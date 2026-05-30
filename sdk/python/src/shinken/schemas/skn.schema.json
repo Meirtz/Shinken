@@ -55,10 +55,17 @@
         "batch_id": { "type": "string", "description": "groups actions dispatched as one ordered batch (#73)" },
         "snapshot_ref": { "type": "string", "description": "checkpoint id for kind=snapshot_ref" },
         "payload": { "type": "object" }
-      }
+      },
+      "allOf": [
+        { "if": { "required": ["kind"], "properties": { "kind": { "const": "verifier_receipt" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/VerifierReceipt" } } } },
+        { "if": { "required": ["kind"], "properties": { "kind": { "const": "file_transfer" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/FileTransferPayload" } } } },
+        { "if": { "required": ["kind"], "properties": { "kind": { "const": "action" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/ActionPayload" } } } }
+      ]
     },
     "EventKind": { "enum": ["action", "observation", "decision", "permission", "marker", "snapshot_ref", "file_transfer", "verifier_receipt", "meta"] },
-    "VerifierReceipt": { "type": "object", "additionalProperties": false, "required": ["passed", "checks"], "description": "eval verifier verdict recorded as a verifier_receipt event (#149)", "properties": { "passed": { "type": "boolean" }, "checks": { "type": "array", "items": { "type": "object", "required": ["name", "ok"], "properties": { "name": { "type": "string" }, "ok": { "type": "boolean" }, "evidence": {} } } } } }
+    "VerifierReceipt": { "type": "object", "additionalProperties": false, "required": ["passed", "checks"], "description": "eval verifier verdict recorded as a verifier_receipt event (#149)", "properties": { "passed": { "type": "boolean" }, "checks": { "type": "array", "items": { "type": "object", "required": ["name", "ok"], "properties": { "name": { "type": "string" }, "ok": { "type": "boolean" }, "evidence": {} } } } } },
+    "FileTransferPayload": { "type": "object", "additionalProperties": false, "required": ["direction", "sha256", "size", "scope"], "description": "file_transfer event payload — content-addressed ref, never bytes (#85/#150)", "properties": { "direction": { "enum": ["put", "get"] }, "path": { "type": "string" }, "sha256": { "type": "string" }, "size": { "type": "integer", "minimum": 0 }, "scope": { "type": "string" }, "stored": { "type": "boolean" } } },
+    "ActionPayload": { "type": "object", "required": ["verb"], "description": "action event payload — a canonical ACI action (verb + params); the ACI Action schema is the source of truth for the full shape (#150)", "properties": { "verb": { "type": "string" } } }
   },
   "oneOf": [
     { "$ref": "#/$defs/Manifest" },

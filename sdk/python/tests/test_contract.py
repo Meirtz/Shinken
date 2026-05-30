@@ -83,9 +83,14 @@ def test_skn_manifest_and_events_validate():
     jsonschema.validate(manifest, {**base, "$ref": "#/$defs/Manifest"})
     for ev in [
         _ev(0, "meta", "capability_envelope"),
-        _ev(1, "action", "click", action_id="c1"),
+        _ev(1, "action", "click", action_id="c1", payload={"verb": "click"}),
         _ev(2, "observation", "image", action_id="c1"),
         _ev(3, "permission", "deny", payload={"capability": "egress"}),
+        # per-kind payload contracts (#150): well-defined kinds bind strictly
+        _ev(4, "file_transfer", "put", payload={
+            "direction": "put", "sha256": "ab", "size": 3, "scope": "session"}),
+        _ev(5, "verifier_receipt", "pass", payload={
+            "passed": True, "checks": [{"name": "did_x", "ok": True}]}),
     ]:
         jsonschema.validate(ev, {**base, "$ref": "#/$defs/Event"})
 
