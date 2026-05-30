@@ -90,8 +90,16 @@ pub enum Message {
     },
     Observation {
         obs_id: String,
+        /// The `call_id` this observation answers (set for one-shot `screenshot`),
+        /// or `None` for an unsolicited server-pushed frame.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cause: Option<String>,
+        /// The screencast stream id this frame belongs to (server-push only).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stream: Option<String>,
+        /// Monotonic frame index within `stream` (server-push only).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        seq: Option<u64>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         image: Option<ImageRef>,
     },
@@ -122,18 +130,23 @@ pub fn capabilities() -> Capabilities {
             "type_text",
             "key",
             "screenshot",
+            "start_screencast",
+            "stop_screencast",
             "wait",
         ]
         .iter()
         .map(|s| s.to_string())
         .collect(),
         // Advertise only what is implemented today. element_ref targets need the
-        // a11y engine (M1b); a11y/video/som observation land later. Honest negotiation.
+        // a11y engine (M1b); a11y/som observation land later. Honest negotiation.
         targets: ["point_px", "point_norm"]
             .iter()
             .map(|s| s.to_string())
             .collect(),
-        observation_types: ["screenshot"].iter().map(|s| s.to_string()).collect(),
+        observation_types: ["screenshot", "screencast"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
         max_long_edge: 2576,
     }
 }
@@ -148,6 +161,17 @@ pub fn welcome() -> Message {
             platform: platform().to_string(),
         },
         capabilities: capabilities(),
+    }
+}
+
+/// Build one server-pushed screencast frame for `stream_id` at index `seq`.
+pub fn stream_frame(stream_id: &str, seq: u64, image: ImageRef) -> Message {
+    Message::Observation {
+        obs_id: format!("{stream_id}-{seq}"),
+        cause: None,
+        stream: Some(stream_id.to_string()),
+        seq: Some(seq),
+        image: Some(image),
     }
 }
 

@@ -64,6 +64,9 @@ pub struct ActionSpec {
     pub ms: Option<u64>,
     #[serde(default)]
     pub scope: Option<String>,
+    /// Target frame rate for `start_screencast` (frames/sec).
+    #[serde(default)]
+    pub fps: Option<f64>,
 }
 
 /// A captured frame: a base64-encoded PNG plus its pixel dimensions.
@@ -428,6 +431,8 @@ impl Executor for X11Executor {
 #[derive(Default)]
 pub struct VirtualExecutor {
     pub log: Mutex<Vec<String>>,
+    /// Frame counter so synthetic screenshots differ on every call.
+    frame: std::sync::atomic::AtomicU64,
 }
 
 impl Executor for VirtualExecutor {
@@ -438,6 +443,21 @@ impl Executor for VirtualExecutor {
     fn execute(&self, a: &ActionSpec) -> Result<String> {
         self.log.lock().expect("log lock").push(a.verb.clone());
         Ok(format!("virtual: {}", a.verb))
+    }
+
+    /// A deterministic 2×2 frame whose content changes every call, so streaming
+    /// consumers (and the screencast test) observe distinct, advancing frames.
+    fn screenshot(&self) -> Result<CapturedImage> {
+        let n = self
+            .frame
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed) as u8;
+        let rgb: Vec<u8> = (0..2u8 * 2 * 3).map(|i| n.wrapping_add(i)).collect();
+        let png = encode_png(&rgb, 2, 2)?;
+        Ok(CapturedImage {
+            png_base64: B64.encode(png),
+            w: 2,
+            h: 2,
+        })
     }
 }
 

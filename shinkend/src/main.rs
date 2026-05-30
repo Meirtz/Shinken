@@ -16,9 +16,11 @@ use std::time::Duration;
 use anyhow::Result;
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
-use connection::Session;
+use connection::{ScreencastSpec, Session, StreamCtl};
 use executor::Executor;
 
 const DEFAULT_ADDR: &str = "127.0.0.1:8765";
@@ -73,12 +75,30 @@ fn is_loopback(addr: &str) -> bool {
 }
 
 /// Handle one client connection through its [`Session`] state machine.
+///
+/// The socket's write half is owned by a single **writer task** fed over an mpsc
+/// channel, so both request replies and unsolicited server-pushed frames (e.g. a
+/// screencast) can be sent without interleaving. The read loop stays a thin driver
+/// over the synchronous [`Session`]; streaming side effects arrive as [`StreamCtl`].
 async fn serve(stream: TcpStream, exec: Arc<dyn Executor>, token: Option<String>) -> Result<()> {
     let ws = tokio_tungstenite::accept_async(stream).await?;
     let (mut tx, mut rx) = ws.split();
-    let mut session = Session::new(token, exec);
 
-    loop {
+    // Single writer: every frame to the client goes through this channel.
+    let (out, mut out_rx) = mpsc::unbounded_channel::<WsMessage>();
+    let writer: JoinHandle<()> = tokio::spawn(async move {
+        while let Some(msg) = out_rx.recv().await {
+            if tx.send(msg).await.is_err() {
+                break;
+            }
+        }
+        let _ = tx.close().await;
+    });
+
+    let mut session = Session::new(token, exec.clone());
+    let mut screencast: Option<JoinHandle<()>> = None;
+
+    let outcome: Result<()> = loop {
         // Bound the time a client may stay unauthenticated.
         let next = if session.is_authenticated() {
             rx.next().await
@@ -86,38 +106,122 @@ async fn serve(stream: TcpStream, exec: Arc<dyn Executor>, token: Option<String>
             match tokio::time::timeout(HANDSHAKE_TIMEOUT, rx.next()).await {
                 Ok(frame) => frame,
                 Err(_) => {
-                    let _ = tx
-                        .send(WsMessage::Text(protocol::error_result_text(
-                            "?",
-                            "handshake timeout",
-                        )))
-                        .await;
-                    break;
+                    let _ = out.send(WsMessage::Text(protocol::error_result_text(
+                        "?",
+                        "handshake timeout",
+                    )));
+                    break Ok(());
                 }
             }
         };
-        let Some(frame) = next else { break };
-        match frame? {
+        let Some(frame) = next else { break Ok(()) };
+        let frame = match frame {
+            Ok(f) => f,
+            Err(e) => break Err(e.into()),
+        };
+        match frame {
             WsMessage::Text(text) => {
                 let step = session.on_text(&text);
                 if let Some(reply) = step.reply {
-                    tx.send(WsMessage::Text(reply)).await?;
+                    if out.send(WsMessage::Text(reply)).is_err() {
+                        break Ok(());
+                    }
+                }
+                match step.stream {
+                    StreamCtl::Start(spec) => {
+                        if let Some(h) = screencast.take() {
+                            h.abort();
+                        }
+                        screencast = Some(spawn_screencast(exec.clone(), out.clone(), spec));
+                    }
+                    StreamCtl::Stop => {
+                        if let Some(h) = screencast.take() {
+                            h.abort();
+                        }
+                    }
+                    StreamCtl::None => {}
                 }
                 if step.close {
-                    break;
+                    break Ok(());
                 }
             }
-            WsMessage::Ping(payload) => tx.send(WsMessage::Pong(payload)).await?,
-            WsMessage::Close(_) => break,
+            WsMessage::Ping(payload) => {
+                let _ = out.send(WsMessage::Pong(payload));
+            }
+            WsMessage::Close(_) => break Ok(()),
             _ => {}
         }
+    };
+
+    if let Some(h) = screencast.take() {
+        h.abort();
     }
-    Ok(())
+    drop(out); // let the writer task drain and finish
+    let _ = writer.await;
+    outcome
+}
+
+/// Stream screencast frames for `spec` into the connection's writer channel until
+/// the task is aborted (on `stop_screencast`, a new stream, or disconnect). Frames
+/// identical to the previous one are dropped (idle-frame suppression) — the first
+/// bandwidth lever; resolution/codec controls follow.
+fn spawn_screencast(
+    exec: Arc<dyn Executor>,
+    out: mpsc::UnboundedSender<WsMessage>,
+    spec: ScreencastSpec,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_secs_f64(1.0 / spec.fps));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut seq: u64 = 0;
+        let mut last_hash: Option<u64> = None;
+        loop {
+            tick.tick().await;
+            // Capture off the runtime's worker threads — X11 GetImage is blocking.
+            let exec = exec.clone();
+            let img = match tokio::task::spawn_blocking(move || exec.screenshot()).await {
+                Ok(Ok(img)) => img,
+                _ => break, // capture failed or the blocking pool is gone
+            };
+            let hash = fnv1a(img.png_base64.as_bytes());
+            if last_hash == Some(hash) {
+                continue; // unchanged frame — skip
+            }
+            last_hash = Some(hash);
+            let frame = protocol::stream_frame(
+                &spec.stream_id,
+                seq,
+                protocol::ImageRef {
+                    data: img.png_base64,
+                    w: img.w,
+                    h: img.h,
+                    scope: "screen".to_string(),
+                },
+            );
+            seq += 1;
+            let Ok(text) = serde_json::to_string(&frame) else {
+                break;
+            };
+            if out.send(WsMessage::Text(text)).is_err() {
+                break; // client gone
+            }
+        }
+    })
+}
+
+/// FNV-1a 64-bit hash — used to detect unchanged frames cheaply.
+fn fnv1a(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for &b in bytes {
+        hash ^= b as u64;
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
 }
 
 #[cfg(test)]
 mod tests {
-    use super::is_loopback;
+    use super::*;
 
     #[test]
     fn loopback_detection() {
@@ -126,5 +230,93 @@ mod tests {
         assert!(is_loopback("[::1]:8765"));
         assert!(!is_loopback("0.0.0.0:8765"));
         assert!(!is_loopback("10.0.0.5:8765"));
+    }
+
+    #[test]
+    fn fnv1a_distinguishes_and_repeats() {
+        assert_eq!(fnv1a(b"frame-a"), fnv1a(b"frame-a"));
+        assert_ne!(fnv1a(b"frame-a"), fnv1a(b"frame-b"));
+    }
+
+    const HELLO: &str = r#"{"type":"hello","v":0,"client":{"name":"t","version":"0"}}"#;
+
+    async fn text(
+        ws: &mut (impl StreamExt<Item = tokio_tungstenite::tungstenite::Result<WsMessage>> + Unpin),
+    ) -> String {
+        tokio::time::timeout(Duration::from_secs(3), ws.next())
+            .await
+            .expect("frame within 3s")
+            .expect("stream open")
+            .expect("ws ok")
+            .into_text()
+            .expect("text frame")
+    }
+
+    /// End-to-end: a real WS client starts a screencast and receives a sequence of
+    /// distinct, server-pushed frames with increasing `seq`; after `stop_screencast`
+    /// the frames cease.
+    #[tokio::test]
+    async fn screencast_streams_distinct_frames_then_stops() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let exec: Arc<dyn Executor> = Arc::new(executor::VirtualExecutor::default());
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let _ = serve(stream, exec, None).await;
+        });
+
+        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}"))
+            .await
+            .unwrap();
+
+        ws.send(WsMessage::Text(HELLO.into())).await.unwrap();
+        assert!(text(&mut ws).await.contains("\"type\":\"welcome\""));
+
+        // Start a fast screencast; the first reply must be the ack.
+        ws.send(WsMessage::Text(
+            r#"{"type":"action","call_id":"sc1","action":{"verb":"start_screencast","fps":50}}"#
+                .into(),
+        ))
+        .await
+        .unwrap();
+        let ack = text(&mut ws).await;
+        assert!(ack.contains("\"type\":\"ack\"") && ack.contains("\"ok\":true"));
+
+        // Collect four pushed frames: stream id matches, seq advances 0..3.
+        let mut seqs = Vec::new();
+        for _ in 0..4 {
+            let v: serde_json::Value = serde_json::from_str(&text(&mut ws).await).unwrap();
+            assert_eq!(v["type"], "observation");
+            assert_eq!(v["stream"], "sc1");
+            assert!(v["image"]["ref"].is_string());
+            seqs.push(v["seq"].as_u64().unwrap());
+        }
+        assert_eq!(seqs, vec![0, 1, 2, 3]);
+
+        // Stop, then confirm the stream goes quiet (a read eventually times out).
+        ws.send(WsMessage::Text(
+            r#"{"type":"action","call_id":"sc2","action":{"verb":"stop_screencast"}}"#.into(),
+        ))
+        .await
+        .unwrap();
+        let mut saw_stop_ack = false;
+        let mut went_quiet = false;
+        for _ in 0..60 {
+            match tokio::time::timeout(Duration::from_millis(250), ws.next()).await {
+                Ok(Some(Ok(msg))) => {
+                    let t = msg.into_text().unwrap_or_default();
+                    if t.contains("\"type\":\"ack\"") && t.contains("sc2") {
+                        saw_stop_ack = true;
+                    }
+                    // otherwise it's an in-flight frame — drain it
+                }
+                _ => {
+                    went_quiet = true;
+                    break;
+                }
+            }
+        }
+        assert!(saw_stop_ack, "stop_screencast must be acked");
+        assert!(went_quiet, "frames must cease after stop_screencast");
     }
 }

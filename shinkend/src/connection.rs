@@ -10,10 +10,30 @@ use std::sync::Arc;
 use crate::executor::{ActionSpec, Executor};
 use crate::protocol::{self, Message};
 
+/// A screencast the runtime should start streaming (see [`StreamCtl`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScreencastSpec {
+    /// Stream id (the `start_screencast` call_id); tags every pushed frame.
+    pub stream_id: String,
+    /// Target frame rate, clamped to a sane range at parse time.
+    pub fps: f64,
+}
+
+/// A side effect on the connection's frame stream, returned alongside a reply.
+/// The async serve loop owns the actual streaming task; the [`Session`] stays a
+/// pure, synchronous state machine.
+#[derive(Debug, Clone, PartialEq)]
+pub enum StreamCtl {
+    None,
+    Start(ScreencastSpec),
+    Stop,
+}
+
 /// What to do after handling one inbound message.
 pub struct Step {
     pub reply: Option<String>,
     pub close: bool,
+    pub stream: StreamCtl,
 }
 
 impl Step {
@@ -21,24 +41,28 @@ impl Step {
         Step {
             reply: Some(encode(msg)),
             close: false,
+            stream: StreamCtl::None,
         }
     }
     fn text(text: String) -> Self {
         Step {
             reply: Some(text),
             close: false,
+            stream: StreamCtl::None,
         }
     }
     fn silent() -> Self {
         Step {
             reply: None,
             close: false,
+            stream: StreamCtl::None,
         }
     }
     fn close(text: String) -> Self {
         Step {
             reply: Some(text),
             close: true,
+            stream: StreamCtl::None,
         }
     }
 }
@@ -114,7 +138,12 @@ impl Session {
                 Step::text(protocol::error_result_text("?", "already authenticated"))
             }
             Message::Action { call_id, action } => {
-                Step::reply(&dispatch_action(&call_id, action, self.exec.as_ref()))
+                let (reply, stream) = dispatch_action(&call_id, action, self.exec.as_ref());
+                Step {
+                    reply: Some(encode(&reply)),
+                    close: false,
+                    stream,
+                }
             }
             other => match protocol::respond(other) {
                 Some(r) => Step::reply(&r),
@@ -130,30 +159,60 @@ fn encode(msg: &Message) -> String {
     })
 }
 
-/// Run one `action`; `screenshot` → `observation`, every other verb → `ack`.
-fn dispatch_action(call_id: &str, action: serde_json::Value, exec: &dyn Executor) -> Message {
+/// Lowest/highest screencast frame rate we will honor (frames/sec).
+const FPS_MIN: f64 = 0.1;
+const FPS_MAX: f64 = 30.0;
+const FPS_DEFAULT: f64 = 5.0;
+
+/// Run one `action`. `screenshot` → one-shot `observation`; `start_screencast`/
+/// `stop_screencast` → `ack` plus a [`StreamCtl`] for the serve loop; every other
+/// verb → `ack`.
+fn dispatch_action(
+    call_id: &str,
+    action: serde_json::Value,
+    exec: &dyn Executor,
+) -> (Message, StreamCtl) {
     let spec = match serde_json::from_value::<ActionSpec>(action) {
         Ok(s) => s,
-        Err(e) => return ack(call_id, false, Some(format!("bad action: {e}"))),
+        Err(e) => {
+            return (
+                ack(call_id, false, Some(format!("bad action: {e}"))),
+                StreamCtl::None,
+            )
+        }
     };
-    if spec.verb == "screenshot" {
-        return match exec.screenshot() {
-            Ok(img) => Message::Observation {
-                obs_id: format!("obs-{call_id}"),
-                cause: Some(call_id.to_string()),
-                image: Some(protocol::ImageRef {
-                    data: img.png_base64,
-                    w: img.w,
-                    h: img.h,
-                    scope: "screen".to_string(),
-                }),
-            },
-            Err(e) => ack(call_id, false, Some(e.to_string())),
-        };
-    }
-    match exec.execute(&spec) {
-        Ok(_) => ack(call_id, true, None),
-        Err(e) => ack(call_id, false, Some(e.to_string())),
+    match spec.verb.as_str() {
+        "screenshot" => {
+            let msg = match exec.screenshot() {
+                Ok(img) => Message::Observation {
+                    obs_id: format!("obs-{call_id}"),
+                    cause: Some(call_id.to_string()),
+                    stream: None,
+                    seq: None,
+                    image: Some(protocol::ImageRef {
+                        data: img.png_base64,
+                        w: img.w,
+                        h: img.h,
+                        scope: "screen".to_string(),
+                    }),
+                },
+                Err(e) => ack(call_id, false, Some(e.to_string())),
+            };
+            (msg, StreamCtl::None)
+        }
+        "start_screencast" => {
+            let fps = spec.fps.unwrap_or(FPS_DEFAULT).clamp(FPS_MIN, FPS_MAX);
+            let cast = ScreencastSpec {
+                stream_id: call_id.to_string(),
+                fps,
+            };
+            (ack(call_id, true, None), StreamCtl::Start(cast))
+        }
+        "stop_screencast" => (ack(call_id, true, None), StreamCtl::Stop),
+        _ => match exec.execute(&spec) {
+            Ok(_) => (ack(call_id, true, None), StreamCtl::None),
+            Err(e) => (ack(call_id, false, Some(e.to_string())), StreamCtl::None),
+        },
     }
 }
 
@@ -232,5 +291,45 @@ mod tests {
         let step = s.on_text(HELLO);
         assert!(!step.close);
         assert!(step.reply.unwrap().contains("already authenticated"));
+    }
+
+    #[test]
+    fn start_screencast_acks_and_requests_a_stream() {
+        let mut s = session(None);
+        s.on_text(HELLO);
+        let step = s.on_text(
+            r#"{"type":"action","call_id":"sc1","action":{"verb":"start_screencast","fps":12}}"#,
+        );
+        assert!(step.reply.unwrap().contains("\"type\":\"ack\""));
+        match step.stream {
+            StreamCtl::Start(spec) => {
+                assert_eq!(spec.stream_id, "sc1");
+                assert_eq!(spec.fps, 12.0);
+            }
+            other => panic!("expected Start, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn screencast_fps_is_clamped() {
+        let mut s = session(None);
+        s.on_text(HELLO);
+        let step = s.on_text(
+            r#"{"type":"action","call_id":"sc1","action":{"verb":"start_screencast","fps":9000}}"#,
+        );
+        match step.stream {
+            StreamCtl::Start(spec) => assert_eq!(spec.fps, 30.0),
+            other => panic!("expected Start, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn stop_screencast_acks_and_requests_stop() {
+        let mut s = session(None);
+        s.on_text(HELLO);
+        let step =
+            s.on_text(r#"{"type":"action","call_id":"sc2","action":{"verb":"stop_screencast"}}"#);
+        assert!(step.reply.unwrap().contains("\"ok\":true"));
+        assert_eq!(step.stream, StreamCtl::Stop);
     }
 }
