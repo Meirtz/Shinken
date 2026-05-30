@@ -17,6 +17,8 @@ from typing import Any
 
 from websockets.asyncio.client import connect as _ws_connect
 
+from .skn import Recorder
+
 __all__ = ["connect", "aconnect", "Sandbox", "AsyncSandbox", "Capabilities"]
 
 DEFAULT_ADDR = "127.0.0.1:8765"
@@ -57,11 +59,14 @@ def _target(target: Any, x: float | None, y: float | None) -> dict | None:
 class AsyncSandbox:
     """An async session against a running ``shinkend``."""
 
-    def __init__(self, ws: Any, capabilities: Capabilities, platform: str) -> None:
+    def __init__(
+        self, ws: Any, capabilities: Capabilities, platform: str, record: bool = False
+    ) -> None:
         self._ws = ws
         self.capabilities = capabilities
         self.platform_name = platform
         self._seq = 0
+        self._recorder = Recorder(platform=platform) if record else None
 
     def _next_id(self) -> str:
         self._seq += 1
@@ -92,9 +97,12 @@ class AsyncSandbox:
         if target is not None:
             action["target"] = target
         action.update({k: v for k, v in kwargs.items() if v is not None})
-        reply = await self._rpc({"type": "action", "call_id": self._next_id(), "action": action})
+        call_id = self._next_id()
+        reply = await self._rpc({"type": "action", "call_id": call_id, "action": action})
         if not reply.get("ok"):
             raise RuntimeError(reply.get("error", f"action {verb!r} failed"))
+        if self._recorder is not None:
+            self._recorder.action(verb, action, call_id)
         return reply
 
     async def click(self, target: Any = None, *, x: float | None = None, y: float | None = None):
@@ -130,7 +138,12 @@ class AsyncSandbox:
         if reply.get("type") != "observation":
             raise RuntimeError(reply.get("error", "screenshot failed"))
         img = reply.get("image") or {}
-        return {"png": base64.b64decode(img.get("ref", "")), "w": img.get("w"), "h": img.get("h")}
+        png = base64.b64decode(img.get("ref", ""))
+        if self._recorder is not None:
+            self._recorder.observation(
+                {"image": {"w": img.get("w"), "h": img.get("h"), "scope": scope}}, png=png
+            )
+        return {"png": png, "w": img.get("w"), "h": img.get("h")}
 
     async def type_text(self, text: str):
         return await self.act("type_text", text=text)
@@ -138,11 +151,17 @@ class AsyncSandbox:
     async def key(self, keys: str):
         return await self.act("key", keys=keys)
 
+    def save_replay(self, path: str) -> str:
+        """Write the recorded session to a `.skn` bundle. Requires record=True."""
+        if self._recorder is None:
+            raise RuntimeError("session is not recording; reconnect with record=True")
+        return self._recorder.save(path)
+
     async def close(self) -> None:
         await self._ws.close()
 
 
-async def aconnect(addr: str = DEFAULT_ADDR) -> AsyncSandbox:
+async def aconnect(addr: str = DEFAULT_ADDR, record: bool = False) -> AsyncSandbox:
     """Open an async session and complete the ACI handshake."""
     ws = await _ws_connect(_to_uri(addr))
     await ws.send(json.dumps({"type": "hello", "v": 0, "client": _CLIENT}))
@@ -161,6 +180,7 @@ async def aconnect(addr: str = DEFAULT_ADDR) -> AsyncSandbox:
             max_long_edge=caps.get("max_long_edge"),
         ),
         welcome.get("server", {}).get("platform", "linux"),
+        record,
     )
 
 
@@ -233,6 +253,9 @@ class Sandbox:
     def key(self, keys: str):
         return self._loop.run(self._inner.key(keys))
 
+    def save_replay(self, path: str) -> str:
+        return self._inner.save_replay(path)
+
     def close(self) -> None:
         try:
             self._loop.run(self._inner.close())
@@ -246,11 +269,11 @@ class Sandbox:
         self.close()
 
 
-def connect(addr: str = DEFAULT_ADDR) -> Sandbox:
+def connect(addr: str = DEFAULT_ADDR, record: bool = False) -> Sandbox:
     """Connect to a running ``shinkend`` and complete the ACI handshake (blocking)."""
     loop = _BackgroundLoop()
     try:
-        inner = loop.run(aconnect(addr))
+        inner = loop.run(aconnect(addr, record=record))
     except Exception:
         loop.stop()
         raise

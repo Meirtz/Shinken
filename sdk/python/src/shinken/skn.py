@@ -1,0 +1,148 @@
+"""`.skn` v0 — the event-sourced replay bundle (see docs/05-tech-decisions.md D5).
+
+A bundle is a ZIP (Playwright-trace model): ``manifest.json`` + append-only
+``events.jsonl`` (one event per line) + content-addressed ``media/<sha256>``. The
+event stream *is* the replay log. :class:`Recorder` accumulates events during a
+session and writes a bundle; :class:`Replay` loads one back for scrubbing.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import time
+import uuid
+import zipfile
+from datetime import datetime, timezone
+from typing import Any
+
+SKN_VERSION = 0
+
+
+class Recorder:
+    """Accumulates timestamped events + content-addressed media for one session."""
+
+    def __init__(
+        self, session_id: str | None = None, platform: str = "linux", aci_version: int = 0
+    ):
+        self.session_id = session_id or f"sbx-{uuid.uuid4().hex[:12]}"
+        self.run_id = f"run-{uuid.uuid4().hex[:12]}"
+        self.platform = platform
+        self.aci_version = aci_version
+        self._events: list[dict] = []
+        self._media: dict[str, bytes] = {}
+        self._seq = 0
+        self._t0 = time.monotonic()
+        self._t0_wall = datetime.now(timezone.utc).isoformat()
+
+    def _emit(self, kind: str, src: str, payload: dict, action_id: str | None = None) -> dict:
+        ev: dict[str, Any] = {
+            "seq": self._seq,
+            "dt": round(time.monotonic() - self._t0, 6),
+            "kind": kind,
+            "src": src,
+            "payload": payload,
+        }
+        if action_id is not None:
+            ev["action_id"] = action_id
+        self._seq += 1
+        self._events.append(ev)
+        return ev
+
+    def action(self, verb: str, action: dict, action_id: str) -> dict:
+        return self._emit("action", verb, action, action_id)
+
+    def observation(
+        self, payload: dict, *, action_id: str | None = None, png: bytes | None = None
+    ) -> dict:
+        payload = dict(payload)
+        src = "a11y"
+        if png is not None:
+            sha = hashlib.sha256(png).hexdigest()
+            self._media[sha] = png
+            image = dict(payload.get("image") or {})
+            image["ref"] = sha
+            payload["image"] = image
+            src = "image"
+        return self._emit("observation", src, payload, action_id)
+
+    def permission(self, payload: dict) -> dict:
+        return self._emit("permission", payload.get("decision", "ask"), payload)
+
+    def marker(self, name: str) -> dict:
+        return self._emit("marker", name, {})
+
+    def manifest(self) -> dict:
+        return {
+            "skn_version": SKN_VERSION,
+            "session_id": self.session_id,
+            "run_id": self.run_id,
+            "t0_wall": self._t0_wall,
+            "t0_mono": 0.0,
+            "platform": self.platform,
+            "aci_version": self.aci_version,
+            "channels": sorted({e["kind"] for e in self._events}),
+        }
+
+    def save(self, path: str) -> str:
+        """Write the bundle to ``path`` (a ``.skn`` ZIP). Crash-safe / re-openable."""
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("manifest.json", json.dumps(self.manifest(), indent=2))
+            z.writestr("events.jsonl", "".join(json.dumps(e) + "\n" for e in self._events))
+            for sha, data in self._media.items():
+                z.writestr(f"media/{sha}", data)
+        return path
+
+    @property
+    def events(self) -> list[dict]:
+        return self._events
+
+
+class Replay:
+    """A loaded `.skn` bundle: manifest + ordered events + media accessor."""
+
+    def __init__(self, manifest: dict, events: list[dict], path: str):
+        self.manifest = manifest
+        self._events = events
+        self._path = path
+
+    @classmethod
+    def load(cls, path: str) -> Replay:
+        with zipfile.ZipFile(path) as z:
+            manifest = json.loads(z.read("manifest.json"))
+            lines = z.read("events.jsonl").decode("utf-8").splitlines()
+        events = [json.loads(line) for line in lines if line.strip()]
+        return cls(manifest, events, path)
+
+    @property
+    def events(self) -> list[dict]:
+        return self._events
+
+    def media(self, sha: str) -> bytes:
+        with zipfile.ZipFile(self._path) as z:
+            return z.read(f"media/{sha}")
+
+    def __len__(self) -> int:
+        return len(self._events)
+
+
+def summarize(path: str) -> str:
+    """Human-readable timeline summary of a `.skn` bundle (used by the CLI)."""
+    rp = Replay.load(path)
+    m = rp.manifest
+    out = [
+        f"{path}",
+        f"  session {m.get('session_id')} · run {m.get('run_id')} · platform {m.get('platform')}",
+        f"  {len(rp)} events · channels: {', '.join(m.get('channels', []))}",
+        "",
+    ]
+    for e in rp.events:
+        extra = ""
+        if e["kind"] == "action":
+            extra = f" target={(e['payload'].get('target') or {}).get('kind', '-')}"
+        elif e["kind"] == "observation":
+            img = e["payload"].get("image") or {}
+            if img:
+                extra = f" image={img.get('w')}x{img.get('h')}"
+        out.append(f"  [{e['seq']:>3}] +{e['dt']:.3f}s {e['kind']}:{e['src']}{extra}")
+    return "\n".join(out)

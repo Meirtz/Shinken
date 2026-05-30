@@ -16,6 +16,16 @@ later milestones (see docs/10-phase0-plan.md).
 """
 
 from .client import AsyncSandbox, Capabilities, Sandbox, aconnect, connect
+from .skn import Recorder, Replay
 
 __version__ = "0.0.0"
-__all__ = ["connect", "aconnect", "Sandbox", "AsyncSandbox", "Capabilities", "__version__"]
+__all__ = [
+    "connect",
+    "aconnect",
+    "Sandbox",
+    "AsyncSandbox",
+    "Capabilities",
+    "Recorder",
+    "Replay",
+    "__version__",
+]

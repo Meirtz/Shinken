@@ -13,7 +13,15 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="cmd")
     connect_cmd = sub.add_parser("connect", help="connect to a shinkend and print its capabilities")
     connect_cmd.add_argument("addr", nargs="?", default="127.0.0.1:8765")
+    replay_cmd = sub.add_parser("replay", help="print the timeline of a .skn replay bundle")
+    replay_cmd.add_argument("bundle")
     args = parser.parse_args(argv)
+
+    if args.cmd == "replay":
+        from .skn import summarize
+
+        print(summarize(args.bundle))
+        return 0
 
     if args.cmd == "connect":
         env = connect(args.addr)
