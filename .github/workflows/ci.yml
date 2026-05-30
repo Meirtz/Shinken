@@ -204,9 +204,31 @@ jobs:
           pip install -e sdk/python
           TOKEN=$(openssl rand -hex 16)
           docker run -d --name shk -p 127.0.0.1:8765:8765 -e SHINKEND_TOKEN="$TOKEN" shinken/sandbox-linux
-          for _ in $(seq 1 60); do nc -z 127.0.0.1 8765 && break; sleep 1; done
-          sleep 3
+          for _ in $(seq 1 60); do
+            SHK_TOKEN="$TOKEN" python - <<'PY' && break || sleep 1
+          import os
+          import shinken
+
+          env = shinken.connect("127.0.0.1:8765", token=os.environ["SHK_TOKEN"])
+          try:
+              env.ping()
+              env.screenshot()
+          finally:
+              env.close()
+          PY
+          done
           SHK_TOKEN="$TOKEN" python scripts/docker_smoke.py || { docker logs shk; exit 1; }
           docker rm -f shk
+      - if: steps.present.outputs.go == 'true'
+        name: provider lifecycle smoke (DockerLocalProvider)
+        run: |
+          set -euo pipefail
+          PYTHONPATH=sdk/python/src python scripts/sandbox_bench.py \
+            --provider docker \
+            --concurrency 1 \
+            --iterations 1 \
+            --cleanup-orphans \
+            --output /tmp/sandbox-bench.json \
+            --markdown-output /tmp/sandbox-bench.md
       - if: steps.present.outputs.go == 'false'
         run: echo "Docker image or smoke script not present yet — skipping"

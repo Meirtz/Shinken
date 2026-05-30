@@ -12,10 +12,12 @@ print(env.screen_size())         # {'w': 1280, 'h': 800}
 env.close()
 ```
 
-> **M0 status:** handshake + `ping`/`query`. The full surface
-> (`observe`/`act`/`run`/`save`/`restore`/`fork`/`drive`/`unlock`) lands in later milestones —
-> see [`docs/10-phase0-plan.md`](../../docs/10-phase0-plan.md) and the ACI spec
-> [`docs/11-aci-spec.md`](../../docs/11-aci-spec.md) (forthcoming, #9).
+> **Status:** the SDK has moved beyond the original M0 handshake. It supports connect/query/ping,
+> typed actions, screenshot/focused capture, screencast consumption, and minimal `.skn` recording.
+> v0.0.1 fills in agent-native dialects/adapters, structured observation, capabilities, artifacts,
+> and tiny eval. See [`docs/user/quickstart.md`](../../docs/user/quickstart.md),
+> [`docs/engineering/v0.0.1-plan.md`](../../docs/engineering/v0.0.1-plan.md), and
+> [`docs/design/aci-spec.md`](../../docs/design/aci-spec.md).
 
 ## Develop
 

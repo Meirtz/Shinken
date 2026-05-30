@@ -1,7 +1,7 @@
 # Security Policy
 
 Shinken runs untrusted, AI-generated actions against real desktops. Security is a first-class
-concern — see [`docs/08-threat-model.md`](docs/08-threat-model.md).
+concern — see [`docs/design/threat-model.md`](docs/design/threat-model.md).
 
 ## Reporting a vulnerability
 

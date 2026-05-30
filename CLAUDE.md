@@ -8,7 +8,7 @@ Linux/X11 vertical slice** — handshake/auth, pointer+keyboard actions, pixel o
 and a Python SDK, all under live CI. The **structured/a11y thesis (D3), permissions, replay
 playback, checkpoint/fork, the control plane, and cross-platform are designed-only and not yet
 built**, and the load-bearing **a11y-coverage spike (#2) is still ungated**.
-**[`docs/STATUS.md`](docs/STATUS.md) is the authoritative built-vs-designed map — read it before
+**[`docs/engineering/status.md`](docs/engineering/status.md) is the authoritative built-vs-designed map — read it before
 trusting present-tense claims in the vision docs.**
 
 ## ⛔ The one hard rule: this is a PUBLIC open-source project
@@ -39,13 +39,13 @@ committed is world-readable.
 
 ## Conventions
 
-- **The public design canon is `docs/05-tech-decisions.md`** — decisions are numbered **D1–D12**.
+- **The public design canon is `docs/design/tech-decisions.md`** — decisions are numbered **D1–D12**.
   When changing a design decision, update the relevant ADR and reconcile sibling docs to the same
   D-number.
 - Naming (use consistently): **Shinken** (platform), **Sandbox** / **Session**, **Guest Runtime**
   (`shinkend`), **ACI** (Agent-Computer Interface), **Operator**, **Control Plane** / **Control
   Panel**, **Substrate/Provider**, **Capability** / **Permission Panel**, **`.skn`** (replay
-  bundle), the control/event/media **planes**. See [docs/07-glossary.md](docs/07-glossary.md).
+  bundle), the control/event/media **planes**. See [docs/design/glossary.md](docs/design/glossary.md).
 - Docs are **self-contained**: cite external sources by URL and sibling docs by relative path; do
   not cite private working filenames.
 - Mark unverified vendor numbers `(vendor-published, unverified)`.
@@ -55,7 +55,7 @@ committed is world-readable.
 **Built & proven (Linux/X11):** M0 transport/auth + M1 act-and-observe are done — pointer+keyboard
 actions, screenshot, real-time screencast (server-push) with idle-suppression + downscale, and
 focused-window/`window:<id>` capture, all with live Xvfb/Docker CI smokes. `.skn` recording and the
-Python SDK (sync facade + reader/demux) ship too. Full built-vs-designed map: **[docs/STATUS.md](docs/STATUS.md)**.
+Python SDK (sync facade + reader/demux) ship too. Full built-vs-designed map: **[docs/engineering/status.md](docs/engineering/status.md)**.
 
 The immediate work (per the recalibrated priorities):
 1. **Reconcile contract + harden (#56)** — align `schema/aci.schema.json` with the implemented wire
@@ -63,7 +63,8 @@ The immediate work (per the recalibrated priorities):
    frame queues (a real OOM vector), and fix the vacuous tests. 22 verified review findings.
 2. **a11y-coverage spike — STILL UNGATED (#2)** — measure what fraction of real apps (browser,
    Electron, Qt, canvas, games) expose usable accessibility trees + the bandwidth of a tree diff.
-   This is *the gate* for the structured-first thesis (D3); the differentiator vs OSWorld rests on it.
+   This gates the structured-default fast path and the bandwidth/cost claims (D3); the screenshot
+   baseline still carries v0.0.1 usability.
 3. **Designed-only, not started:** permissions/capability gate, `.skn` playback, checkpoint/fork,
    control plane + concurrency, dual-channel WebRTC/NVENC, cross-platform (mac/Win) + **Wayland**.
 4. **CoW-fork density** and **dual-channel WebRTC latency** remain Phase-1 boundary spikes (D1/D4).

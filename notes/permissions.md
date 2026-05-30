@@ -1,7 +1,7 @@
 # Permissions — the 3-layer capability-unlock model
 
 > **Status:** drafting · **Date:** 2026-05-30 · **Owner:** the maintainers
-> Working note feeding [`docs/05-tech-decisions.md`](../docs/05-tech-decisions.md) (D6 as an ADR), [`docs/02-architecture.md`](../docs/02-architecture.md), and [`docs/08-threat-model.md`](../docs/08-threat-model.md).
+> Working note feeding [`docs/design/tech-decisions.md`](../docs/design/tech-decisions.md) (D6 as an ADR), [`docs/design/architecture.md`](../docs/design/architecture.md), and [`docs/design/threat-model.md`](../docs/design/threat-model.md).
 > Reconciles to canon **D6** (3-layer capability-unlock permission), and touches **D2** (`tool_runner` boundary, code-as-action), **D5** (approvals as replay events), **D9** (Action Gateway choke point).
 > Siblings: [sandbox-infra.md](sandbox-infra.md) · [ai-native-interface.md](ai-native-interface.md) · [replay.md](replay.md) · [streaming-bandwidth.md](streaming-bandwidth.md) · [open-questions.md](open-questions.md) · [sources.md](sources.md).
 

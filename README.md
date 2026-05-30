@@ -7,24 +7,29 @@
   <img src="https://github.com/Meirtz/Project-ShinKen/raw/main/docs/assets/logo.png" alt="Shinken logo" width="100%">
 </p>
 
-> An **AI-native computer runtime**: give an agent a real desktop, unlock the capabilities
-> that desktop needs, and replay the whole run as data.
+> The open infrastructure stack for computer-use agents: real computers, one typed interface,
+> scoped capabilities, replayable trajectories, and eval on the same substrate.
 
-Shinken is a cross-platform computer sandbox for agents: a real desktop runtime with streaming,
-replay, and capability management built in.
+Shinken is an AI-native, cross-platform **runtime + control plane + control panel** for
+computer-use agents. It is meant to be the full CUA infrastructure layer: boot real desktops and
+browsers, drive them through one Agent-Computer Interface (ACI), grant the sandbox capabilities
+they need, stream and supervise sessions live, record every run as replay/training data, and run
+evals on the same substrate.
 
-It is designed as one platform for production computer-use agents, evals, and training-data
-capture: every session can be watched live, audited, replayed, forked, and exported as trajectory
-data.
+The ambition is deliberately broad. Shinken is not just a benchmark harness, a cloud browser, a
+VNC desktop, or a model adapter. It is the foundation those pieces plug into: production agent
+runtime, eval environment, trajectory recorder, permission boundary, and future cross-OS fleet
+manager.
 
-> **Status (2026-05-31) — early, honest.** What runs **today** is a tested Linux/X11 slice:
+> **Status (2026-05-31) — early, honest.** The product scope is the full CUA stack above. What
+> runs **today** is the first tested Linux/X11 slice:
 > typed pointer/keyboard actions, pixel observation (screenshot + **real-time screencast** with
 > idle-suppression + resolution downscale), **focused-window capture**, `.skn` recording, and a
 > Python SDK — all under live CI. The rest of this README describes the **target design**:
 > cross-platform, accessibility-tree observation, the capability/permission panel, replay playback,
 > checkpoint/fork, the control plane, and WebRTC/GPU streaming are **designed but not yet built**,
 > and the load-bearing a11y-coverage assumption is **not yet validated**. See
-> **[`docs/STATUS.md`](docs/STATUS.md)** for the precise built-vs-designed map.
+> **[`docs/engineering/status.md`](docs/engineering/status.md)** for the precise built-vs-designed map.
 
 ## Why "Shinken"?
 
@@ -47,7 +52,8 @@ That is Shinken's stance: **real desktops, real actions, real capabilities, real
 </p>
 
 The product shape follows from that stance: keep the practice-friendly ergonomics, then add the
-real-runtime edge: sandbox entitlements, replayable runs, and auditable boundary crossings.
+real-runtime edge that a complete CUA stack needs: sandbox entitlements, replayable runs,
+auditable boundary crossings, eval artifacts, and eventually fleet-scale execution.
 
 ```mermaid
 flowchart LR
@@ -64,21 +70,29 @@ flowchart LR
 
 ## What It Lets You Do
 
-- **Drive a real desktop with a clean API.** Agents call typed actions like `click`,
+- **Drive real computers with one clean API.** Agents call typed actions like `click`,
   `type_text`, and `observe` through one Agent-Computer Interface (ACI), not ad hoc
-  `pyautogui` strings.
-- **Start with screenshots, then add structure.** Phase 0's baseline is the universal GUI-agent loop:
-  screenshot observation plus typed mouse/keyboard actions. Accessibility trees and element refs are
-  the parallel upgrade path for lower cost and more stable actions.
+  `pyautogui` strings. The same ACI is the model-facing contract for desktop apps, browsers,
+  OS dialogs, and future mobile targets.
+- **Start with screenshots, then add structure.** v0.0.1 must work through the universal GUI-agent
+  loop: screenshot observation plus typed mouse/keyboard actions. Accessibility trees, DOM snapshots,
+  element refs, Set-of-Marks, and region/zoom are the structured and visual upgrade paths for lower
+  cost and more stable actions.
 - **Grant real sandbox capabilities.** A Sandbox can be provisioned with network egress,
   credentials, GPU, persistence, privileged installs, clipboard, screenshots, or OS automation
   entitlements.
-- **Move files fast.** Task fixtures, generated artifacts, logs, media, and replay resources need a
-  high-throughput Sandbox↔client transfer path with checksums, backpressure, and profiling.
+- **Move files and artifacts as first-class data.** Task fixtures, generated artifacts, logs,
+  media, and replay resources need a Sandbox↔client transfer path with checksums, backpressure,
+  and replay references.
 - **Replay every run.** The event stream is the replay log: actions, observations, permission
-  decisions, and media references become a `.skn` bundle for debugging, eval, and training data.
-- **Scale beyond one laptop.** The local PoC grows into a control plane with warm pools,
-  fork-from-snapshot reset, policy enforcement, WebRTC media, and cross-OS substrates.
+  decisions, verifier receipts, artifacts, and media references become a `.skn` bundle for
+  debugging, eval, and training data.
+- **Run evals on the runtime, not beside it.** OSWorld-style tasks, browser tasks, mobile tasks,
+  and custom enterprise tasks should all become verifier-backed runs over the same ACI and replay
+  substrate.
+- **Scale beyond one laptop.** The reference runtime grows into a control plane with warm pools,
+  fork-from-snapshot reset, policy enforcement, WebRTC media, multi-tenant budgets, and cross-OS
+  substrates.
 
 ## Why It Is Different
 
@@ -94,7 +108,8 @@ Shinken is designed around a different loop:
 screenshot observation -> typed action -> sandbox capability -> verified result -> replay event
 ```
 
-That difference is the product:
+That difference is the product. v0.0.1 should implement these semantics at local/reference scale;
+later milestones make the same semantics faster, denser, multi-tenant, and cross-substrate:
 
 - **Works before instrumentation:** screenshots are universal, so the first GUI loop works even on
   canvas, Electron, games, and custom-rendered apps.
@@ -107,8 +122,9 @@ That difference is the product:
 
 ## Client / Server Shape
 
-M0 is intentionally simple: the Python client talks directly to the Rust Guest Runtime. The target
-architecture inserts the Control Plane as the mandatory server-side boundary.
+The current implementation starts simple: the Python client talks directly to the Rust Guest
+Runtime for the local/reference slice. The target architecture inserts the Control Plane as the
+mandatory server-side boundary, without changing the ACI or replay semantics.
 
 ```mermaid
 flowchart TB
@@ -202,15 +218,18 @@ shinken replay search-demo.skn                  # scrub by action/observation se
 shinken branch search-demo.skn --at 42          # rerun a counterfactual from step 42
 ```
 
-Those examples are the product target. See [docs/10-phase0-plan.md](docs/10-phase0-plan.md) for the
-milestones that make them real.
+Those examples are the product target. v0.0.1 should make the semantics real locally/reference
+scale; later milestones optimize the substrate, streaming, fork density, and multi-tenant control
+plane. See [docs/engineering/v0.0.1-plan.md](docs/engineering/v0.0.1-plan.md).
 
 ## What Works Today
 
-**M1/M2 is underway:** schema scaffold, Rust `shinkend`, Python SDK/CLI, a Linux Docker image
-skeleton, pointer/keyboard actions, screenshots, an OSWorld shim, and a minimal `.skn` replay
-recorder exist. A11y observation, sandbox capability management, eval, real checkpoint/restore,
-and model adapters are the next Phase-0 milestones.
+**v0.0.1 is underway:** schema scaffold, Rust `shinkend`, Python SDK/CLI, a Linux Docker image
+skeleton, pointer/keyboard actions, screenshots, screencast/focused capture, an OSWorld shim, and a
+minimal `.skn` recorder exist. The v0.0.1 backlog fills in the rest of the semantic surface:
+agent-native dialect/adapters, a11y/CDP/element-ref reference paths, capability envelope and
+permission events, artifact transfer, replay scrub/validation, deterministic task fixtures, and a
+tiny verifier harness.
 
 ```bash
 # 1) run the Guest Runtime
@@ -233,25 +252,24 @@ env.close()
 ```
 
 Expected today: connect, print platform/RTT/screen/capabilities, run basic pointer/keyboard actions,
-capture screenshots, and save a minimal `.skn` replay. Not expected yet: a11y trees, sandbox
-capability UI, eval, real checkpoint/restore, or cloud fork.
+capture screenshots/focused windows/screencasts, and save a minimal `.skn` replay. Not expected yet:
+provider adapters, a11y trees, element refs, file/artifact transfer, capability enforcement, eval,
+real checkpoint/restore, or cloud fork.
 
 ## Roadmap
 
 ```mermaid
 flowchart LR
-  M0["M0<br/>schema + handshake"] --> SA["Spike A<br/>a11y coverage"]
-  SA --> M1["M1<br/>act + observe"]
-  M1 --> M2["M2<br/>.skn record + replay"]
-  M2 --> M3["M3<br/>agent completes task"]
-  M3 --> M4["M4<br/>capability config + tiny eval"]
-  M4 --> P1["Phase 1+<br/>fork tier + streaming + panel"]
+  M0["M0<br/>schema + handshake"] --> V001["v0.0.1<br/>feature-complete reference runtime"]
+  V001 --> P1["Performance/scale<br/>fork tier + WebRTC + panel"]
+  P1 --> P2["Eval/training<br/>at concurrency"]
+  P2 --> P3["Cross-OS + GPU<br/>production tiers"]
 ```
 
-Phase 0 is tracked under the
-[Phase 0 milestone](https://github.com/Meirtz/Shinken/milestone/1). The load-bearing gate is
-**a11y coverage**: Shinken must measure whether real apps expose enough structure for the
-structured-first thesis to hold.
+v0.0.1 is tracked under the
+[v0.0.1 milestone](https://github.com/Meirtz/Shinken/milestone/1). The milestone is
+feature-complete at local/reference scale: all core semantics should exist and be tested, even if
+later releases make them fast, scalable, multi-tenant, and production-hardened.
 
 ## Repository Layout
 
@@ -266,8 +284,12 @@ shinken/
 └─ references/    Public prior-art provenance and re-clone notes
 ```
 
-Start with [docs/README.md](docs/README.md) for the full design index, especially
-[Architecture](docs/02-architecture.md), [Technical decisions](docs/05-tech-decisions.md), and the
-[Phase-0 implementation plan](docs/10-phase0-plan.md).
+Start with:
+
+- [User docs](docs/user/README.md) for runnable behavior and concepts.
+- [Design canon](docs/design/README.md) for full scope, architecture, ADRs, and tradeoffs.
+- [Engineering docs](docs/engineering/README.md) for v0.0.1 implementation, testing, and release
+  gates.
+- [Implementation status](docs/engineering/status.md) for what is actually built today.
 
 > The name "Shinken" (真剣 / 神剣) means a real, live blade: sharp by default, safe by design.

@@ -1,9 +1,9 @@
 # OSWorld Teardown — File-by-File Evidence Base
 
 > Raw, technical, file-by-file notes on the OSWorld codebase, organized by subsystem. This is the
-> evidence base behind [`docs/03-osworld-analysis.md`](../docs/03-osworld-analysis.md): where that
+> evidence base behind [`docs/design/osworld-analysis.md`](../docs/design/osworld-analysis.md): where that
 > doc states a conclusion, the supporting `file:line` reference and the corresponding Shinken
-> decision (D1–D12, see [`docs/05-tech-decisions.md`](../docs/05-tech-decisions.md)) live here. The
+> decision (D1–D12, see [`docs/design/tech-decisions.md`](../docs/design/tech-decisions.md)) live here. The
 > read covers six subsystems — in-VM server, client env + controllers, providers, evaluators/tasks,
 > agents/obs-action, and end-to-end dataflow. All source paths are under `references/OSWorld/`.
 > External anchors: the OSWorld repo [github.com/xlang-ai/OSWorld](https://github.com/xlang-ai/OSWorld),
@@ -181,7 +181,7 @@ no auth header, no content negotiation. `/cursor_position` returns a bare JSON a
 
 ### Maps to
 
-D2 (typed action schema replaces code-as-action), D3 (structured-first a11y with refs replaces XML
+D2 (typed action schema replaces code-as-action), D3 (structured a11y with refs replaces XML
 blob), D4 (streaming dual-channel replaces PNG polling), D6 (capability gate replaces open RCE), D10
 (real per-OS handler factory replaces `if/elif` ladders).
 
@@ -679,7 +679,7 @@ monitor HTTP (poll): GET /api/tasks(/brief), /api/task/<type>/<id>, .../screensh
 
 ### Maps to
 
-D2 (one canonical typed tagged-union + version-pinned adapters), D3 (structured-first observation with
+D2 (one canonical typed tagged-union + version-pinned adapters), D3 (screenshot-first observation with structured upgrades and
 stable refs), D4 (streaming replaces synchronous full-frame polling), D6 (capability gate replaces
 sudo-in-prompt + FAILSAFE-off), D8 (one canonical Operator/SDK contract replaces per-vendor forks).
 
@@ -791,9 +791,9 @@ Side-channels: VNC 8006 + noVNC 5910 (human view), Chrome CDP 9222, VLC 8080, RD
 All twelve decisions converge here. The end-to-end map is the single clearest statement of *why*
 Shinken inverts OSWorld: D4 replaces blocking polling with a single-PeerConnection WebRTC dual
 transport (reliable data channel = the event/replay log; on-demand NVENC media track); D3 replaces
-full PNG + full XML with structured-first, layered escalation (~6× token savings, structured ≈ 150×
+full PNG + full XML as the whole product with screenshot-first, layered structured escalation (~6× token savings where coverage is strong, structured ≈ 150×
 cheaper than H.264 office video — both **vendor-published, unverified** pending a first-party
-measurement spike, per [`docs/05-tech-decisions.md`](../docs/05-tech-decisions.md)); D5 replaces the
+measurement spike, per [`docs/design/tech-decisions.md`](../docs/design/tech-decisions.md)); D5 replaces the
 write-only `traj.jsonl`+mp4 with the event-sourced, branchable `.skn` bundle; D6 replaces open RCE
 with the 3-layer capability-unlock permission stack; D1+D9 replace process-per-VM + AMI-relaunch with
 warm pools + fork-from-snapshot; D10 replaces the `os_type='Ubuntu'` reality with one Guest Runtime
@@ -812,7 +812,7 @@ contract across Linux/Windows/macOS.
 | Agents/obs-action | uniform predict contract; obs×action matrix; vendor→one-primitive translation tables; SoM; image budgeting; sentinels | five incompatible schemas; code-as-action; brittle coords; failure-masking; per-vendor forks | D2/D3/D4/D6/D8 |
 | End-to-end | provider seam; in-VM daemon concept; declarative config; snapshot reset; resumable markers; resilient workers; surferH driver direction | blocking poll I/O; hardcoded sleeps; full-frame every step; fake Gym reward; single-platform; process-per-VM scale | D1–D12 |
 
-The one-line verdict for [`docs/03-osworld-analysis.md`](../docs/03-osworld-analysis.md): OSWorld's
+The one-line verdict for [`docs/design/osworld-analysis.md`](../docs/design/osworld-analysis.md): OSWorld's
 **data-model instincts are sound and we keep them** (declarative tasks, getter/metric registry,
 snapshot reset, a uniform in-VM control API, the gym surface); what Shinken replaces is the
 **transport and runtime** — blocking HTTP polling, full-frame PNGs, code-as-action, an unauthenticated

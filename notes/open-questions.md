@@ -2,16 +2,16 @@
 
 > **Status:** living risk register · **Last updated:** 2026-05-30
 > This note is the canonical "what could kill us / what must we prove" list. It reconciles every item
-> to the authoritative decisions **D1–D12** (see [`05-tech-decisions`](../docs/05-tech-decisions.md))
+> to the authoritative decisions **D1–D12** (see [`05-tech-decisions`](../docs/design/tech-decisions.md))
 > and feeds the risk sections of the docs. Cross-links:
-> [00-vision](../docs/00-vision.md) · [01-prd](../docs/01-prd.md) · [02-architecture](../docs/02-architecture.md) ·
-> [05-tech-decisions](../docs/05-tech-decisions.md) · [06-roadmap](../docs/06-roadmap.md) ·
-> [08-threat-model](../docs/08-threat-model.md) · [09-economics-and-build-vs-buy](../docs/09-economics-and-build-vs-buy.md) ·
+> [00-vision](../docs/design/vision.md) · [01-prd](../docs/design/prd.md) · [02-architecture](../docs/design/architecture.md) ·
+> [05-tech-decisions](../docs/design/tech-decisions.md) · [06-roadmap](../docs/engineering/roadmap.md) ·
+> [08-threat-model](../docs/design/threat-model.md) · [09-economics-and-build-vs-buy](../docs/design/economics-and-build-vs-buy.md) ·
 > sources in [`sources.md`](sources.md).
 
-The research produced a strong *qualitative* landscape and a defensible thesis — structured-first
-dual-channel ACI (D3/D4), Morph-class CoW fork (D1), event-sourced replay (D5), a layered capability panel
-(D6). What is *not yet proven* is the engineering and business substance to commit. Every speed/density/cost
+The research produced a strong *qualitative* landscape and a defensible thesis — screenshot-first
+with measured structured fast paths (D3/D4), Morph-class CoW fork (D1), event-sourced replay (D5),
+a layered capability panel (D6). What is *not yet proven* is the engineering and business substance to commit. Every speed/density/cost
 figure cited in the docs is **vendor-published and unverified** unless marked first-party; the load-bearing
 thesis rests on an *unmeasured* accessibility-tree coverage assumption; and scope questions (multi-player,
 build-vs-buy among public substrates) remain open. This note prioritizes those risks **HIGH / MED / LOW**;
@@ -37,7 +37,7 @@ first.
 
 ```mermaid
 flowchart LR
-  Q1[Q1 a11y coverage<br/>kill-or-confirm]:::hi --> G1{Structured-first<br/>still wins?}
+  Q1[Q1 a11y coverage<br/>kill-or-confirm]:::hi --> G1{Structured fast path<br/>wins enough?}
   Q3[Q3 Win/mac reset]:::hi --> G3{Win/mac v1<br/>tier shape}
   Q6[Q6 build-vs-buy]:::hi --> G6{v1 Linux<br/>substrate}
   Q2[Q2 perf/cost numbers]:::hi --> G1
@@ -52,12 +52,12 @@ flowchart LR
 ### Q1 — a11y coverage on Electron / Qt / canvas / games (the load-bearing bet)
 
 **Question.** What fraction of *real target apps* expose a usable accessibility/DOM tree, and what is
-the true bandwidth/token win of structured-first observation **net of the pixel fallback**? If most
+the true bandwidth/token win of structured observation **net of the pixel fallback**? If most
 in-scope apps need pixels anyway, the D3 differentiator collapses into "just another screenshot agent
 with extra latency."
 
 **Why it matters (load-bearing).** This is the single load-bearing unverified assumption in the design. The
-"structured-first, pixels-on-demand" thesis (D3) and the ~150× streaming win (D4, headline feature #3)
+"screenshot-first, structured-upgrade" thesis (D3) and the ~150× streaming win (D4, headline feature #3)
 depend on the a11y tree being reliably populated, cheap to diff, and normalizable into one
 `Element{ref,role,name,value,states,bbox,source}` schema. The failure surface is concrete:
 
@@ -200,7 +200,7 @@ via AOMedia) feeds the D11 codec ADR. There is also a **replay-store PII / data-
 **Question.** Do the D6 mitigations actually stop the concrete attacker kill chains, especially
 prompt-injection → exfiltration past the SNI/scoped-domain allowlist, and multi-tenant side channels?
 
-**Why it matters.** [08-threat-model](../docs/08-threat-model.md) exists, but the pieces were assembled
+**Why it matters.** [08-threat-model](../docs/design/threat-model.md) exists, but the pieces were assembled
 qualitatively, not *validated* against live kill chains. The load-bearing chains:
 
 ```
@@ -264,7 +264,7 @@ gVisor/Kata isolation *without* VM-snapshot fork, the **fork primitive must be b
 - *Spike:* deploy the `agent-sandbox` CRD on a reference cluster, attempt fork-from-snapshot, and measure
   against the S2 targets. Confirm the secret broker (Vault/KMS/SPIRE) integrates with the D6 proxy
   header-injection path.
-- *Decision matrix (capture in [09-economics-and-build-vs-buy](../docs/09-economics-and-build-vs-buy.md)):*
+- *Decision matrix (capture in [09-economics-and-build-vs-buy](../docs/design/economics-and-build-vs-buy.md)):*
   CRD + in-house CoW fork (likely) vs CRD-only vs external provider, scored on fork speed, density, $/hr,
   lock-in, and operational maturity.
 - *Success:* a documented v1 substrate ADR that either confirms the CRD provides the fork primitive or
@@ -402,7 +402,7 @@ S8 grader flake ────────────► eval reliability (D7, Q9
 
 **Bottom line.** The thesis is sound on paper and consistent with D1–D12. Three HIGH risks can *invalidate or
 reshape* the architecture and must be de-risked before heavy build: **Q1** (a11y coverage — run S1 first; if
-structured-first does not win on real apps, D3 and the BEAT claim change), **Q2** (no first-party numbers —
+structured fast paths do not win on real apps, D3 and the BEAT claim change), **Q2** (no first-party numbers —
 every figure stays "(vendor-published, unverified)" until S2/S3), and **Q6** (the chosen public substrate
 must provide, or let us build beneath it, the D1 fork primitive). The other HIGH items (Q3/Q4 cross-OS reset
 + licensing, Q5 threat-model validation) and the MED/LOW items are reshaping rather than existential. Record

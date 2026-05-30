@@ -12,6 +12,6 @@ labels: ["task"]
 - [ ]
 
 ## Design references
-<!-- Link the relevant doc(s) and decision(s), e.g. docs/10-phase0-plan.md M1; D2/D3. -->
+<!-- Link the relevant doc(s) and decision(s), e.g. docs/engineering/v0.0.1-plan.md M1; D2/D3. -->
 
 ## Notes

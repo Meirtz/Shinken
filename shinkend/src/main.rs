@@ -17,7 +17,7 @@ use std::time::Duration;
 use anyhow::Result;
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Semaphore};
 use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
@@ -26,6 +26,10 @@ use executor::Executor;
 
 const DEFAULT_ADDR: &str = "127.0.0.1:8765";
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+const AUTH_IDLE_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+const MAX_CONNECTION_LIFETIME: Duration = Duration::from_secs(4 * 60 * 60);
+const MAX_CONNECTIONS: usize = 64;
+const MAX_SCREENCASTS: usize = 8;
 /// Outbound writer-channel depth. Bounds buffered frames+replies so a slow client
 /// cannot grow memory without bound; screencast frames beyond this are dropped.
 const OUTBOUND_CAP: usize = 32;
@@ -47,6 +51,8 @@ async fn main() -> Result<()> {
 
     let listener = TcpListener::bind(&addr).await?;
     let exec = executor::default_executor()?;
+    let connections = Arc::new(Semaphore::new(MAX_CONNECTIONS));
+    let screencasts = Arc::new(Semaphore::new(MAX_SCREENCASTS));
     eprintln!(
         "shinkend v{} listening on ws://{addr} (platform: {}, backend: {}, auth: {})",
         env!("CARGO_PKG_VERSION"),
@@ -61,10 +67,16 @@ async fn main() -> Result<()> {
 
     loop {
         let (stream, peer) = listener.accept().await?;
+        let Ok(conn_permit) = connections.clone().try_acquire_owned() else {
+            eprintln!("connection {peer} rejected: max connections reached ({MAX_CONNECTIONS})");
+            continue;
+        };
         let exec = exec.clone();
         let token = token.clone();
+        let screencasts = screencasts.clone();
         tokio::spawn(async move {
-            if let Err(e) = serve(stream, exec, token).await {
+            let _conn_permit = conn_permit;
+            if let Err(e) = serve(stream, exec, token, screencasts).await {
                 eprintln!("connection {peer} closed with error: {e}");
             }
         });
@@ -84,7 +96,12 @@ fn is_loopback(addr: &str) -> bool {
 /// channel, so both request replies and unsolicited server-pushed frames (e.g. a
 /// screencast) can be sent without interleaving. The read loop stays a thin driver
 /// over the synchronous [`Session`]; streaming side effects arrive as [`StreamCtl`].
-async fn serve(stream: TcpStream, exec: Arc<dyn Executor>, token: Option<String>) -> Result<()> {
+async fn serve(
+    stream: TcpStream,
+    exec: Arc<dyn Executor>,
+    token: Option<String>,
+    screencasts: Arc<Semaphore>,
+) -> Result<()> {
     let ws = tokio_tungstenite::accept_async(stream).await?;
     let (mut tx, mut rx) = ws.split();
 
@@ -103,11 +120,32 @@ async fn serve(stream: TcpStream, exec: Arc<dyn Executor>, token: Option<String>
 
     let mut session = Session::new(token, exec.clone());
     let mut screencast: Option<JoinHandle<()>> = None;
+    let started = tokio::time::Instant::now();
 
     let outcome: Result<()> = loop {
+        if started.elapsed() >= MAX_CONNECTION_LIFETIME {
+            let _ = out
+                .send(WsMessage::Text(protocol::error_result_text(
+                    "?",
+                    "connection max lifetime exceeded",
+                )))
+                .await;
+            break Ok(());
+        }
         // Bound the time a client may stay unauthenticated.
         let next = if session.is_authenticated() {
-            rx.next().await
+            match tokio::time::timeout(AUTH_IDLE_TIMEOUT, rx.next()).await {
+                Ok(frame) => frame,
+                Err(_) => {
+                    let _ = out
+                        .send(WsMessage::Text(protocol::error_result_text(
+                            "?",
+                            "authenticated connection idle timeout",
+                        )))
+                        .await;
+                    break Ok(());
+                }
+            }
         } else {
             match tokio::time::timeout(HANDSHAKE_TIMEOUT, rx.next()).await {
                 Ok(frame) => frame,
@@ -130,24 +168,48 @@ async fn serve(stream: TcpStream, exec: Arc<dyn Executor>, token: Option<String>
         match frame {
             WsMessage::Text(text) => {
                 let step = session.on_text(&text);
-                if let Some(reply) = step.reply {
-                    if out.send(WsMessage::Text(reply)).await.is_err() {
-                        break Ok(());
-                    }
-                }
                 match step.stream {
                     StreamCtl::Start(spec) => {
                         if let Some(h) = screencast.take() {
                             h.abort();
                         }
-                        screencast = Some(spawn_screencast(exec.clone(), out.clone(), spec));
+                        match screencasts.clone().try_acquire_owned() {
+                            Ok(permit) => {
+                                screencast =
+                                    Some(spawn_screencast(exec.clone(), out.clone(), spec, permit));
+                                if let Some(reply) = step.reply {
+                                    if out.send(WsMessage::Text(reply)).await.is_err() {
+                                        break Ok(());
+                                    }
+                                }
+                            }
+                            Err(_) => {
+                                let _ = out
+                                    .send(WsMessage::Text(format!(
+                                        "{{\"type\":\"ack\",\"call_id\":\"{}\",\"ok\":false,\"error\":\"max concurrent screencasts reached ({MAX_SCREENCASTS})\"}}",
+                                        spec.stream_id
+                                    )))
+                                    .await;
+                            }
+                        }
                     }
                     StreamCtl::Stop => {
                         if let Some(h) = screencast.take() {
                             h.abort();
                         }
+                        if let Some(reply) = step.reply {
+                            if out.send(WsMessage::Text(reply)).await.is_err() {
+                                break Ok(());
+                            }
+                        }
                     }
-                    StreamCtl::None => {}
+                    StreamCtl::None => {
+                        if let Some(reply) = step.reply {
+                            if out.send(WsMessage::Text(reply)).await.is_err() {
+                                break Ok(());
+                            }
+                        }
+                    }
                 }
                 if step.close {
                     break Ok(());
@@ -177,6 +239,7 @@ fn spawn_screencast(
     exec: Arc<dyn Executor>,
     out: mpsc::Sender<WsMessage>,
     spec: ScreencastSpec,
+    _permit: tokio::sync::OwnedSemaphorePermit,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_secs_f64(1.0 / spec.fps));
@@ -279,7 +342,13 @@ mod tests {
         let exec: Arc<dyn Executor> = Arc::new(executor::VirtualExecutor::default());
         tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
-            let _ = serve(stream, exec, None).await;
+            let _ = serve(
+                stream,
+                exec,
+                None,
+                Arc::new(Semaphore::new(MAX_SCREENCASTS)),
+            )
+            .await;
         });
 
         let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}"))

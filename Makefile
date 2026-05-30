@@ -26,4 +26,7 @@ run: ## run the Guest Runtime (ws://127.0.0.1:8765)
 sandbox-image: ## build the Linux Sandbox docker image
 	docker build -f images/linux/Dockerfile -t shinken/sandbox-linux .
 
-.PHONY: help guard fmt lint test run sandbox-image
+sandbox-bench: ## run a one-sandbox local Docker provider benchmark
+	PYTHONPATH=sdk/python/src python scripts/sandbox_bench.py --provider docker --concurrency 1 --iterations 1
+
+.PHONY: help guard fmt lint test run sandbox-image sandbox-bench

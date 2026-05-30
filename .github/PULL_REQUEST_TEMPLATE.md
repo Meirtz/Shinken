@@ -15,6 +15,6 @@ Closes #
 - [ ] Scoped to one logical change; Conventional-Commit title
 - [ ] CI green (incl. the no-internal-content guard)
 - [ ] Tests added/updated for new behavior
-- [ ] Docs/ADRs (`docs/05-tech-decisions.md`) updated if a decision changed
+- [ ] Docs/ADRs (`docs/design/tech-decisions.md`) updated if a decision changed
 - [ ] No confidential/internal content (public, vendor-neutral)
 - [ ] Reconciled to the relevant decision(s): D__

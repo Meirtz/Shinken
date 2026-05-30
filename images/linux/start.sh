@@ -18,6 +18,8 @@ Xvfb "$DISPLAY" -screen 0 "$SCREEN_GEOMETRY" -ac +extension RANDR >/tmp/xvfb.log
 for _ in $(seq 1 50); do xdpyinfo -display "$DISPLAY" >/dev/null 2>&1 && break; sleep 0.1; done
 
 openbox >/tmp/openbox.log 2>&1 &
+for _ in $(seq 1 50); do xsetroot -display "$DISPLAY" -solid '#202020' >/dev/null 2>&1 && break; sleep 0.1; done
+xterm -geometry 80x24+20+20 >/tmp/xterm.log 2>&1 &
 
 echo "shinken: desktop ready on $DISPLAY; starting shinkend on $SHINKEND_ADDR"
 exec shinkend

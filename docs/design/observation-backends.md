@@ -1,10 +1,11 @@
 # Structured observation backends
 
-Shinken's structured-first thesis ([D3](05-tech-decisions.md)) says an agent should act on a
-normalized **element tree** (roles, names, bounding boxes, states, an addressable `ref`) before
-falling back to pixels. That tree can come from several platform backends; they all reduce to the
-same ACI [`Element`](../schema/aci.schema.json) shape (`source` records which backend produced it,
-`provenance` carries the backend-native node id so an element can be re-resolved).
+Shinken's structured-upgrade thesis ([D3](tech-decisions.md)) says an agent should use a normalized
+**element tree** (roles, names, bounding boxes, states, an addressable `ref`) whenever the UI exposes
+one, while screenshots remain the universal baseline. That tree can come from several platform
+backends; they all reduce to the same ACI [`Element`](../../schema/aci.schema.json) shape (`source`
+records which backend produced it, `provenance` carries the backend-native node id so an element can
+be re-resolved).
 
 | `source` | Backend | Best for | Status |
 |----------|---------|----------|--------|
@@ -63,5 +64,5 @@ with shinken.connect(url) as env:
 If the backend is unavailable (no browser, wrong port), `observe(structured=True)` returns
 `available=False` with an empty element list rather than raising — the screenshot path is unaffected.
 
-See also: [architecture](02-architecture.md) · [tech decisions / D3](05-tech-decisions.md) ·
-AT-SPI coverage spike (`scripts/a11y_coverage.py`).
+See also: [architecture](architecture.md) · [tech decisions / D3](tech-decisions.md) ·
+AT-SPI coverage spike (`../../scripts/a11y_coverage.py`).

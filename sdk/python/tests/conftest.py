@@ -101,6 +101,11 @@ async def _handler(ws) -> None:
                     )
                 )
             elif verb == "start_screencast":
+                if cast is not None:
+                    cast.cancel()
+                    with contextlib.suppress(Exception):
+                        await cast
+                    cast = None
                 await ws.send(json.dumps({"type": "ack", "call_id": cid, "ok": True}))
                 action = msg.get("action") or {}
                 fps = action.get("fps") or 50

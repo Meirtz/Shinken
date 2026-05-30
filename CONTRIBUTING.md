@@ -1,12 +1,14 @@
 # Contributing to Shinken
 
-Thanks for helping build Shinken — an AI-native, cross-platform sandbox runtime + control
-plane + control panel for computer-use agents. This guide is short on purpose.
+Thanks for helping build Shinken — the open infrastructure stack for computer-use agents: an
+AI-native, cross-platform sandbox runtime + control plane + control panel. This guide is short on
+purpose.
 
 ## Project shape
 
-- **`docs/`** — authoritative design corpus (read [`docs/README.md`](docs/README.md); decisions
-  are numbered **D1–D12** in [`docs/05-tech-decisions.md`](docs/05-tech-decisions.md)).
+- **`docs/`** — user docs, design canon, and engineering plans (read
+  [`docs/README.md`](docs/README.md); decisions are numbered **D1–D12** in
+  [`docs/design/tech-decisions.md`](docs/design/tech-decisions.md)).
 - **`notes/`** — working research & deep dives.
 - Code (as it lands): `schema/` (ACI + `.skn` JSON Schemas, the source of truth), `shinkend/`
   (Rust Guest Runtime), `sdk/python/` (SDK + Operator + adapters), `images/linux/` (Sandbox
@@ -23,14 +25,14 @@ names, internal URLs, and confidential markers are not. CI enforces this
 
 ## Workflow
 
-1. **Open or claim an issue** describing the change (use the templates; P0 work is tracked under
-   the **Phase 0** milestone).
+1. **Open or claim an issue** describing the change (use the templates; current work is tracked
+   under the **v0.0.1 — feature-complete local/reference runtime** milestone).
 2. **Branch** off `main`: `feat/…`, `fix/…`, `chore/…`, `docs/…`, `spike/…`.
 3. **Commit** with [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`,
    `docs:`, `chore:`, `test:`, `refactor:`). Keep commits focused.
 4. **Open a PR** (fill the template; link the issue with `Closes #N`). Keep PRs small and reviewable.
 5. **CI must be green** and the PR reviewed before merge. Squash-merge preferred.
-6. When a design decision changes, update the relevant **ADR** in `docs/05-tech-decisions.md` in
+6. When a design decision changes, update the relevant **ADR** in `docs/design/tech-decisions.md` in
    the same PR.
 
 ## Local dev (as code lands)

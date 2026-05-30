@@ -29,6 +29,7 @@ __all__ = ["connect", "aconnect", "Sandbox", "AsyncSandbox", "Capabilities"]
 
 DEFAULT_ADDR = "127.0.0.1:8765"
 _CLIENT = {"name": "shinken-py", "version": "0.0.0"}
+_FRAME_QUEUE_MAX = 32
 
 # Sentinel pushed onto the frame queue when the stream/connection ends.
 _STREAM_END = object()
@@ -133,7 +134,7 @@ class AsyncSandbox:
         # server-pushed stream frames (screencast) to the frame queue.
         self._pending: dict[str, asyncio.Future] = {}
         self._pong_waiters: deque[asyncio.Future] = deque()
-        self._frames: asyncio.Queue = asyncio.Queue()
+        self._frames: asyncio.Queue = asyncio.Queue(maxsize=_FRAME_QUEUE_MAX)
         self._reader: asyncio.Task | None = None
 
     def _next_id(self) -> str:
@@ -154,14 +155,29 @@ class AsyncSandbox:
             pass
         finally:
             self._fail_pending(ConnectionError("connection closed"))
-            with contextlib.suppress(Exception):
-                self._frames.put_nowait(_STREAM_END)
+            self._push_frame(_STREAM_END)
+
+    def _clear_frames(self) -> None:
+        """Drop queued stream frames/sentinels before starting a new stream."""
+        while True:
+            try:
+                self._frames.get_nowait()
+            except asyncio.QueueEmpty:
+                return
+
+    def _push_frame(self, item: object) -> None:
+        """Bound the client-side frame queue with drop-oldest semantics."""
+        if self._frames.full():
+            with contextlib.suppress(asyncio.QueueEmpty):
+                self._frames.get_nowait()
+        with contextlib.suppress(asyncio.QueueFull):
+            self._frames.put_nowait(item)
 
     def _dispatch(self, msg: dict) -> None:
         kind = msg.get("type")
         # An unsolicited stream frame is never an RPC reply — route it to the queue.
         if kind == "observation" and msg.get("stream") is not None:
-            self._frames.put_nowait(msg)
+            self._push_frame(msg)
             return
         if kind == "pong":
             while self._pong_waiters:
@@ -299,6 +315,7 @@ class AsyncSandbox:
         each frame's longer edge (px) to save bandwidth; ``scope`` selects the capture
         region (``screen``, ``active_window``, or ``window:<id>``)."""
         self._gate("start_screencast")
+        self._clear_frames()
         action: dict = {"verb": "start_screencast", "fps": fps}
         if max_long_edge is not None:
             action["max_long_edge"] = max_long_edge
@@ -321,6 +338,8 @@ class AsyncSandbox:
                     "action": {"verb": "stop_screencast"},
                 }
             )
+        self._clear_frames()
+        self._push_frame(_STREAM_END)
 
     async def next_frame(self, timeout: float | None = None) -> dict | None:
         """Await the next screencast frame as {'png', 'w', 'h', 'seq', 'stream'},

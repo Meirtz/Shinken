@@ -62,3 +62,28 @@ def test_screencast_records_frames(mock_shinkend, tmp_path):
     # each recorded frame's media is a real PNG, content-addressed
     sha = obs[0]["payload"]["image"]["ref"]
     assert replay.media(sha)[:8] == _PNG_SIG
+
+
+def test_screencast_stop_makes_next_frame_end(mock_shinkend):
+    with shinken.connect(mock_shinkend) as env:
+        with env.screencast(fps=100, timeout=5, limit=2) as stream:
+            assert len(list(stream)) == 2
+
+        # Stop pushes an explicit end sentinel so callers don't block forever after
+        # a stream has ended.
+        assert env._loop.run(env._inner.next_frame(timeout=5)) is None
+
+
+def test_screencast_restart_clears_stale_frames(mock_shinkend):
+    with shinken.connect(mock_shinkend) as env:
+        first_stream = env._loop.run(env._inner.astart_screencast(fps=100))
+        first = env._loop.run(env._inner.next_frame(timeout=5))
+        assert first is not None and first["stream"] == first_stream
+
+        second_stream = env._loop.run(env._inner.astart_screencast(fps=100))
+        second = env._loop.run(env._inner.next_frame(timeout=5))
+        assert second is not None
+        assert second["stream"] == second_stream
+        assert second["stream"] != first_stream
+
+        env._loop.run(env._inner.astop_screencast())

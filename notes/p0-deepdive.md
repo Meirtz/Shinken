@@ -1,13 +1,13 @@
 # P0 deep-dive — action backends, focused capture, cross-OS replay, harness compat
 
-Consolidated findings from the Phase-0 deep-dive (2026-05-30), feeding the ACI spec ([docs/11-aci-spec.md](../docs/11-aci-spec.md)) and M1. Vendor-neutral; public NVIDIA product facts (NVENC/NICE DCV) appear only as cited technology options. Numbers are vendor-published and unverified unless first-party.
+Consolidated findings from the Phase-0 deep-dive (2026-05-30), feeding the ACI spec ([docs/design/aci-spec.md](../docs/design/aci-spec.md)) and M1. Vendor-neutral; public NVIDIA product facts (NVENC/NICE DCV) appear only as cited technology options. Numbers are vendor-published and unverified unless first-party.
 
 ## Linux action-execution backends for a computer-use Guest Runtime (shinkend), beyond pyautogui
 
 There is no single Linux input-injection API; the right backend depends on the display server (X11 vs Wayland), whether you run headless, and whether you can target by element instead of coordinate. On X11 the mature, low-friction path is the XTEST extension (used by xdotool/PyAutoGUI/xte): it injects events into the server's input pipeline so apps accept them, but it is coordinate-and-focus-bound — keystrokes land on whatever window has focus (focus-steal), it cannot reliably target an unfocused window, it has keymap/Unicode quirks, and it does not touch the clipboard (X selections are a separate protocol). XSendEvent can target a specific window without focus but carries a "synthetic" flag (SendEvent mark of shame) that many apps reject, so it is unreliable for real automation. Wayland deliberately removed X-era emulation, fragmenting the replacement space: the kernel uinput path (ydo…
 
 **Recommendations**
-- Architecture fit: this slots into shinkend's per-OS handler factory (D2/D10) behind the canonical typed action union, and into the structured-first observation engine (D3). Build a Linux executor with a Backend trait/ABC {move, click, double_click, drag, scroll, key, type/insert_text, set_clipboard} plus capability fl…
+- Architecture fit: this slots into shinkend's per-OS handler factory (D2/D10) behind the canonical typed action union, and into the screenshot-first / structured-upgrade observation engine (D3). Build a Linux executor with a Backend trait/ABC {move, click, double_click, drag, scroll, key, type/insert_text, set_clipboard} plus capability fl…
 - P0 (v1, Linux headless+desktop fork tiers, which are X11 by design): (1) XTEST as the universal pixel/coordinate backend (via libxdo or direct libXtst, not shelling out to xdotool per call) — drives every point_px/point_norm action; pin a keyboard layout on the XTEST virtual keyboard and bake a transient-keymap path f…
 - Why X11-first for v1: Shinken's Linux fork tier renders software/virtio-gpu and pixel-streams the framebuffer (D1/D3) — you control the session, so choosing X11 (Xvfb/Xorg-dummy) sidesteps the entire Wayland input-fragmentation tax while keeping CoW-fork compatibility (XTEST/AT-SPI/CDP are pure userspace, nothing to l…
 - Later (when a Wayland guest is required, e.g. testing Wayland-only apps or GNOME/KDE fidelity): add a Wayland backend group. Prefer libei/libeis via the XDG RemoteDesktop portal (the cross-compositor, unprivileged, GNOME/KDE/wlroots-converging path; supports absolute pointer, keyboard, touch) — for an unattended guest…
@@ -15,7 +15,7 @@ There is no single Linux input-injection API; the right backend depends on the d
 - Priority order at actuation time (encode as router preference): for a browser target -> CDP; for an element_ref with a valid a11y action -> AT-SPI2 do_action; otherwise pixel coordinate -> XTEST (X11) or libei/uinput (Wayland); clipboard -> X selections / wl-clipboard. Always record the chosen backend and the resolved…
 
 **Numbers (vendor-published, unverified)**
-- PyAutoGUI screenshot() ~100 ms at 1920x1080; locate() ~1-2 s — screenshot latency argues for structured-first observation over per-step pixels
+- PyAutoGUI screenshot() ~100 ms at 1920x1080; locate() ~1-2 s — screenshot latency argues for structured fast paths over per-step full-frame pixels where coverage is strong
 - XTEST events enter the server input pipeline directly (sub-ms injection), accepted by apps because they lack the synthetic flag
 - ydotool needs ydotoold to hold the virtual device persistently because a freshly created uinput device takes time for X11/Wayland to recognize (recognition delay)
 - CDP/Playwright-class in-browser injection avoids any display-server round-trip — lowest-latency path for the browser workload
@@ -136,7 +136,7 @@ The state of the art converges on a layered, NOT bit-deterministic, replay model
 
 **Sources**
 - [Shinken D5 replay note — .skn bundle, bisected snapshot+event-log model, branch…](file:///path/to/shinken/notes/replay.md)
-- [Shinken Technical Decisions — D1 isolation tiers, D5 replay, D7 eval golden-sna…](file:///path/to/shinken/docs/05-tech-decisions.md)
+- [Shinken Technical Decisions — D1 isolation tiers, D5 replay, D7 eval golden-sna…](file:///path/to/shinken/docs/design/tech-decisions.md)
 - [Shinken streaming-bandwidth note — fMP4/CMAF IDR-aligned recording, keyframe ca…](file:///path/to/shinken/notes/streaming-bandwidth.md)
 - [Shinken sandbox-infra note — CoW disk (overlayfs/qcow2 backing chains/dm-thin/b…](file:///path/to/shinken/notes/sandbox-infra.md)
 - [OSWorld desktop_env — reset() -> _revert_to_snapshot('init_state') per task (de…](file:///path/to/shinken/references/OSWorld/desktop_env/desktop_env.py)

@@ -4,7 +4,7 @@
 > the four headline features (replay, the capability-unlock permission panel, bandwidth
 > optimization, real-time streaming). Entries are **deduplicated** and grouped by topic;
 > each has a one-line annotation explaining *why it matters to Shinken*. Sibling design docs
-> are linked by relative path (e.g. [05-tech-decisions.md](../docs/05-tech-decisions.md)).
+> are linked by relative path (e.g. [05-tech-decisions.md](../docs/design/tech-decisions.md)).
 >
 > **Conventions.** All performance / density / cost figures cited from these sources are
 > **vendor-published and unverified** unless they are first-party measurements; see
@@ -16,7 +16,7 @@
 
 ## 1. Agent frameworks, computer-use models & benchmarks
 
-The competitive landscape Shinken slots into (see [../docs/04-landscape.md](../docs/04-landscape.md)
+The competitive landscape Shinken slots into (see [../docs/design/landscape.md](../docs/design/landscape.md)
 and [eval-benchmarks.md](eval-benchmarks.md)) and the canonical action/observation interfaces it
 must natively speak (D2).
 
@@ -29,7 +29,7 @@ must natively speak (D2).
 - Anthropic — Bash tool: https://platform.claude.com/docs/en/docs/agents-and-tools/tool-use/bash-tool and Text editor (`str_replace_based_edit_tool`): https://platform.claude.com/docs/en/docs/agents-and-tools/tool-use/text-editor-tool — the off-by-default code-as-action class + third hosted tool the ACI adapter normalizes (D2).
 - Anthropic — Vision / image token math (tokens ≈ w·h/750; 1568/2576 px caps): https://platform.claude.com/docs/en/build-with-claude/vision — drives "send the pixels the model reasons over" downscaling (D3/D4).
 - Anthropic — Claude Opus 4.8 announcement (strongest computer-use/browser model, ~84% on OSWorld-class evals — vendor, unverified): https://www.anthropic.com/news/claude-opus-4-8 — current SOTA anchor for the eval bar (D7).
-- Anthropic — Writing effective tools for AI agents: https://www.anthropic.com/engineering/writing-tools-for-agents and Effective context engineering: https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents — token-efficiency/namespacing for the MCP facade (D8) + structured-first, prune-stale-frames observation (D3).
+- Anthropic — Writing effective tools for AI agents: https://www.anthropic.com/engineering/writing-tools-for-agents and Effective context engineering: https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents — token-efficiency/namespacing for the MCP facade (D8) + structured fast-path / prune-stale-frames observation (D3).
 
 **Agent architectures & grounding research**
 - SWE-agent: Agent-Computer Interfaces Enable Automated Software Engineering: https://arxiv.org/abs/2405.15793 — origin of the "ACI" framing Shinken adopts as a first-class typed protocol.
@@ -149,7 +149,7 @@ The event-sourced `.skn` bundle and branchable checkpoint DAG (D5). See [replay.
 
 The three-layer capability-unlock permission system: Cedar + ocap + OS enforcement, plus
 egress/secret brokering (D6). See [permissions.md](permissions.md) and
-[../docs/08-threat-model.md](../docs/08-threat-model.md).
+[../docs/design/threat-model.md](../docs/design/threat-model.md).
 
 **Declarative policy engine (Cedar — D6 layer 1)**
 - Cedar — policy structure: https://docs.cedarpolicy.com/policies/syntax-policy.html, operators: https://docs.cedarpolicy.com/policies/syntax-operators.html, templates: https://docs.cedarpolicy.com/policies/templates.html — the declarative decision layer Shinken chooses over OPA/Rego.
@@ -174,7 +174,7 @@ egress/secret brokering (D6). See [permissions.md](permissions.md) and
 
 ## 6. ACI, observation model & MCP
 
-The structured-first observation rungs (D3), the typed action schema and version-pinned
+The screenshot-first plus structured-upgrade observation rungs (D3), the typed action schema and version-pinned
 adapters (D2), and the native-SDK-core-plus-MCP-facade interface posture (D8). See
 [ai-native-interface.md](ai-native-interface.md).
 
@@ -183,7 +183,7 @@ adapters (D2), and the native-SDK-core-plus-MCP-facade interface posture (D8). S
 - GNOME at-spi2-core: https://github.com/GNOME/at-spi2-core — AT-SPI, the Linux a11y backend for the cross-OS `Element` schema.
 - Playwright — ARIA/accessibility snapshots: https://playwright.dev/docs/aria-snapshots and Playwright MCP — snapshots (`[ref=e2]` element refs): https://playwright.dev/mcp/snapshots, vision mode: https://playwright.dev/mcp/vision-mode, repo: https://github.com/microsoft/playwright-mcp — the act-on-element-ref-by-default, pixels-on-demand escalation Shinken adopts (D3).
 - WebDriver BiDi (W3C spec): https://www.w3.org/TR/webdriver-bidi and browser-use — leaving Playwright for CDP: https://browser-use.com/posts/playwright-to-cdp — bidirectional automation direction + kill-9/reconnect resilience for the browser observation path.
-- A11y-Compressor — visual context reconstruction + redundancy reduction: https://arxiv.org/html/2605.00551v1 — token-savings evidence for structured-first observation (~6× claim, unverified).
+- A11y-Compressor — visual context reconstruction + redundancy reduction: https://arxiv.org/html/2605.00551v1 — token-savings evidence for structured observation (~6× claim, unverified).
 
 **MCP facade (D8)**
 - MCP — transports (stdio, Streamable HTTP/SSE): https://modelcontextprotocol.io/specification/2025-11-25/basic/transports, tools: https://modelcontextprotocol.io/specification/2025-11-25/server/tools, progress utility (no progress in responses): https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/progress — confirms why the high-frequency action/observation/video loop must NOT run over MCP (D8) + facade tool surface.
@@ -195,7 +195,7 @@ adapters (D2), and the native-SDK-core-plus-MCP-facade interface posture (D8). S
 ## 7. GPU virtualization & confidential compute (optional GPU tier)
 
 Public NVIDIA product facts framed as options for the opt-in GPU tier (D11). See
-[sandbox-infra.md](sandbox-infra.md) and [../docs/09-economics-and-build-vs-buy.md](../docs/09-economics-and-build-vs-buy.md).
+[sandbox-infra.md](sandbox-infra.md) and [../docs/design/economics-and-build-vs-buy.md](../docs/design/economics-and-build-vs-buy.md).
 
 - NVIDIA — MIG User Guide: https://docs.nvidia.com/datacenter/tesla/mig-user-guide/latest, supported profiles (media engines per slice): https://docs.nvidia.com/datacenter/tesla/mig-user-guide/supported-mig-profiles.html, MIG on DGX A100 (up to 7 instances): https://docs.nvidia.com/dgx/dgxa100-user-guide/using-mig.html — MIG slicing = the per-session GPU quota the panel hands out (D11).
 - NVIDIA — time-slicing GPUs in K8s (no memory/fault isolation): https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/gpu-sharing.html, vGPU features: https://docs.nvidia.com/vgpu/knowledge-base/latest/vgpu-features.html, scheduling policies: https://docs.nvidia.com/ai-enterprise/release-8/latest/infra-software/vgpu/features/scheduling.html — the time-sliced vGPU density pool + density-vs-fairness knob (D11).
@@ -209,12 +209,12 @@ Public NVIDIA product facts framed as options for the opt-in GPU tier (D11). See
 
 These projects are **cloned/vendored under `references/`** (git-ignored; only
 `references/README.md` is tracked) so we can study implementation details first-hand. Each is
-prior art we MATCH, BEAT, or DIFFERENTIATE against (see [../docs/04-landscape.md](../docs/04-landscape.md)).
+prior art we MATCH, BEAT, or DIFFERENTIATE against (see [../docs/design/landscape.md](../docs/design/landscape.md)).
 Re-clone steps live in [../references/README.md](../references/README.md).
 
 | Repo (path) | Upstream | Why we keep it |
 |-------------|----------|----------------|
-| `OSWorld/` | https://github.com/xlang-ai/OSWorld | Primary prior-art runtime+benchmark Shinken supersedes: in-VM action server, gym-style client env, multi-cloud providers, getter/metric evaluators. We document where it is too primitive — single-platform, screenshot polling, no streaming/replay/permissions ([../docs/03-osworld-analysis.md](../docs/03-osworld-analysis.md), [osworld-teardown.md](osworld-teardown.md)). |
+| `OSWorld/` | https://github.com/xlang-ai/OSWorld | Primary prior-art runtime+benchmark Shinken supersedes: in-VM action server, gym-style client env, multi-cloud providers, getter/metric evaluators. We document where it is too primitive — single-platform, screenshot polling, no streaming/replay/permissions ([../docs/design/osworld-analysis.md](../docs/design/osworld-analysis.md), [osworld-teardown.md](osworld-teardown.md)). |
 | `cua/` | https://github.com/trycua/cua | Closest cross-platform competitor. Source of the Image→Runtime→Transport→Interfaces→Sandbox layering, three-mode lifecycle, per-OS handler-factory, dual-altitude MCP, and trajectory recorder we adopt — and the pull-a-PNG-per-step + coarse-auth gaps we BEAT. |
 | `codex/` | https://github.com/openai/codex | OpenAI Codex Rust CLI (`codex-rs`) sandboxing: the three-axis permission model (admissibility × confinement × approval), strictest-wins merge, ordered (path, Read/Write/Deny) FS rules, fail-closed egress — the most reusable permission design (D6). |
 | `anthropic-quickstarts/` | https://github.com/anthropics/anthropic-quickstarts | `computer-use-demo` + best-practices: the canonical hosted tool schema (computer/bash/str_replace), sampling loop, image-resize/coordinate math, and prompt-caching discipline Shinken must MATCH — plus the stock Xvfb+x11vnc+noVNC stack it aims to BEAT (D2/D4). |

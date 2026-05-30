@@ -1,7 +1,7 @@
 # Sandbox Infrastructure — the substrate tier
 
 > **Status:** drafting · **Date:** 2026-05-30 · **Owner:** the maintainers
-> Working note feeding [`../docs/02-architecture.md`](../docs/02-architecture.md) and [`../docs/05-tech-decisions.md`](../docs/05-tech-decisions.md).
+> Working note feeding [`../docs/design/architecture.md`](../docs/design/architecture.md) and [`../docs/design/tech-decisions.md`](../docs/design/tech-decisions.md).
 > Reconciles to **D1** (tiered, substrate-pluggable isolation), **D9** (Fleet Manager / control plane), **D10** (cross-platform), **D11** (optional GPU tier).
 > Siblings: [streaming-bandwidth.md](streaming-bandwidth.md) · [replay.md](replay.md) · [permissions.md](permissions.md) · [ai-native-interface.md](ai-native-interface.md) · [sources.md](sources.md).
 
@@ -50,7 +50,7 @@ The decisive substrate fact: **Firecracker emulates exactly five virtio devices*
 
 That is fine, because Firecracker is the headless king and we keep it exactly there (tier L0): ~125 ms boot to userspace, <5 MiB per-VM overhead, 28–33 ms snapshot restore for concurrent spawns, thousands of microVMs/host, up to ~150 microVMs/s/host create rate, 10× memory/CPU oversubscription in production (all vendor-published, unverified — [Firecracker snapshot docs](https://github.com/firecracker-microvm/firecracker/blob/main/docs/snapshotting/snapshot-support.md), [NSDI'20 summary](https://blog.acolyer.org/2020/03/02/firecracker/), [Seven Years of Firecracker](https://brooker.co.za/blog/2025/09/18/firecracker.html)). E2B and Morph are the production proof points that this is a real, copyable blueprint, not a research demo.
 
-The defense-in-depth story matters for [permissions.md](permissions.md) and [`../docs/08-threat-model.md`](../docs/08-threat-model.md): Firecracker is wrapped by the **jailer** companion (chroot, dedicated cgroup, mount/PID/network namespaces, dropped privileges, a seccomp-BPF filter allowing only ~24 syscalls), so a guest+VMM escape lands in a near-empty jail with no host filesystem and only the configured TAP. Networking is one host TAP device per microVM with iptables/nftables NAT (typically a /30 per VM); **namespaced NAT lets many clones of one snapshot run with identical guest IPs** ([network-setup docs](https://github.com/firecracker-microvm/firecracker/blob/main/docs/network-setup.md)). The control surface is a REST API over a per-VM Unix socket; no daemon broker. Fly.io's eBPF/XDP UDP-steering + anti-spoof pattern ([fly.io: BPF, XDP and UDP](https://fly.io/blog/bpf-xdp-packet-filters-and-udp/)) is the model for routing media at line rate to the right microVM.
+The defense-in-depth story matters for [permissions.md](permissions.md) and [`../docs/design/threat-model.md`](../docs/design/threat-model.md): Firecracker is wrapped by the **jailer** companion (chroot, dedicated cgroup, mount/PID/network namespaces, dropped privileges, a seccomp-BPF filter allowing only ~24 syscalls), so a guest+VMM escape lands in a near-empty jail with no host filesystem and only the configured TAP. Networking is one host TAP device per microVM with iptables/nftables NAT (typically a /30 per VM); **namespaced NAT lets many clones of one snapshot run with identical guest IPs** ([network-setup docs](https://github.com/firecracker-microvm/firecracker/blob/main/docs/network-setup.md)). The control surface is a REST API over a per-VM Unix socket; no daemon broker. Fly.io's eBPF/XDP UDP-steering + anti-spoof pattern ([fly.io: BPF, XDP and UDP](https://fly.io/blog/bpf-xdp-packet-filters-and-udp/)) is the model for routing media at line rate to the right microVM.
 
 ### 2.1 The Linux *desktop* answer: decouple "display" from "GPU"
 
@@ -254,7 +254,7 @@ The host knobs the **Permission Panel** (**D6**) actuates per session live on th
 
 **Carried gaps (do not paper over — tracked in [open-questions.md](open-questions.md)):**
 
-1. **a11y-coverage on Electron/Qt/canvas/games** is the load-bearing unverified assumption for the structured-first observation model (and for choosing X11+AT-SPI over Wayland on L1) — needs a measurement spike.
+1. **a11y-coverage on Electron/Qt/canvas/games** is the load-bearing unverified assumption for the structured fast-path observation model (and for choosing X11+AT-SPI over Wayland on L1) — needs a measurement spike.
 2. **No first-party perf numbers.** Every fork/restore/density figure in §3 is vendor-published; Shinken needs its own measurement plan before publishing SLAs, and must measure *page-fault-bound* restore, not just VMM setup.
 3. **macOS / Windows fast-reset is largely infeasible today** — replay must degrade gracefully there; the platform asymmetry is permanent.
 4. **Windows-in-cloud licensing and the macOS 2-VM/host + 24 h Dedicated-Host minimum** shape cost and roadmap — procurement must confirm the buyable Windows path; macOS is premium/scarce capacity, not commodity.

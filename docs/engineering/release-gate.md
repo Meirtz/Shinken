@@ -5,12 +5,12 @@ The contract that must hold before a `v0.0.1` (and `v0.0.1-alpha`) release is cu
 Performance, fork density, WebRTC/SFU/NVENC, multi-tenant scale, and cross-substrate
 breadth are explicitly **out of scope for v0.0.1** — they are later milestones.
 
-> Authoritative built-vs-designed status: [`STATUS.md`](STATUS.md). This page is the
-> *gate*; `STATUS.md` is the *map*.
+> Authoritative built-vs-designed status: [`status.md`](status.md). This page is the
+> *gate*; `status.md` is the *map*.
 
 ## Automated gate (CI — every PR)
 
-All seven jobs must be green:
+All contract jobs must be green:
 
 | Job | Enforces |
 |-----|----------|
@@ -33,7 +33,7 @@ Core semantics that must be demonstrable (most are covered by the jobs above):
 - [ ] **Policy seam**: local Action-Gateway capability check denies ungranted actions before dispatch and records the decision.
 - [ ] **Eval**: tiny harness with verifier receipts + N-run summary; OSWorld-compatible interface + first-party smoke.
 - [ ] **Adapters/agents**: at least one provider-neutral smoke-agent path (skips cleanly without credentials).
-- [ ] **Docs honest**: README/roadmap reconciled with `STATUS.md`; designed-only features not claimed as built.
+- [ ] **Docs honest**: README/roadmap reconciled with `status.md`; designed-only features not claimed as built.
 
 ## Explicitly NOT required for v0.0.1
 
