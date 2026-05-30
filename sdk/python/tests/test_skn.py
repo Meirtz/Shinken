@@ -6,9 +6,17 @@ import jsonschema
 import pytest
 
 import shinken
-from shinken.skn import Recorder, Replay, _validate_bundle, summarize
+from shinken import cli
+from shinken.skn import Recorder, Replay, _validate_bundle, check_pairing, summarize
 
 _PNG = b"\x89PNG\r\n\x1a\nDATA"
+
+
+def _ev(seq, kind, src, action_id=None, dt=0.0):
+    e = {"seq": seq, "dt": dt, "kind": kind, "src": src, "payload": {}}
+    if action_id is not None:
+        e["action_id"] = action_id
+    return e
 
 
 def test_recorder_roundtrip(tmp_path):
@@ -88,3 +96,51 @@ def test_record_session_to_skn(mock_shinkend, tmp_path):
     assert rp.media(obs["payload"]["image"]["ref"])[:8] == b"\x89PNG\r\n\x1a\n"
     assert "run.skn" not in summarize(path)  # summarize names the given path
     assert "events" in summarize(path)
+
+
+def test_replay_steps_group_action_with_observations(tmp_path):
+    rec = Recorder(platform="linux")
+    rec.action("click", {"verb": "click"}, "c1")
+    rec.observation({"image": {"w": 1, "h": 1, "scope": "screen"}}, png=_PNG, action_id="c1")
+    rec.action("type_text", {"verb": "type_text", "text": "hi"}, "c2")
+    rp = Replay.load(rec.save(str(tmp_path / "r.skn")))
+    steps = rp.steps()
+    assert len(steps) == 2
+    assert steps[0]["action"]["action_id"] == "c1"
+    assert [e["kind"] for e in steps[0]["events"]] == ["action", "observation"]
+    assert steps[1]["action"]["action_id"] == "c2"
+
+
+def test_check_pairing_detects_dangling_action_id():
+    good = [
+        _ev(0, "action", "click", action_id="c1"),
+        _ev(1, "observation", "image", action_id="c1", dt=0.1),
+    ]
+    check_pairing(good)  # valid pairing — no raise
+    bad = good + [_ev(2, "observation", "image", action_id="ZZZ", dt=0.2)]
+    with pytest.raises(ValueError):
+        check_pairing(bad)
+
+
+def test_cli_replay_step_and_validate(tmp_path, capsys):
+    rec = Recorder(platform="linux")
+    rec.action("click", {"verb": "click", "target": {"kind": "point_px", "x": 1, "y": 2}}, "c1")
+    rec.observation({"image": {"w": 2, "h": 2, "scope": "screen"}}, png=_PNG, action_id="c1")
+    path = rec.save(str(tmp_path / "s.skn"))
+
+    assert cli.main(["replay", path, "--step"]) == 0
+    out = capsys.readouterr().out
+    assert "step 1:" in out and "action[click]" in out and "media=" in out
+
+    assert cli.main(["replay", path, "--validate"]) == 0
+    assert "replay OK" in capsys.readouterr().out
+
+
+def test_cli_replay_validate_fails_on_broken_pairing(tmp_path, capsys):
+    rec = Recorder(platform="linux")
+    rec.action("click", {"verb": "click"}, "c1")
+    # schema-valid event, but its action_id points at no real action → pairing breaks
+    rec._events.append(_ev(5, "observation", "image", action_id="NOPE", dt=0.5))
+    path = rec.save(str(tmp_path / "broken.skn"))  # schema-valid; pairing dangling
+    assert cli.main(["replay", path, "--validate"]) == 1
+    assert "INVALID" in capsys.readouterr().out

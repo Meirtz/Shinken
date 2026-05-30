@@ -175,8 +175,46 @@ class Replay:
         with zipfile.ZipFile(self._path) as z:
             return z.read(f"media/{sha}")
 
+    def validate(self) -> None:
+        """Schema-validate the manifest + events and check action/observation pairing
+        integrity. Raises on a malformed bundle or a dangling ``action_id``."""
+        _validate_bundle(self.manifest, self._events)
+        check_pairing(self._events)
+
+    def steps(self) -> list[dict]:
+        """Group the timeline into steps for scrubbing: each ``action`` plus the
+        events that follow it until the next action. Returns ``[{action, events}]``
+        (``action`` is ``None`` for any leading pre-action events)."""
+        steps: list[dict] = []
+        cur: dict = {"action": None, "events": []}
+        for e in self._events:
+            if e.get("kind") == "action":
+                if cur["events"]:
+                    steps.append(cur)
+                cur = {"action": e, "events": [e]}
+            else:
+                cur["events"].append(e)
+        if cur["events"]:
+            steps.append(cur)
+        return steps
+
     def __len__(self) -> int:
         return len(self._events)
+
+
+def check_pairing(events: list[dict]) -> None:
+    """Verify action/observation pairing integrity: every non-action event that
+    references an ``action_id`` must point at a real recorded ``action``. Raises
+    :class:`ValueError` on a dangling/broken link."""
+    action_ids = {e.get("action_id") for e in events if e.get("kind") == "action"}
+    action_ids.discard(None)
+    for e in events:
+        aid = e.get("action_id")
+        if aid is not None and e.get("kind") != "action" and aid not in action_ids:
+            raise ValueError(
+                f"event seq={e.get('seq')} ({e.get('kind')}) references action_id "
+                f"{aid!r} with no matching action"
+            )
 
 
 def summarize(path: str) -> str:
