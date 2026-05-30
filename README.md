@@ -1,5 +1,8 @@
 # Shinken
 
+[![CI](https://github.com/Meirtz/Shinken/actions/workflows/ci.yml/badge.svg)](https://github.com/Meirtz/Shinken/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+
 > An **AI-native, cross-platform sandbox runtime + control plane** for computer-use agents.
 
 Shinken gives AI agents a safe, observable, high-fidelity computer to operate — and gives
