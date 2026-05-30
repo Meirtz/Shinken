@@ -49,11 +49,11 @@ class A11yNode:
 
 
 def iter_nodes(root: A11yNode) -> Iterable[A11yNode]:
-    stack = [root]
-    while stack:
-        node = stack.pop()
-        yield node
-        stack.extend(node.children)
+    # Pre-order, children left-to-right — so element refs (e0, e1, …) are stable and
+    # match document order, which element_ref resolution (#78) relies on.
+    yield root
+    for child in root.children:
+        yield from iter_nodes(child)
 
 
 def to_elements(root: A11yNode, source: str = "atspi") -> list[dict]:

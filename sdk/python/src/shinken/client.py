@@ -493,6 +493,7 @@ class Sandbox:
         self._inner = inner
         self._loop = loop
         self._closed = False
+        self._elements: dict[str, dict] = {}  # ref -> Element, from the last observe(structured)
 
     @property
     def capabilities(self) -> Capabilities:
@@ -552,7 +553,10 @@ class Sandbox:
         if structured:
             from .a11y import AtspiSource, observe_structured
 
-            return observe_structured(source or AtspiSource())
+            obs = observe_structured(source or AtspiSource())
+            # retain ref -> Element so element_ref targets can be resolved (#78)
+            self._elements = {e["ref"]: e for e in obs.get("elements", [])}
+            return obs
         shot = self.screenshot()
         return {
             "type": "observation",
@@ -560,6 +564,25 @@ class Sandbox:
             "image": {"w": shot["w"], "h": shot["h"], "scope": "screen"},
             "png": shot["png"],
         }
+
+    def resolve(self, ref: str) -> dict:
+        """Resolve an `element_ref` (from the last ``observe(structured=True)``) to a
+        click point — the centre of its bounding box. Raises ``KeyError`` on an unknown
+        ref and ``ValueError`` if the element has no usable bbox."""
+        el = self._elements.get(ref)
+        if el is None:
+            raise KeyError(f"unknown element_ref {ref!r}; call observe(structured=True) first")
+        x, y, w, h = el.get("bbox") or (0, 0, 0, 0)
+        if w <= 0 or h <= 0:
+            raise ValueError(f"element_ref {ref!r} has no usable bounding box")
+        return {"x": x + w // 2, "y": y + h // 2, "element": el}
+
+    def act_on(self, ref: str, verb: str = "click", **kwargs: Any) -> dict:
+        """Semantic action routing: resolve an `element_ref` to a point via the last
+        structured observation, then dispatch ``verb`` there as a typed pixel action —
+        the structured fast path (no raw coordinates from the caller)."""
+        point = self.resolve(ref)
+        return self.act(verb, {"kind": "point_px", "x": point["x"], "y": point["y"]}, **kwargs)
 
     def type_text(self, text: str):
         return self._loop.run(self._inner.type_text(text))
