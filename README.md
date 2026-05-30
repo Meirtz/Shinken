@@ -17,6 +17,15 @@ It is designed as one platform for production computer-use agents, evals, and tr
 capture: every session can be watched live, audited, replayed, forked, and exported as trajectory
 data.
 
+> **Status (2026-05-31) — early, honest.** What runs **today** is a tested Linux/X11 slice:
+> typed pointer/keyboard actions, pixel observation (screenshot + **real-time screencast** with
+> idle-suppression + resolution downscale), **focused-window capture**, `.skn` recording, and a
+> Python SDK — all under live CI. The rest of this README describes the **target design**:
+> cross-platform, accessibility-tree observation, the capability/permission panel, replay playback,
+> checkpoint/fork, the control plane, and WebRTC/GPU streaming are **designed but not yet built**,
+> and the load-bearing a11y-coverage assumption is **not yet validated**. See
+> **[`docs/STATUS.md`](docs/STATUS.md)** for the precise built-vs-designed map.
+
 ## Why "Shinken"?
 
 Most computer-use sandboxes today are **mogitō**: training swords. They are useful for demos,

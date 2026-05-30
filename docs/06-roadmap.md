@@ -1,7 +1,13 @@
 # Shinken — Roadmap
 
-> Status: drafting · Date: 2026-05-30
+> Status: drafting · Date: 2026-05-31
 > Sibling docs: [00 Vision](00-vision.md) · [01 PRD](01-prd.md) · [02 Architecture](02-architecture.md) · [03 OSWorld teardown](03-osworld-analysis.md) · [04 Landscape](04-landscape.md) · [05 Tech decisions / ADRs](05-tech-decisions.md) · [07 Glossary](07-glossary.md) · [08 Threat model](08-threat-model.md) · [09 Economics & build-vs-buy](09-economics-and-build-vs-buy.md)
+
+> **What's actually built so far → [`STATUS.md`](STATUS.md).** Phase 0's pixel slice (actions +
+> screenshot + real-time screencast + bandwidth levers + focused-window capture, Linux/X11) is
+> implemented and under live CI; the **a11y-coverage spike below is still ungated**, so the
+> structured fast path and everything gated on it remain unproven. This roadmap is the *plan*, not
+> the current state.
 
 Shinken's roadmap is deliberately **usable-first, de-risk-as-we-scale**. The first Phase-0 priority is a screenshot-based GUI-agent loop, because screenshots are the universal interface every computer-use model can consume. The completeness review behind the broader design is still blunt: the *qualitative* architecture is sound, but the scale/cost assumptions — that a normalized accessibility (a11y) tree covers enough real applications to become the structured fast path, that copy-on-write (CoW) fork density is economically real, and that the dual-channel WebRTC latency budget actually closes — are **all vendor-quoted and unverified** as of 2026-05-30. So the phases below prove usability first, then gate cloud-scale commitments on spikes that can kill expensive architectural bets.
 

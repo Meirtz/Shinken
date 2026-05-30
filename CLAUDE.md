@@ -2,9 +2,14 @@
 
 Shinken is an **AI-native, cross-platform sandbox runtime + control plane + control panel for
 computer-use agents** (a streaming-first successor to OSWorld). See [README.md](README.md) and
-[`docs/`](docs/README.md). The design corpus is complete and M0 implementation has started:
-`shinkend` and the Python SDK currently prove the ACI v0 handshake; action execution, observation,
-replay, permissions, and eval are Phase-0 follow-up work.
+[`docs/`](docs/README.md). The design corpus is complete; the **implementation is a proven
+Linux/X11 vertical slice** — handshake/auth, pointer+keyboard actions, pixel observation
+(screenshot + real-time screencast + bandwidth levers + focused-window capture), `.skn` recording,
+and a Python SDK, all under live CI. The **structured/a11y thesis (D3), permissions, replay
+playback, checkpoint/fork, the control plane, and cross-platform are designed-only and not yet
+built**, and the load-bearing **a11y-coverage spike (#2) is still ungated**.
+**[`docs/STATUS.md`](docs/STATUS.md) is the authoritative built-vs-designed map — read it before
+trusting present-tense claims in the vision docs.**
 
 ## ⛔ The one hard rule: this is a PUBLIC open-source project
 
@@ -47,15 +52,20 @@ committed is world-readable.
 
 ## Status & next steps
 
-Design corpus complete; M0 scaffold in progress. Per [docs/10-phase0-plan.md](docs/10-phase0-plan.md),
-the immediate work is:
-1. **Harden M0** — align advertised capabilities with implemented behavior, secure the local
-   `shinkend` transport defaults, and keep README/docs consistent with actual status.
-2. **a11y-coverage spike** — measure what fraction of real apps (browser, Electron, Qt, canvas,
-   games) expose usable accessibility trees + the bandwidth of a tree diff. This is the
-   load-bearing assumption behind the structured-first thesis (D3).
-3. **M1 act + observe** — implement the first real GUI action and observation loop inside the
-   local Linux Sandbox.
+**Built & proven (Linux/X11):** M0 transport/auth + M1 act-and-observe are done — pointer+keyboard
+actions, screenshot, real-time screencast (server-push) with idle-suppression + downscale, and
+focused-window/`window:<id>` capture, all with live Xvfb/Docker CI smokes. `.skn` recording and the
+Python SDK (sync facade + reader/demux) ship too. Full built-vs-designed map: **[docs/STATUS.md](docs/STATUS.md)**.
+
+The immediate work (per the recalibrated priorities):
+1. **Reconcile contract + harden (#56)** — align `schema/aci.schema.json` with the implemented wire
+   vocabulary (screencast verbs, `scope`/`fps`/`max_long_edge`, `stream`/`seq`), bound the screencast
+   frame queues (a real OOM vector), and fix the vacuous tests. 22 verified review findings.
+2. **a11y-coverage spike — STILL UNGATED (#2)** — measure what fraction of real apps (browser,
+   Electron, Qt, canvas, games) expose usable accessibility trees + the bandwidth of a tree diff.
+   This is *the gate* for the structured-first thesis (D3); the differentiator vs OSWorld rests on it.
+3. **Designed-only, not started:** permissions/capability gate, `.skn` playback, checkpoint/fork,
+   control plane + concurrency, dual-channel WebRTC/NVENC, cross-platform (mac/Win) + **Wayland**.
 4. **CoW-fork density** and **dual-channel WebRTC latency** remain Phase-1 boundary spikes (D1/D4).
 
 Open questions and risks: [notes/open-questions.md](notes/open-questions.md).
