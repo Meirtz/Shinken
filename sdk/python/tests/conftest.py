@@ -47,6 +47,8 @@ async def _handler(ws) -> None:
             value = "linux" if msg.get("q") == "platform" else {"w": 1280, "h": 800}
             reply = {"type": "result", "call_id": msg.get("call_id"), "ok": True, "value": value}
             await ws.send(json.dumps(reply))
+        elif kind == "action":
+            await ws.send(json.dumps({"type": "ack", "call_id": msg.get("call_id"), "ok": True}))
 
 
 @pytest.fixture

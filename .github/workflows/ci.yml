@@ -74,3 +74,39 @@ jobs:
           pytest -q
       - if: steps.present.outputs.exists == 'false'
         run: echo "sdk/python not present yet — skipping"
+
+  integration-linux:
+    name: Linux integration (Xvfb)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: present
+        run: |
+          if [ -f shinkend/Cargo.toml ] && [ -f scripts/m1_smoke.py ]; then echo "go=true" >> "$GITHUB_OUTPUT"; else echo "go=false" >> "$GITHUB_OUTPUT"; fi
+      - if: steps.present.outputs.go == 'true'
+        uses: dtolnay/rust-toolchain@stable
+      - if: steps.present.outputs.go == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - if: steps.present.outputs.go == 'true'
+        run: sudo apt-get update && sudo apt-get install -y xvfb xdotool
+      - if: steps.present.outputs.go == 'true'
+        run: cargo build --manifest-path shinkend/Cargo.toml
+      - if: steps.present.outputs.go == 'true'
+        run: pip install -e sdk/python
+      - name: live pointer-action smoke (move to 300,200 → verify with xdotool)
+        if: steps.present.outputs.go == 'true'
+        run: |
+          set -euo pipefail
+          export DISPLAY=:99
+          Xvfb :99 -screen 0 1280x800x24 -ac &
+          for _ in $(seq 1 50); do xdotool getmouselocation >/dev/null 2>&1 && break; sleep 0.1; done
+          SHINKEND_ADDR=127.0.0.1:8765 ./shinkend/target/debug/shinkend &
+          sleep 1
+          python scripts/m1_smoke.py 127.0.0.1:8765
+          eval "$(xdotool getmouselocation --shell)"
+          echo "cursor at X=$X Y=$Y"
+          test "$X" = "300" && test "$Y" = "200" && echo "✅ live X11 pointer action verified"
+      - if: steps.present.outputs.go == 'false'
+        run: echo "shinkend or smoke script not present yet — skipping"

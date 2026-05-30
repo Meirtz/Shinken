@@ -37,6 +37,22 @@ def _to_uri(addr: str) -> str:
     return addr if addr.startswith("ws://") or addr.startswith("wss://") else f"ws://{addr}"
 
 
+def _target(target: Any, x: float | None, y: float | None) -> dict | None:
+    """Build an ACI target from (element-ref | dict | x,y). None if unspecified."""
+    if target is not None:
+        if isinstance(target, dict):
+            return target
+        if isinstance(target, str):
+            return {"kind": "element_ref", "ref": target}
+        ref = getattr(target, "ref", None)
+        if ref is not None:
+            return {"kind": "element_ref", "ref": ref}
+        raise TypeError(f"unsupported target: {target!r}")
+    if x is not None and y is not None:
+        return {"kind": "point_px", "x": x, "y": y}
+    return None
+
+
 class AsyncSandbox:
     """An async session against a running ``shinkend``."""
 
@@ -68,6 +84,38 @@ class AsyncSandbox:
 
     async def screen_size(self) -> dict:
         return await self.query("screen_size")
+
+    async def act(self, verb: str, target: dict | None = None, **kwargs: Any) -> dict:
+        """Send one typed action and await its ack. Raises on failure."""
+        action: dict = {"verb": verb}
+        if target is not None:
+            action["target"] = target
+        action.update({k: v for k, v in kwargs.items() if v is not None})
+        reply = await self._rpc({"type": "action", "call_id": self._next_id(), "action": action})
+        if not reply.get("ok"):
+            raise RuntimeError(reply.get("error", f"action {verb!r} failed"))
+        return reply
+
+    async def click(self, target: Any = None, *, x: float | None = None, y: float | None = None):
+        return await self.act("click", _target(target, x, y))
+
+    async def double_click(
+        self, target: Any = None, *, x: float | None = None, y: float | None = None
+    ):
+        return await self.act("double_click", _target(target, x, y))
+
+    async def right_click(
+        self, target: Any = None, *, x: float | None = None, y: float | None = None
+    ):
+        return await self.act("right_click", _target(target, x, y))
+
+    async def move(self, target: Any = None, *, x: float | None = None, y: float | None = None):
+        return await self.act("move", _target(target, x, y))
+
+    async def scroll(
+        self, target: Any = None, *, x: float | None = None, y: float | None = None, dy: float = 0.0
+    ):
+        return await self.act("scroll", _target(target, x, y), dy=dy)
 
     async def close(self) -> None:
         await self._ws.close()
@@ -134,6 +182,26 @@ class Sandbox:
 
     def screen_size(self) -> dict:
         return self._loop.run(self._inner.screen_size())
+
+    def act(self, verb: str, target: dict | None = None, **kwargs: Any) -> dict:
+        return self._loop.run(self._inner.act(verb, target, **kwargs))
+
+    def click(self, target: Any = None, *, x: float | None = None, y: float | None = None):
+        return self._loop.run(self._inner.click(target, x=x, y=y))
+
+    def double_click(self, target: Any = None, *, x: float | None = None, y: float | None = None):
+        return self._loop.run(self._inner.double_click(target, x=x, y=y))
+
+    def right_click(self, target: Any = None, *, x: float | None = None, y: float | None = None):
+        return self._loop.run(self._inner.right_click(target, x=x, y=y))
+
+    def move(self, target: Any = None, *, x: float | None = None, y: float | None = None):
+        return self._loop.run(self._inner.move(target, x=x, y=y))
+
+    def scroll(
+        self, target: Any = None, *, x: float | None = None, y: float | None = None, dy: float = 0.0
+    ):
+        return self._loop.run(self._inner.scroll(target, x=x, y=y, dy=dy))
 
     def close(self) -> None:
         try:

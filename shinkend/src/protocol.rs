@@ -169,11 +169,7 @@ pub fn respond(msg: Message) -> Option<Message> {
             "screen_size" => ok_result(&call_id, serde_json::json!({ "w": 1280, "h": 800 })),
             other => err_result(&call_id, &format!("unknown query: {other}")),
         }),
-        Message::Action { call_id, .. } => Some(Message::Ack {
-            call_id,
-            ok: false,
-            error: Some("action execution lands in M1 (#4)".to_string()),
-        }),
+        // `action` is handled by the Executor in main.rs, not here.
         _ => None,
     }
 }
@@ -226,17 +222,6 @@ mod tests {
                 assert_eq!(value, Some(serde_json::json!(platform())));
             }
             other => panic!("expected result, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn action_is_acked_not_implemented_in_m0() {
-        let msg: Message =
-            serde_json::from_str(r#"{"type":"action","call_id":"c2","action":{"verb":"click"}}"#)
-                .unwrap();
-        match respond(msg) {
-            Some(Message::Ack { ok, .. }) => assert!(!ok),
-            other => panic!("expected ack, got {other:?}"),
         }
     }
 }
