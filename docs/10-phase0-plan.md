@@ -205,8 +205,9 @@ timeline
 ### M3 — a screenshot-based agent completes a task
 - **Build:** the **Operator loop** (provider-agnostic) + **one model adapter** (Anthropic
   `computer_2025xxxx` *or* OpenAI `computer_call`) translating the provider's action/observation
-  format to/from the ACI (D2 adapters). A small **task fixture** (deterministic start state in the
-  image; a clear goal).
+  format to/from the ACI (D2 adapters). Also define one Shinken-native action dialect
+  (XML-like tags or JSON/function calls) so model output is parsed and validated before it becomes
+  canonical ACI. A small **task fixture** (deterministic start state in the image; a clear goal).
 - **Acceptance:** the off-the-shelf screenshot-based model, unmodified, drives the Sandbox to
   complete the task; the whole run is a single `.skn` bundle with action + screenshot observations.
 - **Realizes:** D2 (adapters), D8 (Operator contract), and E1/E6.

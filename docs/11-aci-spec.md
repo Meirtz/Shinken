@@ -19,7 +19,9 @@ reconciles to decisions **D2** (actions), **D3** (observation), **D5** (replay),
 ## 1. Design principles (what "elegant" means here)
 
 1. **One line to start.** `shinken.connect()` (or `.init()`) returns a ready session.
-2. **Few, high-affordance verbs.** A small typed action set; sugar methods for the common ones.
+2. **Agent-native by default.** Models emit a constrained action dialect; adapters translate that
+   dialect into canonical ACI typed actions. Low-level SDK verbs remain available for control and
+   tests.
 3. **Screenshot baseline, structured upgrade.** The first loop works with screenshots everywhere; structured observations add stable refs when available.
 4. **Checkpoints are first-class and trivial.** `save()/restore()/fork()` — the same primitive as instant reset and replay-branching.
 5. **Progressive disclosure.** Simple by default (`screenshot()` + typed actions); structure and power on demand (`observe(structured=True)`, `fork`, `unlock`).
@@ -41,10 +43,16 @@ env = shinken.connect()                       # or shinken.connect("sbx_id") / s
 shot = env.screenshot()                       # -> {'png': bytes, 'w': int, 'h': int}
 view = env.observe(structured=True)           # -> a11y tree when available (later)
 
-# 3) act — a tiny verb set, on element refs (preferred) or coordinates
-env.click(x=640, y=400); env.type("Q3 report"); env.key("ctrl+s")
-env.scroll(x=900, y=400, dy=-300)
-env.click(x=640, y=400)                       # raw pixels still available
+# 3) act — model dialect -> adapter -> canonical ACI actions
+xml = """
+<actions>
+  <click x="640" y="400" button="left"/>
+  <type_text text="Q3 report"/>
+  <key combo="ctrl+s"/>
+</actions>
+"""
+for action in shinken.adapters.xml().parse(xml, observation=shot):
+    env.act(action.verb, action.target, **action.args)
 
 # 4) run() — code-as-action, preserved verbatim (a gated capability)
 r = env.run("a = 10\nb = 20\nprint(a + b)");  print(r.output)   # "30"
@@ -88,7 +96,17 @@ base64.
 
 ## 3. Action model (D2)
 
-**One canonical typed action**, a tagged union discriminated by `verb` (wire form in
+The ACI has two layers:
+
+1. **Agent-facing dialects** — XML-like tags, JSON/function-call outputs, vendor grammars
+   (Anthropic/OpenAI/UI-TARS), and OSWorld `computer_13`.
+2. **Canonical typed actions** — the internal wire contract sent to `shinkend`.
+
+The adapter boundary is: parse model output -> validate against a dialect schema -> normalize
+coordinates -> check the Sandbox capability envelope -> emit canonical ACI action(s). A model never
+gets to emit arbitrary Python or untyped strings as the primary path.
+
+The canonical action is a tagged union discriminated by `verb` (wire form in
 [`schema/aci.schema.json`](../schema/aci.schema.json)). The spatial `target` is a discriminated
 union so the *same* verb serves pixel models, normalized models, and element-ref models:
 
@@ -132,7 +150,37 @@ acknowledgements/observations back into the event stream. This preserves a simpl
 **ordinary GUI backends implement typed verbs; boundary-crossing power is requested, authorized, and
 recorded separately.**
 
-### 3.2 Backend-pluggable executor
+### 3.2 Phase-0 agent action dialect
+
+Phase 0 should define at least one constrained dialect that is easy for models to emit and easy for
+Shinken to validate. XML-like tags are a good human-readable candidate:
+
+```xml
+<actions>
+  <click x="640" y="420" button="left"/>
+  <double_click x="310" y="88"/>
+  <right_click x="900" y="512"/>
+  <scroll x="900" y="600" dy="-480"/>
+  <type_text text="hello world"/>
+  <key combo="ctrl+s"/>
+  <wait ms="500"/>
+  <done/>
+</actions>
+```
+
+Rules:
+
+- The dialect is a **model output format**, not the runtime wire format.
+- The parser rejects unknown tags/attributes, invalid coordinates, missing required fields, and
+  mixed text/code.
+- Coordinates are interpreted in the observation's coordinate space unless a dialect explicitly
+  declares normalized coordinates.
+- The adapter may emit one or more canonical ACI actions per model output.
+- Errors are teaching errors returned to the agent loop; unsupported dialect output is not executed.
+- Vendor adapters can use their native function-call/JSON grammars, but must pass through the same
+  canonical ACI action layer.
+
+### 3.3 Backend-pluggable executor
 
 `shinkend` exposes one typed action surface over a **per-OS, backend-pluggable executor** with a
 router that prefers semantic actuation, falling back to synthetic input. (Validated by the P0

@@ -149,23 +149,43 @@ flowchart TB
 The rule of thumb: **clients request, the Control Plane authorizes and records, `shinkend` executes,
 the guest OS changes, and `.skn` preserves the timeline.**
 
-## How Simple It Should Feel
+## How Agent-Native It Should Feel
 
-The Phase-0 SDK target is a screenshot-first blocking API:
+The low-level SDK stays available for debugging and tests, but agents should not be hand-written as
+`env.click(...)` scripts. A computer-use model emits a constrained action dialect; a Shinken adapter
+parses and validates that output, normalizes coordinates, checks the Sandbox capability envelope,
+and only then sends canonical ACI actions to `shinkend`.
 
 ```python
 import shinken
+from shinken.adapters import ShinkenXMLAdapter
 
-with shinken.connect() as env:
+adapter = ShinkenXMLAdapter()
+
+with shinken.connect(record=True) as env:
     shot = env.screenshot()                     # universal GUI observation
-    # send shot["png"] to your computer-use model, then execute its action
-    env.click(x=640, y=420)
-    env.type_text("agent sandbox runtime")
-    env.key("enter")
-    shot = env.screenshot()
+
+    # The model returns a restricted action dialect, not arbitrary Python.
+    model_output = """
+    <actions>
+      <click x="640" y="420" button="left"/>
+      <type_text text="agent sandbox runtime"/>
+      <key combo="enter"/>
+    </actions>
+    """
+
+    for action in adapter.parse(model_output, observation=shot):
+        env.act(action.verb, action.target, **action.args)
 
     env.save_replay("search-demo.skn")          # replay/debug/train later
 ```
+
+The same adapter boundary can host XML-like tags, JSON/function-call outputs, Anthropic/OpenAI
+computer-use grammars, UI-TARS normalized coordinates, or OSWorld `computer_13`. The invariant is
+the same: **model dialect in, validated ACI typed actions out**.
+
+Low-level calls such as `env.click(x=...)`, `env.type_text(...)`, and `env.key(...)` remain useful
+for smoke tests, scripting, and replay debugging; they are not the primary agent interface.
 
 Boundary-crossing capabilities should be just as explicit:
 
