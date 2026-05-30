@@ -97,7 +97,7 @@ class HttpModelAgent:
         self._round += 1
         if self._round == 1:
             self._chat(instruction)  # raises on connectivity/auth failure
-            return {"verb": "move", "x": 100, "y": 100}  # benign, recordable
+            return dict(BENIGN_ACTION)  # canonical ACI action (#163), benign + recordable
         return "DONE"
 
     def _chat(self, instruction: str) -> str:
@@ -128,18 +128,18 @@ class HttpModelAgent:
         return data["choices"][0]["message"]["content"]
 
 
+#: The benign canonical-ACI action the default smoke agent emits — a no-op move with a
+#: typed ``point_px`` target (not the old simplified ``{verb, x, y}`` shape) (#163).
+BENIGN_ACTION = {"verb": "move", "target": {"kind": "point_px", "x": 100, "y": 100}}
+
+
 def _apply(env: Any, action: dict) -> None:
-    verb = action.get("verb")
-    if verb in ("click", "double_click", "right_click", "move"):
-        getattr(env, verb)(x=action["x"], y=action["y"])
-    elif verb == "type_text":
-        env.type_text(action.get("text", ""))
-    elif verb == "key":
-        env.key(action.get("keys", ""))
-    elif verb == "scroll":
-        env.scroll(dy=action.get("dy", 0))
-    else:
-        raise ValueError(f"smoke agent emitted unsupported verb: {verb!r}")
+    """Execute a **canonical ACI** action dict through the same ordered-batch path
+    production adapters/operators use (#73/#163). Raises if the runtime rejects it."""
+    result = env.act_batch([action])
+    if not result.get("completed"):
+        failed = next((r for r in result.get("results", []) if not r.get("ok")), None)
+        raise ValueError(f"smoke action failed: {failed.get('error') if failed else action}")
 
 
 def run_smoke_agent(
