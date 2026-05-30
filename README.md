@@ -16,6 +16,22 @@ computer-use agents. It is the production-grade successor to research harnesses 
 replayable instead of write-only, permission-gated instead of all-or-nothing, and built to serve
 both production agent deployment and evaluation.
 
+## Why "Shinken"?
+
+Most computer-use sandboxes today are **mogitō**: training swords. They are useful for demos,
+benchmarks, and learning the motions, but they are not built for real side effects, real
+permissions, real audit, or real scale.
+
+**Shinken (真剣)** means a real sword. The point is not recklessness; it is discipline. A real
+agent runtime must be sharp enough to do production work, and safe enough that every dangerous edge
+is gated, recorded, replayable, and under human control.
+
+<p align="center">
+  <img src="docs/assets/shinken-vs-mogito.png" alt="Mogito training sword versus Shinken real sword" width="900">
+</p>
+
+That is Shinken's stance: **real desktops, real actions, real permissions, real replay.**
+
 ```mermaid
 flowchart LR
   Agent["Agent / Operator<br/>Claude, OpenAI, UI-TARS, custom"] --> SDK["Shinken SDK<br/>one typed ACI"]
