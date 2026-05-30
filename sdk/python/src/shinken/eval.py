@@ -154,7 +154,11 @@ def run_eval(
             wall = time.perf_counter() - t0
             bundle = env.save_replay(os.path.join(out_dir, f"{task.name}-{i}.skn"))
             rp = Replay.load(bundle)
-            steps = sum(1 for e in rp.events if e["kind"] == "action")
+            # count agent task actions as steps; screenshots are observations recorded as
+            # actions for pairing (#160), not task steps
+            steps = sum(
+                1 for e in rp.events if e["kind"] == "action" and e["src"] != "screenshot"
+            )
             receipt = task.verify(rp)
             passed = receipt.passed
         except SetupError as exc:

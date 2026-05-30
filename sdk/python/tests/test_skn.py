@@ -91,9 +91,13 @@ def test_record_session_to_skn(mock_shinkend, tmp_path):
 
     rp = Replay.load(path)
     kinds = [e["kind"] for e in rp.events]
-    assert kinds.count("action") == 2 and "observation" in kinds
+    # click + type_text + screenshot — screenshot is recorded as an action too (#160)
+    assert kinds.count("action") == 3 and "observation" in kinds
     obs = next(e for e in rp.events if e["kind"] == "observation")
     assert rp.media(obs["payload"]["image"]["ref"])[:8] == b"\x89PNG\r\n\x1a\n"
+    # the screenshot observation is paired to its screenshot action via action_id (#160)
+    shot = next(e for e in rp.events if e["kind"] == "action" and e["src"] == "screenshot")
+    assert obs.get("action_id") == shot.get("action_id") and shot.get("action_id")
     assert "run.skn" not in summarize(path)  # summarize names the given path
     assert "events" in summarize(path)
 

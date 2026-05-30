@@ -19,7 +19,8 @@ EXPECTED_VERBS = ["click", "type_text", "click", "type_text", "key"]
 
 
 def _verify(rp: Replay) -> VerifierReceipt:
-    verbs = [e["src"] for e in rp.events if e["kind"] == "action"]
+    # screenshots are now recorded as actions too (#160) — the task verbs are the rest
+    verbs = [e["src"] for e in rp.events if e["kind"] == "action" and e["src"] != "screenshot"]
     return VerifierReceipt.from_checks(
         [
             check("at_least_5_actions", len(verbs) >= 5, evidence=len(verbs)),
@@ -37,7 +38,8 @@ def test_drive_completes_five_step_task_as_one_bundle(mock_shinkend, tmp_path):
 
     rp = Replay.load(path)
     rp.validate()  # one bundle, schema-valid, action/observation pairing intact
-    actions = [e for e in rp.events if e["kind"] == "action"]
+    # screenshots are recorded as actions too (#160); the task actions are the rest
+    actions = [e for e in rp.events if e["kind"] == "action" and e["src"] != "screenshot"]
     obs = [e for e in rp.events if e["kind"] == "observation"]
     assert [e["src"] for e in actions] == EXPECTED_VERBS  # ≥5 steps, in order
     assert len(obs) >= 5  # the agent observed before each turn

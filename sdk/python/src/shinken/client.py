@@ -142,6 +142,7 @@ class AsyncSandbox:
         self._pong_waiters: deque[asyncio.Future] = deque()
         self._frames: asyncio.Queue = asyncio.Queue(maxsize=_FRAME_QUEUE_MAX)
         self._reader: asyncio.Task | None = None
+        self._rpc_timeout = 30.0  # per-RPC reply deadline (#142); async callers never hang
 
     def _next_id(self) -> str:
         self._seq += 1
@@ -207,8 +208,11 @@ class AsyncSandbox:
             if not fut.done():
                 fut.set_exception(exc)
 
-    async def _rpc(self, msg: dict) -> dict:
-        """Send a call_id-bearing message and await its correlated reply."""
+    async def _rpc(self, msg: dict, timeout: float | None = None) -> dict:
+        """Send a call_id-bearing message and await its correlated reply, bounded by a
+        timeout (#142) so a missing, dropped, or uncorrelated reply can't hang an async
+        caller; the pending future is also failed on connection close (``_fail_pending``)."""
+        timeout = self._rpc_timeout if timeout is None else timeout
         call_id = msg["call_id"]
         fut: asyncio.Future = asyncio.get_running_loop().create_future()
         self._pending[call_id] = fut
@@ -217,7 +221,13 @@ class AsyncSandbox:
         except Exception:
             self._pending.pop(call_id, None)
             raise
-        return await fut
+        try:
+            return await asyncio.wait_for(fut, timeout)
+        except asyncio.TimeoutError:
+            self._pending.pop(call_id, None)
+            raise TimeoutError(
+                f"RPC {msg.get('type')!r} ({call_id}) timed out after {timeout}s"
+            ) from None
 
     async def ping(self) -> float:
         """Round-trip time to the runtime, in seconds."""
@@ -410,20 +420,21 @@ class AsyncSandbox:
     async def screenshot(self, scope: str = "screen") -> dict:
         """Capture pixels on demand. Returns {'png': bytes, 'w': int, 'h': int}."""
         self._gate("screenshot")
+        call_id = self._next_id()
         reply = await self._rpc(
-            {
-                "type": "action",
-                "call_id": self._next_id(),
-                "action": {"verb": "screenshot", "scope": scope},
-            }
+            {"type": "action", "call_id": call_id, "action": {"verb": "screenshot", "scope": scope}}
         )
         if reply.get("type") != "observation":
             raise RuntimeError(reply.get("error", "screenshot failed"))
         img = reply.get("image") or {}
         png = base64.b64decode(img.get("ref", ""))
         if self._recorder is not None:
+            # record the screenshot as an action + pair the observation to it (#160)
+            self._recorder.action("screenshot", {"verb": "screenshot", "scope": scope}, call_id)
             self._recorder.observation(
-                {"image": {"w": img.get("w"), "h": img.get("h"), "scope": scope}}, png=png
+                {"image": {"w": img.get("w"), "h": img.get("h"), "scope": scope}},
+                png=png,
+                action_id=call_id,
             )
         return {"png": png, "w": img.get("w"), "h": img.get("h")}
 
