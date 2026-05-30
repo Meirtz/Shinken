@@ -208,6 +208,23 @@ A native streaming SDK core plus an optional MCP facade.
 | FR-IFC-7 | The granular MCP facade MUST keep the agent loop OUT of its tools so the Control Panel retains per-step reasoning, capability state, and replay visibility. | D8, D6 |
 | FR-IFC-8 | The **Operator** contract MUST be the documented seam for human takeover and the provider-agnostic boundary; the agent loop is open and self-hostable (no lock-in). | D8, D12 |
 
+### 2.10 File transfer / artifacts (D5, D6, D8, D9)
+
+File transfer is a first-class runtime path. Agents and eval harnesses move task fixtures into a
+Sandbox and move generated artifacts, logs, traces, screenshots/videos, and replay resources out. It
+must be profiled and optimized as aggressively as screenshots and actions; JSON/base64 over the ACI
+RPC path is not acceptable for hot binary transfer.
+
+| ID | Requirement | Reconciles |
+|----|-------------|-----------|
+| FR-FILE-1 | The SDK MUST expose explicit `put_file`, `get_file`, `put_dir`, `get_dir`, and artifact upload/download primitives for Sandbox↔client transfer. | D8, D9 |
+| FR-FILE-2 | Binary payloads MUST avoid JSON/base64 inflation on hot paths; use binary frames, a dedicated stream, or object-store/signed-URL handoff where appropriate. | D8, D9 |
+| FR-FILE-3 | Large transfers MUST be chunked, checksummed, resumable, cancellable, and backpressured. | D8, D9 |
+| FR-FILE-4 | File transfer traffic MUST NOT block low-latency ACI actions, screenshot observations, or realtime control streams. | D4, D8, D9 |
+| FR-FILE-5 | Transfers MUST be governed by Sandbox capabilities: `fs.scope`, host mounts, persistence, credentials, and artifact export/import policy. | D6 |
+| FR-FILE-6 | `.skn` bundles SHOULD reference transferred resources by content hash or artifact id; replay metadata records what moved without embedding large blobs in JSON events. | D5 |
+| FR-FILE-7 | The implementation MUST emit transfer metrics: bytes, chunks, p50/p95/p99 latency, throughput, retries, queue time, CPU cost, memory copies, and compression/dedup ratio. | D9 |
+
 ---
 
 ## 3. Non-functional requirements
@@ -232,6 +249,7 @@ A native streaming SDK core plus an optional MCP facade.
 | NFR-LAT-4 | ocap revoke | O(1) synchronous, fail-closed at next use | D6 |
 | NFR-LAT-5 | Replay scrub-seek / re-run-from-T | O(nearest snapshot + tail) | D5 |
 | NFR-LAT-6 | Structured observation diff | event-driven (on change/focus), ~5–80 kbps on Tier 0 | D3 |
+| NFR-LAT-7 | Small-file Sandbox↔client transfer | p95 low tens of milliseconds on local/region-near paths; measured and budgeted | D8, D9 |
 
 ### 3.3 Cost (NFR-COST) — D3, D4, D9, D11
 
@@ -241,6 +259,7 @@ A native streaming SDK core plus an optional MCP facade.
 | NFR-COST-2 | The dominant streaming cost (egress/TURN, not codec) MUST be budgeted explicitly: at 100k concurrent 24×7, ≈$4.9M/mo (H.264 office) vs ≈$0.8M/mo (AV1 screen-content) vs tiny (structured) — *all vendor-derived, unverified, gating a first-party measurement plan*. See [09 Economics](09-economics-and-build-vs-buy.md). | D4 |
 | NFR-COST-3 | Idle MUST be treated as the primary cost driver: auto-suspend-to-snapshot, host-memory overcommit/ballooning, billing on sandbox-seconds. | D9 |
 | NFR-COST-4 | macOS and Windows MUST be priced as scarce/heavier premium tiers (macOS ≤2 VMs/host; Windows per-core licensing) and capacity-planned as standing pools. | D1, D10 |
+| NFR-COST-5 | File/artifact transfer MUST be metered separately from action/observation traffic and deduplicated where content-addressed resources repeat across runs. | D5, D9 |
 
 ### 3.4 Security & isolation (NFR-SEC) — D1, D6
 

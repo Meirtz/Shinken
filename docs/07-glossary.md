@@ -14,6 +14,14 @@ The OS-native, structured representation of the on-screen UI: a hierarchy of ele
 
 The versioned protocol plus typed action/observation schema that every agent uses to drive a *Sandbox* (**D2**). The action schema is one canonical tagged-union discriminated by `verb` (~16 verbs), with `target = oneof{ point_px | point_norm | element_ref }` and an explicit *CoordinateSpace* on every observation. It is semver-versioned with capability negotiation at handshake, and exposes **version-pinned bidirectional adapters** as the only model-facing surface (Anthropic `computer_2024xxxx/2025xxxx`, OpenAI `computer_call`, UI-TARS, OSWorld `computer_13`). The ACI is the seam Shinken differentiates on: a *structured-first, pixels-on-demand* observation model rather than screenshot polling. Adapter targets: [Anthropic computer use](https://code.claude.com/docs/en/computer-use), [OpenAI computer-use tool](https://developers.openai.com/api/docs/guides/tools-computer-use).
 
+### Artifact / file transfer
+
+The high-performance data path for moving files between client/operator, Control Plane, and
+Sandbox: task fixtures in; generated files, logs, media, traces, and replay resources out. It is not
+the ACI JSON RPC hot path. Large payloads are binary, chunked, checksummed, resumable, cancellable,
+and backpressured; content-addressed resources can be referenced from `.skn` bundles. Governed by
+*Capability* scopes such as `fs.scope`, persistence, host mounts, and artifact export policy.
+
 ### Action Gateway
 
 The single choke point in the *Control Plane* for session lifecycle, budgets, boundary capabilities, and dispatch (**D9**). Pipeline: tenant-auth → token-bucket / weighted-fair-queue rate-limit → combined budget → *Cedar* capability decision → dispatch. Centralizing this makes auth, rate-limiting, capability state, and replay one auditable surface instead of scattered checks.

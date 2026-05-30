@@ -56,6 +56,7 @@ transport**) once validated.
 | **ACI schema (source of truth)** | **JSON Schema** for wire messages + `.skn` events, in `schema/` | Human-debuggable, fast to iterate, validates the `.skn` log directly; one source generates types. | Migrate hot path to **protobuf + gRPC/bidi** when perf demands (D8); keep JSON `.skn`. |
 | **Transport (host↔guest)** | **WebSocket** carrying the typed event stream | Browser-native for the viewer, simplest cross-language, the event stream *is* the `.skn` log (D5). | **virtio-vsock** + WebRTC dual-channel (D4) in Phase 1. |
 | **SDK / Operator** | **Python** (`sdk/python/`) + thin CLI | The agent/model ecosystem is Python-first; adapters for Anthropic/OpenAI computer-use are easiest here (D2). | Generate **TypeScript** SDK from the same schema (D8); web Operator. |
+| **File transfer** | Explicit artifact/file-transfer API + benchmarks | GUI agents and evals need fast fixture upload and artifact download; base64-over-RPC would distort latency and throughput. | Dedicated binary stream, resumable directory sync, object-store handoff. |
 | **Substrate (Sandbox)** | **Docker** container: Xvfb + a lightweight WM (Openbox/XFCE) + target apps + `shinkend` | Simplest local isolated Linux desktop; mirrors the proven E2B / Anthropic-demo image pattern; runs on the dev machine via Docker. | OSS **`kubernetes-sigs/agent-sandbox`** CRD + Firecracker/QEMU-microvm fork tier (D1) in Phase 1. |
 | **Observation** | **Screenshot-first**: full-screen PNG with coordinate space is the Phase-0 baseline; AT-SPI a11y tree → normalized `Element` diff runs in parallel where available. | Proves a usable GUI-agent loop before optimizing observation cost. | Structured-first optimization, SoM/OmniParser, UIA/AX, CDP for browsers. |
 | **Capabilities** | Minimal: a capability descriptor for the local Sandbox plus boundary grant/deny events logged to `.skn` | Proves the *capability + audit* spine without turning every in-sandbox action into an approval. | Cedar decision + ocap caretaker + OS/TCC entitlement enforcement (D6) in Phase 1. |
@@ -191,6 +192,15 @@ timeline
 - **Acceptance:** record an M1 session; replay re-renders the action timeline + observation states;
   `seq`/`action_id` integrity validated; bundle re-opens after a crash mid-write (append-only).
 - **Realizes:** D5 (`.skn`, event-sourced, the event stream *is* the log).
+
+### M2b — high-performance file transfer / artifacts
+- **Build:** SDK + Guest Runtime primitives for `put_file`, `get_file`, and artifact references,
+  plus benchmarks. Binary payloads must avoid JSON/base64 on hot paths; large files are chunked,
+  checksummed, resumable, cancellable, and backpressured.
+- **Acceptance:** transfer a small fixture file with low local p95 latency; transfer a large artifact
+  without blocking screenshot/action RPC; record content hashes / artifact refs in `.skn`.
+- **Realizes:** D5 (content-addressed resources), D8 (SDK surface), D9 (resource accounting), D6
+  (`fs.scope` / artifact export capability).
 
 ### M3 — a screenshot-based agent completes a task
 - **Build:** the **Operator loop** (provider-agnostic) + **one model adapter** (Anthropic

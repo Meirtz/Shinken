@@ -63,6 +63,8 @@ flowchart LR
 - **Grant real sandbox capabilities.** A Sandbox can be provisioned with network egress,
   credentials, GPU, persistence, privileged installs, clipboard, screenshots, or OS automation
   entitlements.
+- **Move files fast.** Task fixtures, generated artifacts, logs, media, and replay resources need a
+  high-throughput Sandbox↔client transfer path with checksums, backpressure, and profiling.
 - **Replay every run.** The event stream is the replay log: actions, observations, permission
   decisions, and media references become a `.skn` bundle for debugging, eval, and training data.
 - **Scale beyond one laptop.** The local PoC grows into a control plane with warm pools,
@@ -90,6 +92,7 @@ That difference is the product:
   exposes useful structure.
 - **Auditable authority:** sandbox capabilities such as network egress, credentials, GPU,
   persistence, host mounts, and OS automation are explicit, scoped, revocable, and recorded.
+- **Fast artifacts:** file transfer is a profiled data path, not JSON/base64 bolted onto control RPC.
 - **Forkable trajectories:** the same run can be scrubbed, audited, branched, and exported.
 
 ## Client / Server Shape

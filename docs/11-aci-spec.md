@@ -70,6 +70,20 @@ env.close()
 Streaming is the same object: `for ev in env.events(): ...` yields the typed event stream (the
 replay log) live; `env.video()` attaches the on-demand pixel/video channel.
 
+File transfer is also first-class, but it is **not** the same hot RPC channel:
+
+```python
+env.put_file("local/input.csv", "/workspace/input.csv")
+env.put_dir("fixtures/task_001", "/workspace/task")
+env.get_file("/workspace/result.json", "artifacts/result.json")
+artifact = env.artifacts.upload("trace.log")     # content-addressed, checksummed
+env.replay.attach(artifact)                      # referenced from .skn, not copied through JSON
+```
+
+Small transfers should feel synchronous; large transfers are binary, chunked, resumable, and
+backpressured. The ACI event stream records transfer metadata and content hashes, not megabytes of
+base64.
+
 ---
 
 ## 3. Action model (D2)
@@ -173,6 +187,13 @@ run only when it needs a new boundary power (external egress, credential broker,
 persistence, OS entitlement). The controller or policy resolves it, and the decision is recorded as
 a capability/permission event in `.skn`. Ordinary in-sandbox actions do not prompt.
 
+**Artifact / file-transfer channel:** `put_file`, `get_file`, `put_dir`, `get_dir`, `artifact.upload`,
+and `artifact.download` move bytes outside the action/observation hot path. Requirements:
+binary frames or a side channel (not JSON/base64), chunk checksums, resumability, cancellation,
+backpressure, per-session quotas, and p50/p95/p99 latency/throughput metrics. The capability layer
+authorizes boundary scopes (`fs.scope`, host mounts, persistence, credentials); `.skn` records
+content hashes and artifact references.
+
 **Four thin adapters, generated from one IDL:**
 1. **Gym/Gymnasium shim** — `reset()->(obs,info)`, `step()->(obs,reward,terminated,truncated,info)` for RL users.
 2. **MCP server** — model-agnostic tools/resources (never the hot video loop).
@@ -197,6 +218,7 @@ client uses only advertised capabilities. The ACI is semver-versioned; adapters 
 | Observation | screenshot baseline + screen video + focused-app capture + a11y track | structured-first defaults for tree-rich apps, SoM/OmniParser service, multi-OS a11y, hardware NVENC streaming pipeline |
 | Replay | `.skn` event log + state snapshots; qcow2-eval (revert only) | video sidecar, mid-execution branching (fork tier), agent-core determinism |
 | Harness | async Env+Operator core; Gym shim; OSWorld shim; 1 vendor adapter | MCP server, full adapter set, RL gym at scale |
+| File transfer | `put_file/get_file` design + benchmarks; no base64 on hot paths | resumable directory sync, object-store handoff, artifact GC/dedup |
 | API | `connect/observe/act/run/save/restore/close` + handshake | `fork/drive/unlock(capability)/events/video`, cloud `connect(id)` |
 
 This spec is the contract M1–M4 implement against; changes here update the relevant ADR in

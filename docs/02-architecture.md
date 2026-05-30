@@ -17,7 +17,7 @@ The design borrows the clean `Image → Runtime → Transport → Interfaces →
 
 Shinken is four cooperating subsystems plus a pluggable substrate:
 
-- **Control Plane** — orchestration: a **Fleet Manager** (warm pools + fork-on-demand), an **Action Gateway** (the single auth → rate-limit → policy choke point), a **scheduler**, a **replay store**, an **eval service**, plus telemetry, a policy/capability store, WebRTC signaling, and an SFU fan-out layer.
+- **Control Plane** — orchestration: a **Fleet Manager** (warm pools + fork-on-demand), an **Action Gateway** (the single auth → rate-limit → policy choke point), a **scheduler**, a **replay store**, an **artifact/file-transfer service**, an **eval service**, plus telemetry, a policy/capability store, WebRTC signaling, and an SFU fan-out layer.
 - **Sandbox + Guest Runtime** — one isolated guest computer (substrate-pluggable) running the in-guest daemon **`shinkend`**, which executes the Agent-Computer Interface (ACI), produces the structured observation stream, and publishes the optional video track.
 - **Operator** — the client-side adapter that drives a Sandbox for a given agent/model and is the human-takeover seam. The agent loop itself is **provider-agnostic** behind the Operator contract.
 - **Control Panel** — the human web UI: live structured + video view, Sandbox capability configuration, replay/scrub, cross-session search, takeover.
@@ -40,6 +40,7 @@ flowchart TB
     SCH["Scheduler<br/>(routes by OS × GPU × fast-fork)"]
     FM["Fleet Manager<br/>warm pools + fork-on-demand + cold replenish"]
     RS["Replay Store<br/>(.skn bundles, checkpoint DAG)"]
+    ART["Artifact Transfer<br/>(fixtures, outputs, media resources,<br/>checksums, resumable chunks)"]
     EV["Eval Service<br/>(verifier DAG, pass@k / pass^k)"]
     TEL["Telemetry<br/>(OTel-GenAI)"]
     POL["Policy / Capability Store<br/>(Cedar policies + ocap handle registry)"]
@@ -77,6 +78,8 @@ flowchart TB
   SCH --> FM
   FM -->|"provision / fork / reset"| Sub
   GR -->|"events.jsonl stream"| RS
+  GR -->|"binary resources / artifacts"| ART
+  SDK -->|"upload/download artifacts"| ART
   GR -->|"WHIP publish<br/>(media plane)"| SFU
   SIG -. "SDP offer/answer" .- GR
   SIG -. "SDP offer/answer" .- CP
@@ -100,7 +103,7 @@ the guest runtime executes only validated ACI.
 | Lane | Owns | Must not own |
 |---|---|---|
 | **Client side** | SDKs, Operator, model adapters, Control Panel views, optional MCP facade | Direct privileged access to a Sandbox |
-| **Control Server / Control Plane** | Action Gateway, sandbox capability policy, budgets, replay store, Fleet Manager, eval orchestration | In-guest actuation or app-specific UI logic |
+| **Control Server / Control Plane** | Action Gateway, sandbox capability policy, budgets, replay store, artifact/file transfer, Fleet Manager, eval orchestration | In-guest actuation or app-specific UI logic |
 | **Guest server (`shinkend`)** | ACI execution, observation capture, event emission, media publishing | Authorization, tenant policy, secret decisions |
 | **Guest OS / apps** | Desktop state, app processes, a11y/DOM sources, framebuffer | Trust boundary or policy enforcement by itself |
 | **Substrate host** | VM/container lifecycle, isolation, reset/fork, egress proxy attachment | Model-facing API semantics |
@@ -159,6 +162,14 @@ Rate limiting is per-`(tenant, workload, model)` token buckets (Redis + Lua, ato
 
 **Replay Store (D5).** Append-only store of `.skn` bundles: the canonical `events.jsonl` stream, the content-addressed media/snapshot resources, and the immutable **checkpoint DAG**. The same store backs live streaming, scrubbable replay, branch/fork, and trajectory export for RL/SFT. The replay log and the live event stream are **the same canonical events** emitted to two sinks, so "works live, broken on replay" divergence cannot occur (D5).
 
+**Artifact / file-transfer service (D5, D8, D9).** Moves task fixtures, uploaded files, generated
+artifacts, logs, screenshots/videos, and `.skn` resources between clients, the Control Plane, and
+Sandboxes. This is a hot data path, not a convenience wrapper around JSON RPC: binary payloads avoid
+base64 inflation, large transfers are chunked/resumable/checksummed, concurrent transfers have
+backpressure and cancellation, and traffic is isolated from latency-sensitive ACI action/observation
+messages. Content-addressed storage aligns artifacts with `.skn` media/resources; `fs.scope`,
+`persistence`, credentials, and host mounts are enforced through the Capability Manager (D6).
+
 **Eval Service (D7).** Thin orchestration on top of the runtime that inverts OSWorld: a typed **verifier DAG** (not stringly-typed `getattr`), programmatic-primary with a constrained model-verifier fallback, a golden snapshot per task, and `N≥5` CoW-forked replicas producing `pass@k / pass^k` with confidence intervals. It uses readiness probes, not sleeps. It is a *consumer* of the Fleet Manager's fork primitive and the Replay Store's bundle format — eval is the production runtime, layered.
 
 **Telemetry, Policy/Capability Store, Signaling, SFU, Secret broker.** OpenTelemetry-GenAI is the native trace/metering format (one span stream feeds tracing + cost attribution + per-tenant metering). The Policy/Capability Store holds Cedar policies and the live ocap **handle registry** for sandbox capabilities and OS entitlements (D6). WebRTC signaling is WHIP/WHEP. The SFU fans video out encode-once. The Secret broker fronts Vault/KMS so the model never sees plaintext credentials (§5.3, D6).
@@ -207,6 +218,12 @@ Shinken separates concerns into three logical planes. This separation is the arc
 | **Control** | Session lifecycle, provisioning, signaling, permission grant/revoke, capability tokens | gRPC / HTTP to Control Plane; WHIP/WHEP for media signaling | Reliable | Tiny, bursty | D9 |
 | **Event** | Typed actions + structured observations + permission events + decisions — **this stream IS the replay log** | WebRTC **reliable-ordered DataChannel** (SCTP/DTLS); `virtio-vsock` host↔guest | Reliable + ordered | ~20 kbps structured (Tier 0) | D3, D4, D5 |
 | **Media** | On-demand NVENC video track (screen-content-tuned H.264 / AV1) | WebRTC **SRTP media track**, same PeerConnection; fanned out by the SFU | Lossy real-time (NACK/RTX/FEC) | 0 when idle → Mbps when watching | D4 |
+
+A fourth practical data path sits alongside those planes:
+
+| Path | Carries | Transport shape | Reliability | Design rule | Decision |
+|------|---------|-----------------|-------------|-------------|----------|
+| **Artifact / file transfer** | Fixtures, directories, generated files, logs, screenshots/videos, `.skn` resources | Dedicated binary stream, range/chunk endpoint, WebRTC DataChannel stream, vsock, or object-store handoff depending on deployment | Reliable, resumable, checksummed | Never block the low-latency ACI/event path; avoid JSON/base64 for binary payloads | D5, D8, D9 |
 
 The key insight (D4): the **event** plane and the **media** plane ride **one PeerConnection** — one ICE/DTLS connection, one NAT traversal, one set of ports — split into a reliable-ordered DataChannel (actions + a11y/DOM diffs) and an SRTP video track (pixels). A second partial-reliability DataChannel sub-stream carries high-rate lossy telemetry (cursor/scroll), where freshness beats completeness; using separate SCTP streams avoids reliable-mode head-of-line blocking stalling an urgent action ack behind a big tree snapshot.
 

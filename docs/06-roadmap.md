@@ -70,6 +70,9 @@ Per [D1](05-tech-decisions.md), dev/test starts **local, small concurrency**. Th
 - **ACI v0:** the canonical typed tagged-union action schema ([D2](05-tech-decisions.md)), discriminated by `verb`, with `target = oneof{point_px | point_norm | element_ref}` and an explicit `CoordinateSpace` on every observation. Ship *one* model adapter end-to-end — the Anthropic computer-use tool (`computer_2025xxxx` + `bash` + text-editor) — to prove the bidirectional-adapter seam ([D2](05-tech-decisions.md)). The adapter contract is documented at the [Claude computer-use tool reference](https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool).
 - **Observation = screenshot baseline + a11y enhancement** ([D3](05-tech-decisions.md)): full-frame or focused screenshot is the Phase-0 default that every GUI model can use; normalized AT-SPI/CDP a11y trees run in parallel where available and become the structured fast path for tree-rich apps. The browser path uses CDP `Accessibility.getFullAXTree` ([Chrome DevTools Protocol](https://chromedevtools.github.io/devtools-protocol/tot/Accessibility/)).
 - **Basic `.skn` replay** ([D5](05-tech-decisions.md)): write `manifest.json` + an append-only `events.jsonl` (the two-level discriminated envelope, logical-clock `seq` + wall-clock anchor, `action_id` pairing each action to its observation) plus a single snapshot reference. Replay = re-read the event log into a local viewer. No branching yet.
+- **High-performance file transfer / artifacts:** move fixtures into the Sandbox and artifacts out
+  without blocking the ACI action/screenshot path. Phase 0 defines the API and benchmarks; large
+  binary payloads must avoid JSON/base64 hot paths.
 - Transport: host↔guest over **virtio-vsock** (or a local socket for the Docker path), never HTTP polling ([D4](05-tech-decisions.md)) — even at concurrency 1, to lock the contract.
 
 ### Deliverables
@@ -77,6 +80,8 @@ Per [D1](05-tech-decisions.md), dev/test starts **local, small concurrency**. Th
 - `shinkend` daemon (Linux) emitting the event stream.
 - ACI v0 schema (IDL) + a generated Python SDK ([D8](05-tech-decisions.md): one IDL → SDKs) + the Anthropic adapter.
 - `.skn` writer + a minimal CLI replay viewer (scrub by `seq`).
+- File-transfer API design + microbenchmarks for small files, large files, many files, and
+  concurrent Sandboxes.
 - The **a11y-coverage spike harness** (below) and its first dataset.
 
 ### 🔬 SPIKE — a11y-coverage *(the load-bearing assumption)*
