@@ -144,3 +144,32 @@ jobs:
           /tmp/venv/bin/shinken --version
       - if: steps.present.outputs.go == 'false'
         run: echo "sdk/python not present yet — skipping"
+
+  docker:
+    name: Docker sandbox image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: present
+        run: |
+          if [ -f images/linux/Dockerfile ] && [ -f scripts/docker_smoke.py ]; then echo "go=true" >> "$GITHUB_OUTPUT"; else echo "go=false" >> "$GITHUB_OUTPUT"; fi
+      - if: steps.present.outputs.go == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - if: steps.present.outputs.go == 'true'
+        name: build the Linux sandbox image
+        run: docker build -f images/linux/Dockerfile -t shinken/sandbox-linux .
+      - if: steps.present.outputs.go == 'true'
+        name: run the container, then handshake + screenshot off its Xvfb desktop
+        run: |
+          set -euo pipefail
+          pip install -e sdk/python
+          TOKEN=$(openssl rand -hex 16)
+          docker run -d --name shk -p 127.0.0.1:8765:8765 -e SHINKEND_TOKEN="$TOKEN" shinken/sandbox-linux
+          for _ in $(seq 1 60); do nc -z 127.0.0.1 8765 && break; sleep 1; done
+          sleep 3
+          SHK_TOKEN="$TOKEN" python scripts/docker_smoke.py || { docker logs shk; exit 1; }
+          docker rm -f shk
+      - if: steps.present.outputs.go == 'false'
+        run: echo "Docker image or smoke script not present yet — skipping"
