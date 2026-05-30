@@ -22,6 +22,7 @@ from __future__ import annotations
 import os
 import re
 import tempfile
+import time
 from typing import Any
 
 from .client import connect
@@ -62,6 +63,8 @@ class DesktopEnv:
 
     def step(self, action: Any, pause: float = 0.0) -> tuple[dict, float, bool, dict]:
         done = self._dispatch(action)
+        if pause and pause > 0:
+            time.sleep(pause)  # OSWorld pacing: let the UI settle before observing (#162)
         return self._observation(), 0.0, done, {"terminal": self._terminal}
 
     def evaluate(self, checker: Any = None) -> dict:
