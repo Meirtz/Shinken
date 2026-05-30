@@ -114,10 +114,15 @@ class Recorder:
         self._events.append(ev)
         return ev
 
-    def action(self, verb: str, action: dict, action_id: str) -> dict:
+    def action(
+        self, verb: str, action: dict, action_id: str, *, batch_id: str | None = None
+    ) -> dict:
         if self.redact_text and "text" in action:
             action = {**action, "text": "[redacted]"}  # never persist typed secrets
-        return self._emit("action", verb, action, action_id)
+        ev = self._emit("action", verb, action, action_id)
+        if batch_id is not None:
+            ev["batch_id"] = batch_id  # groups actions dispatched as one ordered batch (#73)
+        return ev
 
     def observation(
         self, payload: dict, *, action_id: str | None = None, png: bytes | None = None

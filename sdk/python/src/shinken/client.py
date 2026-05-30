@@ -15,6 +15,7 @@ import shutil
 import tempfile
 import threading
 import time
+import uuid
 from collections import deque
 from dataclasses import dataclass
 from typing import Any
@@ -245,8 +246,11 @@ class AsyncSandbox:
                 )
             raise CapabilityDenied(f"{verb}: {reason}")
 
-    async def act(self, verb: str, target: dict | None = None, **kwargs: Any) -> dict:
-        """Send one typed action and await its ack. Raises on failure."""
+    async def act(
+        self, verb: str, target: dict | None = None, *, _batch_id: str | None = None, **kwargs: Any
+    ) -> dict:
+        """Send one typed action and await its ack. Raises on failure. ``_batch_id`` tags
+        the recorded action event when dispatched as part of a batch (#73)."""
         self._gate(verb)
         action: dict = {"verb": verb}
         if target is not None:
@@ -257,8 +261,48 @@ class AsyncSandbox:
         if not reply.get("ok"):
             raise RuntimeError(reply.get("error", f"action {verb!r} failed"))
         if self._recorder is not None:
-            self._recorder.action(verb, action, call_id)
+            self._recorder.action(verb, action, call_id, batch_id=_batch_id)
         return reply
+
+    async def act_batch(
+        self, actions: list[dict], *, stop_on_error: bool = True, batch_id: str | None = None
+    ) -> dict:
+        """Execute an ordered batch of ACI actions serially (#73).
+
+        Each action is dispatched in order and recorded as its own ``.skn`` event sharing
+        ``batch_id`` (per-action ``action_id`` is preserved for observation pairing).
+        With ``stop_on_error`` (default) the batch halts at the first failing action and
+        returns explicit partial state; otherwise it runs them all. Returns
+        ``{batch_id, completed, stopped_at?, results:[{index, verb, ok, action_id/ack/error}]}``."""
+        bid = batch_id or f"batch-{uuid.uuid4().hex[:8]}"
+        results: list[dict] = []
+        for i, a in enumerate(actions):
+            verb = a.get("verb")
+            target = a.get("target")
+            rest = {k: v for k, v in a.items() if k not in ("verb", "target")}
+            try:
+                if not verb:
+                    raise ValueError("action has no 'verb'")
+                reply = await self.act(verb, target, _batch_id=bid, **rest)
+                results.append(
+                    {
+                        "index": i,
+                        "verb": verb,
+                        "ok": True,
+                        "action_id": reply.get("call_id") or reply.get("cause"),
+                        "ack": reply,
+                    }
+                )
+            except Exception as exc:
+                results.append({"index": i, "verb": verb, "ok": False, "error": str(exc)})
+                if stop_on_error:
+                    return {
+                        "batch_id": bid,
+                        "completed": False,
+                        "stopped_at": i,
+                        "results": results,
+                    }
+        return {"batch_id": bid, "completed": True, "results": results}
 
     async def click(self, target: Any = None, *, x: float | None = None, y: float | None = None):
         return await self.act("click", _target(target, x, y))
@@ -609,6 +653,15 @@ class Sandbox:
 
     def act(self, verb: str, target: dict | None = None, **kwargs: Any) -> dict:
         return self._loop.run(self._inner.act(verb, target, **kwargs))
+
+    def act_batch(
+        self, actions: list[dict], *, stop_on_error: bool = True, batch_id: str | None = None
+    ) -> dict:
+        """Execute an ordered batch of ACI actions serially with per-action replay
+        events (#73). Pairs naturally with the CU adapters, which emit ordered batches."""
+        return self._loop.run(
+            self._inner.act_batch(actions, stop_on_error=stop_on_error, batch_id=batch_id)
+        )
 
     def click(self, target: Any = None, *, x: float | None = None, y: float | None = None):
         return self._loop.run(self._inner.click(target, x=x, y=y))

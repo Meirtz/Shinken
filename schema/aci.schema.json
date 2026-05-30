@@ -103,6 +103,7 @@
       }
     },
     "Verb": { "enum": ["click", "double_click", "right_click", "move", "scroll", "type_text", "key", "screenshot", "start_screencast", "stop_screencast", "wait"] },
+    "ActionBatch": { "type": "object", "additionalProperties": false, "required": ["actions"], "properties": { "batch_id": { "type": "string" }, "stop_on_error": { "type": "boolean", "description": "halt the batch on the first failing action (default true)" }, "actions": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/Action" }, "description": "ordered actions executed serially; each becomes its own .skn event sharing batch_id (#73)" } } },
     "Scope": { "oneOf": [ { "enum": ["screen", "active_window"] }, { "type": "string", "pattern": "^window:(0x[0-9a-fA-F]+|[0-9]+)$" } ], "description": "capture region: screen, active_window, or window:<id> (decimal or 0x-hex)" },
     "Target": {
       "oneOf": [

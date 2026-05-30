@@ -51,6 +51,7 @@
         "kind": { "$ref": "#/$defs/EventKind" },
         "src": { "type": "string", "description": "per-kind subtype, e.g. action:click, observation:a11y_diff, permission:ask" },
         "action_id": { "type": "string", "description": "pairs an action with its resulting observation" },
+        "batch_id": { "type": "string", "description": "groups actions dispatched as one ordered batch (#73)" },
         "snapshot_ref": { "type": "string", "description": "checkpoint id for kind=snapshot_ref" },
         "payload": { "type": "object" }
       }
