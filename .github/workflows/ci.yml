@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  guard:
+    name: No internal/confidential content
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/check-no-internal.sh
+
+  schema:
+    name: Schema sanity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate JSON schemas (if any)
+        run: |
+          shopt -s globstar nullglob
+          files=(schema/**/*.json schema/*.json)
+          if [ ${#files[@]} -eq 0 ]; then echo "no schemas yet — skipping"; exit 0; fi
+          python3 -c "import json,sys;[json.load(open(f)) for f in sys.argv[1:]];print('all schemas parse:', len(sys.argv)-1)" "${files[@]}"
+
+  shinkend:
+    name: shinkend (Rust)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: present
+        run: |
+          if [ -f shinkend/Cargo.toml ]; then echo "exists=true" >> "$GITHUB_OUTPUT"; else echo "exists=false" >> "$GITHUB_OUTPUT"; fi
+      - if: steps.present.outputs.exists == 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - if: steps.present.outputs.exists == 'true'
+        working-directory: shinkend
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test --all
+      - if: steps.present.outputs.exists == 'false'
+        run: echo "shinkend/ not present yet — skipping"
+
+  sdk-python:
+    name: SDK (Python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: present
+        run: |
+          if [ -d sdk/python ]; then echo "exists=true" >> "$GITHUB_OUTPUT"; else echo "exists=false" >> "$GITHUB_OUTPUT"; fi
+      - if: steps.present.outputs.exists == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - if: steps.present.outputs.exists == 'true'
+        working-directory: sdk/python
+        run: |
+          python -m pip install -U pip ruff pytest
+          pip install -e . || true
+          ruff check .
+          pytest -q
+      - if: steps.present.outputs.exists == 'false'
+        run: echo "sdk/python not present yet — skipping"

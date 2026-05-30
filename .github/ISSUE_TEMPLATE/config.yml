@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Design corpus (docs/)
+    url: https://github.com/Meirtz/Shinken/tree/main/docs
+    about: Read the vision, architecture, ADRs (D1–D12), and the Phase-0 plan before filing design issues.
