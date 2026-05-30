@@ -543,6 +543,24 @@ class Sandbox:
     def screenshot(self, scope: str = "screen") -> dict:
         return self._loop.run(self._inner.screenshot(scope))
 
+    def observe(self, structured: bool = False, source: Any = None) -> dict:
+        """Observe the desktop. ``structured=True`` captures the accessibility tree as
+        ACI ``Element``s (full tree + node_count + capture_ms), falling back gracefully
+        with ``available=False`` if AT-SPI is unavailable; otherwise returns a
+        screenshot observation. The structured path is a **co-located / local-reference**
+        capture (AT-SPI on this host); the over-the-wire shinkend path is a follow-up."""
+        if structured:
+            from .a11y import AtspiSource, observe_structured
+
+            return observe_structured(source or AtspiSource())
+        shot = self.screenshot()
+        return {
+            "type": "observation",
+            "tree": "full",
+            "image": {"w": shot["w"], "h": shot["h"], "scope": "screen"},
+            "png": shot["png"],
+        }
+
     def type_text(self, text: str):
         return self._loop.run(self._inner.type_text(text))
 

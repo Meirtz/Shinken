@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from typing import Protocol
 
 #: Roles an agent can typically act on (used for the "actionable" coverage metric).
 ACTIONABLE_ROLES = {
@@ -43,6 +44,7 @@ class A11yNode:
     role: str
     name: str = ""
     bbox: tuple[int, int, int, int] | None = None  # (x, y, w, h)
+    states: list[str] = field(default_factory=list)
     children: list[A11yNode] = field(default_factory=list)
 
 
@@ -52,6 +54,64 @@ def iter_nodes(root: A11yNode) -> Iterable[A11yNode]:
         node = stack.pop()
         yield node
         stack.extend(node.children)
+
+
+def to_elements(root: A11yNode, source: str = "atspi") -> list[dict]:
+    """Flatten a node tree into ACI `Element`s (ref/role/name/states/bbox/source).
+
+    ``ref`` is a stable per-capture id (``e0``, ``e1`` … in walk order); a missing
+    bounding box becomes ``[0, 0, 0, 0]`` (the ACI Element requires a bbox)."""
+    elements: list[dict] = []
+    for i, n in enumerate(iter_nodes(root)):
+        x, y, w, h = n.bbox if n.bbox else (0, 0, 0, 0)
+        el: dict = {
+            "ref": f"e{i}",
+            "role": n.role or "unknown",
+            "bbox": [x, y, w, h],
+            "source": source,
+        }
+        if n.name.strip():
+            el["name"] = n.name
+        if n.states:
+            el["states"] = list(n.states)
+        elements.append(el)
+    return elements
+
+
+class A11ySource(Protocol):
+    """Anything that can produce an accessibility tree (AT-SPI/UIA/AX/CDP backends)."""
+
+    def tree(self) -> A11yNode: ...
+
+
+def observe_structured(src: A11ySource) -> dict:
+    """Capture a structured (a11y) observation: normalized full-tree `Element`s plus
+    metadata. Fails gracefully — if the source is unavailable, returns
+    ``available=False`` with an empty element list rather than raising."""
+    import time
+
+    t0 = time.perf_counter()
+    try:
+        tree = src.tree()
+    except Exception as exc:  # AT-SPI bus / gi missing, etc.
+        return {
+            "type": "observation",
+            "tree": "full",
+            "elements": [],
+            "node_count": 0,
+            "available": False,
+            "error": type(exc).__name__,
+            "capture_ms": round((time.perf_counter() - t0) * 1000, 2),
+        }
+    elements = to_elements(tree)
+    return {
+        "type": "observation",
+        "tree": "full",
+        "elements": elements,
+        "node_count": len(elements),
+        "available": True,
+        "capture_ms": round((time.perf_counter() - t0) * 1000, 2),
+    }
 
 
 def _depth(node: A11yNode, d: int = 1) -> int:
@@ -146,7 +206,9 @@ class AtspiSource:
         return root
 
     def _walk(self, acc) -> A11yNode:
-        node = A11yNode(role=_role(acc), name=acc.get_name() or "", bbox=_bbox(acc))
+        node = A11yNode(
+            role=_role(acc), name=acc.get_name() or "", bbox=_bbox(acc), states=_states(acc)
+        )
         if self._count >= self.max_nodes:
             return node
         for i in range(acc.get_child_count()):
@@ -165,6 +227,25 @@ def _role(acc) -> str:
         return acc.get_role_name() or "unknown"
     except Exception:
         return "unknown"
+
+
+def _states(acc) -> list[str]:
+    """A few agent-relevant states from the AT-SPI state set (best-effort)."""
+    try:
+        ss = acc.get_state_set()
+        wanted = ("enabled", "focusable", "focused", "selected", "checked", "showing", "editable")
+        return [s for s in wanted if ss.contains(_state_const(s))]
+    except Exception:
+        return []
+
+
+def _state_const(name: str):
+    import gi
+
+    gi.require_version("Atspi", "2.0")
+    from gi.repository import Atspi  # type: ignore
+
+    return getattr(Atspi.StateType, name.upper())
 
 
 def _bbox(acc) -> tuple[int, int, int, int] | None:
