@@ -17,7 +17,7 @@ jobs:
     name: No internal/confidential content
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - run: bash scripts/check-no-internal.sh --self-test
       - run: bash scripts/check-no-internal.sh
 
@@ -25,7 +25,7 @@ jobs:
     name: Schema sanity
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Validate JSON schemas (if any)
         run: |
           shopt -s globstar nullglob
@@ -37,7 +37,7 @@ jobs:
     name: shinkend (Rust)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - id: present
         run: |
           if [ -f shinkend/Cargo.toml ]; then echo "exists=true" >> "$GITHUB_OUTPUT"; else echo "exists=false" >> "$GITHUB_OUTPUT"; fi
@@ -58,7 +58,7 @@ jobs:
     name: SDK (Python)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - id: present
         run: |
           if [ -d sdk/python ]; then echo "exists=true" >> "$GITHUB_OUTPUT"; else echo "exists=false" >> "$GITHUB_OUTPUT"; fi
@@ -80,7 +80,7 @@ jobs:
     name: Linux integration (Xvfb)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - id: present
         run: |
           if [ -f shinkend/Cargo.toml ] && [ -f scripts/m1_smoke.py ]; then echo "go=true" >> "$GITHUB_OUTPUT"; else echo "go=false" >> "$GITHUB_OUTPUT"; fi
@@ -132,7 +132,7 @@ jobs:
     name: SDK wheel install
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - id: present
         run: |
           if [ -f sdk/python/pyproject.toml ]; then echo "go=true" >> "$GITHUB_OUTPUT"; else echo "go=false" >> "$GITHUB_OUTPUT"; fi
@@ -165,7 +165,7 @@ jobs:
     name: Docker sandbox image
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - id: present
         run: |
           if [ -f images/linux/Dockerfile ] && [ -f scripts/docker_smoke.py ]; then echo "go=true" >> "$GITHUB_OUTPUT"; else echo "go=false" >> "$GITHUB_OUTPUT"; fi
