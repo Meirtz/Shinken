@@ -55,7 +55,7 @@
         "payload": { "type": "object" }
       }
     },
-    "EventKind": { "enum": ["action", "observation", "decision", "permission", "marker", "snapshot_ref", "meta"] }
+    "EventKind": { "enum": ["action", "observation", "decision", "permission", "marker", "snapshot_ref", "file_transfer", "meta"] }
   },
   "oneOf": [
     { "$ref": "#/$defs/Manifest" },

@@ -11,6 +11,8 @@ import asyncio
 import base64
 import contextlib
 import json
+import shutil
+import tempfile
 import threading
 import time
 from collections import deque
@@ -19,7 +21,8 @@ from typing import Any
 
 from websockets.asyncio.client import connect as _ws_connect
 
-from .gateway import CapabilityDenied, check_action
+from .artifacts import LocalArtifactStore
+from .gateway import CapabilityDenied, check_action, check_file_transfer
 from .skn import DEFAULT_CAPABILITIES, Recorder
 
 __all__ = ["connect", "aconnect", "Sandbox", "AsyncSandbox", "Capabilities"]
@@ -96,11 +99,18 @@ class AsyncSandbox:
         redact_media: bool = False,
         redact_text: bool = False,
         enforce_capabilities: bool = False,
+        artifact_root: str | None = None,
     ) -> None:
         self._ws = ws
         self.capabilities = capabilities
         self.platform_name = platform
         self._seq = 0
+        # File/artifact transfer (#85). The M0 transport is a co-located reference store
+        # (a directory standing in for the sandbox filesystem); a per-session temp dir is
+        # created lazily when no explicit root is given. Over-the-wire transfer is later.
+        self._artifact_root = artifact_root
+        self._artifacts: LocalArtifactStore | None = None
+        self._artifact_tmp: Any = None
         # The session capability envelope (what the Sandbox may do) — reference
         # semantics, recorded into .skn; distinct from the ACI `capabilities` above.
         self.sandbox_capabilities = {**DEFAULT_CAPABILITIES, **(sandbox_capabilities or {})}
@@ -358,6 +368,57 @@ class AsyncSandbox:
             raise RuntimeError("session is not recording; reconnect with record=True")
         return self._recorder.save(path)
 
+    def _artifact_store(self) -> LocalArtifactStore:
+        if self._artifacts is None:
+            root = self._artifact_root
+            if root is None:
+                self._artifact_tmp = tempfile.mkdtemp(prefix="shinken-artifacts-")
+                root = self._artifact_tmp
+            self._artifacts = LocalArtifactStore(root)
+        return self._artifacts
+
+    def _gate_file(self, direction: str, sandbox_path: str) -> str:
+        """Capability gate for file transfer (#85). When enforcing, deny if ``fs_scope``
+        is not granted (recording the decision); returns the effective scope string."""
+        scope = self.sandbox_capabilities.get("fs_scope", "session")
+        if self._enforce:
+            allowed, cap, reason = check_file_transfer(direction, self.sandbox_capabilities)
+            if not allowed:
+                if self._recorder is not None:
+                    self._recorder.permission(
+                        {"decision": "deny", "capability": cap, "verb": direction, "reason": reason}
+                    )
+                raise CapabilityDenied(f"{direction}: {reason}")
+        return str(scope)
+
+    def put_file(self, local_path: str, sandbox_path: str, *, archive: bool = False) -> dict:
+        """Copy a host file into the sandbox, hash it, and record the transfer (#85).
+
+        Returns the artifact ref (path / sha256 / size / scope / direction). With
+        ``archive=True`` the bytes are content-addressed into the `.skn` media store so a
+        replay can reproduce the file; by default only the ref is recorded."""
+        scope = self._gate_file("put_file", sandbox_path)
+        ref = self._artifact_store().put(local_path, sandbox_path, scope=scope)
+        if self._recorder is not None:
+            data = self._artifact_store().read_bytes(sandbox_path) if archive else None
+            self._recorder.file_transfer(ref.to_event(), data=data)
+        return ref.to_event()
+
+    def get_file(
+        self, sandbox_path: str, local_path: str, *, expect_sha256: str | None = None
+    ) -> dict:
+        """Copy a file out of the sandbox to the host, verifying its content hash (#85).
+
+        Raises :class:`~shinken.artifacts.HashMismatch` if ``expect_sha256`` is given and
+        the fetched content does not match. Records the transfer when recording."""
+        scope = self._gate_file("get_file", sandbox_path)
+        ref = self._artifact_store().get(
+            sandbox_path, local_path, expect_sha256=expect_sha256, scope=scope
+        )
+        if self._recorder is not None:
+            self._recorder.file_transfer(ref.to_event())
+        return ref.to_event()
+
     async def close(self) -> None:
         if self._reader is not None:
             self._reader.cancel()
@@ -365,6 +426,10 @@ class AsyncSandbox:
                 await self._reader
         await self._ws.close()
         self._fail_pending(ConnectionError("session closed"))
+        if self._artifact_tmp is not None:  # clean the per-session temp store, if we made one
+            with contextlib.suppress(Exception):
+                shutil.rmtree(self._artifact_tmp, ignore_errors=True)
+            self._artifact_tmp = None
 
 
 async def aconnect(
@@ -375,6 +440,7 @@ async def aconnect(
     redact_media: bool = False,
     redact_text: bool = False,
     enforce_capabilities: bool = False,
+    artifact_root: str | None = None,
 ) -> AsyncSandbox:
     """Open an async session and complete the ACI handshake."""
     ws = await _ws_connect(_to_uri(addr))
@@ -397,6 +463,7 @@ async def aconnect(
         redact_media,
         redact_text,
         enforce_capabilities,
+        artifact_root,
     )
     sandbox._start_reader()  # the reader owns recv() from here on
     return sandbox
@@ -616,6 +683,16 @@ class Sandbox:
     def save_replay(self, path: str) -> str:
         return self._inner.save_replay(path)
 
+    def put_file(self, local_path: str, sandbox_path: str, *, archive: bool = False) -> dict:
+        """Upload a host file into the sandbox; return its content-addressed ref (#85)."""
+        return self._inner.put_file(local_path, sandbox_path, archive=archive)
+
+    def get_file(
+        self, sandbox_path: str, local_path: str, *, expect_sha256: str | None = None
+    ) -> dict:
+        """Download a sandbox file to the host, verifying its content hash (#85)."""
+        return self._inner.get_file(sandbox_path, local_path, expect_sha256=expect_sha256)
+
     def close(self) -> None:
         if self._closed:
             return
@@ -639,6 +716,7 @@ def connect(
     redact_media: bool = False,
     redact_text: bool = False,
     enforce_capabilities: bool = False,
+    artifact_root: str | None = None,
 ) -> Sandbox:
     """Connect to a running ``shinkend`` and complete the ACI handshake (blocking).
 
@@ -658,6 +736,7 @@ def connect(
                 redact_media=redact_media,
                 redact_text=redact_text,
                 enforce_capabilities=enforce_capabilities,
+                artifact_root=artifact_root,
             )
         )
     except Exception:

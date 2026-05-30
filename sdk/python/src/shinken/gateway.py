@@ -26,8 +26,29 @@ VERB_CAPABILITY: dict[str, str | None] = {
 }
 
 
+#: ``fs_scope`` values that mean "no filesystem access is granted".
+_NO_FS_SCOPE = {None, "", "none", "false", False}
+
+
 class CapabilityDenied(RuntimeError):
     """Raised when the gateway denies an action because its capability isn't granted."""
+
+
+def check_file_transfer(direction: str, capabilities: dict) -> tuple[bool, str, str]:
+    """Decide whether a file transfer (#85) is permitted by the capability envelope.
+
+    File transfer gates on ``fs_scope`` (a scope *string* such as ``"session"``, not a
+    boolean); ``none``/empty/false means no filesystem access. Returns
+    ``(allowed, "fs_scope", reason)``. Path containment (no ``..`` / absolute escape) is
+    enforced separately and unconditionally by the artifact store."""
+    scope = capabilities.get("fs_scope")
+    allowed = scope not in _NO_FS_SCOPE
+    reason = (
+        f"{direction} permitted within fs_scope '{scope}'"
+        if allowed
+        else "capability 'fs_scope' not granted"
+    )
+    return (allowed, "fs_scope", reason)
 
 
 def check_action(verb: str, capabilities: dict) -> tuple[bool, str | None, str]:

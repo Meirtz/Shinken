@@ -150,6 +150,19 @@ class Recorder:
     def marker(self, name: str) -> dict:
         return self._emit("marker", name, {})
 
+    def file_transfer(self, ref: dict, data: bytes | None = None) -> dict:
+        """Record a file transfer (#85) by content hash/path/scope — never inlining the
+        bytes into the event. When ``data`` is supplied (and media isn't redacted) the
+        bytes are content-addressed into ``media/<sha256>`` so a replay can reproduce the
+        artifact; otherwise only the ref is kept (the default — large payloads stay out
+        of the bundle)."""
+        payload = dict(ref)
+        if data is not None and not self.redact_media:
+            sha = ref.get("sha256") or hashlib.sha256(data).hexdigest()
+            self._media[sha] = data
+            payload["stored"] = True
+        return self._emit("file_transfer", ref.get("direction", "put"), payload)
+
     def manifest(self) -> dict:
         return {
             "skn_version": SKN_VERSION,
@@ -219,6 +232,13 @@ class Replay:
     def media(self, sha: str) -> bytes:
         with zipfile.ZipFile(self._path) as z:
             return z.read(f"media/{sha}")
+
+    def media_keys(self) -> list[str]:
+        """Content hashes of every blob in the bundle's ``media/`` store (screenshots,
+        archived artifacts) — without reading their bytes."""
+        with zipfile.ZipFile(self._path) as z:
+            names = [n for n in z.namelist() if n.startswith("media/") and n != "media/"]
+        return sorted(n[len("media/") :] for n in names)
 
     def validate(self) -> None:
         """Schema-validate the manifest + events and check action/observation pairing
