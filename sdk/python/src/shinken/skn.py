@@ -143,6 +143,11 @@ class Recorder:
         Reference semantics for replay/audit — not enforcement (#83)."""
         return self._emit("meta", "capability_envelope", {"capabilities": self.capabilities})
 
+    def meta(self, subtype: str, payload: dict) -> dict:
+        """Record arbitrary run metadata as a ``meta`` event — e.g. a CU adapter's
+        identity / tool version / coordinate space (#75/#76). Reference semantics."""
+        return self._emit("meta", subtype, dict(payload))
+
     def permission(self, payload: dict) -> dict:
         """Record a boundary decision (grant / deny / narrow) as a permission event."""
         return self._emit("permission", payload.get("decision", "ask"), payload)
