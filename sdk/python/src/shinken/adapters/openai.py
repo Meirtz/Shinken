@@ -73,9 +73,10 @@ class OpenAIComputerUseAdapter:
             return {"verb": "key", "keys": "+".join(str(k).lower() for k in keys)}
         if t == "scroll":
             act: dict = {"verb": "scroll", "target": _xy(a)}
-            if a.get("scroll_x"):
+            # preserve an explicit zero delta (key presence, not truthiness) — #146
+            if "scroll_x" in a:
                 act["dx"] = a["scroll_x"]
-            if a.get("scroll_y"):
+            if "scroll_y" in a:
                 act["dy"] = a["scroll_y"]
             return act
         if t == "screenshot":

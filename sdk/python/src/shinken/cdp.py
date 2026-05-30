@@ -188,11 +188,23 @@ class CdpSource:
         return chosen[0]["webSocketDebuggerUrl"]
 
     def _call(self, ws, method: str, params: dict | None = None) -> dict:
+        import time as _time
+
+        from websockets.exceptions import ConnectionClosed
+
         self._id += 1
         call_id = self._id
         ws.send(json.dumps({"id": call_id, "method": method, "params": params or {}}))
+        deadline = _time.monotonic() + self.timeout
         while True:  # skip CDP events (no matching id) until our response arrives
-            msg = json.loads(ws.recv())
+            remaining = deadline - _time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(f"CDP {method} timed out after {self.timeout}s")
+            try:
+                raw = ws.recv(timeout=remaining)
+            except ConnectionClosed as exc:  # dead/half-open debugger socket — fail fast
+                raise RuntimeError(f"CDP websocket closed during {method}") from exc
+            msg = json.loads(raw)
             if msg.get("id") != call_id:
                 continue
             if "error" in msg:

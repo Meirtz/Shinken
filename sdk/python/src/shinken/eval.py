@@ -138,7 +138,7 @@ def run_eval(
     os.makedirs(out_dir, exist_ok=True)
     results: list[RunResult] = []
     for i in range(n):
-        env = connect_factory()
+        env = None  # created inside the try so a connect failure is a per-replica error (#147)
         err: str | None = None
         passed = False
         steps = 0
@@ -147,6 +147,7 @@ def run_eval(
         t0 = time.perf_counter()
         wall = 0.0
         try:
+            env = connect_factory()
             if task.setup is not None:
                 task.setup(env)
             task.run(env)
@@ -159,12 +160,13 @@ def run_eval(
         except SetupError as exc:
             wall = time.perf_counter() - t0
             err = f"setup: {exc}"
-        except Exception as exc:  # harness/run error — distinct from a task failure
+        except Exception as exc:  # connect/harness/run error — distinct from a task failure
             wall = time.perf_counter() - t0
             err = f"error: {exc}"
         finally:
-            with contextlib.suppress(Exception):
-                env.close()
+            if env is not None:
+                with contextlib.suppress(Exception):
+                    env.close()
         results.append(RunResult(i, passed, steps, wall, bundle, receipt, err))
 
     n_passed = sum(1 for r in results if r.passed)
