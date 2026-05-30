@@ -110,8 +110,6 @@ Modern per-OS capture has converged on compositor-backed APIs that can grab a si
 - [Zero copy pipeline on Nvidia (dmabuf/GPU-surface zero-copy to NVENC) - GStreame…](https://discourse.gstreamer.org/t/zero-copy-pipeline-on-nvidia/4856)
 - [m1k1o/neko GitHub repository (X11 ximagesrc to GStreamer to WebRTC, NVENC, shar…](https://github.com/m1k1o/neko)
 - [neko documentation - capture configuration (GStreamer pipelines, ABR qualities,…](https://neko.m1k1o.net/docs/v3/configuration/capture)
-- [trycua/cua in-sandbox execution layer reference (cua-driver per-window screenca…](file:///path/to/shinken/scratch/research2/ref-trycua-cua-in-sandbox-execution-layer-computer-server-c.json)
-- [m1k1o/neko reference (capture/streaming/ABR analysis for Shinken) - local resea…](file:///path/to/shinken/scratch/research2/ref-m1k1o-neko.json)
 
 ## An efficient, scientific, cross-OS REPLAY architecture for Shinken (the layered .skn model: event-log + periodic STATE snapshots + on-demand VIDEO sidecar, with content-addressed/delta/fMP4 storage and O(nearest-snapshot) seek) PLUS a separate qcow2-backed deterministic-eval-VM design for OSWorld-style evaluation in which agent-trajectory replay is OPTIONAL because snapshot-revert alone gives reproducibility.
 

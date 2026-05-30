@@ -18,6 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - run: bash scripts/check-no-internal.sh --self-test
       - run: bash scripts/check-no-internal.sh
 
   schema:
