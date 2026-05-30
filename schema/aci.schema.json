@@ -76,12 +76,14 @@
       "properties": {
         "type": { "const": "observation" },
         "obs_id": { "type": "string" },
-        "cause": { "type": "string", "description": "action call_id, or 'push'" },
+        "cause": { "type": "string", "description": "action call_id; omitted on server-pushed stream frames" },
+        "stream": { "type": "string", "description": "screencast stream id (set on server-pushed frames)" },
+        "seq": { "type": "integer", "minimum": 0, "description": "monotonic frame index within a stream" },
         "display": { "$ref": "#/$defs/CoordinateSpace" },
         "tree": { "enum": ["full", "diff"] },
         "elements": { "type": "array", "items": { "$ref": "#/$defs/Element" } },
         "delta": { "type": "object", "properties": { "added": { "type": "array", "items": { "$ref": "#/$defs/Element" } }, "removed": { "type": "array", "items": { "type": "string" } }, "changed": { "type": "array", "items": { "$ref": "#/$defs/Element" } } } },
-        "image": { "type": "object", "required": ["ref", "w", "h"], "properties": { "ref": { "type": "string" }, "w": { "type": "integer" }, "h": { "type": "integer" }, "scope": { "enum": ["screen", "window", "region"] } } }
+        "image": { "type": "object", "required": ["ref", "w", "h"], "properties": { "ref": { "type": "string" }, "w": { "type": "integer" }, "h": { "type": "integer" }, "scope": { "$ref": "#/$defs/Scope" } } }
       }
     },
     "Action": {
@@ -95,10 +97,13 @@
         "dx": { "type": "number" },
         "dy": { "type": "number" },
         "ms": { "type": "integer", "minimum": 0 },
-        "scope": { "enum": ["screen", "window", "region"] }
+        "scope": { "$ref": "#/$defs/Scope" },
+        "fps": { "type": "number", "exclusiveMinimum": 0, "description": "start_screencast target frame rate (frames/sec)" },
+        "max_long_edge": { "type": "integer", "minimum": 1, "description": "downscale cap (px) for screencast/screenshot frames" }
       }
     },
-    "Verb": { "enum": ["click", "double_click", "right_click", "move", "scroll", "type_text", "key", "screenshot", "wait"] },
+    "Verb": { "enum": ["click", "double_click", "right_click", "move", "scroll", "type_text", "key", "screenshot", "start_screencast", "stop_screencast", "wait"] },
+    "Scope": { "oneOf": [ { "enum": ["screen", "active_window"] }, { "type": "string", "pattern": "^window:(0x[0-9a-fA-F]+|[0-9]+)$" } ], "description": "capture region: screen, active_window, or window:<id> (decimal or 0x-hex)" },
     "Target": {
       "oneOf": [
         { "type": "object", "additionalProperties": false, "required": ["kind", "x", "y"], "properties": { "kind": { "const": "point_px" }, "x": { "type": "number" }, "y": { "type": "number" } } },
@@ -131,7 +136,7 @@
         "dpr": { "type": "number", "default": 1 }
       }
     },
-    "ObservationType": { "enum": ["a11y", "screenshot", "video", "som"] },
+    "ObservationType": { "enum": ["a11y", "screenshot", "screencast", "video", "som"] },
     "Platform": { "enum": ["linux", "windows", "macos"] }
   }
 }

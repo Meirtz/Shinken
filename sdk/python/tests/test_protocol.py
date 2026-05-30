@@ -26,10 +26,35 @@ from shinken import protocol
             "server": {"name": "shinkend", "version": "0.0.0", "platform": "linux"},
             "capabilities": {
                 "schema_version": 0,
-                "verbs": ["click"],
+                "verbs": ["click", "start_screencast", "stop_screencast"],
                 "targets": ["element_ref"],
-                "observation_types": ["a11y"],
+                "observation_types": ["a11y", "screencast"],
             },
+        },
+        # screencast wire vocabulary (must match shinkend/SDK; see #56)
+        {
+            "type": "action",
+            "call_id": "sc1",
+            "action": {"verb": "start_screencast", "fps": 10, "max_long_edge": 640},
+        },
+        {"type": "action", "call_id": "sc2", "action": {"verb": "stop_screencast"}},
+        {
+            "type": "action",
+            "call_id": "c",
+            "action": {"verb": "screenshot", "scope": "active_window"},
+        },
+        {
+            "type": "action",
+            "call_id": "c",
+            "action": {"verb": "screenshot", "scope": "window:0x1a"},
+        },
+        # a server-pushed screencast frame carries stream + seq + a scoped image
+        {
+            "type": "observation",
+            "obs_id": "sc1-0",
+            "stream": "sc1",
+            "seq": 0,
+            "image": {"ref": "abc", "w": 640, "h": 400, "scope": "screen"},
         },
     ],
 )
@@ -43,6 +68,16 @@ def test_valid_messages_pass_schema(message):
         {"type": "hello"},  # missing v + client
         {"type": "action", "call_id": "c", "action": {"verb": "teleport"}},  # bad verb
         {"type": "nonsense"},  # unknown discriminator
+        {  # bad window id
+            "type": "action",
+            "call_id": "c",
+            "action": {"verb": "screenshot", "scope": "window:nope"},
+        },
+        {  # unsupported scope (region not implemented)
+            "type": "action",
+            "call_id": "c",
+            "action": {"verb": "screenshot", "scope": "region"},
+        },
     ],
 )
 def test_invalid_messages_fail_schema(message):
