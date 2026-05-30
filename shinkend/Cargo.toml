@@ -1,0 +1,24 @@
+[package]
+name = "shinkend"
+version = "0.0.0"
+edition = "2021"
+description = "Shinken Guest Runtime — the in-Sandbox daemon that executes the ACI and emits the event stream."
+license = "Apache-2.0"
+repository = "https://github.com/Meirtz/Shinken"
+publish = false
+
+[[bin]]
+name = "shinkend"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "signal"] }
+tokio-tungstenite = "0.21"
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+
+[profile.release]
+strip = true
+lto = true

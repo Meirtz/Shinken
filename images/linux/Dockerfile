@@ -1,0 +1,33 @@
+# Shinken Linux Sandbox image (M0 skeleton).
+#
+# A minimal headless Linux desktop (Xvfb + Openbox) running a few GUI apps, with
+# the shinkend Guest Runtime built and launched on the ACI WebSocket port. This is
+# the proven OSWorld/E2B-style stack; the structured-first observation + action
+# executor backends land in M1 (#4).
+#
+# Build (from repo root):  docker build -f images/linux/Dockerfile -t shinken/sandbox-linux .
+# Run:                     docker run --rm -p 8765:8765 shinken/sandbox-linux
+
+# --- build shinkend ---
+FROM rust:1-slim AS build
+WORKDIR /src
+COPY shinkend/ ./shinkend/
+RUN cargo build --release --manifest-path shinkend/Cargo.toml
+
+# --- runtime: headless Linux desktop + shinkend ---
+FROM debian:stable-slim
+ENV DEBIAN_FRONTEND=noninteractive DISPLAY=:0
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        xvfb x11-utils openbox xdotool x11-apps \
+        at-spi2-core dbus-x11 \
+        xterm \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=build /src/shinkend/target/release/shinkend /usr/local/bin/shinkend
+COPY images/linux/start.sh /usr/local/bin/start.sh
+RUN chmod +x /usr/local/bin/start.sh
+
+EXPOSE 8765
+ENV SHINKEND_ADDR=0.0.0.0:8765
+CMD ["/usr/local/bin/start.sh"]

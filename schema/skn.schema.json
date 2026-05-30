@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shinken.dev/schema/skn/v0",
+  "title": "Shinken .skn v0 — replay bundle",
+  "description": "The .skn replay/trajectory format v0. A bundle is a directory or zip: manifest.json + events.jsonl (one Event per line) + media/<sha256>. The event stream IS the live stream and the replay log. See docs/05-tech-decisions.md (D5) and docs/10-phase0-plan.md.",
+  "$defs": {
+    "Manifest": {
+      "type": "object", "additionalProperties": false,
+      "required": ["skn_version", "session_id", "run_id", "t0_wall", "platform"],
+      "properties": {
+        "skn_version": { "type": "integer", "const": 0 },
+        "session_id": { "type": "string" },
+        "run_id": { "type": "string" },
+        "t0_wall": { "type": "string", "description": "ISO-8601 wall-clock anchor" },
+        "t0_mono": { "type": "number", "description": "monotonic anchor (seconds)" },
+        "platform": { "enum": ["linux", "windows", "macos"] },
+        "aci_version": { "type": "integer" },
+        "channels": { "type": "array", "items": { "$ref": "#/$defs/EventKind" } },
+        "title": { "type": "string" }
+      }
+    },
+    "Event": {
+      "type": "object", "additionalProperties": false,
+      "required": ["seq", "dt", "kind", "src", "payload"],
+      "properties": {
+        "seq": { "type": "integer", "minimum": 0, "description": "monotonic logical clock" },
+        "dt": { "type": "number", "description": "seconds since t0_mono" },
+        "kind": { "$ref": "#/$defs/EventKind" },
+        "src": { "type": "string", "description": "per-kind subtype, e.g. action:click, observation:a11y_diff, permission:ask" },
+        "action_id": { "type": "string", "description": "pairs an action with its resulting observation" },
+        "snapshot_ref": { "type": "string", "description": "checkpoint id for kind=snapshot_ref" },
+        "payload": { "type": "object" }
+      }
+    },
+    "EventKind": { "enum": ["action", "observation", "decision", "permission", "marker", "snapshot_ref", "meta"] }
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/Manifest" },
+    { "$ref": "#/$defs/Event" }
+  ]
+}

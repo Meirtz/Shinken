@@ -71,4 +71,30 @@ landscape.
   open questions, and sources.
 
 Next: de-risking spikes (a11y coverage, CoW-fork density, dual-channel streaming latency) and a
-Phase-0 local PoC — see [docs/06-roadmap.md](docs/06-roadmap.md).
+Phase-0 local PoC — see [docs/06-roadmap.md](docs/06-roadmap.md) and the
+[Phase-0 plan](docs/10-phase0-plan.md). Implementation tracked under the
+[**Phase 0** milestone](https://github.com/Meirtz/Shinken/milestone/1).
+
+## Build & run (M0)
+
+Today M0 implements the **ACI v0 handshake**: the Rust Guest Runtime (`shinkend`) and the Python
+SDK negotiate capabilities over a WebSocket. Actions, observation, and replay follow in M1+.
+
+```bash
+# 1) run the Guest Runtime
+cargo run --manifest-path shinkend/Cargo.toml          # ws://127.0.0.1:8765
+
+# 2) drive it from Python
+cd sdk/python && pip install -e ".[dev]"
+shinken connect                                        # prints platform, rtt, caps
+```
+
+```python
+import shinken
+env = shinken.connect()
+print(env.platform, env.screen_size(), env.capabilities.verbs)
+env.close()
+```
+
+Code layout: `schema/` (ACI + `.skn` JSON Schemas — source of truth) · `shinkend/` (Rust runtime) ·
+`sdk/python/` (SDK + Operator) · `images/linux/` (Sandbox image) · `spikes/` · `eval/`.

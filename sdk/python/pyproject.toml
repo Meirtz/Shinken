@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "shinken"
+version = "0.0.0"
+description = "AI-native sandbox runtime for computer-use agents — Python SDK"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+authors = [{ name = "The Shinken Authors" }]
+keywords = ["computer-use", "agent", "sandbox", "gui-agent", "runtime"]
+dependencies = ["websockets>=13"]
+
+[project.urls]
+Homepage = "https://github.com/Meirtz/Shinken"
+Source = "https://github.com/Meirtz/Shinken"
+
+[project.optional-dependencies]
+dev = ["ruff>=0.6", "pytest>=8", "jsonschema>=4"]
+
+[project.scripts]
+shinken = "shinken.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/shinken"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
