@@ -19,10 +19,13 @@ left to the eval layer (M4) — ``DONE``/``FAIL`` sentinels set ``done``.
 
 from __future__ import annotations
 
+import os
 import re
+import tempfile
 from typing import Any
 
 from .client import connect
+from .skn import Replay
 
 _PYAUTOGUI_PATTERNS = [
     (re.compile(r"(?:pyautogui\.)?moveTo\(\s*(\d+)\s*,\s*(\d+)"), "move"),
@@ -40,22 +43,39 @@ class DesktopEnv:
         address: str = "127.0.0.1:8765",
         observation_type: str = "screenshot",
         action_space: str = "pyautogui",
+        record: bool = False,
     ):
         self.address = address
         self.observation_type = observation_type
         self.action_space = action_space
+        self.record = record
         self._env: Any = None
         self._instruction = ""
+        self._terminal: str | None = None  # "DONE" / "FAIL" once the agent terminates
 
     def reset(self, task_config: dict | None = None) -> dict:
         if self._env is None:
-            self._env = connect(self.address)
+            self._env = connect(self.address, record=self.record)
         self._instruction = (task_config or {}).get("instruction", "")
+        self._terminal = None
         return self._observation()
 
     def step(self, action: Any, pause: float = 0.0) -> tuple[dict, float, bool, dict]:
         done = self._dispatch(action)
-        return self._observation(), 0.0, done, {}
+        return self._observation(), 0.0, done, {"terminal": self._terminal}
+
+    def evaluate(self, checker: Any = None) -> dict:
+        """Return the terminal evaluator result for the episode. ``passed`` requires a
+        ``DONE`` terminal and, if a ``checker(env) -> bool`` is given, that it holds —
+        e.g. a verifier over the recorded `.skn` trace. Mirrors OSWorld's final score."""
+        ok = self._terminal == "DONE"
+        if ok and checker is not None:
+            ok = bool(checker(self))
+        return {"terminal": self._terminal, "passed": ok, "score": 1.0 if ok else 0.0}
+
+    def save_replay(self, path: str) -> str:
+        """Write the session's `.skn` replay (requires ``record=True``)."""
+        return self._env.save_replay(path)
 
     def close(self) -> None:
         if self._env is not None:
@@ -78,6 +98,7 @@ class DesktopEnv:
         if isinstance(action, str):
             s = action.strip()
             if s in ("DONE", "FAIL"):
+                self._terminal = s
                 return True
             if s == "WAIT":
                 self._env.act("wait")
@@ -90,6 +111,7 @@ class DesktopEnv:
     def _computer13(self, a: dict) -> bool:
         t = str(a.get("action_type", "")).upper()
         if t in ("DONE", "FAIL"):
+            self._terminal = t
             return True
         if t == "WAIT":
             self._env.act("wait")
@@ -159,3 +181,59 @@ class DesktopEnv:
         if not executed:
             raise ValueError(f"no supported pyautogui call found in: {code!r}")
         return False
+
+
+def _smoke_checker(bundle: str):
+    """Verify the first-party smoke trajectory from its `.skn`: a click, the typed
+    text, and an Enter keypress all present in the recorded action stream."""
+
+    def check(_env: Any) -> bool:
+        rp = Replay.load(bundle)
+        actions = [e for e in rp.events if e["kind"] == "action"]
+        clicked = any(a["src"] == "click" for a in actions)
+        typed = any(
+            a["src"] == "type_text" and "hello shinken" in (a["payload"].get("text") or "")
+            for a in actions
+        )
+        pressed = any(a["src"] == "key" and a["payload"].get("keys") == "enter" for a in actions)
+        return clicked and typed and pressed
+
+    return check
+
+
+def osworld_smoke(address: str = "127.0.0.1:8765", record: bool = True) -> dict:
+    """First-party minimal **public-OSWorld-style** smoke (no private assets / harness).
+
+    Drives a short trajectory mixing the two public action spaces — a ``computer_13``
+    CLICK, a ``pyautogui`` typewrite, a ``PRESS`` — through :class:`DesktopEnv`,
+    terminates with ``DONE``, and evaluates from the recorded `.skn` trace. Returns the
+    evaluator result (``terminal``/``passed``/``score``) plus the step count and replay
+    bundle path. Run it locally or in CI to prove the OSWorld compatibility path; pass
+    means every expected typed action reached the runtime and was recorded.
+    """
+    env = DesktopEnv(
+        address=address, observation_type="screenshot", action_space="pyautogui", record=record
+    )
+    bundle: str | None = None
+    steps = 0
+    try:
+        env.reset({"instruction": "click a target, type text, then finish"})
+        for action in (
+            {"action_type": "CLICK", "x": 100, "y": 40},  # computer_13 dict
+            "pyautogui.typewrite('hello shinken')",  # pyautogui code string
+            {"action_type": "PRESS", "key": "enter"},
+            "DONE",
+        ):
+            _, _, done, _ = env.step(action)
+            steps += 1
+            if done:
+                break
+        if record:
+            bundle = env.save_replay(
+                os.path.join(tempfile.mkdtemp(prefix="osworld-smoke-"), "osworld-smoke.skn")
+            )
+        result = env.evaluate(checker=_smoke_checker(bundle) if bundle else None)
+        result.update(steps=steps, bundle=bundle)
+        return result
+    finally:
+        env.close()
