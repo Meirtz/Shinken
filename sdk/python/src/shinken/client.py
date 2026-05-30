@@ -270,6 +270,64 @@ class AsyncSandbox:
             )
         raise CapabilityDenied(f"{verb}: {reason}")
 
+    def gate_capability(self, cap_name: str, label: str) -> None:
+        """Gateway check for a *named* capability (e.g. ``a11y`` for structured
+        observation, #145) — allow / deny / ask with the same recording semantics as
+        :meth:`_gate` does for verbs. No-op unless enforcing."""
+        if not self._enforce:
+            return
+        val = self.sandbox_capabilities.get(cap_name, False)
+        if isinstance(val, str) and val.lower() == "ask":
+            granted = (
+                bool(self._on_ask(label, cap_name, "requires approval")) if self._on_ask else False
+            )
+            if self._recorder is not None:
+                self._recorder.permission(
+                    {
+                        "decision": "ask",
+                        "capability": cap_name,
+                        "verb": label,
+                        "reason": f"capability '{cap_name}' requires approval",
+                        "resolution": "grant" if granted else "deny",
+                    }
+                )
+            if not granted:
+                raise CapabilityDenied(f"{label}: approval denied ({cap_name})")
+            return
+        if val:
+            return
+        reason = f"capability '{cap_name}' not granted"
+        if self._recorder is not None:
+            self._recorder.permission(
+                {"decision": "deny", "capability": cap_name, "verb": label, "reason": reason}
+            )
+        raise CapabilityDenied(f"{label}: {reason}")
+
+    def record_structured(self, obs: dict, *, diff: bool = False) -> None:
+        """Record a structured (a11y/CDP) observation into the `.skn` when recording (#144).
+
+        The structured path is co-located (it doesn't traverse shinkend), so it is
+        recorded here. ``diff=True`` records an ``observe_diff`` payload; otherwise the
+        full element list. No-op when not recording or the capture was unavailable."""
+        if self._recorder is None or not obs.get("available"):
+            return
+        if diff:
+            payload = {
+                "tree": "diff",
+                "added": obs.get("added", []),
+                "removed": obs.get("removed", []),
+                "changed": obs.get("changed", []),
+                "unchanged": obs.get("unchanged", 0),
+                "size": obs.get("size"),
+            }
+        else:
+            payload = {
+                "tree": obs.get("tree", "full"),
+                "elements": obs.get("elements", []),
+                "node_count": obs.get("node_count", 0),
+            }
+        self._recorder.observation(payload)
+
     async def act(
         self, verb: str, target: dict | None = None, *, _batch_id: str | None = None, **kwargs: Any
     ) -> dict:
@@ -717,11 +775,8 @@ class Sandbox:
         screenshot observation. The structured path is a **co-located / local-reference**
         capture (AT-SPI on this host); the over-the-wire shinkend path is a follow-up."""
         if structured:
-            from .a11y import AtspiSource, observe_structured
-
-            obs = observe_structured(source or AtspiSource())
-            # retain ref -> Element so element_ref targets can be resolved (#78)
-            self._elements = {e["ref"]: e for e in obs.get("elements", [])}
+            obs = self._capture_structured(source)
+            self._inner.record_structured(obs, diff=False)  # write the full tree to .skn (#144)
             return obs
         shot = self.screenshot()
         return {
@@ -730,6 +785,17 @@ class Sandbox:
             "image": {"w": shot["w"], "h": shot["h"], "scope": "screen"},
             "png": shot["png"],
         }
+
+    def _capture_structured(self, source: Any = None) -> dict:
+        """Gate the ``a11y`` capability (#145), capture a structured observation, and
+        retain its ``ref → Element`` map (#78). Recording is done by the caller so a full
+        capture and a diff capture each record the right shape (no double-recording)."""
+        from .a11y import AtspiSource, observe_structured
+
+        self._inner.gate_capability("a11y", "observe_structured")
+        obs = observe_structured(source or AtspiSource())
+        self._elements = {e["ref"]: e for e in obs.get("elements", [])}
+        return obs
 
     def observe_diff(self, source: Any = None) -> dict:
         """Structured observation as a **diff** from the previous one (#4 / D3): returns
@@ -742,7 +808,7 @@ class Sandbox:
         keep working."""
         from .a11y import diff_elements, diff_size
 
-        obs = self.observe(structured=True, source=source)
+        obs = self._capture_structured(source)
         if not obs.get("available", False):
             return {
                 "available": False,
@@ -757,6 +823,7 @@ class Sandbox:
         diff["size"] = diff_size(diff, curr)
         diff["available"] = True
         self._last_structured = curr
+        self._inner.record_structured(diff, diff=True)  # write the diff to .skn (#144)
         return diff
 
     def resolve(self, ref: str) -> dict:
