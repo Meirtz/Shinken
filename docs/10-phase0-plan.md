@@ -161,7 +161,7 @@ timeline
 ```
 
 ### M0 — Scaffold, schema, stack (foundation)
-- **Build:** monorepo code dirs (see [§7](#7-proposed-code-layout)); the **ACI v0 JSON Schema**
+- **Build:** monorepo code dirs (see [§8](#8-phase-0-code-layout)); the **ACI v0 JSON Schema**
   (`schema/aci.schema.json`) and **`.skn` v0 schema** (`schema/skn.schema.json`); generated Python
   types; a `shinkend` skeleton that opens the WebSocket, handshakes (capability negotiation, D2 §2),
   and answers `ping`/`get_screen_size`/`platform`.
@@ -268,7 +268,33 @@ Frozen-enough surfaces so milestones can proceed in parallel. Full schemas live 
 
 ---
 
-## 7. Phase-0 code layout
+## 7. Outer orchestration primitives
+
+The hot action loop stays on the ACI: model adapter → typed action → gateway shim → `shinkend`.
+Around that loop, Shinken still needs lightweight orchestration so evals, demos, and training-data
+runs are repeatable without turning the runtime into a benchmark-specific harness.
+
+Phase-0 should define these outer primitives as thin SDK-side concepts:
+
+- **Task** — declares setup inputs, the instruction/goal, verifier entrypoint, artifact expectations,
+  and the replay bundle produced by the run. A task does not own the GUI backend.
+- **Agent adapter** — translates a model/provider grammar into ACI actions and renders observations
+  into that provider's expected shape. It owns prompt/message formatting, not Sandbox authority.
+- **Tool adapter** — exposes non-GUI capabilities such as command execution, file editing, or browser
+  semantic helpers through the policy boundary. It is optional for GUI-only agents.
+- **Batch runner** — expands a run matrix, leases Sandboxes, retries infrastructure failures,
+  resumes completed work, and writes summaries that point at `.skn` bundles and artifacts.
+- **Trace processor** — consumes the canonical event stream for token/cost accounting,
+  OpenTelemetry export, redaction reports, and replay-derived summaries.
+
+These primitives are deliberately outside `shinkend`. The Guest Runtime should remain a small,
+backend-pluggable ACI executor and observation engine; orchestration belongs in SDK/control-plane
+code where policy, retries, batching, and model adapters can evolve without changing the in-guest
+daemon.
+
+---
+
+## 8. Phase-0 code layout
 
 M0 creates the first implementation directories; later milestones fill in the currently planned
 `spikes/`, `panel/`, and `eval/` surfaces.
@@ -278,6 +304,8 @@ shinken/
 ├── schema/            # ACI + .skn JSON Schemas (source of truth) — M0
 ├── shinkend/          # Rust guest runtime (act + observe + WS) — M0/M1
 ├── sdk/python/        # Python SDK, Operator loop, model adapters, CLI — M0/M3
+├── tasks/             # Shinken-native task specs + verifiers — M4+
+├── batch/             # run matrix, retry/resume, replay/artifact summaries — M4+
 ├── panel/             # minimal web replay viewer (TS) — M2 stretch
 ├── images/linux/      # Dockerfile: Xvfb + WM + target apps + shinkend — M0
 ├── spikes/
@@ -293,7 +321,7 @@ A future `CONTRIBUTING.md` + CI (lint/test, schema-validation, `shinkend` build)
 
 ---
 
-## 8. Risks & dependencies
+## 9. Risks & dependencies
 
 | Risk | Likelihood | Mitigation |
 |---|---|---|
@@ -309,7 +337,7 @@ A). No proprietary or internal dependencies.
 
 ---
 
-## 9. Definition of done & handoff to Phase 1
+## 10. Definition of done & handoff to Phase 1
 
 Phase-0 is complete when **E1–E6** ([§1](#1-goal--exit-criteria)) pass and `spikes/a11y-coverage/
 REPORT.md` exists. Outputs that feed Phase 1: the validated **ACI v0 + `.skn` v0** schemas (harden
