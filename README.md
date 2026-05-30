@@ -10,11 +10,12 @@
 > An **AI-native computer runtime**: give an agent a real desktop, unlock the capabilities
 > that desktop needs, and replay the whole run as data.
 
-Shinken is a cross-platform sandbox runtime, control plane, and control panel for
-computer-use agents. It is the production-grade successor to research harnesses like
-[OSWorld](https://github.com/xlang-ai/OSWorld): structured-first instead of screenshot-polling,
-replayable instead of write-only, capability-managed instead of all-or-nothing, and built to serve
-both production agent deployment and evaluation.
+Shinken is a cross-platform computer sandbox for agents: a real desktop runtime with streaming,
+replay, and capability management built in.
+
+It is designed as one platform for production computer-use agents, evals, and training-data
+capture: every session can be watched live, audited, replayed, forked, and exported as trajectory
+data.
 
 ## Why "Shinken"?
 
