@@ -24,7 +24,7 @@ from .skn import Recorder
 __all__ = ["connect", "aconnect", "Sandbox", "AsyncSandbox", "Capabilities"]
 
 DEFAULT_ADDR = "127.0.0.1:8765"
-_CLIENT = {"name": "shinken-py", "version": "0.0.0"}
+_CLIENT = {"name": "shinken-py", "version": "0.0.1"}
 
 # Sentinel pushed onto the frame queue when the stream/connection ends.
 _STREAM_END = object()
