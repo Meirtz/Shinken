@@ -2,12 +2,14 @@
 
 Audience: users, eval authors, and training-data users.
 
-The canonical design decision is D5 in [`../design/tech-decisions.md`](../design/tech-decisions.md). Current
-implementation status is in [`../engineering/status.md`](../engineering/status.md).
+The canonical design decision is D5 in [`../design/tech-decisions.md`](../design/tech-decisions.md).
+Current implementation status is in [`../engineering/status.md`](../engineering/status.md). For
+snapshot/checkpoint/fork/resume, see [`runtime-state.md`](runtime-state.md).
 
 ## What `.skn` Is
 
-`.skn` is the Shinken replay and trajectory bundle. It is intended to carry:
+`.skn` is the Shinken replay and trajectory bundle. It answers: **what happened?** It is intended to
+carry:
 
 - Manifest and version metadata.
 - Append-only `events.jsonl`.
@@ -48,11 +50,23 @@ v0.0.1 should add:
 - Verifier receipts.
 - Replay privacy/redaction metadata.
 
-## Replay Is Not Checkpoint
+## Replay Is Not Runtime State
 
-Saving a `.skn` replay does **not** restore the runtime state. Future APIs such as `checkpoint`,
-`restore`, and `fork` refer to environment/agent state and substrate snapshots. `.skn` may reference
-checkpoint ids later, but it is not itself a VM snapshot.
+Saving a `.skn` replay does **not** restore the runtime state. Runtime state has its own concepts:
+
+- **Snapshot**: substrate state such as disk, memory, or device state.
+- **Checkpoint**: a Shinken restore point linking snapshot(s), event offset, and optional agent state.
+- **Fork**: create a new Sandbox/run branch from a checkpoint.
+- **Resume**: continue a paused or suspended Sandbox/Session.
+
+`.skn` may reference checkpoint ids later, but it is not itself a VM snapshot and does not make an old
+desktop live again.
+
+## Relationship To Checkpoints
+
+When runtime state is implemented, `.skn` should include `checkpoint_ref` or `snapshot_ref` events at
+meaningful boundaries: task start, step boundaries, capability changes, verifier milestones, and
+manual markers. The replay lets a user find the point; checkpoint/fork/resume make that point live.
 
 ## Privacy
 

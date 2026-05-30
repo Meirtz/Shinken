@@ -50,6 +50,19 @@ based on measured coverage.
 events, and verifier receipts. It is replay evidence and training/eval data. Runtime
 checkpoint/restore/fork is a later substrate primitive and is not the same thing as saving a replay.
 
+## Runtime State
+
+Runtime state is the live or restorable computer state behind a Sandbox. The key terms are:
+
+- **Snapshot**: substrate-captured state such as disk, memory, or device state.
+- **Checkpoint**: Shinken restore point that links substrate snapshot(s), event offset, and optional
+  agent state.
+- **Fork**: create a new Sandbox/run branch from a checkpoint.
+- **Resume**: continue a paused/suspended Sandbox or Session.
+
+See [`runtime-state.md`](runtime-state.md). `.skn` can reference checkpoints, but `.skn` is not
+itself a VM snapshot.
+
 ## Capabilities
 
 Capabilities are sandbox powers such as network egress, filesystem scope, credentials, clipboard,

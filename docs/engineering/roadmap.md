@@ -86,7 +86,7 @@ gantt
 
 | Phase | Theme | Primary decisions exercised | External dependency | Gating spike(s) |
 |-------|-------|-----------------------------|---------------------|-----------------|
-| **0 / v0.0.1** | Feature-complete local/reference CUA runtime | D2, D3, D5, D6, D7, D8 | none (local Docker/QEMU) | contract tests; a11y coverage measured, not a pixel-loop blocker |
+| **0 / v0.0.1** | Feature-complete local/reference CUA runtime | D2, D3, D5, D6, D7, D8 | none (local Docker/QEMU) | contract tests; a11y coverage measured, not a pixel-loop blocker; runtime-state support advertised honestly |
 | **1** | Performance and productionization: Linux fast-fork + streaming + panel | D1, D3, D4, D6, D9 | `agent-sandbox` CRD, Vault, NICE DCV or WebRTC+NVENC | a11y-coverage, CoW-fork density, dual-channel latency |
 | **2** | Eval + OSWorld-Verified + first eval/training users | D5, D7, D8 | `agent-sandbox` CRD (parallel replicas) | reuses Phase 1 spikes |
 | **3** | Cross-OS (Windows + macOS) | D1, D10 | Apple hardware pool; Windows licensing | macOS-reset feasibility, Windows-licensing |
@@ -101,8 +101,9 @@ gantt
 not the whole production platform yet, but it is not a narrow demo either. v0.0.1 should make the
 full CUA contract concrete and tested: ACI, agent-native dialects/adapters, real GUI action and
 observation, screenshot/focused/region capture, screencast, a11y/CDP/element-ref reference paths,
-`.skn`, capability envelope and permission events, file/artifact transfer, deterministic task
-fixtures, and a tiny verifier harness. Later phases optimize performance, fork density, streaming
+`.skn`, runtime-state descriptors, capability envelope and permission events, file/artifact
+transfer, deterministic task fixtures, and a tiny verifier harness. Later phases optimize
+performance, fork density, streaming
 quality, multi-tenancy, and cross-substrate scale.
 
 Per [D1](../design/tech-decisions.md), dev/test starts **local, small concurrency**. The substrate is
@@ -124,10 +125,13 @@ No cluster substrate dependency yet. The limit is scale, not scope.
   full-frame/focused/region screenshots, screencast, AT-SPI and CDP normalized `Element` output,
   and `element_ref` resolution. Efficient diffs and SoM/OmniParser can improve later; the reference
   semantics must exist now.
-- **`.skn` replay** ([D5](../design/tech-decisions.md)): write `manifest.json` + append-only
-  `events.jsonl`, content-addressed media/artifact refs, action-observation pairing, capability and
-  permission events, verifier receipts, atomic bundle writes, and a CLI scrubber. Runtime
-  checkpoint/restore remains a later substrate primitive and must not be conflated with replay.
+- **`.skn` replay and runtime-state descriptors** ([D5](../design/tech-decisions.md)): write
+  `manifest.json` + append-only `events.jsonl`, content-addressed media/artifact refs,
+  action-observation pairing, capability and permission events, verifier receipts, atomic bundle
+  writes, and a CLI scrubber. Also define provider-advertised `snapshot`, `checkpoint`, `fork`,
+  `restore`, and `resume` capabilities so unsupported providers fail honestly. Runtime
+  checkpoint/restore implementation remains a later substrate primitive and must not be conflated
+  with replay.
 - **File/artifact transfer:** move fixtures into the Sandbox and artifacts out with checksums and
   replay refs. High throughput and resumability can improve later; the semantic API must exist in
   v0.0.1.

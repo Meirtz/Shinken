@@ -15,6 +15,7 @@ behavior first, then link to design docs for target architecture.
 - ACI surface and SDK target: [`../design/aci-spec.md`](../design/aci-spec.md)
 - ACI user guide: [`aci.md`](aci.md)
 - Replay and `.skn`: [`replay.md`](replay.md)
+- Runtime state: [`runtime-state.md`](runtime-state.md)
 - Capabilities: [`capabilities.md`](capabilities.md)
 - Eval: [`eval.md`](eval.md)
 - v0.0.1 implementation plan: [`../engineering/v0.0.1-plan.md`](../engineering/v0.0.1-plan.md)

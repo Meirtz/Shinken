@@ -161,7 +161,18 @@ replaces that shim with the real Control Plane without changing the client/guest
 
 The Control Plane is the orchestration brain. It is stateless where it can be (the Action Gateway), stateful where it must be (Fleet Manager pool inventory, Replay Store, policy/capability registry). Its sub-components:
 
-**Fleet Manager (D9).** Owns the sandbox lifecycle: warm pools per `(image, region, tier)`, fork-on-demand from immutable golden snapshots, and a cheap suspended **cold pool** that replenishes the warm pool. It adopts the CRD shape of the OSS `kubernetes-sigs/agent-sandbox` project — `Sandbox`, `SandboxTemplate`, `SandboxClaim`, `SandboxWarmPool` — as its internal API even where Shinken does not run that controller upstream. Reference numbers to design against: a managed implementation of that CRD reports ~300 sandboxes/second/cluster with p90 allocation ~200 ms (vendor-published, unverified). The Fleet Manager handles **dual-timer sessions** — an idle timeout (~15 min, resets on activity) and an absolute max-lifetime (~4–8 h, does not reset) — with **auto-suspend-to-snapshot** on idle, because idle wall-clock dominates cost (a mostly-waiting session on a 10–15 min minimum-billing keep-alive can cost ~5×; vendor-published, unverified). A heartbeat/lease-based **reaper** GCs orphans from crashed control-plane nodes, not just timer expiries.
+**Fleet Manager (D9).** Owns the sandbox lifecycle: warm pools per `(image, region, tier)`,
+snapshot/checkpoint inventory, fork-on-demand from immutable golden checkpoints, resume from
+suspended state, and a cheap suspended **cold pool** that replenishes the warm pool. It adopts the
+CRD shape of the OSS `kubernetes-sigs/agent-sandbox` project — `Sandbox`, `SandboxTemplate`,
+`SandboxClaim`, `SandboxWarmPool` — as its internal API even where Shinken does not run that
+controller upstream. Reference numbers to design against: a managed implementation of that CRD
+reports ~300 sandboxes/second/cluster with p90 allocation ~200 ms (vendor-published, unverified).
+The Fleet Manager handles **dual-timer sessions** — an idle timeout (~15 min, resets on activity)
+and an absolute max-lifetime (~4–8 h, does not reset) — with **auto-suspend-to-snapshot** on idle,
+because idle wall-clock dominates cost (a mostly-waiting session on a 10–15 min minimum-billing
+keep-alive can cost ~5×; vendor-published, unverified). A heartbeat/lease-based **reaper** GCs
+orphans from crashed control-plane nodes, not just timer expiries.
 
 **Action Gateway (D9).** The single request-path choke point for session lifecycle, boundary-crossing capabilities, budget, and replay. Routine in-sandbox GUI/input actions are expected to be allowed once the Sandbox has been provisioned; the Gateway is not meant to ask a human before every click or install inside an isolated guest. Its pipeline, in order:
 
@@ -178,7 +189,13 @@ Rate limiting is per-`(tenant, workload, model)` token buckets (Redis + Lua, ato
 
 **Scheduler.** Routes a `SandboxClaim` to the correct substrate pool by `(OS × needs-GPU × needs-fast-fork)` (D1), and bin-packs on **private/dirty-page RSS**, not snapshot size — the shared-page advantage of CoW forks erodes as a workload writes memory, so density must be measured on what actually costs RAM (see §6).
 
-**Replay Store (D5).** Append-only store of `.skn` bundles: the canonical `events.jsonl` stream, the content-addressed media/snapshot resources, and the immutable **checkpoint DAG**. The same store backs live streaming, scrubbable replay, branch/fork, and trajectory export for RL/SFT. The replay log and the live event stream are **the same canonical events** emitted to two sinks, so "works live, broken on replay" divergence cannot occur (D5).
+**State + Replay Store (D5).** Append-only store of `.skn` bundles plus runtime-state metadata:
+the canonical `events.jsonl` stream, content-addressed media/resources, substrate snapshot refs,
+named Shinken checkpoints, and the immutable **checkpoint DAG**. `.skn` is the evidence ledger;
+snapshots/checkpoints/forks/resume are the runnable-state layer it can reference. The same store
+backs live streaming, scrubbable replay, branch/fork, resume/restore, and trajectory export for
+RL/SFT. The replay log and the live event stream are **the same canonical events** emitted to two
+sinks, so "works live, broken on replay" divergence cannot occur (D5).
 
 **Artifact / file-transfer service (D5, D8, D9).** Moves task fixtures, uploaded files, generated
 artifacts, logs, screenshots/videos, and `.skn` resources between clients, the Control Plane, and
@@ -226,7 +243,13 @@ The Control Panel is the human web UI and the home of three of Shinken's four he
 
 ### 1.6 Substrate / Providers
 
-The Substrate layer is deliberately pluggable behind a `Runtime` ABC modeled on the cua layering: `start() → RuntimeInfo`, `stop()`, `is_ready()`, plus optional `suspend / resume`, and the CoW primitives `checkpoint / fork / ensure_base`. The scheduler's `_auto_runtime()`-style selection picks a backend from `(os_type, kind, needs_gpu, needs_fast_fork)`. The full routing matrix is §3.
+The Substrate layer is deliberately pluggable behind a `Runtime` ABC modeled on the cua layering:
+`start() → RuntimeInfo`, `stop()`, `is_ready()`, plus optional `suspend / resume`, and the runtime
+state primitives `snapshot`, `checkpoint`, `restore`, `fork`, and `ensure_base`. Providers must
+advertise which of these are real, provider-managed, or unsupported; Docker recreate, macOS clone,
+Windows warm-pool swap, and Firecracker CoW fork are not interchangeable. The scheduler's
+`_auto_runtime()`-style selection picks a backend from `(os_type, kind, needs_gpu,
+needs_fast_fork)`. The full routing matrix is §3.
 
 ---
 

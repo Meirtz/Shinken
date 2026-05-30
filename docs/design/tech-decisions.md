@@ -264,7 +264,7 @@ A **single-PeerConnection, dual-transport** design:
 
 ---
 
-## D5 — Replay: event stream + bisected snapshots, the `.skn` bundle
+## D5 — Runtime state + replay: event stream, snapshots, checkpoints, forks, and `.skn`
 
 **Status:** Accepted.
 
@@ -274,26 +274,38 @@ Prior art converges on a small set of reusable primitives but no one ships the w
 
 ### Decision
 
-Replay = **the event stream + bisected snapshots**, packaged as the **`.skn` bundle** (a ZIP, Playwright-trace model):
+Shinken separates the evidence ledger from runnable state while linking them tightly:
 
-- `manifest.json` + an append-only **`events.jsonl`** with a two-level envelope: `kind ∈ {action, observation, decision, permission, marker, snapshot_ref, meta}`; a logical-clock `seq` plus a wall-clock anchor; an `action_id` pairing each action to its observation.
-- An immutable **checkpoint DAG** (branchable, never mutated) + content-addressed media (fMP4).
+- **`.skn` replay/data bundle** = the evidence ledger. It contains `manifest.json`, append-only
+  **`events.jsonl`**, content-addressed media/resources, verifier receipts, permission events, and
+  future `checkpoint_ref` / `snapshot_ref` markers. It answers "what happened?"
+- **Snapshot** = provider/substrate state captured at a point in time: disk, memory, device state,
+  process state, or provider-managed metadata depending on tier. It answers "what raw state can this
+  substrate restore?"
+- **Checkpoint** = Shinken's named restore point: substrate snapshot refs + logical event offset +
+  optional agent-side state. Checkpoints form an immutable parent-pointer DAG. It answers "where can
+  Shinken continue or branch?"
+- **Fork** = create a new live Sandbox/run branch from a checkpoint. On the Linux fast-fork tier this
+  is CoW memory/disk fork; on weaker tiers it may be unsupported or degrade to restore/recreate.
+- **Resume/restore** = make a paused/snapshotted Sandbox live again. It answers "can this run
+  continue?", which is distinct from viewing a `.skn` replay.
 - The **decision channel uses OpenTelemetry-GenAI** semantic conventions.
 - **Not bit-deterministic** — a pragmatic **state-snapshot + event-log + observation-log** model.
-- **Branch = CoW-fork the env snapshot + deserialize the agent checkpoint → re-run from step N** (the same primitive as instant reset, D1). The `.skn` replay doubles as **RL/SFT training data** (the adoption wedge, D12).
+- The `.skn` bundle doubles as **RL/SFT training data** (the adoption wedge, D12), while checkpoints
+  and forks make counterfactual reruns live.
 
 ### Alternatives (and why rejected)
 
 | Alternative | Why rejected |
 |---|---|
 | **Bit-deterministic record/replay (rr)** | x86/Linux-only, single-core; cannot span Windows/macOS or the multi-core desktop tier. |
-| **Video-only recording (OSWorld `recording.mp4`)** | No scrub-to-action, no fork, no re-run; not training-grade. |
+| **Video-only recording (OSWorld `recording.mp4`)** | No scrub-to-action, no checkpoint references, no fork, no re-run; not training-grade. |
 | **Agent-state-only checkpoint (LangGraph-style)** | Forks the agent but re-runs side effects against a live, drifted world; needs the env snapshot too. |
 | **Mutable trajectory log** | Breaks branch provenance; the checkpoint DAG must be immutable and append-only. |
 
 ### Consequences
 
-- **Positive:** one representation is the live stream *and* the replay log *and* the branch substrate *and* RL/SFT data; time-travel and counterfactual re-runs are nearly free given shared-prefix CoW pages.
+- **Positive:** the live stream becomes the replay/data ledger, while snapshots/checkpoints/forks make selected points runnable; time-travel and counterfactual re-runs are nearly free on tiers with shared-prefix CoW pages.
 - **Negative:** side-effecting tool calls on a branch need record/mock or idempotency handling; a forked VM pins its backing memory file (snapshot GC complexity).
 - **Risks:** event-schema versioning + upcasting must be specified (open question); not bit-deterministic means re-runs can diverge — that is by design and must be documented to users.
 

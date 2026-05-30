@@ -189,15 +189,18 @@ Phase-0 screencast resource policy is deliberately conservative:
 
 ---
 
-## 5. Replay model (D5) — two artifacts, two contracts
+## 5. Runtime state + replay model (D5) — two artifacts, two contracts
 
-The P0 deep-dive splits replay into two cleanly-separated concerns:
+The P0 deep-dive splits evidence from runnable state:
 
 - **(A) `.skn` layered bundle** (cross-OS, the debug/audit/train artifact): append-only event log
-  (the source of truth, = the live stream) + **bisected STATE snapshots** + an **on-demand VIDEO
+  (the source of truth, = the live stream) + checkpoint/snapshot references + an **on-demand VIDEO
   sidecar**. Storage levers from day one: content-addressed `resources/<sha256>` dedup, full-snapshot
   + typed-delta observations (`a11y_delta`/`png_diff`). Wire form in [`../../schema/skn.schema.json`](../../schema/skn.schema.json).
-- **(B) qcow2 deterministic-eval VM** (the OSWorld-style eval path): a read-only golden qcow2 base
+- **(B) Runtime state**: provider snapshots, Shinken checkpoints, restore/resume operations, and
+  fork-from-checkpoint. This is what makes a desktop live again. `.skn` points at it; `.skn` does not
+  replace it.
+- **(C) qcow2 deterministic-eval VM** (the OSWorld-style eval path): a read-only golden qcow2 base
   per task-suite + per-task **backing-file overlays** (redirect-on-write) + `savevm/loadvm`. This
   needs **only snapshot-revert** — agent-trajectory replay is **deferred** here (P0).
 
@@ -206,6 +209,14 @@ snaps to event seq); true mid-execution **branching** on the Linux fork tier (Fi
 CoW memory-fork + a versioned, non-pickle agent-half checkpoint, immutable checkpoint DAG). The
 "scientific" determinism layer is reserved for the **agent core only** (recorded LLM/tool inputs
 replayed via stubs; CRIU for the process).
+
+Terminology:
+
+- **Snapshot**: substrate-captured state.
+- **Checkpoint**: Shinken restore point linking snapshot refs, event offset, and optional agent state.
+- **Fork**: create a new live branch from a checkpoint.
+- **Resume/restore**: continue a paused/snapshotted Sandbox.
+- **Replay**: inspect or export the event ledger.
 
 ---
 

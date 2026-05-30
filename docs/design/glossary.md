@@ -54,6 +54,13 @@ The human-facing web UI: live structured + on-demand video view, *Capability Man
 
 The memory/disk-sharing technique behind instant *fork-from-snapshot*. A child *Sandbox* shares the parent's pages read-only (RAM via `MAP_PRIVATE` mmap; disk via qcow2/overlay) and copies a page only on write, so N parallel replicas cost roughly the divergent pages plus a small constant each, instead of a full VM each. This is what makes high-concurrency forking and replay-branching cheap (**D1**, **D5**). Background: [Firecracker snapshot system](https://deepwiki.com/firecracker-microvm/firecracker/5-snapshot-system).
 
+### Checkpoint
+
+A Shinken-level restore point (**D5**) that binds together substrate *snapshot* references, a
+logical event offset in `.skn`, and optionally agent-side state. A checkpoint is not just a replay
+event and not just a VM snapshot: it is the named boundary from which Shinken can restore, resume, or
+fork a run. Checkpoints form an immutable parent-pointer DAG once branching exists.
+
 ### control / event / media planes
 
 The three logical planes of the streaming *ACI* (**D4**). **Control plane** — session lifecycle and signaling. **Event plane** — the reliable-ordered WebRTC data channel carrying actions + observations + permissions; *this stream IS the replay log*. **Media plane** — the on-demand *NVENC* video track, attached only when pixels are requested. Note this is the *streaming* plane terminology and is separate from the *Control Plane* / *Control Panel* server-side split.
@@ -69,6 +76,13 @@ The *Control Plane* component that owns *Sandbox* supply (**D9**): per-image/reg
 ### fork-from-snapshot
 
 Shinken's reset and branching primitive (**D1**, **D5**): instead of terminate-and-reboot (OSWorld's model), a new *Sandbox* is forked from a warm parent snapshot via *CoW* + `userfaultfd` lazy paging, with a post-fork uniqueness hook (reseed RNG / MAC / hostname / boot-id). Target <30 ms VMM restore and sub-second time-to-first-action. **Instant reset and replay-branching are the same primitive** — forking a snapshot node. Published reference point: Morph Infinibranch reports P99 ~1.3 ms fork with ~93% shared pages (vendor-published, unverified, [morph.so/blog/infinibranch](https://www.morph.so/blog/infinibranch/)).
+
+### Fork
+
+Creating a new live Sandbox or run branch from a *checkpoint*. Fork is the runtime operation behind
+instant reset, N-run eval replicas, best-of-N exploration, and counterfactual reruns from a replay
+step. On the Linux fast-fork tier it should be CoW memory/disk fork; on Docker, Windows, macOS, or
+GPU providers it may be unsupported or degrade to slower restore/recreate semantics.
 
 ### GPU-TEE
 
@@ -128,6 +142,12 @@ One isolated guest computer — Linux, Windows, or macOS desktop (Android is roa
 
 A live attach/run against a *Sandbox*. Sessions have dual timers (idle reset ~15 min; max-lifetime ~4–8 h) and auto-suspend-to-snapshot on idle (**D9**). Multiple sessions may fork from one warm parent.
 
+### Resume
+
+Continuing a paused, suspended, or snapshotted Sandbox/Session from runtime state. Resume makes a
+computer live again; replay only shows or analyzes the event timeline. A provider must advertise
+whether resume is memory-backed, disk-only, provider-managed, or unsupported.
+
 ### Set-of-Marks (SoM)
 
 A grounding technique: overlay numbered/labeled marks on the screen so the model emits a stable mark ID instead of regressing raw pixel coordinates. In Shinken's layered observation (**D3**), SoM is **Rung 1** — a server-side GPU microservice (OmniParser-style), invoked on demand when the *accessibility tree* (Rung 0) is insufficient, before falling back to region/zoom pixels (Rung 2) or full frame (Rung 3). ID-based grounding is the single biggest accuracy lever. Reference: [OmniParser V2](https://www.microsoft.com/en-us/research/articles/omniparser-v2-turning-any-llm-into-a-computer-use-agent/), [github.com/microsoft/OmniParser](https://github.com/microsoft/OmniParser).
@@ -149,7 +169,19 @@ Shinken is a public, vendor-neutral open-source project; NVIDIA GPUs are a suppo
 
 ### `.skn` bundle
 
-The on-disk *replay*/trajectory container (**D5**). A ZIP (Playwright-trace model): `manifest.json` + append-only `events.jsonl` (two-level discriminated envelope, `kind ∈ {action, observation, decision, permission, marker, snapshot_ref, meta}`, logical-clock `seq` + wall-clock anchor, `action_id` pairing action→observation) + an immutable checkpoint DAG (parent-pointer, branchable, never mutated) + content-addressed media (fMP4). It doubles as replay-as-training-data (RL/SFT) — a concrete adoption wedge for teams building and evaluating computer-use agents (**D12**).
+The on-disk *replay*/trajectory container (**D5**). A ZIP (Playwright-trace model): `manifest.json`
++ append-only `events.jsonl` (two-level discriminated envelope, `kind ∈ {action, observation,
+decision, permission, marker, checkpoint_ref, snapshot_ref, meta}`, logical-clock `seq` +
+wall-clock anchor, `action_id` pairing action→observation) + content-addressed media/resources. It
+is the evidence ledger and training-data artifact. It can reference *snapshots* and *checkpoints*,
+but it is not itself the runtime state that makes a Sandbox live again.
+
+### Snapshot
+
+Substrate-captured state at a point in time (**D1**, **D5**). Depending on provider support, a
+snapshot may include disk, memory, device model, process state, or only provider-managed metadata.
+Snapshots are lower-level than Shinken checkpoints. Docker recreate is not a snapshot; Firecracker
+memory/block state is; macOS APFS clone is disk-style and not a Firecracker-class memory fork.
 
 ### Substrate / Provider
 
@@ -184,7 +216,7 @@ The standard HTTP-based WebRTC signaling protocols. **WHIP** (WebRTC-HTTP Ingest
 | ACI, action schema, CoordinateSpace, model adapters | D2 |
 | accessibility tree, SoM, CDP, observation rungs | D3 |
 | control/event/media planes, NVENC, SFU, WHIP/WHEP, virtio-vsock, NICE DCV | D4 |
-| `.skn` bundle, fork-from-snapshot (as replay), CoW | D5 |
+| `.skn` bundle, Snapshot, Checkpoint, Fork, Resume, CoW | D1, D5 |
 | Capability, Capability Manager, Cedar, ocap/caretaker, taint-tracking, boundary controls | D6 |
 | pass@k / pass^k, OSWorld / OSWorld-Verified eval | D7 |
 | Action Gateway, Fleet Manager, Control Plane, Session timers | D9 |
