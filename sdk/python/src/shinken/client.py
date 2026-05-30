@@ -13,6 +13,7 @@ import contextlib
 import json
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,6 +25,9 @@ __all__ = ["connect", "aconnect", "Sandbox", "AsyncSandbox", "Capabilities"]
 
 DEFAULT_ADDR = "127.0.0.1:8765"
 _CLIENT = {"name": "shinken-py", "version": "0.0.0"}
+
+# Sentinel pushed onto the frame queue when the stream/connection ends.
+_STREAM_END = object()
 
 
 @dataclass
@@ -89,19 +93,83 @@ class AsyncSandbox:
         self.platform_name = platform
         self._seq = 0
         self._recorder = Recorder(platform=platform) if record else None
+        # Demux state. A single background reader task consumes every inbound frame
+        # and routes it: RPC replies to their pending future (by call_id, or `cause`
+        # for a one-shot observation), `pong` to the next ping waiter, and unsolicited
+        # server-pushed stream frames (screencast) to the frame queue.
+        self._pending: dict[str, asyncio.Future] = {}
+        self._pong_waiters: deque[asyncio.Future] = deque()
+        self._frames: asyncio.Queue = asyncio.Queue()
+        self._reader: asyncio.Task | None = None
 
     def _next_id(self) -> str:
         self._seq += 1
         return f"c{self._seq}"
 
+    def _start_reader(self) -> None:
+        self._reader = asyncio.ensure_future(self._read_loop())
+
+    async def _read_loop(self) -> None:
+        try:
+            async for raw in self._ws:
+                try:
+                    self._dispatch(json.loads(raw))
+                except Exception:
+                    continue  # one malformed frame must not kill the reader
+        except Exception:
+            pass
+        finally:
+            self._fail_pending(ConnectionError("connection closed"))
+            with contextlib.suppress(Exception):
+                self._frames.put_nowait(_STREAM_END)
+
+    def _dispatch(self, msg: dict) -> None:
+        kind = msg.get("type")
+        # An unsolicited stream frame is never an RPC reply — route it to the queue.
+        if kind == "observation" and msg.get("stream") is not None:
+            self._frames.put_nowait(msg)
+            return
+        if kind == "pong":
+            while self._pong_waiters:
+                fut = self._pong_waiters.popleft()
+                if not fut.done():
+                    fut.set_result(msg)
+                    return
+            return
+        cid = msg.get("call_id") or msg.get("cause")
+        fut = self._pending.pop(cid, None) if cid is not None else None
+        if fut is not None and not fut.done():
+            fut.set_result(msg)
+
+    def _fail_pending(self, exc: Exception) -> None:
+        for fut in self._pending.values():
+            if not fut.done():
+                fut.set_exception(exc)
+        self._pending.clear()
+        while self._pong_waiters:
+            fut = self._pong_waiters.popleft()
+            if not fut.done():
+                fut.set_exception(exc)
+
     async def _rpc(self, msg: dict) -> dict:
-        await self._ws.send(json.dumps(msg))
-        return json.loads(await self._ws.recv())
+        """Send a call_id-bearing message and await its correlated reply."""
+        call_id = msg["call_id"]
+        fut: asyncio.Future = asyncio.get_running_loop().create_future()
+        self._pending[call_id] = fut
+        try:
+            await self._ws.send(json.dumps(msg))
+        except Exception:
+            self._pending.pop(call_id, None)
+            raise
+        return await fut
 
     async def ping(self) -> float:
         """Round-trip time to the runtime, in seconds."""
+        fut: asyncio.Future = asyncio.get_running_loop().create_future()
+        self._pong_waiters.append(fut)
         t0 = time.perf_counter()
-        await self._rpc({"type": "ping", "t": t0})
+        await self._ws.send(json.dumps({"type": "ping", "t": t0}))
+        await fut
         return time.perf_counter() - t0
 
     async def query(self, q: str) -> Any:
@@ -173,6 +241,60 @@ class AsyncSandbox:
     async def key(self, keys: str):
         return await self.act("key", keys=keys)
 
+    async def astart_screencast(self, fps: float = 5.0) -> str:
+        """Start a server-pushed screencast; returns its stream id. Frames arrive
+        asynchronously and are read with :meth:`next_frame`."""
+        call_id = self._next_id()
+        reply = await self._rpc(
+            {
+                "type": "action",
+                "call_id": call_id,
+                "action": {"verb": "start_screencast", "fps": fps},
+            }
+        )
+        if not reply.get("ok"):
+            raise RuntimeError(reply.get("error", "start_screencast failed"))
+        return call_id
+
+    async def astop_screencast(self) -> None:
+        """Ask the runtime to stop streaming frames."""
+        call_id = self._next_id()
+        with contextlib.suppress(Exception):
+            await self._rpc(
+                {
+                    "type": "action",
+                    "call_id": call_id,
+                    "action": {"verb": "stop_screencast"},
+                }
+            )
+
+    async def next_frame(self, timeout: float | None = None) -> dict | None:
+        """Await the next screencast frame as {'png', 'w', 'h', 'seq', 'stream'},
+        or None if the stream ended or `timeout` seconds elapsed with no frame."""
+        try:
+            item = (
+                await asyncio.wait_for(self._frames.get(), timeout)
+                if timeout is not None
+                else await self._frames.get()
+            )
+        except asyncio.TimeoutError:
+            return None
+        if item is _STREAM_END:
+            return None
+        img = item.get("image") or {}
+        png = base64.b64decode(img.get("ref", ""))
+        if self._recorder is not None:
+            self._recorder.observation(
+                {"image": {"w": img.get("w"), "h": img.get("h"), "scope": "screen"}}, png=png
+            )
+        return {
+            "png": png,
+            "w": img.get("w"),
+            "h": img.get("h"),
+            "seq": item.get("seq"),
+            "stream": item.get("stream"),
+        }
+
     def save_replay(self, path: str) -> str:
         """Write the recorded session to a `.skn` bundle. Requires record=True."""
         if self._recorder is None:
@@ -180,7 +302,12 @@ class AsyncSandbox:
         return self._recorder.save(path)
 
     async def close(self) -> None:
+        if self._reader is not None:
+            self._reader.cancel()
+            with contextlib.suppress(Exception):
+                await self._reader
         await self._ws.close()
+        self._fail_pending(ConnectionError("session closed"))
 
 
 async def aconnect(
@@ -198,7 +325,9 @@ async def aconnect(
     except Exception:
         await ws.close()
         raise
-    return AsyncSandbox(ws, capabilities, platform, record)
+    sandbox = AsyncSandbox(ws, capabilities, platform, record)
+    sandbox._start_reader()  # the reader owns recv() from here on
+    return sandbox
 
 
 class _BackgroundLoop:
@@ -213,12 +342,66 @@ class _BackgroundLoop:
         asyncio.set_event_loop(self.loop)
         self.loop.run_forever()
 
-    def run(self, coro: Any, timeout: float = 30.0) -> Any:
+    def run(self, coro: Any, timeout: float | None = 30.0) -> Any:
         return asyncio.run_coroutine_threadsafe(coro, self.loop).result(timeout)
 
     def stop(self) -> None:
+        # Cancel lingering loop tasks (e.g. the websockets keepalive) before stopping,
+        # so teardown is clean and doesn't warn "Task was destroyed but it is pending".
+        async def _drain() -> None:
+            pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+
+        with contextlib.suppress(Exception):
+            asyncio.run_coroutine_threadsafe(_drain(), self.loop).result(timeout=2)
         self.loop.call_soon_threadsafe(self.loop.stop)
         self._thread.join(timeout=5)
+
+
+class _Screencast:
+    """Synchronous, bounded iterator over screencast frames; stops the stream on exit.
+
+    Usage::
+
+        with env.screencast(fps=10, limit=30) as frames:
+            for frame in frames:
+                handle(frame["png"], frame["seq"])
+    """
+
+    def __init__(
+        self, sandbox: Sandbox, fps: float, timeout: float | None, limit: int | None
+    ) -> None:
+        self._sb = sandbox
+        self._fps = fps
+        self._timeout = timeout
+        self._limit = limit
+        self._count = 0
+        self._started = False
+
+    def __enter__(self) -> _Screencast:
+        self._sb._loop.run(self._sb._inner.astart_screencast(self._fps))
+        self._started = True
+        return self
+
+    def __iter__(self) -> _Screencast:
+        return self
+
+    def __next__(self) -> dict:
+        if self._limit is not None and self._count >= self._limit:
+            raise StopIteration
+        outer = None if self._timeout is None else self._timeout + 5.0
+        frame = self._sb._loop.run(self._sb._inner.next_frame(self._timeout), timeout=outer)
+        if frame is None:
+            raise StopIteration
+        self._count += 1
+        return frame
+
+    def __exit__(self, *_exc: object) -> None:
+        if self._started:
+            with contextlib.suppress(Exception):
+                self._sb._loop.run(self._sb._inner.astop_screencast())
 
 
 class Sandbox:
@@ -271,6 +454,21 @@ class Sandbox:
 
     def key(self, keys: str):
         return self._loop.run(self._inner.key(keys))
+
+    def screencast(
+        self, fps: float = 5.0, *, timeout: float | None = 30.0, limit: int | None = None
+    ) -> _Screencast:
+        """Stream the screen in real time as a context manager yielding frames::
+
+            with env.screencast(fps=10, limit=30) as frames:
+                for frame in frames:
+                    ...  # frame: {'png', 'w', 'h', 'seq', 'stream'}
+
+        Frames identical to the previous one are suppressed server-side, so an idle
+        screen yields nothing until it changes. ``timeout`` bounds the wait per frame
+        (None blocks indefinitely); ``limit`` caps the number of frames.
+        """
+        return _Screencast(self, fps, timeout, limit)
 
     def save_replay(self, path: str) -> str:
         return self._inner.save_replay(path)

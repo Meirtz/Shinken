@@ -4,6 +4,7 @@ the Rust binary. It mirrors the M0 message handling in shinkend/src/protocol.rs.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import socket
 import threading
@@ -25,7 +26,29 @@ def _free_port() -> int:
     return port
 
 
+async def _push_frames(ws, stream_id: str, fps: float) -> None:
+    """Push server-pushed screencast frames with advancing seq until cancelled."""
+    seq = 0
+    period = max(1.0 / fps, 0.005)
+    with contextlib.suppress(asyncio.CancelledError, Exception):
+        while True:
+            await ws.send(
+                json.dumps(
+                    {
+                        "type": "observation",
+                        "obs_id": f"{stream_id}-{seq}",
+                        "stream": stream_id,
+                        "seq": seq,
+                        "image": {"ref": _PNG_1X1, "w": 1, "h": 1, "scope": "screen"},
+                    }
+                )
+            )
+            seq += 1
+            await asyncio.sleep(period)
+
+
 async def _handler(ws) -> None:
+    cast: asyncio.Task | None = None
     async for raw in ws:
         msg = json.loads(raw)
         kind = msg.get("type")
@@ -38,9 +61,17 @@ async def _handler(ws) -> None:
                         "server": {"name": "mock-shinkend", "version": "0", "platform": "linux"},
                         "capabilities": {
                             "schema_version": 0,
-                            "verbs": ["click", "type_text", "key", "screenshot", "wait"],
+                            "verbs": [
+                                "click",
+                                "type_text",
+                                "key",
+                                "screenshot",
+                                "start_screencast",
+                                "stop_screencast",
+                                "wait",
+                            ],
                             "targets": ["point_px", "element_ref"],
-                            "observation_types": ["a11y", "screenshot", "video"],
+                            "observation_types": ["a11y", "screenshot", "screencast"],
                             "max_long_edge": 2576,
                         },
                     }
@@ -54,21 +85,33 @@ async def _handler(ws) -> None:
             await ws.send(json.dumps(reply))
         elif kind == "action":
             verb = (msg.get("action") or {}).get("verb")
+            cid = msg.get("call_id")
             if verb == "screenshot":
                 await ws.send(
                     json.dumps(
                         {
                             "type": "observation",
                             "obs_id": "o1",
-                            "cause": msg.get("call_id"),
+                            "cause": cid,
                             "image": {"ref": _PNG_1X1, "w": 1, "h": 1, "scope": "screen"},
                         }
                     )
                 )
+            elif verb == "start_screencast":
+                await ws.send(json.dumps({"type": "ack", "call_id": cid, "ok": True}))
+                fps = (msg.get("action") or {}).get("fps") or 50
+                cast = asyncio.create_task(_push_frames(ws, cid, fps))
+            elif verb == "stop_screencast":
+                if cast is not None:
+                    cast.cancel()
+                    with contextlib.suppress(Exception):
+                        await cast
+                    cast = None
+                await ws.send(json.dumps({"type": "ack", "call_id": cid, "ok": True}))
             else:
-                await ws.send(
-                    json.dumps({"type": "ack", "call_id": msg.get("call_id"), "ok": True})
-                )
+                await ws.send(json.dumps({"type": "ack", "call_id": cid, "ok": True}))
+    if cast is not None:
+        cast.cancel()
 
 
 @pytest.fixture

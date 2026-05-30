@@ -109,6 +109,10 @@ jobs:
           eval "$(xdotool getmouselocation --shell)"
           echo "cursor at X=$X Y=$Y"
           test "$X" = "300" && test "$Y" = "200" && echo "✅ live X11 pointer action verified"
+          if [ -f scripts/screencast_smoke.py ]; then
+            python scripts/screencast_smoke.py
+            echo "✅ live screencast frames verified"
+          fi
       - if: steps.present.outputs.go == 'false'
         run: echo "shinkend or smoke script not present yet — skipping"
 
