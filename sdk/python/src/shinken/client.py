@@ -17,13 +17,14 @@ import threading
 import time
 import uuid
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 from websockets.asyncio.client import connect as _ws_connect
 
 from .artifacts import LocalArtifactStore
-from .gateway import CapabilityDenied, check_action, check_file_transfer
+from .gateway import CapabilityDenied, check_file_transfer, decide_action
 from .skn import DEFAULT_CAPABILITIES, Recorder
 
 __all__ = ["connect", "aconnect", "Sandbox", "AsyncSandbox", "Capabilities"]
@@ -102,6 +103,7 @@ class AsyncSandbox:
         redact_text: bool = False,
         enforce_capabilities: bool = False,
         artifact_root: str | None = None,
+        on_ask: Callable[[str, str | None, str], bool] | None = None,
     ) -> None:
         self._ws = ws
         self.capabilities = capabilities
@@ -117,6 +119,9 @@ class AsyncSandbox:
         # semantics, recorded into .skn; distinct from the ACI `capabilities` above.
         self.sandbox_capabilities = {**DEFAULT_CAPABILITIES, **(sandbox_capabilities or {})}
         self._enforce = enforce_capabilities  # Action Gateway shim (#84)
+        # Approval handler for risky ("ask") capabilities (#7): (verb, cap, reason) -> bool.
+        # None means risky steps are denied by default (conservative, still recorded).
+        self._on_ask = on_ask
         self._recorder = (
             Recorder(
                 platform=platform,
@@ -233,18 +238,37 @@ class AsyncSandbox:
         return await self.query("screen_size")
 
     def _gate(self, verb: str) -> None:
-        """Action Gateway check (#84): when enforcing, deny verbs whose capability is
-        not granted — before dispatch, so they never reach shinkend — and record the
-        decision. GUI input passes when input_automation is granted (the default)."""
+        """Action Gateway check (#84/#7): when enforcing, decide allow / deny / **ask**
+        before dispatch — so a denied or unapproved verb never reaches shinkend — and
+        record the decision. A capability valued ``"ask"`` is *risky*: it pauses for
+        approval via the ``on_ask`` handler (default: deny), and the resolution is
+        recorded as a ``permission:ask`` event. GUI input passes when input_automation is
+        granted (the default)."""
         if not self._enforce:
             return
-        allowed, cap, reason = check_action(verb, self.sandbox_capabilities)
-        if not allowed:
+        decision, cap, reason = decide_action(verb, self.sandbox_capabilities)
+        if decision == "allow":
+            return
+        if decision == "ask":
+            granted = bool(self._on_ask(verb, cap, reason)) if self._on_ask else False
             if self._recorder is not None:
                 self._recorder.permission(
-                    {"decision": "deny", "capability": cap, "verb": verb, "reason": reason}
+                    {
+                        "decision": "ask",
+                        "capability": cap,
+                        "verb": verb,
+                        "reason": reason,
+                        "resolution": "grant" if granted else "deny",
+                    }
                 )
-            raise CapabilityDenied(f"{verb}: {reason}")
+            if not granted:
+                raise CapabilityDenied(f"{verb}: approval denied ({cap})")
+            return
+        if self._recorder is not None:  # decision == "deny"
+            self._recorder.permission(
+                {"decision": "deny", "capability": cap, "verb": verb, "reason": reason}
+            )
+        raise CapabilityDenied(f"{verb}: {reason}")
 
     async def act(
         self, verb: str, target: dict | None = None, *, _batch_id: str | None = None, **kwargs: Any
@@ -504,6 +528,7 @@ async def aconnect(
     redact_text: bool = False,
     enforce_capabilities: bool = False,
     artifact_root: str | None = None,
+    on_ask: Callable[[str, str | None, str], bool] | None = None,
 ) -> AsyncSandbox:
     """Open an async session and complete the ACI handshake."""
     ws = await _ws_connect(_to_uri(addr))
@@ -527,6 +552,7 @@ async def aconnect(
         redact_text,
         enforce_capabilities,
         artifact_root,
+        on_ask,
     )
     sandbox._start_reader()  # the reader owns recv() from here on
     return sandbox
@@ -789,6 +815,7 @@ def connect(
     redact_text: bool = False,
     enforce_capabilities: bool = False,
     artifact_root: str | None = None,
+    on_ask: Callable[[str, str | None, str], bool] | None = None,
 ) -> Sandbox:
     """Connect to a running ``shinkend`` and complete the ACI handshake (blocking).
 
@@ -796,7 +823,8 @@ def connect(
     into the `.skn` replay as reference semantics). For sensitive runs, ``redact_media``
     drops captured screenshot bytes and ``redact_text`` strips typed text from the
     recording (#88). With ``enforce_capabilities``, the local Action Gateway shim (#84)
-    denies actions whose capability the envelope does not grant, before dispatch."""
+    denies actions whose capability the envelope does not grant, before dispatch; a
+    capability valued ``"ask"`` is *risky* and pauses for approval via ``on_ask`` (#7)."""
     loop = _BackgroundLoop()
     try:
         inner = loop.run(
@@ -809,6 +837,7 @@ def connect(
                 redact_text=redact_text,
                 enforce_capabilities=enforce_capabilities,
                 artifact_root=artifact_root,
+                on_ask=on_ask,
             )
         )
     except Exception:

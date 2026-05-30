@@ -28,18 +28,19 @@
         "title": { "type": "string" }
       }
     },
+    "CapabilityFlag": { "anyOf": [ { "type": "boolean" }, { "const": "ask" } ], "description": "granted (true) / denied (false) / requires approval (\"ask\", #7)" },
     "CapabilityEnvelope": {
       "type": "object",
       "description": "v0 session capability envelope — reference semantics (recorded/auditable), NOT Cedar/ocap/OS enforcement",
       "properties": {
-        "input_automation": { "type": "boolean" },
-        "screenshot": { "type": "boolean" },
-        "a11y": { "type": "boolean" },
+        "input_automation": { "$ref": "#/$defs/CapabilityFlag" },
+        "screenshot": { "$ref": "#/$defs/CapabilityFlag" },
+        "a11y": { "$ref": "#/$defs/CapabilityFlag" },
         "fs_scope": { "type": ["string", "null"] },
         "egress": { "type": ["boolean", "string"] },
-        "credentials": { "type": "boolean" },
-        "clipboard": { "type": "boolean" },
-        "privileged_install": { "type": "boolean" }
+        "credentials": { "$ref": "#/$defs/CapabilityFlag" },
+        "clipboard": { "$ref": "#/$defs/CapabilityFlag" },
+        "privileged_install": { "$ref": "#/$defs/CapabilityFlag" }
       }
     },
     "Event": {
