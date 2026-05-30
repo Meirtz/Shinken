@@ -15,6 +15,7 @@ Authoritative, relatively-stable design corpus. Read in order; each builds on th
 | 08 | [Threat model](08-threat-model.md) | Trust boundaries, STRIDE table, 5 kill chains, mitigations mapped to D6 | ✅ |
 | 09 | [Economics & build-vs-buy](09-economics-and-build-vs-buy.md) | Concurrency/cost model, build-vs-buy (OSS substrates vs in-house), measurement plan | ✅ |
 | 10 | [Phase-0 implementation plan](10-phase0-plan.md) | The local single-Sandbox PoC: stack, milestones (M0–M4), the a11y-coverage gate, interface contracts, code layout | ✅ |
+| 11 | [ACI specification](11-aci-spec.md) | The north-star interface: elegant API, typed actions, observation, replay, the async harness core + adapters | ✅ |
 
 Legend: ⏳ pending · 🚧 drafting · ✅ drafted
 

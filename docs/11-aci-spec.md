@@ -1,0 +1,203 @@
+# 11 — ACI Specification (the north-star interface)
+
+> Status: drafted · 2026-05-30 · Siblings: [00 Vision](00-vision.md) · [02 Architecture](02-architecture.md) · [05 ADRs](05-tech-decisions.md) · [10 Phase-0 plan](10-phase0-plan.md) · wire schema [`schema/aci.schema.json`](../schema/aci.schema.json)
+
+The **Agent-Computer Interface (ACI)** is Shinken's product. This document is the north-star it is
+built toward — the elegant surface, the typed action/observation model, the action-execution and
+capture strategies, and the small async core contract that lets *any* harness drive Shinken. It
+reconciles to decisions **D2** (actions), **D3** (observation), **D5** (replay), **D8** (interfaces).
+
+> **Lineage.** Shinken is the elegant Python-exec sandbox idea grown up: the prior `shinken` gave
+> you `init() / run(code) / save() / restore() / cleanup()` with a rich `result.output`. Shinken
+> keeps that exact ergonomics and generalizes it — `run(code)` gains a sibling GUI surface
+> (`observe`/`act`), and `save`/`restore` are promoted from a Python interpreter's namespace to an
+> entire **forkable desktop**. The checkpoint idea *was* the right one; it is now the killer
+> primitive (D1/D5).
+
+---
+
+## 1. Design principles (what "elegant" means here)
+
+1. **One line to start.** `shinken.connect()` (or `.init()`) returns a ready session.
+2. **Few, high-affordance verbs.** A small typed action set; sugar methods for the common ones.
+3. **Rich, structured results.** Observations and results are objects (`view["Save"]`, `r.output`), never opaque blobs.
+4. **Checkpoints are first-class and trivial.** `save()/restore()/fork()` — the same primitive as instant reset and replay-branching.
+5. **Progressive disclosure.** Simple by default (`observe()` returns structure); power on demand (`observe(pixels=True)`, `fork`, `unlock`).
+6. **Same object, local or remote, any OS.** `connect()` local, `connect(id)` cloud — identical surface.
+7. **The agent loop is one call** (`drive`), but `observe`/`act` are always exposed for control.
+8. **Safe by default, powerful on unlock.** Dangerous capabilities are gated, not forbidden (`unlock`).
+
+---
+
+## 2. The north-star API
+
+```python
+import shinken
+
+# 1) one-line setup — your init(), now a whole desktop (local or cloud; same object)
+env = shinken.connect()                       # or shinken.connect("sbx_id") / shinken.init(os="linux")
+
+# 2) observe — structured-first, but screenshot + video are first-class (P0)
+view = env.observe()                          # -> Observation (a11y tree when available)
+view["Save"]                                  # find an element by name/role -> ElementRef
+view.screenshot()                             # pixels on demand
+view.screenshot(window=True)                  # focused-app/window pixels (not full screen)
+
+# 3) act — a tiny verb set, on element refs (preferred) or coordinates
+env.click(view["Save"]); env.type("Q3 report"); env.key("ctrl+s")
+env.scroll(view["sidebar"], dy=-300)
+env.click(x=640, y=400)                       # raw pixels still available
+
+# 4) run() — code-as-action, preserved verbatim (a gated capability)
+r = env.run("a = 10\nb = 20\nprint(a + b)");  print(r.output)   # "30"
+
+# 5) save / restore / fork — checkpoints over the WHOLE desktop
+cp = env.save()                               # snapshot the Sandbox
+env.click(view["Delete all"]); env.restore(cp)# time-travel back
+kids = env.fork(cp, n=8)                       # branch into 8 parallel Sandboxes (Best-of-N)
+
+# 6) drive — one call, provider-agnostic, fully recorded
+out = env.drive(shinken.agent("claude-opus-4-8"), task="Make every .txt in ~/docs a .md")
+
+# 7) replay is free — the live event stream IS the recording
+env.replay.save("run.skn")
+
+# 8) capability-unlock — dangerous features are unlocked, not forbidden
+with env.unlock("install.privileged", reason="pip install pandas"):
+    env.run("pip install pandas")
+
+env.close()
+```
+
+Streaming is the same object: `for ev in env.events(): ...` yields the typed event stream (the
+replay log) live; `env.video()` attaches the on-demand pixel/video channel.
+
+---
+
+## 3. Action model (D2)
+
+**One canonical typed action**, a tagged union discriminated by `verb` (wire form in
+[`schema/aci.schema.json`](../schema/aci.schema.json)). The spatial `target` is a discriminated
+union so the *same* verb serves pixel models, normalized models, and element-ref models:
+
+```
+target = oneof{ point_px{x,y} | point_norm{x,y∈0..1} | element_ref{ref, source} }
+```
+
+Every observation carries a `CoordinateSpace {origin, w, h, dpr}`; coordinate normalization lives in
+the protocol, once. v0 verbs: `click, double_click, right_click, move, scroll, type_text, key,
+screenshot, wait`. **Code-as-action** (`run`/bash/edit) is a separate, **off-by-default** capability
+class behind the policy boundary (D6) — expressive, but gated and auditable.
+
+### 3.1 Backend-pluggable executor
+
+`shinkend` exposes one typed action surface over a **per-OS, backend-pluggable executor** with a
+router that prefers semantic actuation, falling back to synthetic input. (Validated by the P0
+deep-dive; see [notes/p0-deepdive.md](../notes/p0-deepdive.md).)
+
+| OS | Default (semantic) | Fallback (synthetic) | Focused/background |
+|----|--------------------|----------------------|--------------------|
+| **Linux** (P0, X11) | browser → **CDP**; `element_ref` → **AT-SPI2 `do_action`** | **XTEST** via libXtst/libxdo (not shelling `xdotool` per call) | XTEST on a controlled Xvfb/Xorg-dummy session (we own the display) |
+| Linux (later) | AT-SPI2 | **libei/libeis** via the RemoteDesktop portal; `uinput` | portal session |
+| **Windows** | **UIAutomation `Invoke`/`Value`** | **SendInput** | UIA + background dispatch (later) |
+| **macOS** | **AXUIElement `AXPress`/`AXSetValue`** | **CGEventPostToPid** (avoid `CGWarpMouseCursorPosition`) | per-pid post; SkyLight (later) |
+
+**Router priority at actuation:** `browser → CDP` · `element_ref with a valid a11y action → AT-SPI/UIA/AX` · `else pixel coordinate → XTEST/SendInput/CGEvent`. We do **not** make raw XTEST/pyautogui the sole strategy (coordinate-only, focus-stealing, X11-only). A `pyautogui`-compatible shim is kept so OSWorld's pyautogui action space runs unchanged.
+
+---
+
+## 4. Observation model (D3) — pixels *and* structure
+
+Per your steer, **screenshot + video are first-class in P0** (the GUI-agent mainstream), with the
+accessibility tree as a **parallel structured track** (our bandwidth/robustness differentiator) and
+SoM/OmniParser as a fallback rung.
+
+**One capture contract, three operations, one capture source per OS:**
+
+```
+screenshot(target=screen|window|region, region?, format, quality, max_dim) -> image
+start_video(target, fps, codec) -> stream     # continuous; for the human/Control Panel
+stop_video(stream)
+```
+
+- **macOS:** ScreenCaptureKit (`SCScreenshotManager` for stills incl. occluded per-window; `SCStream` for video).
+- **Windows:** Windows.Graphics.Capture (WGC) — the only API doing per-window **and** occluded/background, for both stills and video.
+- **Linux:** Wayland → `xdg-desktop-portal` ScreenCast + PipeWire (persist `restore_token`); X11 (our P0 fork tier) → XComposite per-window + XShm.
+- **Encoder hand-off:** keep frames GPU-resident → GStreamer `nvcodec`/NVENC (neko-style, realtime-tuned). NVENC streaming runs on Ada L4/L40S, never A100/H100 (D11).
+
+**Two paths off the same source:** (1) **screenshot-per-step**, downscaled to the model's true vision
+resolution, for the agent loop; (2) **continuous video** for the human Control Panel. The structured
+**observation event** (`a11y` full→diff with stable element refs) is the low-bandwidth default and
+is what gets recorded.
+
+Layered escalation the agent/policy requests: rung 0 a11y/DOM diff (default) → rung 1 SoM/OmniParser
+(low a11y coverage) → rung 2 region/zoom pixels → rung 3 full frame.
+
+---
+
+## 5. Replay model (D5) — two artifacts, two contracts
+
+The P0 deep-dive splits replay into two cleanly-separated concerns:
+
+- **(A) `.skn` layered bundle** (cross-OS, the debug/audit/train artifact): append-only event log
+  (the source of truth, = the live stream) + **bisected STATE snapshots** + an **on-demand VIDEO
+  sidecar**. Storage levers from day one: content-addressed `resources/<sha256>` dedup, full-snapshot
+  + typed-delta observations (`a11y_delta`/`png_diff`). Wire form in [`schema/skn.schema.json`](../schema/skn.schema.json).
+- **(B) qcow2 deterministic-eval VM** (the OSWorld-style eval path): a read-only golden qcow2 base
+  per task-suite + per-task **backing-file overlays** (redirect-on-write) + `savevm/loadvm`. This
+  needs **only snapshot-revert** — agent-trajectory replay is **deferred** here (P0).
+
+**Later:** video sidecar as IDR-aligned fragmented-MP4 with a keyframe→seq→byte-offset index (scrub
+snaps to event seq); true mid-execution **branching** on the Linux fork tier (Firecracker MAP_PRIVATE
+CoW memory-fork + a versioned, non-pickle agent-half checkpoint, immutable checkpoint DAG). The
+"scientific" determinism layer is reserved for the **agent core only** (recorded LLM/tool inputs
+replayed via stubs; CRIU for the process).
+
+---
+
+## 6. The harness-compat core (D8) — small async core + thin adapters
+
+Plain Gym (sync `reset`/`step`) is a necessary *veneer* but insufficient as the *core* — it can't
+express streaming observations, async/long-horizon runs, or permission interrupts. So the core is a
+**small async contract**, and every harness is a **thin adapter** over it.
+
+**Env contract (environment side, async):** `create(spec)` / `connect(id)` / `ephemeral(spec)`
+(cua's three lifecycle modes); `reset(task_config?) -> Observation`; `step(action) -> (obs, reward?,
+done?, info)`; `observe()`; `save()/restore()/fork()`; `events()` stream; `close()`.
+
+**Operator contract (actuation side, async, UI-TARS-shaped):** `screenshot()/observe() ->
+Observation`; `execute(actions: Action[]) -> ExecuteResult{status, executed_target_logical_px,
+error?}`; `supported() -> {verbs, targets, observation_types}`.
+
+**Control + permission channel:** a `needs_approval{capability, token}` event (generalizing OpenAI
+`pending_safety_checks` and LangGraph `interrupt()`) pauses the run until the controller (human panel
+or policy) resolves it — recorded as a `permission` event in `.skn`.
+
+**Four thin adapters, generated from one IDL:**
+1. **Gym/Gymnasium shim** — `reset()->(obs,info)`, `step()->(obs,reward,terminated,truncated,info)` for RL users.
+2. **MCP server** — model-agnostic tools/resources (never the hot video loop).
+3. **OSWorld `DesktopEnv` shim** — existing OSWorld tasks/agents run **unchanged** (subsumes OSWorld's runtime/message-passing).
+4. **Vendor agent-loop adapters** — `AnthropicComputerAdapter` (`computer_20241022/0124/1124` + bash + text_editor), `OpenAIComputerAdapter` (`computer_call`/`computer_call_output`), UI-TARS — so any off-the-shelf CUA model drives Shinken unmodified.
+
+---
+
+## 7. Handshake & versioning
+
+On connect the client sends `hello{v, client, accept}`; the runtime replies `welcome{server,
+capabilities}` advertising `{schema_version, verbs, targets, observation_types, max_long_edge}`. The
+client uses only advertised capabilities. The ACI is semver-versioned; adapters are version-pinned.
+
+---
+
+## 8. P0 vs later
+
+| Area | P0 | Later |
+|------|----|-------|
+| Actions | typed schema + executor; Linux XTEST + CDP/AT-SPI routing + pyautogui-compat | Wayland (libei), Windows UIA/SendInput, macOS AX/CGEvent, background injection |
+| Observation | screenshot + screen video + focused-app capture + a11y track | SoM/OmniParser service, multi-OS a11y, hardware NVENC streaming pipeline |
+| Replay | `.skn` event log + state snapshots; qcow2-eval (revert only) | video sidecar, mid-execution branching (fork tier), agent-core determinism |
+| Harness | async Env+Operator core; Gym shim; OSWorld shim; 1 vendor adapter | MCP server, full adapter set, RL gym at scale |
+| API | `connect/observe/act/run/save/restore/close` + handshake | `fork/drive/unlock/events/video`, cloud `connect(id)` |
+
+This spec is the contract M1–M4 implement against; changes here update the relevant ADR in
+[05-tech-decisions.md](05-tech-decisions.md). Evidence + sources: [notes/p0-deepdive.md](../notes/p0-deepdive.md).

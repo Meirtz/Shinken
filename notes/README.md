@@ -13,6 +13,7 @@ Lower bar than `docs/`: opinionated, exploratory, citation-heavy, may go stale.
 | [ai-native-interface.md](ai-native-interface.md) | ACI design, Anthropic/OpenAI computer-use schemas, MCP, a11y-tree observations | ✅ |
 | [eval-benchmarks.md](eval-benchmarks.md) | Benchmark landscape + SOTA scores, eval-harness design, HUD/cua-bench, training-data capture | ✅ |
 | [open-questions.md](open-questions.md) | Prioritized unresolved questions, risks, and prototype spikes with success criteria | ✅ |
+| [p0-deepdive.md](p0-deepdive.md) | Action-execution backends, focused-app capture, cross-OS replay + qcow2 eval, harness compatibility | ✅ |
 | [sources.md](sources.md) | Annotated bibliography (external sources + cloned reference repos) | ✅ |
 
 Legend: ⏳ pending · 🚧 drafting · ✅ drafted
