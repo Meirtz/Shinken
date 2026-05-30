@@ -31,6 +31,16 @@ pub struct Capabilities {
     pub max_long_edge: u32,
 }
 
+/// An image carried in an `observation` (base64 PNG + dimensions).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImageRef {
+    #[serde(rename = "ref")]
+    pub data: String,
+    pub w: u16,
+    pub h: u16,
+    pub scope: String,
+}
+
 /// One ACI message. `#[serde(tag = "type")]` gives the `{"type": "..."}` discriminator.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -75,6 +85,13 @@ pub enum Message {
         ok: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
+    },
+    Observation {
+        obs_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cause: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        image: Option<ImageRef>,
     },
 }
 

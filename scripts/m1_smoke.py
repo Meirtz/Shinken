@@ -13,5 +13,11 @@ env = shinken.connect(addr)
 print(f"connected to {addr}: platform={env.platform}, verbs={env.capabilities.verbs[:4]}")
 env.move(x=300, y=200)
 env.click(x=300, y=200)
+
+shot = env.screenshot()
+assert shot["png"][:8] == b"\x89PNG\r\n\x1a\n", "screenshot is not a PNG"
+print(f"screenshot: {shot['w']}x{shot['h']}, {len(shot['png'])} bytes")
+assert (shot["w"], shot["h"]) == (1280, 800), f"unexpected screen size {shot['w']}x{shot['h']}"
+
 env.close()
-print("M1 smoke: move + click sent")
+print("M1 smoke: move + click + screenshot OK")

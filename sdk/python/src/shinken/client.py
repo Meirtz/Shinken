@@ -8,6 +8,7 @@ public API can stay a clean one-liner (``env = shinken.connect()``) without leak
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import threading
 import time
@@ -117,6 +118,20 @@ class AsyncSandbox:
     ):
         return await self.act("scroll", _target(target, x, y), dy=dy)
 
+    async def screenshot(self, scope: str = "screen") -> dict:
+        """Capture pixels on demand. Returns {'png': bytes, 'w': int, 'h': int}."""
+        reply = await self._rpc(
+            {
+                "type": "action",
+                "call_id": self._next_id(),
+                "action": {"verb": "screenshot", "scope": scope},
+            }
+        )
+        if reply.get("type") != "observation":
+            raise RuntimeError(reply.get("error", "screenshot failed"))
+        img = reply.get("image") or {}
+        return {"png": base64.b64decode(img.get("ref", "")), "w": img.get("w"), "h": img.get("h")}
+
     async def close(self) -> None:
         await self._ws.close()
 
@@ -202,6 +217,9 @@ class Sandbox:
         self, target: Any = None, *, x: float | None = None, y: float | None = None, dy: float = 0.0
     ):
         return self._loop.run(self._inner.scroll(target, x=x, y=y, dy=dy))
+
+    def screenshot(self, scope: str = "screen") -> dict:
+        return self._loop.run(self._inner.screenshot(scope))
 
     def close(self) -> None:
         try:

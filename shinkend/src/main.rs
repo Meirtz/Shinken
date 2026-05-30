@@ -85,15 +85,37 @@ fn handle_message(text: &str, exec: &dyn Executor) -> Option<String> {
     })
 }
 
-/// Run one `action` message through the executor and build the `ack`.
+/// Run one `action` message through the executor; `screenshot` replies with an
+/// `observation`, every other verb with an `ack`.
 fn dispatch_action(call_id: &str, action: serde_json::Value, exec: &dyn Executor) -> Message {
-    let (ok, error) = match serde_json::from_value::<ActionSpec>(action) {
-        Ok(spec) => match exec.execute(&spec) {
-            Ok(_) => (true, None),
-            Err(e) => (false, Some(e.to_string())),
-        },
-        Err(e) => (false, Some(format!("bad action: {e}"))),
+    let spec = match serde_json::from_value::<ActionSpec>(action) {
+        Ok(s) => s,
+        Err(e) => return ack(call_id, false, Some(format!("bad action: {e}"))),
     };
+
+    if spec.verb == "screenshot" {
+        return match exec.screenshot() {
+            Ok(img) => Message::Observation {
+                obs_id: format!("obs-{call_id}"),
+                cause: Some(call_id.to_string()),
+                image: Some(protocol::ImageRef {
+                    data: img.png_base64,
+                    w: img.w,
+                    h: img.h,
+                    scope: "screen".to_string(),
+                }),
+            },
+            Err(e) => ack(call_id, false, Some(e.to_string())),
+        };
+    }
+
+    match exec.execute(&spec) {
+        Ok(_) => ack(call_id, true, None),
+        Err(e) => ack(call_id, false, Some(e.to_string())),
+    }
+}
+
+fn ack(call_id: &str, ok: bool, error: Option<String>) -> Message {
     Message::Ack {
         call_id: call_id.to_string(),
         ok,

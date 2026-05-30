@@ -11,6 +11,11 @@ import threading
 import pytest
 from websockets.asyncio.server import serve
 
+# A valid 1x1 PNG (signature + IHDR/IDAT/IEND), base64-encoded.
+_PNG_1X1 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAen63NgAAAAASUVORK5CYII="
+)
+
 
 def _free_port() -> int:
     s = socket.socket()
@@ -48,7 +53,22 @@ async def _handler(ws) -> None:
             reply = {"type": "result", "call_id": msg.get("call_id"), "ok": True, "value": value}
             await ws.send(json.dumps(reply))
         elif kind == "action":
-            await ws.send(json.dumps({"type": "ack", "call_id": msg.get("call_id"), "ok": True}))
+            verb = (msg.get("action") or {}).get("verb")
+            if verb == "screenshot":
+                await ws.send(
+                    json.dumps(
+                        {
+                            "type": "observation",
+                            "obs_id": "o1",
+                            "cause": msg.get("call_id"),
+                            "image": {"ref": _PNG_1X1, "w": 1, "h": 1, "scope": "screen"},
+                        }
+                    )
+                )
+            else:
+                await ws.send(
+                    json.dumps({"type": "ack", "call_id": msg.get("call_id"), "ok": True})
+                )
 
 
 @pytest.fixture

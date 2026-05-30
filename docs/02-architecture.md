@@ -91,6 +91,51 @@ flowchart TB
   SEC -.->|"scoped token injection<br/>(model never sees plaintext)"| EGRESS
 ```
 
+### 1.1.1 Client / server responsibility split
+
+The component diagram is easier to reason about if read as five lanes. This split is also the
+security model: clients request work, the server-side control plane authorizes and records it, and
+the guest runtime executes only validated ACI.
+
+| Lane | Owns | Must not own |
+|---|---|---|
+| **Client side** | SDKs, Operator, model adapters, Control Panel views, optional MCP facade | Direct privileged access to a Sandbox |
+| **Control Server / Control Plane** | Action Gateway, policy/capability decisions, budgets, replay store, Fleet Manager, eval orchestration | In-guest actuation or app-specific UI logic |
+| **Guest server (`shinkend`)** | ACI execution, observation capture, event emission, media publishing | Authorization, tenant policy, secret decisions |
+| **Guest OS / apps** | Desktop state, app processes, a11y/DOM sources, framebuffer | Trust boundary or policy enforcement by itself |
+| **Substrate host** | VM/container lifecycle, isolation, reset/fork, egress proxy attachment | Model-facing API semantics |
+
+The request path follows the same boundary every time:
+
+```mermaid
+sequenceDiagram
+    participant C as Client / Operator
+    participant G as Control Server / Action Gateway
+    participant P as Policy / capability store
+    participant S as Guest server / shinkend
+    participant A as Guest OS / app
+    participant R as Replay Store
+
+    C->>G: typed ACI action
+    G->>P: authorize capability + budget
+    P-->>G: allow / ask / deny
+    alt allowed
+        G->>S: dispatch validated action
+        S->>A: actuate / observe
+        A-->>S: UI state
+        S-->>G: ack + observation
+        G-->>C: result + observation
+        G->>R: append action / observation / permission events
+    else denied or needs approval
+        G-->>C: denied / needs_approval
+        G->>R: append permission decision event
+    end
+```
+
+Phase-0 uses a smaller local version of this split: the Python client talks directly to `shinkend`
+for the M0 handshake, then a local Gateway shim is introduced for permission and replay. Phase 1
+replaces that shim with the real Control Plane without changing the client/guest contract.
+
 ### 1.2 Control Plane
 
 The Control Plane is the orchestration brain. It is stateless where it can be (the Action Gateway), stateful where it must be (Fleet Manager pool inventory, Replay Store, policy/capability registry). Its sub-components:

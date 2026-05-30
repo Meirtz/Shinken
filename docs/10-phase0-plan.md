@@ -90,6 +90,54 @@ flowchart LR
 What's intentionally **absent** in Phase-0: Fleet Manager / warm pools / fork, Cedar engine, OS
 sandbox enforcement, WebRTC media plane + NVENC, SFU, SoM grounding, cross-OS guests, GPU.
 
+### 3.1 Client / server split
+
+For Phase-0, keep the mental model simple and explicit:
+
+- **Client side:** Python SDK, CLI, Operator loop, and the one model adapter. The client asks to
+  observe and act; it does not own privileged authority.
+- **Phase-0 control shim:** a local Action Gateway shim that checks allow/ask/deny decisions and
+  writes the `.skn` event stream. This is deliberately small, but it preserves the future control
+  plane boundary.
+- **Guest server:** `shinkend`, running inside the Linux Sandbox. It executes ACI actions and
+  captures observations. It does not make policy decisions.
+- **Guest OS / apps:** the desktop session, target GUI apps, AT-SPI/CDP sources, and screenshots.
+- **Substrate host:** Docker in Phase-0; later replaced by the routed substrate pool (agent-sandbox,
+  Firecracker, QEMU/crosvm, and other per-OS backends).
+
+M0 is only the first link in that split: the Python SDK talks directly to `shinkend` over a
+WebSocket to prove the handshake and query shape. M1-M4 add the Phase-0 control shim, real
+act/observe, `.skn` recording, permissions, and eval.
+
+```mermaid
+sequenceDiagram
+    participant C as Client (SDK / CLI / Operator)
+    participant G as Phase-0 Gateway shim
+    participant S as Guest server (shinkend)
+    participant A as Guest OS / app
+    participant R as .skn writer
+
+    Note over C,S: M0 today: C connects directly to S for hello / ping / query.
+    C->>S: hello(v0)
+    S-->>C: welcome(capabilities)
+    C->>S: ping / query(screen_size)
+    S-->>C: pong / result
+
+    Note over C,R: M1-M4 target: gateway shim becomes the local policy + replay boundary.
+    C->>G: act(Action)
+    G->>G: allow / ask / deny
+    G->>S: dispatch validated action
+    S->>A: execute input / capture state
+    A-->>S: UI state
+    S-->>G: ack + observation
+    G-->>C: result + observation
+    G->>R: append action / observation / permission event
+```
+
+This split is intentionally the same split used later by the full architecture: the future Control
+Plane replaces the local Gateway shim, but the client still requests, the server still authorizes
+and records, and `shinkend` still only executes validated ACI.
+
 ---
 
 ## 4. Work breakdown (milestones)
@@ -207,9 +255,10 @@ Frozen-enough surfaces so milestones can proceed in parallel. Full schemas live 
 
 ---
 
-## 7. Proposed code layout
+## 7. Phase-0 code layout
 
-Added alongside the existing tracked tree; created when M0 starts.
+M0 creates the first implementation directories; later milestones fill in the currently planned
+`spikes/`, `panel/`, and `eval/` surfaces.
 
 ```
 shinken/
@@ -224,7 +273,7 @@ shinken/
 │   └── webrtc-latency/# Spike C (Phase-1 boundary)
 ├── eval/              # tiny eval harness + task fixtures + verifiers — M4
 ├── docs/  notes/      # (existing) design corpus
-└── references/ scratch/ internal/   # (existing) git-ignored
+└── references/        # public prior-art provenance + re-clone notes
 ```
 
 A future `CONTRIBUTING.md` + CI (lint/test, schema-validation, `shinkend` build) land with M0.

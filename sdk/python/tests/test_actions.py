@@ -16,6 +16,13 @@ def test_click_move_scroll_acked(mock_shinkend):
         assert env.act("double_click", {"kind": "point_px", "x": 1, "y": 2})["ok"] is True
 
 
+def test_screenshot_returns_png(mock_shinkend):
+    with shinken.connect(mock_shinkend) as env:
+        shot = env.screenshot()
+        assert shot["png"][:8] == b"\x89PNG\r\n\x1a\n"
+        assert shot["w"] == 1 and shot["h"] == 1
+
+
 def test_target_builder():
     assert _target(None, 5, 6) == {"kind": "point_px", "x": 5, "y": 6}
     assert _target("e1", None, None) == {"kind": "element_ref", "ref": "e1"}

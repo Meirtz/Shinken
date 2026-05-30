@@ -8,11 +8,14 @@
 
 use std::sync::Mutex;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, ensure, Context, Result};
+use base64::engine::general_purpose::STANDARD as B64;
+use base64::Engine as _;
 use serde::Deserialize;
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{
-    Window, BUTTON_PRESS_EVENT, BUTTON_RELEASE_EVENT, MOTION_NOTIFY_EVENT,
+    ConnectionExt as _, ImageFormat, Window, BUTTON_PRESS_EVENT, BUTTON_RELEASE_EVENT,
+    MOTION_NOTIFY_EVENT,
 };
 use x11rb::protocol::xtest::ConnectionExt as _;
 
@@ -58,12 +61,38 @@ pub struct ActionSpec {
     pub ms: Option<u64>,
 }
 
+/// A captured frame: a base64-encoded PNG plus its pixel dimensions.
+#[derive(Debug, Clone)]
+pub struct CapturedImage {
+    pub png_base64: String,
+    pub w: u16,
+    pub h: u16,
+}
+
 /// Executes typed actions against a guest. Backends are swappable per OS.
 pub trait Executor: Send + Sync {
     /// Execute one action; returns a short status string or an error.
     fn execute(&self, action: &ActionSpec) -> Result<String>;
     /// A human label for the active backend.
     fn backend(&self) -> &'static str;
+    /// Capture the screen as a PNG (M1b). Default: unsupported.
+    fn screenshot(&self) -> Result<CapturedImage> {
+        bail!("screenshot not supported by the {} backend", self.backend())
+    }
+}
+
+/// Encode raw RGB8 pixels as a PNG byte stream.
+fn encode_png(rgb: &[u8], w: u32, h: u32) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
+    {
+        let mut enc = png::Encoder::new(&mut out, w, h);
+        enc.set_color(png::ColorType::Rgb);
+        enc.set_depth(png::BitDepth::Eight);
+        let mut writer = enc.write_header()?;
+        writer.write_image_data(rgb)?;
+        writer.finish()?;
+    }
+    Ok(out)
 }
 
 /// Pick the best available executor: X11 if a display is reachable, else virtual.
@@ -147,6 +176,39 @@ impl Executor for X11Executor {
         "x11/xtest"
     }
 
+    fn screenshot(&self) -> Result<CapturedImage> {
+        let reply = {
+            let conn = self.conn.lock().expect("x11 conn lock");
+            let cookie = conn.get_image(
+                ImageFormat::Z_PIXMAP,
+                self.root,
+                0,
+                0,
+                self.width,
+                self.height,
+                !0,
+            )?;
+            cookie.reply()?
+        };
+        let (w, h) = (self.width as usize, self.height as usize);
+        ensure!(w * h > 0, "zero-sized screen");
+        let bpp = reply.data.len() / (w * h);
+        ensure!(bpp == 3 || bpp == 4, "unexpected bytes-per-pixel: {bpp}");
+        // X delivers BGR[X]; reorder to RGB for PNG.
+        let mut rgb = Vec::with_capacity(w * h * 3);
+        for px in reply.data.chunks_exact(bpp) {
+            rgb.push(px[2]);
+            rgb.push(px[1]);
+            rgb.push(px[0]);
+        }
+        let png = encode_png(&rgb, self.width as u32, self.height as u32)?;
+        Ok(CapturedImage {
+            png_base64: B64.encode(png),
+            w: self.width,
+            h: self.height,
+        })
+    }
+
     fn execute(&self, a: &ActionSpec) -> Result<String> {
         match a.verb.as_str() {
             "move" => {
@@ -186,8 +248,8 @@ impl Executor for X11Executor {
             }
             // M1b: keysym mapping + IME.
             "type_text" | "key" => bail!("{} lands in M1b (keysym mapping)", a.verb),
-            // M1b: capture engine.
-            "screenshot" => bail!("screenshot lands in M1b (observation engine)"),
+            // Dispatched via the capture path (screenshot()), not execute().
+            "screenshot" => bail!("screenshot is handled via the capture path"),
             // We discourage fixed sleeps (prefer readiness probes, D7) — ack as a no-op.
             "wait" => Ok("wait acknowledged (prefer readiness probes over fixed sleeps)".into()),
             other => bail!("unknown verb: {other}"),
