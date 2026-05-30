@@ -25,6 +25,8 @@ ENV DEBIAN_FRONTEND=noninteractive DISPLAY=:0
 RUN apt-get update && apt-get install -y --no-install-recommends \
         xvfb x11-utils openbox xdotool x11-apps \
         at-spi2-core dbus-x11 \
+        python3 python3-gi gir1.2-atspi-2.0 \
+        zenity \
         xterm \
     && rm -rf /var/lib/apt/lists/*
 
