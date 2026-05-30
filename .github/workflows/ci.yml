@@ -111,3 +111,36 @@ jobs:
           test "$X" = "300" && test "$Y" = "200" && echo "✅ live X11 pointer action verified"
       - if: steps.present.outputs.go == 'false'
         run: echo "shinkend or smoke script not present yet — skipping"
+
+  sdk-wheel:
+    name: SDK wheel install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: present
+        run: |
+          if [ -f sdk/python/pyproject.toml ]; then echo "go=true" >> "$GITHUB_OUTPUT"; else echo "go=false" >> "$GITHUB_OUTPUT"; fi
+      - if: steps.present.outputs.go == 'true'
+        name: packaged SDK schemas match source of truth
+        run: |
+          diff -q schema/aci.schema.json sdk/python/src/shinken/schemas/aci.schema.json
+          diff -q schema/skn.schema.json sdk/python/src/shinken/schemas/skn.schema.json
+          echo "packaged schemas in sync with schema/"
+      - if: steps.present.outputs.go == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - if: steps.present.outputs.go == 'true'
+        name: build wheel, install in a clean venv, validate WITHOUT the repo schema/
+        run: |
+          set -euo pipefail
+          python -m pip install -U pip build
+          python -m build --wheel sdk/python --outdir dist
+          python -m venv /tmp/venv
+          /tmp/venv/bin/pip install -U pip
+          /tmp/venv/bin/pip install dist/*.whl jsonschema
+          cd /tmp  # run outside the repo so repo-root schema/ is unreachable
+          /tmp/venv/bin/python -c "from shinken import protocol; protocol.validate({'type':'ping','t':1.0}); print('packaged schema validate OK')"
+          /tmp/venv/bin/shinken --version
+      - if: steps.present.outputs.go == 'false'
+        run: echo "sdk/python not present yet — skipping"

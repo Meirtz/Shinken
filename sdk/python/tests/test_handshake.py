@@ -22,3 +22,9 @@ def test_connect_handshake_and_queries(mock_shinkend):
 def test_context_manager(mock_shinkend):
     with shinken.connect(mock_shinkend) as env:
         assert env.platform == "linux"
+
+
+def test_close_is_idempotent(mock_shinkend):
+    env = shinken.connect(mock_shinkend)
+    env.close()
+    env.close()  # second close must be a safe no-op

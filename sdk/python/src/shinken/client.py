@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import json
 import threading
 import time
@@ -217,6 +218,7 @@ class _BackgroundLoop:
 
     def stop(self) -> None:
         self.loop.call_soon_threadsafe(self.loop.stop)
+        self._thread.join(timeout=5)
 
 
 class Sandbox:
@@ -225,6 +227,7 @@ class Sandbox:
     def __init__(self, inner: AsyncSandbox, loop: _BackgroundLoop) -> None:
         self._inner = inner
         self._loop = loop
+        self._closed = False
 
     @property
     def capabilities(self) -> Capabilities:
@@ -273,10 +276,12 @@ class Sandbox:
         return self._inner.save_replay(path)
 
     def close(self) -> None:
-        try:
+        if self._closed:
+            return
+        self._closed = True
+        with contextlib.suppress(Exception):
             self._loop.run(self._inner.close())
-        finally:
-            self._loop.stop()
+        self._loop.stop()
 
     def __enter__(self) -> Sandbox:
         return self

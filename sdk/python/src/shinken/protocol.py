@@ -16,10 +16,16 @@ SCHEMA_VERSION = 0
 
 @lru_cache(maxsize=1)
 def aci_schema() -> dict:
-    """Load the ACI v0 JSON Schema from the repo (monorepo / editable install)."""
-    # this file: sdk/python/src/shinken/protocol.py -> parents[4] == repo root
-    root = Path(__file__).resolve().parents[4]
-    return json.loads((root / "schema" / "aci.schema.json").read_text())
+    """Load the ACI v0 JSON Schema. Works from a wheel via packaged data, with a
+    repo-root fallback for unusual layouts."""
+    try:
+        from importlib.resources import files
+
+        text = files("shinken").joinpath("schemas", "aci.schema.json").read_text(encoding="utf-8")
+        return json.loads(text)
+    except (FileNotFoundError, ModuleNotFoundError, NotADirectoryError):
+        root = Path(__file__).resolve().parents[4]
+        return json.loads((root / "schema" / "aci.schema.json").read_text())
 
 
 def validate(message: dict) -> None:

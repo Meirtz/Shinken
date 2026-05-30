@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shinken.dev/schema/aci/v0",
+  "title": "Shinken ACI v0 — wire messages",
+  "description": "Agent-Computer Interface v0: the typed messages on the WebSocket between the client/Operator and the in-Sandbox Guest Runtime (shinkend). Discriminated by `type`. See docs/05-tech-decisions.md (D2) and docs/10-phase0-plan.md.",
+  "type": "object",
+  "required": ["type"],
+  "discriminator": { "propertyName": "type" },
+  "oneOf": [
+    { "$ref": "#/$defs/Hello" },
+    { "$ref": "#/$defs/Welcome" },
+    { "$ref": "#/$defs/Ping" },
+    { "$ref": "#/$defs/Pong" },
+    { "$ref": "#/$defs/Query" },
+    { "$ref": "#/$defs/Result" },
+    { "$ref": "#/$defs/ActionMsg" },
+    { "$ref": "#/$defs/Ack" },
+    { "$ref": "#/$defs/ObservationMsg" }
+  ],
+  "$defs": {
+    "Hello": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "v", "client"],
+      "properties": {
+        "type": { "const": "hello" },
+        "v": { "const": 0 },
+        "client": { "type": "object", "required": ["name", "version"], "properties": { "name": { "type": "string" }, "version": { "type": "string" } } },
+        "accept": { "type": "object", "properties": { "observation_types": { "type": "array", "items": { "$ref": "#/$defs/ObservationType" } } } }
+      }
+    },
+    "Welcome": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "v", "server", "capabilities"],
+      "properties": {
+        "type": { "const": "welcome" },
+        "v": { "const": 0 },
+        "server": { "type": "object", "required": ["name", "version", "platform"], "properties": { "name": { "type": "string" }, "version": { "type": "string" }, "platform": { "$ref": "#/$defs/Platform" } } },
+        "capabilities": {
+          "type": "object", "additionalProperties": false,
+          "required": ["schema_version", "verbs", "targets", "observation_types"],
+          "properties": {
+            "schema_version": { "type": "integer", "const": 0 },
+            "verbs": { "type": "array", "items": { "$ref": "#/$defs/Verb" } },
+            "targets": { "type": "array", "items": { "$ref": "#/$defs/TargetKind" } },
+            "observation_types": { "type": "array", "items": { "$ref": "#/$defs/ObservationType" } },
+            "max_long_edge": { "type": "integer", "minimum": 1 }
+          }
+        }
+      }
+    },
+    "Ping": { "type": "object", "additionalProperties": false, "required": ["type"], "properties": { "type": { "const": "ping" }, "t": { "type": "number" } } },
+    "Pong": { "type": "object", "additionalProperties": false, "required": ["type"], "properties": { "type": { "const": "pong" }, "t": { "type": "number" } } },
+    "Query": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "call_id", "q"],
+      "properties": { "type": { "const": "query" }, "call_id": { "type": "string" }, "q": { "enum": ["platform", "screen_size"] } }
+    },
+    "Result": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "call_id", "ok"],
+      "properties": { "type": { "const": "result" }, "call_id": { "type": "string" }, "ok": { "type": "boolean" }, "value": {}, "error": { "type": "string" } }
+    },
+    "ActionMsg": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "call_id", "action"],
+      "properties": { "type": { "const": "action" }, "call_id": { "type": "string" }, "action": { "$ref": "#/$defs/Action" } }
+    },
+    "Ack": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "call_id", "ok"],
+      "properties": { "type": { "const": "ack" }, "call_id": { "type": "string" }, "ok": { "type": "boolean" }, "error": { "type": "string" } }
+    },
+    "ObservationMsg": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "obs_id"],
+      "properties": {
+        "type": { "const": "observation" },
+        "obs_id": { "type": "string" },
+        "cause": { "type": "string", "description": "action call_id, or 'push'" },
+        "display": { "$ref": "#/$defs/CoordinateSpace" },
+        "tree": { "enum": ["full", "diff"] },
+        "elements": { "type": "array", "items": { "$ref": "#/$defs/Element" } },
+        "delta": { "type": "object", "properties": { "added": { "type": "array", "items": { "$ref": "#/$defs/Element" } }, "removed": { "type": "array", "items": { "type": "string" } }, "changed": { "type": "array", "items": { "$ref": "#/$defs/Element" } } } },
+        "image": { "type": "object", "required": ["ref", "w", "h"], "properties": { "ref": { "type": "string" }, "w": { "type": "integer" }, "h": { "type": "integer" }, "scope": { "enum": ["screen", "window", "region"] } } }
+      }
+    },
+    "Action": {
+      "type": "object", "additionalProperties": false,
+      "required": ["verb"],
+      "properties": {
+        "verb": { "$ref": "#/$defs/Verb" },
+        "target": { "$ref": "#/$defs/Target" },
+        "text": { "type": "string" },
+        "keys": { "type": "string", "description": "e.g. 'ctrl+s'" },
+        "dx": { "type": "number" },
+        "dy": { "type": "number" },
+        "ms": { "type": "integer", "minimum": 0 },
+        "scope": { "enum": ["screen", "window", "region"] }
+      }
+    },
+    "Verb": { "enum": ["click", "double_click", "right_click", "move", "scroll", "type_text", "key", "screenshot", "wait"] },
+    "Target": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["kind", "x", "y"], "properties": { "kind": { "const": "point_px" }, "x": { "type": "number" }, "y": { "type": "number" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "x", "y"], "properties": { "kind": { "const": "point_norm" }, "x": { "type": "number", "minimum": 0, "maximum": 1 }, "y": { "type": "number", "minimum": 0, "maximum": 1 } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "ref"], "properties": { "kind": { "const": "element_ref" }, "ref": { "type": "string" }, "source": { "$ref": "#/$defs/ElementSource" } } }
+      ]
+    },
+    "TargetKind": { "enum": ["point_px", "point_norm", "element_ref"] },
+    "Element": {
+      "type": "object", "additionalProperties": false,
+      "required": ["ref", "role", "bbox"],
+      "properties": {
+        "ref": { "type": "string" },
+        "role": { "type": "string" },
+        "name": { "type": "string" },
+        "value": { "type": "string" },
+        "states": { "type": "array", "items": { "type": "string" } },
+        "bbox": { "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4, "description": "[x, y, w, h] in display pixels" },
+        "source": { "$ref": "#/$defs/ElementSource" }
+      }
+    },
+    "ElementSource": { "enum": ["atspi", "uia", "ax", "cdp", "som"] },
+    "CoordinateSpace": {
+      "type": "object", "additionalProperties": false,
+      "required": ["w", "h"],
+      "properties": {
+        "origin": { "const": "top-left" },
+        "w": { "type": "integer" },
+        "h": { "type": "integer" },
+        "dpr": { "type": "number", "default": 1 }
+      }
+    },
+    "ObservationType": { "enum": ["a11y", "screenshot", "video", "som"] },
+    "Platform": { "enum": ["linux", "windows", "macos"] }
+  }
+}
