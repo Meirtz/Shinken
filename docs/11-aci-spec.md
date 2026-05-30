@@ -101,7 +101,38 @@ the protocol, once. v0 verbs: `click, double_click, right_click, move, scroll, t
 screenshot, wait`. **Code-as-action** (`run`/bash/edit) is a separate, **off-by-default** capability
 class behind the policy boundary (D6) — expressive, but gated and auditable.
 
-### 3.1 Backend-pluggable executor
+### 3.1 Action execution taxonomy
+
+The ACI action object is the **model-facing contract**, not the execution strategy. Shinken keeps the
+surface small and typed, then routes each accepted action through an explicit capability boundary and
+a backend router:
+
+```text
+agent/model grammar -> adapter -> typed ACI action -> capability boundary -> executor router -> backend
+```
+
+This gives Shinken four distinct action classes:
+
+- **GUI actions** — pointer, keyboard, scroll, screenshot, and later element-ref actions. These are
+  typed ACI verbs executed by a GUI backend. A backend may use XTEST, PyAutoGUI, CDP, AT-SPI, UIA,
+  AX, SendInput, or CGEvent internally, but it does **not** accept arbitrary model-supplied code.
+- **Browser-semantic actions** — a specialization of GUI actions where the router can use CDP or a
+  DOM/accessibility handle before falling back to synthetic input. They still enter as typed ACI
+  verbs and produce replayable action/observation events.
+- **CLI / code actions** — shell, Python, editor, install, and other command execution. These are not
+  GUI backends. They are powerful side-effecting capabilities behind the D6 `tool_runner` policy
+  boundary, with scoped filesystem, egress, credential, timeout, and replay-redaction rules.
+- **Artifact and file operations** — fixture upload, result download, directory sync, and replay
+  resource attachment. These use the artifact/file-transfer channel, not the low-latency GUI action
+  path.
+
+The Action Gateway (or the Phase-0 gateway shim) owns capability decisions before an action reaches
+`shinkend`. `shinkend` executes only validated actions inside the Sandbox and reports typed
+acknowledgements/observations back into the event stream. This preserves a simple invariant:
+**ordinary GUI backends implement typed verbs; boundary-crossing power is requested, authorized, and
+recorded separately.**
+
+### 3.2 Backend-pluggable executor
 
 `shinkend` exposes one typed action surface over a **per-OS, backend-pluggable executor** with a
 router that prefers semantic actuation, falling back to synthetic input. (Validated by the P0
