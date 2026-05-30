@@ -140,7 +140,7 @@ Because `.skn` replay doubles as RL/SFT training data ([D5](05-tech-decisions.md
 - **Exclude secrets from capture by construction**: brokered tokens and injected headers are never persisted; takeover-mode keystrokes and screenshots are excluded; env-derived secrets are scrubbed. The credential broker means the secret never enters the agent context in the first place, so it is not *available* to capture.
 - **Hash, don't store**: action parameters are recorded as SHA-256 hashes (`tool_params_hash`), not raw values, where the raw value may be sensitive; the OTel-GenAI decision channel carries the *decision*, not the payload.
 - **Tamper-evidence**: events are hash-chained and signed with triple-identity (authorizing human UID, agent id+version, tool) so the authority timeline is non-repudiable and any edit is detectable ([OTel-GenAI conventions](https://zylos.ai/research/2026-02-28-opentelemetry-ai-agent-observability); [audit-trail guidance](https://www.loginradius.com/blog/engineering/auditing-and-logging-ai-agent-activity)).
-- **PII in pixels**: the media track is content-addressed and access-controlled per tenant; structured-first observation ([D3](05-tech-decisions.md)) means most sessions never capture full frames at all, shrinking the surface. Region/zoom pixels are escalated on-demand, not default.
+- **PII in pixels**: the screenshot baseline means Phase-0 replay can contain visual PII. The media track is content-addressed and access-controlled per tenant; structured observation ([D3](05-tech-decisions.md)) shrinks this surface where coverage is strong. Region/zoom pixels and masking must be explicit retention/capture controls, not an afterthought.
 - **Store ACLs**: per-tenant encryption and access control on the replay store; a cross-tenant read is a Cedar-gated, audited operation, not an ambient capability.
 
 ### Kill chain 5 — Multi-tenant noisy-neighbor / DoS
@@ -209,7 +209,7 @@ D6 is a **three-layer split** because no single layer does the whole job: Cedar 
 
 Risks we knowingly accept or defer, with the compensating control. They reconcile to canon §8's open questions and are tracked in [notes/open-questions.md](../notes/open-questions.md).
 
-1. **a11y / structured-observation coverage is the load-bearing unverified assumption.** If structured-first observation ([D3](05-tech-decisions.md)) degrades to full-frame pixels on Electron/Qt/canvas/games, the replay store captures far more PII and the bandwidth/cost model breaks. *Compensation:* on-demand, access-controlled region/zoom escalation; *required:* a first-party a11y-coverage spike ([06-roadmap](06-roadmap.md)).
+1. **a11y / structured-observation coverage is the load-bearing unverified assumption for scale economics, not for Phase-0 usability.** If structured observation ([D3](05-tech-decisions.md)) degrades to screenshots on Electron/Qt/canvas/games, the replay store captures far more PII and the bandwidth/cost model weakens. *Compensation:* screenshot-first works universally; use access-controlled region/zoom and SoM escalation; *required:* a first-party a11y-coverage spike before structured-first scale commitments ([06-roadmap](06-roadmap.md)).
 
 2. **Shared-kernel sandboxes are escapable by a kernel LPE.** gVisor/bubblewrap reduce but do not eliminate kernel attack surface; unprivileged user namespaces are a large surface and are disabled on some hosts. *Compensation:* the microVM boundary for untrusted/multi-tenant work; feature-detect userns. *Accepted:* a 0-day kernel LPE under the microVM remains a residual.
 

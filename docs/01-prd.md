@@ -90,19 +90,20 @@ The **ACI** is the versioned protocol plus typed action/observation schema. The 
 
 ### 2.3 Observation (D3)
 
-Observation is **structured-first, layered escalation** — the bandwidth/cost/latency crux of the platform. The default is a normalized accessibility/DOM tree, never pixels; pixels are a metered escalation.
+Observation is **screenshot-first with structured upgrade**. Phase 0 must work for any GUI through screenshots; normalized accessibility/DOM structure becomes the lower-cost, more stable fast path where apps expose it.
 
 | ID | Requirement | Reconciles |
 |----|-------------|-----------|
-| FR-OBS-1 | Default observation (Rung 0) MUST be a **normalized cross-OS a11y/DOM tree diff** (AT-SPI / UIA / AX / CDP) projected onto one `Element{ref,role,name,value,states,bbox,source,backend_id,parent_ref,children_refs}` schema with stable per-session refs. | D3 |
-| FR-OBS-2 | Escalation rungs MUST be explicit and requestable: Rung 1 = **Set-of-Marks / OmniParser** (server-side, on-demand); Rung 2 = region/zoom pixels; Rung 3 = full frame. | D3, D11 |
-| FR-OBS-3 | The [OmniParser](https://github.com/microsoft/OmniParser)/Set-of-Marks parser MUST run server-side **on demand** (triggered on low a11y coverage or explicit agent request), never per-frame by default; budget ~0.6 s/frame *(vendor-published, unverified)*. | D3, D11 |
-| FR-OBS-4 | Observations MUST stream **full-snapshot + typed delta**: emit `a11y_full` / `screenshot_full` periodically, between them `a11y_delta` (added/removed/changed nodes), triggered on change/focus — never on a fixed clock. | D3, D5 |
-| FR-OBS-5 | The structured/pixel duality MUST be a property of the action grammar (one verb takes a ref OR a coord), never two parallel APIs. | D2, D3 |
-| FR-OBS-6 | Structured-only MUST NOT ship alone: vision + grounding is a first-class fallback because a11y goes blind on Electron/Qt/canvas/WebGL — **the load-bearing unverified assumption**, requiring a first-party a11y-coverage measurement spike before any density/cost commitment. | D3 |
-| FR-OBS-7 | Each observation MUST carry `{obs_id, ts, session_id, cause(action_id\|push), display, tree_mode, elements\|delta, marks?, CoordinateSpace}` and be `action_id`-correlated to its causing action. | D3, D5 |
-| FR-OBS-8 | The diff-based observation stream MUST BE the same append-only event stream used for live view, replay, and capability audit (one source of truth). | D3, D4, D5 |
-| FR-OBS-9 | Sensitive element values MUST be maskable at capture, before they enter the stream or replay. | D3, D6, NFR-COMP |
+| FR-OBS-1 | Phase-0 baseline observation MUST be a **screenshot** (full-screen or focused region) with explicit coordinate space so a screenshot-based GUI agent can run before any app instrumentation exists. | D3 |
+| FR-OBS-2 | Structured observation MUST run in parallel where available: normalized cross-OS a11y/DOM tree diff (AT-SPI / UIA / AX / CDP) projected onto one `Element{ref,role,name,value,states,bbox,source,backend_id,parent_ref,children_refs}` schema with stable per-session refs. | D3 |
+| FR-OBS-3 | Escalation/enhancement rungs MUST be explicit and requestable: screenshot baseline, a11y/DOM structure, **Set-of-Marks / OmniParser** (server-side, on-demand), region/zoom pixels, full frame/video. | D3, D11 |
+| FR-OBS-4 | The [OmniParser](https://github.com/microsoft/OmniParser)/Set-of-Marks parser MUST run server-side **on demand** (triggered on low a11y coverage or explicit agent request), never per-frame by default; budget ~0.6 s/frame *(vendor-published, unverified)*. | D3, D11 |
+| FR-OBS-5 | Observations MUST stream **full-snapshot + typed delta** where applicable: emit screenshot observations for the baseline and `a11y_full` / `a11y_delta` for structured tracks, triggered on action/change/focus rather than a fixed clock. | D3, D5 |
+| FR-OBS-6 | The structured/pixel duality MUST be a property of the action grammar (one verb takes a ref OR a coord), never two parallel APIs. | D2, D3 |
+| FR-OBS-7 | Structured-only MUST NOT ship alone: screenshots + vision/grounding are the Phase-0 baseline because a11y goes blind on Electron/Qt/canvas/WebGL. First-party a11y coverage is required before any structured-first scale/cost commitment. | D3 |
+| FR-OBS-8 | Each observation MUST carry `{obs_id, ts, session_id, cause(action_id\|push), display, tree_mode?, elements\|delta?, image?, marks?, CoordinateSpace}` and be `action_id`-correlated to its causing action. | D3, D5 |
+| FR-OBS-9 | The observation stream MUST BE the same append-only event stream used for live view, replay, and capability audit (one source of truth). | D3, D4, D5 |
+| FR-OBS-10 | Sensitive element values MUST be maskable at capture, before they enter the stream or replay. | D3, D6, NFR-COMP |
 
 ### 2.4 Streaming (D4)
 
@@ -110,12 +111,12 @@ Streaming is a **single-PeerConnection WebRTC, dual-transport** design. The reli
 
 | ID | Requirement | Reconciles |
 |----|-------------|-----------|
-| FR-STR-1 | Each Session MUST use one [WebRTC](https://github.com/pion/webrtc) PeerConnection carrying (a) a **reliable-ordered data channel** = the structured action/observation/permission event stream (this IS the replay log), and (b) an **on-demand media track**. | D4, D5 |
+| FR-STR-1 | Each Session MUST use one [WebRTC](https://github.com/pion/webrtc) PeerConnection carrying (a) a **reliable-ordered data channel** = the action/observation/capability event stream (this IS the replay log), and (b) an **on-demand media track**. | D4, D5 |
 | FR-STR-2 | The media track MUST be hardware-encoded ([NVENC](https://docs.nvidia.com/video-technologies/video-codec-sdk/13.0/nvenc-application-note/index.html) on the GPU tier) H.264/AV1, screen-content-tuned; [AV1](https://developer.nvidia.com/blog/improving-video-quality-and-performance-with-av1-and-nvidia-ada-lovelace-architecture/) negotiated only where the client advertises HW AV1 decode, else HEVC/H.264. | D4, D11 |
 | FR-STR-3 | The encode tier MUST run on encode-capable GPUs (Ada **L4** for density / **L40S** for premium 4K/AV1 + render), and **NEVER** on A100/H100/H200/B200 (which ship zero NVENC engines — [public NVIDIA fact](https://en.wikipedia.org/wiki/Nvidia_NVENC)); no MIG for the encode tier. | D11 |
 | FR-STR-4 | Fan-out MUST be **encode-once at an SFU** ([LiveKit](https://docs.livekit.io/reference/internals/livekit-sfu/)-style), never per viewer; encode count = number of distinct desktops, not number of reviewers. | D4 |
 | FR-STR-5 | Signaling MUST be **WHIP** ([RFC 9725](https://www.rfc-editor.org/rfc/rfc9725.html), Sandbox→SFU ingest) / **WHEP** (SFU→browser egress), extended to negotiate the bidirectional data channel; the receiver jitter buffer MUST be minimized (playout-delay min≈0). | D4 |
-| FR-STR-6 | The three observation tiers MUST map to bandwidth tiers: Tier 0 structured (~20 kbps), Tier 1 Set-of-Marks, Tier 2 video; structured is the always-on default. | D3, D4 |
+| FR-STR-6 | The observation tiers MUST map to bandwidth tiers: screenshot baseline for Phase 0, structured Tier 0 (~20 kbps) where coverage is strong, Set-of-Marks for screenshot-only surfaces, and Tier 2 video for human/live pixel viewing. | D3, D4 |
 | FR-STR-7 | The system MUST **record-while-stream**: a GStreamer `tee` (or equivalent track egress) after the encoder writes a fragmented MP4 / CMAF on IDR boundaries so the recording is crash-safe and MSE-replayable. | D4, D5 |
 | FR-STR-8 | Reconnection MUST be deliberate: monitor `iceConnectionState`, call `restartIce()` on failure with a full re-offer fallback, and request a PLI keyframe on every (re)connect so the viewer paints immediately. | D4 |
 | FR-STR-9 | TURN relay MUST be budgeted and contained (expect ~18–35% of connections to relay); video MUST be event-driven to cut idle relay egress. | D4, NFR-COST |

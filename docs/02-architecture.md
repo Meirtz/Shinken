@@ -496,7 +496,7 @@ The design principle throughout (D12): an **open, self-hostable core** — reusa
 
 These are not papered over (canon-aligned, also tracked in [open-questions](../notes/open-questions.md) and [08 Threat model](08-threat-model.md)):
 
-- **a11y coverage on Electron/Qt/canvas/games is the load-bearing unverified assumption** behind the structured-first observation thesis (§2). Needs a first-party measurement spike; until then the `coverage_ratio` signal and the SoM/OmniParser + pixel fallback rungs are the safety net.
+- **a11y coverage on Electron/Qt/canvas/games is the load-bearing unverified assumption** behind the structured observation cost model (§2), not behind the first usable GUI loop. Phase 0 proves the screenshot baseline first; the a11y spike decides where structured observation becomes the fast path. Until then the `coverage_ratio` signal and the SoM/OmniParser + pixel fallback rungs are the safety net.
 - **macOS / Windows fast-reset is largely infeasible today.** The matrix (§3) treats both as heavier, snapshot-light, longer-lived tiers; sub-second fork is a Linux-only property in v1.
 - **Windows-in-cloud licensing and the macOS 2-VM/host cap** shape cost and roadmap, not just engineering (§7).
 - **No first-party performance numbers yet** — every speed/density/cost figure here is vendor-published and unverified, pending the measurement plan in [09 Economics](09-economics-and-build-vs-buy.md).

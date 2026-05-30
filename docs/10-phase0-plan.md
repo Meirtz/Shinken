@@ -4,9 +4,10 @@
 
 This is the concrete build plan for **Phase 0** from the [roadmap](06-roadmap.md): a **local,
 single-Sandbox proof-of-concept on Linux** that proves the spine end-to-end — an agent driving a
-real desktop app through the **ACI**, observed **structured-first**, recorded as a **`.skn`
-replay**, with explicit **sandbox capabilities / entitlements** — while empirically de-risking the one assumption
-the whole thesis rests on (accessibility-tree coverage, D3). It deliberately builds the *thinnest
+real desktop app through the **ACI**, observed through a **screenshot-first GUI loop**, recorded as a
+**`.skn` replay**, with explicit **sandbox capabilities / entitlements**. Accessibility-tree coverage
+is still measured in Phase 0, but it is a structured-observation enhancement, not the blocker for the
+first usable GUI-agent runtime. It deliberately builds the *thinnest
 vertical slice* of [D1–D12](05-tech-decisions.md) and defers everything that doesn't serve that
 proof. No cloud, no fork tier, no GPU, no Windows/macOS, no SFU, no Cedar engine yet.
 
@@ -15,9 +16,10 @@ proof. No cloud, no fork tier, no GPU, no Windows/macOS, no SFU, no Cedar engine
 ## 1. Goal & exit criteria
 
 **Goal:** one command starts a local Linux Sandbox; a Python script (or an off-the-shelf
-Anthropic/OpenAI agent via an adapter) drives a real GUI app to complete a small multi-step task;
-every action + observation + permission event is recorded to a `.skn` bundle that can be replayed
-and scrubbed; and we have **first-party numbers** for a11y coverage and observation bandwidth.
+Anthropic/OpenAI agent via an adapter) drives a real GUI app through the universal
+`screenshot -> action -> screenshot` loop to complete a small multi-step task; every action +
+screenshot observation + capability event is recorded to a `.skn` bundle that can be replayed and
+scrubbed; and we have first-party numbers for a11y coverage as a structured enhancement path.
 
 **Phase-0 is "done" when all of these hold (exit criteria):**
 
@@ -25,13 +27,14 @@ and scrubbed; and we have **first-party numbers** for a11y coverage and observat
 |---|----------------|--------|
 | E1 | An agent completes a scripted ≥5-step task in a real Linux GUI app (e.g. a LibreOffice or file-manager task) entirely through the ACI, no direct host access. | The ACI + Guest Runtime spine works. |
 | E2 | The session is recorded as a `.skn` v0 bundle and replays in a scrubber (CLI minimum, web stretch) with synchronized action + observation timeline. | Replay (D5) at v0. |
-| E3 | Default observation is the **normalized a11y-tree diff**; pixels are fetched only on demand. Measured: per-step observation bytes (structured) and token estimate vs a screenshot baseline. | Structured-first (D3) + bandwidth thesis, with real data. |
+| E3 | Default Phase-0 observation is a **screenshot** with dimensions and coordinate space; a11y/DOM is recorded when available as a parallel structured track. Measured: screenshot bytes/tokens and a11y delta bytes/tokens where available. | Screenshot-first GUI baseline + structured enhancement (D3). |
 | E4 | The run declares its sandbox capability envelope (for example screenshot/input automation, local filesystem scope, optional egress) and records any boundary grant/denial as a first-class `.skn` event. | Capability/entitlement spine (D6) at v0. |
-| E5 | **Spike A (a11y coverage)** has run against the target app set and produced a coverage + diff-bandwidth report meeting (or honestly failing) its threshold. | The load-bearing D3 assumption is measured, not assumed. |
+| E5 | **Spike A (a11y coverage)** has run against the target app set and produced a coverage + diff-bandwidth report. | The D3 optimization path is measured, not assumed. |
 | E6 | An off-the-shelf model drives the Sandbox unchanged via one adapter (Anthropic *or* OpenAI computer-use). | The adapter strategy (D2) works against a real provider. |
 
 If **E5** fails (a11y coverage is too low on real apps), that is a *successful* Phase-0 outcome: it
-tells us the structured-first default must lean harder on SoM/OmniParser sooner — see [Spike A](#5-spike-a-a11y-coverage-the-gate).
+tells us which apps stay on the screenshot/SoM path longer. It does **not** block the first
+screenshot-based GUI loop — see [Spike A](#5-spike-a-a11y-coverage-structured-enhancement).
 
 **Explicit non-goals for Phase-0** (deferred to later phases, per [roadmap](06-roadmap.md)):
 cloud/control-plane, warm pools, CoW fork tier (Phase 1), WebRTC/SFU streaming + NVENC (Phase 1),
@@ -54,7 +57,7 @@ transport**) once validated.
 | **Transport (host↔guest)** | **WebSocket** carrying the typed event stream | Browser-native for the viewer, simplest cross-language, the event stream *is* the `.skn` log (D5). | **virtio-vsock** + WebRTC dual-channel (D4) in Phase 1. |
 | **SDK / Operator** | **Python** (`sdk/python/`) + thin CLI | The agent/model ecosystem is Python-first; adapters for Anthropic/OpenAI computer-use are easiest here (D2). | Generate **TypeScript** SDK from the same schema (D8); web Operator. |
 | **Substrate (Sandbox)** | **Docker** container: Xvfb + a lightweight WM (Openbox/XFCE) + target apps + `shinkend` | Simplest local isolated Linux desktop; mirrors the proven E2B / Anthropic-demo image pattern; runs on the dev machine via Docker. | OSS **`kubernetes-sigs/agent-sandbox`** CRD + Firecracker/QEMU-microvm fork tier (D1) in Phase 1. |
-| **Observation** | **AT-SPI** a11y tree → normalized `Element` diff (D3 rung 0) + on-demand screenshot (rung 2/3) | Validates the structured-first default on Linux where AT-SPI is richest. | SoM/OmniParser (rung 1), UIA/AX, CDP for browsers. |
+| **Observation** | **Screenshot-first**: full-screen PNG with coordinate space is the Phase-0 baseline; AT-SPI a11y tree → normalized `Element` diff runs in parallel where available. | Proves a usable GUI-agent loop before optimizing observation cost. | Structured-first optimization, SoM/OmniParser, UIA/AX, CDP for browsers. |
 | **Capabilities** | Minimal: a capability descriptor for the local Sandbox plus boundary grant/deny events logged to `.skn` | Proves the *capability + audit* spine without turning every in-sandbox action into an approval. | Cedar decision + ocap caretaker + OS/TCC entitlement enforcement (D6) in Phase 1. |
 | **Replay viewer** | CLI scrubber (required) + minimal static web viewer (stretch) | Prove `.skn` is replayable; full Control-Panel UX later. | rrweb-player-style web panel, branching (D5) in Phase 1. |
 
@@ -78,7 +81,7 @@ flowchart LR
     GW <-->|"WebSocket: typed ACI event stream<br/>(= the .skn log)"| SH
     subgraph Sandbox["Docker Sandbox (Linux desktop)"]
         SH["shinkend (Rust)"] --> ACT["execute action<br/>(xdotool/AT-SPI actions)"]
-        SH --> OBS["observe: AT-SPI tree diff<br/>+ on-demand screenshot"]
+        SH --> OBS["observe: screenshot baseline<br/>+ optional AT-SPI tree diff"]
         ACT --> APP["target GUI app"]
         OBS --> APP
     end
@@ -107,7 +110,7 @@ For Phase-0, keep the mental model simple and explicit:
 
 M0 is only the first link in that split: the Python SDK talks directly to `shinkend` over a
 WebSocket to prove the handshake and query shape. M1-M4 add the Phase-0 control shim, real
-act/observe, `.skn` recording, permissions, and eval.
+act/observe, `.skn` recording, capability descriptors, and eval.
 
 ```mermaid
 sequenceDiagram
@@ -149,7 +152,7 @@ Each milestone has a **deliverable**, an **acceptance test**, and the **decision
 timeline
     title Phase-0 milestones
     M0 : repo + schema + scaffold
-    Spike A : a11y coverage (GATE)
+    Spike A : a11y coverage (enhancement)
     M1 : shinkend act+observe
     M2 : .skn record + replay
     M3 : agent completes a task
@@ -165,19 +168,18 @@ timeline
   schema validates a sample event round-trip.
 - **Realizes:** D2 (schema + handshake), D8 (one IDL → SDK).
 
-### Spike A — a11y coverage (THE GATE — see [§5](#5-spike-a-a11y-coverage-the-gate))
-- Run before committing to the structured-first default in M1.
+### Spike A — a11y coverage (structured enhancement — see [§5](#5-spike-a-a11y-coverage-structured-enhancement))
+- Run alongside the screenshot-first loop so we know where structure can reduce cost and improve stability.
 
-### M1 — `shinkend` acts and observes
+### M1 — `shinkend` acts and observes screenshots
 - **Build:** ACI v0 **action verbs** (subset of D2): `click`, `double_click`, `right_click`,
   `type_text`, `key`, `scroll`, `move`, `screenshot`, `wait` — `target = oneof{point_px |
   element_ref}`. Action execution via AT-SPI actions where possible, else `xdotool`/`xte` at
-  pixel coords. **Observation v0:** capture the AT-SPI tree, normalize to the `Element` schema
-  (D3), emit a **full tree on connect then diffs** on change; on-demand `screenshot` returns a PNG.
-- **Acceptance:** a Python script clicks a specific button *by element ref* and types into a field
-  in a real app (e.g. gedit/LibreOffice), and receives a tree diff reflecting the change; observation
-  bytes/step logged.
-- **Realizes:** D2 (actions), D3 (structured-first observation, element-ref acting).
+  pixel coords. **Observation v0:** `screenshot` returns a PNG plus `{w,h,dpr}` coordinate space;
+  AT-SPI tree capture is a parallel track where available.
+- **Acceptance:** a Python script observes a screenshot, clicks/types/scrolls by pixel coordinates in
+  a real app (e.g. gedit/LibreOffice/browser), then observes a new screenshot reflecting the change.
+- **Realizes:** D2 (actions), D3 (screenshot baseline + structured enhancement).
 
 ### M2 — `.skn` record + replay
 - **Build:** the **`.skn` v0 writer** — a directory/zip with `manifest.json`, append-only
@@ -190,13 +192,13 @@ timeline
   `seq`/`action_id` integrity validated; bundle re-opens after a crash mid-write (append-only).
 - **Realizes:** D5 (`.skn`, event-sourced, the event stream *is* the log).
 
-### M3 — an agent completes a task
+### M3 — a screenshot-based agent completes a task
 - **Build:** the **Operator loop** (provider-agnostic) + **one model adapter** (Anthropic
   `computer_2025xxxx` *or* OpenAI `computer_call`) translating the provider's action/observation
   format to/from the ACI (D2 adapters). A small **task fixture** (deterministic start state in the
   image; a clear goal).
-- **Acceptance:** the off-the-shelf model, unmodified, drives the Sandbox to complete the task;
-  the whole run is a single `.skn` bundle.
+- **Acceptance:** the off-the-shelf screenshot-based model, unmodified, drives the Sandbox to
+  complete the task; the whole run is a single `.skn` bundle with action + screenshot observations.
 - **Realizes:** D2 (adapters), D8 (Operator contract), and E1/E6.
 
 ### M4 — capability descriptor + tiny eval (EXIT)
@@ -214,12 +216,12 @@ timeline
 
 ---
 
-## 5. Spike A — a11y coverage (the gate)
+## 5. Spike A — a11y coverage (structured enhancement)
 
-The structured-first thesis (D3) — and the ~6× token and ~150× bandwidth claims behind it
+The structured observation thesis (D3) — and the ~6× token and ~150× bandwidth claims behind it
 ([09-economics](09-economics-and-build-vs-buy.md)) — assume real apps expose usable accessibility
-trees cheaply. [open-questions](../notes/open-questions.md) flags this as the **load-bearing
-unverified assumption.** Spike A measures it before we build on it.
+trees cheaply. Phase 0 does **not** wait for that assumption to run a GUI agent; it measures the
+assumption while the screenshot baseline provides universal coverage.
 
 - **Method:** in the Linux Sandbox, for each target app, dump the AT-SPI tree and compute: (a)
   **coverage** = fraction of visibly-interactable elements that appear as actionable a11y nodes with
@@ -230,8 +232,8 @@ unverified assumption.** Spike A measures it before we build on it.
   (LibreOffice / a file manager), an Electron app, a canvas/WebGL page, and one game/custom-rendered
   surface (expected worst case).
 - **Success threshold (proposed):** ≥ ~85% coverage on standard GTK/Qt/browser apps with tree-diff
-  ≤ ~50 kbps; canvas/Electron/games are *expected* to be low → that quantifies exactly when to fall
-  back to SoM/OmniParser (rung 1).
+  ≤ ~50 kbps; canvas/Electron/games are *expected* to be low → that quantifies exactly when the
+  screenshot/SoM path remains primary.
 - **Output:** `spikes/a11y-coverage/REPORT.md` with the numbers (first-party, replacing the
   vendor-published anchors in the canon), feeding [09-economics](09-economics-and-build-vs-buy.md)
   and a possible D3 amendment.
@@ -251,7 +253,7 @@ Frozen-enough surfaces so milestones can proceed in parallel. Full schemas live 
 - **ACI action (v0):** `{ "v": 0, "verb": "<click|double_click|right_click|type_text|key|scroll|move|screenshot|wait>", "target"?: { "kind": "point_px"|"element_ref", ... }, "args"?: {...}, "call_id": "<uuid>" }`. Verbs are a strict subset of D2; `element_ref` resolves server-side to a centroid.
 - **Observation (v0):** `{ "obs_id", "ts", "cause": "<action_id|push>", "display": {w,h,dpr}, "tree": "full" | "diff", "elements"?: [Element], "delta"?: {added,removed,changed}, "image"?: {ref, w, h} }`, `Element = {ref, role, name, value?, states[], bbox[x,y,w,h]}` (D3).
 - **`.skn` event (v0):** `{ "seq": int, "dt": float, "kind": "<action|observation|decision|permission|marker|meta>", "src": "<subtype>", "action_id"?: "...", "payload": {...} }`; bundle = `manifest.json` + `events.jsonl` + `media/<sha256>` (D5).
-- **Permission decision (v0):** `{ "capability": "<class>", "request": {...}, "decision": "allow|ask|deny", "by": "policy|human", "resolved": "...", "ts" }` — emitted as a `permission` `.skn` event (D6).
+- **Capability decision (v0):** `{ "capability": "<class>", "request": {...}, "decision": "grant|narrow|deny", "by": "policy|human", "resolved": "...", "ts" }` — emitted as a `permission` or `capability` `.skn` event (D6).
 - **Operator/adapter contract:** `observe() -> Observation`, `act(Action) -> ack`, `supported() -> {verbs, targets, observation_types}` — the provider-agnostic seam (D8).
 
 ---
@@ -303,5 +305,5 @@ Phase-0 is complete when **E1–E6** ([§1](#1-goal--exit-criteria)) pass and `s
 REPORT.md` exists. Outputs that feed Phase 1: the validated **ACI v0 + `.skn` v0** schemas (harden
 to protobuf/gRPC + virtio-vsock), the first-party **a11y/bandwidth numbers** (replace canon §7
 vendor anchors; possibly amend D3), and a working **Sandbox image + Operator** to graft the
-**fork tier (Spike B)**, **dual-channel streaming (Spike C)**, and the **Cedar permission engine**
+**fork tier (Spike B)**, **dual-channel streaming (Spike C)**, and the **Cedar capability engine**
 onto. See [06-roadmap.md](06-roadmap.md) for Phase 1.

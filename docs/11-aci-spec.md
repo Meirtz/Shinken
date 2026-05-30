@@ -20,9 +20,9 @@ reconciles to decisions **D2** (actions), **D3** (observation), **D5** (replay),
 
 1. **One line to start.** `shinken.connect()` (or `.init()`) returns a ready session.
 2. **Few, high-affordance verbs.** A small typed action set; sugar methods for the common ones.
-3. **Rich, structured results.** Observations and results are objects (`view["Save"]`, `r.output`), never opaque blobs.
+3. **Screenshot baseline, structured upgrade.** The first loop works with screenshots everywhere; structured observations add stable refs when available.
 4. **Checkpoints are first-class and trivial.** `save()/restore()/fork()` — the same primitive as instant reset and replay-branching.
-5. **Progressive disclosure.** Simple by default (`observe()` returns structure); power on demand (`observe(pixels=True)`, `fork`, `unlock`).
+5. **Progressive disclosure.** Simple by default (`screenshot()` + typed actions); structure and power on demand (`observe(structured=True)`, `fork`, `unlock`).
 6. **Same object, local or remote, any OS.** `connect()` local, `connect(id)` cloud — identical surface.
 7. **The agent loop is one call** (`drive`), but `observe`/`act` are always exposed for control.
 8. **Powerful in the Sandbox, explicit at the boundary.** The guest is allowed to do real work; boundary capabilities are provisioned, scoped, and replayed (`unlock`).
@@ -37,15 +37,13 @@ import shinken
 # 1) one-line setup — your init(), now a whole desktop (local or cloud; same object)
 env = shinken.connect()                       # or shinken.connect("sbx_id") / shinken.init(os="linux")
 
-# 2) observe — structured-first, but screenshot + video are first-class (P0)
-view = env.observe()                          # -> Observation (a11y tree when available)
-view["Save"]                                  # find an element by name/role -> ElementRef
-view.screenshot()                             # pixels on demand
-view.screenshot(window=True)                  # focused-app/window pixels (not full screen)
+# 2) observe — Phase 0 baseline is screenshots; structure is the upgrade path
+shot = env.screenshot()                       # -> {'png': bytes, 'w': int, 'h': int}
+view = env.observe(structured=True)           # -> a11y tree when available (later)
 
 # 3) act — a tiny verb set, on element refs (preferred) or coordinates
-env.click(view["Save"]); env.type("Q3 report"); env.key("ctrl+s")
-env.scroll(view["sidebar"], dy=-300)
+env.click(x=640, y=400); env.type("Q3 report"); env.key("ctrl+s")
+env.scroll(x=900, y=400, dy=-300)
 env.click(x=640, y=400)                       # raw pixels still available
 
 # 4) run() — code-as-action, preserved verbatim (a gated capability)
@@ -106,11 +104,12 @@ deep-dive; see [notes/p0-deepdive.md](../notes/p0-deepdive.md).)
 
 ---
 
-## 4. Observation model (D3) — pixels *and* structure
+## 4. Observation model (D3) — screenshot baseline, structure upgrade
 
-Per your steer, **screenshot + video are first-class in P0** (the GUI-agent mainstream), with the
-accessibility tree as a **parallel structured track** (our bandwidth/robustness differentiator) and
-SoM/OmniParser as a fallback rung.
+Phase 0 is **screenshot-first** because that is the universal GUI-agent baseline. The first usable
+loop is `screenshot -> model/adapter -> typed action -> screenshot`, with every step recorded to
+`.skn`. The accessibility tree is a **parallel structured track** (our bandwidth/robustness
+differentiator), not a prerequisite for the first GUI agent.
 
 **One capture contract, three operations, one capture source per OS:**
 
@@ -126,12 +125,12 @@ stop_video(stream)
 - **Encoder hand-off:** keep frames GPU-resident → GStreamer `nvcodec`/NVENC (neko-style, realtime-tuned). NVENC streaming runs on Ada L4/L40S, never A100/H100 (D11).
 
 **Two paths off the same source:** (1) **screenshot-per-step**, downscaled to the model's true vision
-resolution, for the agent loop; (2) **continuous video** for the human Control Panel. The structured
-**observation event** (`a11y` full→diff with stable element refs) is the low-bandwidth default and
-is what gets recorded.
+resolution, for the agent loop; (2) **continuous video** for the human Control Panel. A structured
+**observation event** (`a11y` full→diff with stable element refs) is recorded alongside screenshots
+when available and can become the low-bandwidth default for tree-rich apps.
 
-Layered escalation the agent/policy requests: rung 0 a11y/DOM diff (default) → rung 1 SoM/OmniParser
-(low a11y coverage) → rung 2 region/zoom pixels → rung 3 full frame.
+Layered observation in Phase 0: rung 0 screenshot baseline → rung 1 a11y/DOM structure when available
+→ rung 2 Set-of-Marks / OmniParser for screenshot-only UIs → rung 3 focused region/zoom/video.
 
 ---
 
@@ -195,7 +194,7 @@ client uses only advertised capabilities. The ACI is semver-versioned; adapters 
 | Area | P0 | Later |
 |------|----|-------|
 | Actions | typed schema + executor; Linux XTEST + CDP/AT-SPI routing + pyautogui-compat | Wayland (libei), Windows UIA/SendInput, macOS AX/CGEvent, background injection |
-| Observation | screenshot + screen video + focused-app capture + a11y track | SoM/OmniParser service, multi-OS a11y, hardware NVENC streaming pipeline |
+| Observation | screenshot baseline + screen video + focused-app capture + a11y track | structured-first defaults for tree-rich apps, SoM/OmniParser service, multi-OS a11y, hardware NVENC streaming pipeline |
 | Replay | `.skn` event log + state snapshots; qcow2-eval (revert only) | video sidecar, mid-execution branching (fork tier), agent-core determinism |
 | Harness | async Env+Operator core; Gym shim; OSWorld shim; 1 vendor adapter | MCP server, full adapter set, RL gym at scale |
 | API | `connect/observe/act/run/save/restore/close` + handshake | `fork/drive/unlock(capability)/events/video`, cloud `connect(id)` |

@@ -29,7 +29,7 @@
 |-----|----------|--------|-----------------|
 | **D1** | Isolation = tiered, substrate-pluggable, routed by `(OS × needs-GPU × needs-fast-fork)` | Accepted (phased) | Firecracker for headless Linux fork; QEMU-microvm/crosvm for Linux desktop; CLH/QEMU+VFIO for GPU/Windows; Apple VZ for macOS |
 | **D2** | ACI action schema = one typed tagged-union with version-pinned adapters | Accepted | ~16 verbs, `target` oneof, code-as-action off by default behind the policy boundary |
-| **D3** | Observation = structured-first, layered escalation | Accepted | a11y/DOM diff → Set-of-Marks → region pixels → full frame; act on refs by default |
+| **D3** | Observation = screenshot-first baseline, structured upgrade | Accepted | Phase 0 proves screenshot GUI loop; a11y/DOM diff → Set-of-Marks → region pixels optimize tree-rich apps |
 | **D4** | Streaming = single-PeerConnection WebRTC, dual-transport | Accepted | Reliable data channel = event stream (= the replay log); on-demand media track |
 | **D5** | Replay = event stream + bisected snapshots; `.skn` bundle | Accepted | Append-only `events.jsonl` + immutable checkpoint DAG; reset and branch are one primitive |
 | **D6** | Sandbox capabilities = entitlement provisioning + boundary enforcement (Cedar + ocap + OS) | Accepted | Sandboxes can do real work inside the boundary; Cedar/ocap/OS control the capabilities and boundary crossings |
@@ -171,13 +171,13 @@ Define **one canonical typed tagged-union** as the wire schema, and make **versi
 
 ---
 
-## D3 — Observation: structured-first, layered escalation
+## D3 — Observation: screenshot-first baseline, structured upgrade
 
 **Status:** Accepted.
 
 ### Context
 
-The observation channel — not the action grammar — is the bandwidth, cost, and latency crux of an AI-native ACI. The four modalities are complementary, not competing:
+The observation channel — not the action grammar — is the bandwidth, cost, and latency crux of an AI-native ACI. The first usable GUI agent must work with screenshots because pixels are universal; structured observation is the optimization that makes the runtime cheaper, more stable, and more replayable where the UI exposes structure. The four modalities are complementary, not competing:
 
 - **Pixels** are universal and zero-instrumentation but the most expensive on every axis. Anthropic's image-token formula is ~`w*h/750`; a 10-step full-screenshot loop is **~150K tokens vs ~25K for a11y — a ~6× difference** (vendor-published, unverified). Opus 4.7/4.8 raised the long-edge cap to 2576 px, *tripling* a dense screenshot's token cost.
 - **Accessibility trees** (AT-SPI2 / UIA / AX / CDP) are orders of magnitude cheaper (a few thousand tokens after pruning) and replay-stable, but coverage is uneven on Electron/Qt/canvas/games.
@@ -186,27 +186,28 @@ The observation channel — not the action grammar — is the bandwidth, cost, a
 
 ### Decision
 
-A **structured-first, layered escalation** observation model:
+A **screenshot-first baseline with structured upgrade** observation model:
 
-- **Rung 0 (default):** a normalized cross-OS **a11y/DOM tree diff** (AT-SPI/UIA/AX/CDP) projected onto one `Element{ref, role, name, value, states, bbox, source, …}` schema with **stable per-session refs**.
-- **Rung 1:** **Set-of-Marks / OmniParser**, server-side, on demand.
-- **Rung 2:** region/zoom pixels. **Rung 3:** full frame.
+- **Phase-0 baseline:** full-screen or focused-region **screenshot observations** with explicit coordinate space. This is the universal loop every GUI model can use.
+- **Structured upgrade:** a normalized cross-OS **a11y/DOM tree diff** (AT-SPI/UIA/AX/CDP) projected onto one `Element{ref, role, name, value, states, bbox, source, …}` schema with **stable per-session refs**.
+- **Vision grounding upgrade:** **Set-of-Marks / OmniParser**, server-side, on demand for screenshot-only or low-a11y surfaces.
+- **Media escalation:** region/zoom pixels, full frame, and video for humans or pixel-heavy tasks.
 
-Agents **act on element refs / marks by default**; raw `x,y` is permitted only at the pixel rungs. Target the ~6× token saving and replay-stable trajectories. The a11y-coverage assumption is **load-bearing and unverified** — gated on a measurement spike (see Risks and [`../notes/open-questions.md`](../notes/open-questions.md)).
+Agents can act on raw `x,y` in the screenshot baseline; they should act on element refs / marks when structure is available. Target the ~6× token saving and replay-stable trajectories for tree-rich apps. The a11y-coverage assumption is **important and unverified**, but it is no longer a blocker for the first screenshot-based GUI loop (see Risks and [`../notes/open-questions.md`](../notes/open-questions.md)).
 
 ### Alternatives (and why rejected)
 
 | Alternative | Why rejected |
 |---|---|
-| **Pixels-only (screenshot loop)** | The dominant cost driver; ~6× more tokens, no replay-stable refs, requires a grounding model for every click. |
+| **Pixels-only forever** | Works universally but is the dominant cost driver; ~6× more tokens, no replay-stable refs, requires a grounding model for every click. Kept as the Phase-0 baseline, not the end state. |
 | **a11y-only** | Fails on canvas/WebGL/games/Electron with poor trees; needs a pixel fallback. |
 | **Single fixed modality** | Misses that the modalities are complementary; the right answer is escalation, not selection. |
 
 ### Consequences
 
-- **Positive:** ~6× token reduction, ~150× bandwidth reduction with D4, replay-stable element refs, model-agnostic grounding.
+- **Positive:** a usable GUI-agent runtime immediately via screenshots, then ~6× token reduction, ~150× bandwidth reduction with D4, replay-stable element refs, and model-agnostic grounding where structure exists.
 - **Negative:** Shinken must build and maintain a cross-OS a11y normalizer (AT-SPI/UIA/AX/CDP → one schema) and a server-side SoM service.
-- **Risks:** **the load-bearing unverified assumption** is that real target apps expose usable a11y trees cheaply. Mitigation: instrument a representative app set (browser, Electron, native Win/macOS, canvas/WebGL, a game) and measure the fraction with usable trees + bandwidth before committing density/cost claims.
+- **Risks:** the unverified assumption is that real target apps expose usable a11y trees cheaply enough for structured observation to become the common fast path. Mitigation: instrument a representative app set (browser, Electron, native Win/macOS, canvas/WebGL, a game) and measure the fraction with usable trees + bandwidth before committing density/cost claims.
 
 ### Evidence
 

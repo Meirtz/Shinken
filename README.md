@@ -57,8 +57,9 @@ flowchart LR
 - **Drive a real desktop with a clean API.** Agents call typed actions like `click`,
   `type_text`, and `observe` through one Agent-Computer Interface (ACI), not ad hoc
   `pyautogui` strings.
-- **Observe structure first.** The default observation is an accessibility/DOM tree diff with
-  stable element refs; screenshots and video are escalation tiers, not the hot path.
+- **Start with screenshots, then add structure.** Phase 0's baseline is the universal GUI-agent loop:
+  screenshot observation plus typed mouse/keyboard actions. Accessibility trees and element refs are
+  the parallel upgrade path for lower cost and more stable actions.
 - **Grant real sandbox capabilities.** A Sandbox can be provisioned with network egress,
   credentials, GPU, persistence, privileged installs, clipboard, screenshots, or OS automation
   entitlements.
@@ -78,14 +79,15 @@ screenshot -> model -> pixel click -> sleep -> screenshot -> throw trace away
 Shinken is designed around a different loop:
 
 ```text
-structured observation -> typed action -> sandbox capability -> verified result -> replay event
+screenshot observation -> typed action -> sandbox capability -> verified result -> replay event
 ```
 
 That difference is the product:
 
-- **Lower bandwidth and token cost:** send a11y/DOM diffs by default; send pixels only when the UI
-  is not structurally visible.
-- **Stable actions:** click element refs when available, not only raw coordinates.
+- **Works before instrumentation:** screenshots are universal, so the first GUI loop works even on
+  canvas, Electron, games, and custom-rendered apps.
+- **Lower bandwidth and token cost over time:** add a11y/DOM diffs and element refs when the UI
+  exposes useful structure.
 - **Auditable authority:** sandbox capabilities such as network egress, credentials, GPU,
   persistence, host mounts, and OS automation are explicit, scoped, revocable, and recorded.
 - **Forkable trajectories:** the same run can be scrubbed, audited, branched, and exported.
@@ -136,19 +138,20 @@ the guest OS changes, and `.skn` preserves the timeline.**
 
 ## How Simple It Should Feel
 
-Today's M0 only supports connect/ping/query. The Phase-0 SDK target is a small blocking API:
+The Phase-0 SDK target is a screenshot-first blocking API:
 
 ```python
 import shinken
 
 with shinken.connect() as env:
-    obs = env.observe()                         # structured tree by default
-    search = obs.find(role="textbox", name="Search")
-    env.click(search.ref)                       # stable element ref, not a magic pixel
+    shot = env.screenshot()                     # universal GUI observation
+    # send shot["png"] to your computer-use model, then execute its action
+    env.click(x=640, y=420)
     env.type_text("agent sandbox runtime")
     env.key("enter")
+    shot = env.screenshot()
 
-    run = env.save("search-demo.skn")           # replay/debug/train later
+    env.save_replay("search-demo.skn")          # replay/debug/train later
 ```
 
 Boundary-crossing capabilities should be just as explicit:
