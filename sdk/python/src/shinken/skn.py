@@ -23,6 +23,20 @@ from typing import Any
 
 SKN_VERSION = 0
 
+#: v0 session **capability envelope** — what a Sandbox session is permitted to do.
+#: This is *reference* semantics for replay/audit (recorded, inspectable), **not**
+#: Cedar/ocap/OS enforcement — that lands in a later milestone. See #83 / #7.
+DEFAULT_CAPABILITIES: dict[str, Any] = {
+    "input_automation": True,  # synthetic pointer/keyboard
+    "screenshot": True,
+    "a11y": True,  # accessibility-tree capture
+    "fs_scope": "session",  # local filesystem scope
+    "egress": False,  # network egress
+    "credentials": False,
+    "clipboard": False,
+    "privileged_install": False,
+}
+
 
 @lru_cache(maxsize=1)
 def skn_schema() -> dict:
@@ -58,12 +72,17 @@ class Recorder:
     """Accumulates timestamped events + content-addressed media for one session."""
 
     def __init__(
-        self, session_id: str | None = None, platform: str = "linux", aci_version: int = 0
+        self,
+        session_id: str | None = None,
+        platform: str = "linux",
+        aci_version: int = 0,
+        capabilities: dict | None = None,
     ):
         self.session_id = session_id or f"sbx-{uuid.uuid4().hex[:12]}"
         self.run_id = f"run-{uuid.uuid4().hex[:12]}"
         self.platform = platform
         self.aci_version = aci_version
+        self.capabilities = {**DEFAULT_CAPABILITIES, **(capabilities or {})}
         self._events: list[dict] = []
         self._media: dict[str, bytes] = {}
         self._seq = 0
@@ -101,7 +120,13 @@ class Recorder:
             src = "image"
         return self._emit("observation", src, payload, action_id)
 
+    def capability_envelope(self) -> dict:
+        """Emit the session capability envelope as a `meta` event at session start.
+        Reference semantics for replay/audit — not enforcement (#83)."""
+        return self._emit("meta", "capability_envelope", {"capabilities": self.capabilities})
+
     def permission(self, payload: dict) -> dict:
+        """Record a boundary decision (grant / deny / narrow) as a permission event."""
         return self._emit("permission", payload.get("decision", "ask"), payload)
 
     def marker(self, name: str) -> dict:
@@ -116,6 +141,7 @@ class Recorder:
             "t0_mono": 0.0,
             "platform": self.platform,
             "aci_version": self.aci_version,
+            "capabilities": self.capabilities,
             "channels": sorted({e["kind"] for e in self._events}),
         }
 

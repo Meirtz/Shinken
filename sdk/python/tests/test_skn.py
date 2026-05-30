@@ -144,3 +144,36 @@ def test_cli_replay_validate_fails_on_broken_pairing(tmp_path, capsys):
     path = rec.save(str(tmp_path / "broken.skn"))  # schema-valid; pairing dangling
     assert cli.main(["replay", path, "--validate"]) == 1
     assert "INVALID" in capsys.readouterr().out
+
+
+def test_capability_envelope_and_permissions_recorded(mock_shinkend, tmp_path):
+    path = str(tmp_path / "cap.skn")
+    with shinken.connect(mock_shinkend, record=True) as env:
+        # envelope exposed in session metadata (reference semantics)
+        assert env.sandbox_capabilities["input_automation"] is True
+        assert env.sandbox_capabilities["egress"] is False
+        env.click(x=1, y=1)
+        env.record_permission("grant", capability="screenshot")
+        env.record_permission("deny", capability="egress", reason="not in scope")
+        env.save_replay(path)
+
+    rp = Replay.load(path)
+    rp.validate()  # schema + action/observation pairing
+    # capability envelope is in the manifest
+    assert rp.manifest["capabilities"]["screenshot"] is True
+    # a capability meta event is recorded at session start
+    cap = rp.events[0]
+    assert cap["kind"] == "meta" and cap["src"] == "capability_envelope"
+    assert cap["payload"]["capabilities"]["privileged_install"] is False
+    # grant + deny decisions recorded and replayable
+    perms = [e for e in rp.events if e["kind"] == "permission"]
+    assert [p["src"] for p in perms] == ["grant", "deny"]
+    assert perms[1]["payload"]["capability"] == "egress"
+    assert perms[1]["payload"]["reason"] == "not in scope"
+
+
+def test_capability_envelope_override():
+    rec = Recorder(capabilities={"egress": "github.com", "clipboard": True})
+    assert rec.capabilities["egress"] == "github.com"
+    assert rec.capabilities["clipboard"] is True
+    assert rec.capabilities["screenshot"] is True  # defaults retained

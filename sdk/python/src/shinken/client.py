@@ -19,7 +19,7 @@ from typing import Any
 
 from websockets.asyncio.client import connect as _ws_connect
 
-from .skn import Recorder
+from .skn import DEFAULT_CAPABILITIES, Recorder
 
 __all__ = ["connect", "aconnect", "Sandbox", "AsyncSandbox", "Capabilities"]
 
@@ -86,13 +86,25 @@ class AsyncSandbox:
     """An async session against a running ``shinkend``."""
 
     def __init__(
-        self, ws: Any, capabilities: Capabilities, platform: str, record: bool = False
+        self,
+        ws: Any,
+        capabilities: Capabilities,
+        platform: str,
+        record: bool = False,
+        sandbox_capabilities: dict | None = None,
     ) -> None:
         self._ws = ws
         self.capabilities = capabilities
         self.platform_name = platform
         self._seq = 0
-        self._recorder = Recorder(platform=platform) if record else None
+        # The session capability envelope (what the Sandbox may do) — reference
+        # semantics, recorded into .skn; distinct from the ACI `capabilities` above.
+        self.sandbox_capabilities = {**DEFAULT_CAPABILITIES, **(sandbox_capabilities or {})}
+        self._recorder = (
+            Recorder(platform=platform, capabilities=self.sandbox_capabilities) if record else None
+        )
+        if self._recorder is not None:
+            self._recorder.capability_envelope()  # declare the envelope at session start
         # Demux state. A single background reader task consumes every inbound frame
         # and routes it: RPC replies to their pending future (by call_id, or `cause`
         # for a one-shot observation), `pong` to the next ping waiter, and unsolicited
@@ -298,6 +310,19 @@ class AsyncSandbox:
             "stream": item.get("stream"),
         }
 
+    def record_permission(
+        self, decision: str, capability: str | None = None, **fields: Any
+    ) -> None:
+        """Record a boundary decision (grant / deny / narrow) as a `.skn` permission
+        event. Reference semantics for replay/audit; requires record=True."""
+        if self._recorder is None:
+            raise RuntimeError("session is not recording; reconnect with record=True")
+        payload = {"decision": decision}
+        if capability is not None:
+            payload["capability"] = capability
+        payload.update(fields)
+        self._recorder.permission(payload)
+
     def save_replay(self, path: str) -> str:
         """Write the recorded session to a `.skn` bundle. Requires record=True."""
         if self._recorder is None:
@@ -314,7 +339,10 @@ class AsyncSandbox:
 
 
 async def aconnect(
-    addr: str = DEFAULT_ADDR, record: bool = False, token: str | None = None
+    addr: str = DEFAULT_ADDR,
+    record: bool = False,
+    token: str | None = None,
+    sandbox_capabilities: dict | None = None,
 ) -> AsyncSandbox:
     """Open an async session and complete the ACI handshake."""
     ws = await _ws_connect(_to_uri(addr))
@@ -328,7 +356,7 @@ async def aconnect(
     except Exception:
         await ws.close()
         raise
-    sandbox = AsyncSandbox(ws, capabilities, platform, record)
+    sandbox = AsyncSandbox(ws, capabilities, platform, record, sandbox_capabilities)
     sandbox._start_reader()  # the reader owns recv() from here on
     return sandbox
 
@@ -433,6 +461,18 @@ class Sandbox:
     def platform(self) -> str:
         return self._inner.platform_name
 
+    @property
+    def sandbox_capabilities(self) -> dict:
+        """The session capability envelope (what this Sandbox is permitted to do —
+        reference semantics, recorded into `.skn`)."""
+        return self._inner.sandbox_capabilities
+
+    def record_permission(
+        self, decision: str, capability: str | None = None, **fields: Any
+    ) -> None:
+        """Record a boundary decision (grant / deny / narrow) into the `.skn` replay."""
+        self._inner.record_permission(decision, capability, **fields)
+
     def ping(self) -> float:
         return self._loop.run(self._inner.ping())
 
@@ -509,11 +549,21 @@ class Sandbox:
         self.close()
 
 
-def connect(addr: str = DEFAULT_ADDR, record: bool = False, token: str | None = None) -> Sandbox:
-    """Connect to a running ``shinkend`` and complete the ACI handshake (blocking)."""
+def connect(
+    addr: str = DEFAULT_ADDR,
+    record: bool = False,
+    token: str | None = None,
+    sandbox_capabilities: dict | None = None,
+) -> Sandbox:
+    """Connect to a running ``shinkend`` and complete the ACI handshake (blocking).
+
+    ``sandbox_capabilities`` overrides the session's v0 capability envelope (recorded
+    into the `.skn` replay as reference semantics)."""
     loop = _BackgroundLoop()
     try:
-        inner = loop.run(aconnect(addr, record=record, token=token))
+        inner = loop.run(
+            aconnect(addr, record=record, token=token, sandbox_capabilities=sandbox_capabilities)
+        )
     except Exception:
         loop.stop()
         raise
