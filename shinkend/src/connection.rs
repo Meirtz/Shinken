@@ -83,7 +83,13 @@ impl Session {
 
     fn on_handshake(&mut self, msg: Message) -> Step {
         match msg {
-            Message::Hello { token, .. } => {
+            Message::Hello { v, token, .. } => {
+                if v != 0 {
+                    return Step::close(protocol::error_result_text(
+                        "?",
+                        &format!("unsupported ACI version: {v} (this runtime speaks v0)"),
+                    ));
+                }
                 if let Some(expected) = self.token.as_deref() {
                     if token.as_deref() != Some(expected) {
                         return Step::close(protocol::error_result_text(
@@ -199,6 +205,14 @@ mod tests {
             r#"{"type":"hello","v":0,"client":{"name":"t","version":"0"},"token":"secret"}"#,
         );
         assert!(!ok.close && s.is_authenticated());
+    }
+
+    #[test]
+    fn non_v0_hello_is_rejected() {
+        let mut s = session(None);
+        let step = s.on_text(r#"{"type":"hello","v":1,"client":{"name":"t","version":"0"}}"#);
+        assert!(step.close && !s.is_authenticated());
+        assert!(step.reply.unwrap().contains("unsupported ACI version"));
     }
 
     #[test]

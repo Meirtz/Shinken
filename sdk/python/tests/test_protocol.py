@@ -52,3 +52,38 @@ def test_invalid_messages_fail_schema(message):
 
 def test_schema_version_constant():
     assert protocol.SCHEMA_VERSION == 0
+
+
+def test_parse_welcome_ok():
+    from shinken.client import _parse_welcome
+
+    caps, platform = _parse_welcome(
+        {
+            "type": "welcome",
+            "v": 0,
+            "server": {"platform": "linux"},
+            "capabilities": {
+                "schema_version": 0,
+                "verbs": ["click"],
+                "targets": ["point_px"],
+                "observation_types": ["screenshot"],
+            },
+        }
+    )
+    assert platform == "linux"
+    assert caps.schema_version == 0 and "click" in caps.verbs
+
+
+@pytest.mark.parametrize(
+    "welcome",
+    [
+        {"type": "oops", "v": 0, "capabilities": {"schema_version": 0}},
+        {"type": "welcome", "v": 1, "capabilities": {"schema_version": 0}},
+        {"type": "welcome", "v": 0, "capabilities": {"schema_version": 1}},
+    ],
+)
+def test_parse_welcome_rejects_mismatch(welcome):
+    from shinken.client import _parse_welcome
+
+    with pytest.raises(RuntimeError):
+        _parse_welcome(welcome)

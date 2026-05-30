@@ -56,6 +56,27 @@ def _target(target: Any, x: float | None, y: float | None) -> dict | None:
     return None
 
 
+def _parse_welcome(welcome: dict) -> tuple[Capabilities, str]:
+    """Validate a `welcome` payload and build (Capabilities, platform). Raises on mismatch."""
+    if welcome.get("type") != "welcome":
+        raise RuntimeError(f"expected 'welcome', got {welcome.get('type')!r}")
+    if welcome.get("v") != 0:
+        raise RuntimeError(f"unsupported ACI version in welcome: {welcome.get('v')!r}")
+    caps = welcome.get("capabilities") or {}
+    if caps.get("schema_version") != 0:
+        raise RuntimeError(f"unsupported ACI schema_version: {caps.get('schema_version')!r}")
+    return (
+        Capabilities(
+            schema_version=caps["schema_version"],
+            verbs=caps.get("verbs", []),
+            targets=caps.get("targets", []),
+            observation_types=caps.get("observation_types", []),
+            max_long_edge=caps.get("max_long_edge"),
+        ),
+        (welcome.get("server") or {}).get("platform", "linux"),
+    )
+
+
 class AsyncSandbox:
     """An async session against a running ``shinkend``."""
 
@@ -171,22 +192,12 @@ async def aconnect(
         hello["token"] = token
     await ws.send(json.dumps(hello))
     welcome = json.loads(await ws.recv())
-    if welcome.get("type") != "welcome":
+    try:
+        capabilities, platform = _parse_welcome(welcome)
+    except Exception:
         await ws.close()
-        raise RuntimeError(f"expected 'welcome', got {welcome.get('type')!r}")
-    caps = welcome.get("capabilities", {})
-    return AsyncSandbox(
-        ws,
-        Capabilities(
-            schema_version=caps.get("schema_version", 0),
-            verbs=caps.get("verbs", []),
-            targets=caps.get("targets", []),
-            observation_types=caps.get("observation_types", []),
-            max_long_edge=caps.get("max_long_edge"),
-        ),
-        welcome.get("server", {}).get("platform", "linux"),
-        record,
-    )
+        raise
+    return AsyncSandbox(ws, capabilities, platform, record)
 
 
 class _BackgroundLoop:

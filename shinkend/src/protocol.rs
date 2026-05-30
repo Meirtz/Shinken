@@ -127,14 +127,13 @@ pub fn capabilities() -> Capabilities {
         .iter()
         .map(|s| s.to_string())
         .collect(),
-        targets: ["point_px", "point_norm", "element_ref"]
+        // Advertise only what is implemented today. element_ref targets need the
+        // a11y engine (M1b); a11y/video/som observation land later. Honest negotiation.
+        targets: ["point_px", "point_norm"]
             .iter()
             .map(|s| s.to_string())
             .collect(),
-        observation_types: ["a11y", "screenshot", "video", "som"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect(),
+        observation_types: ["screenshot"].iter().map(|s| s.to_string()).collect(),
         max_long_edge: 2576,
     }
 }

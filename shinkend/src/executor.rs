@@ -43,8 +43,10 @@ pub enum Target {
 }
 
 /// A typed action parsed from the `action` field of an ACI `action` message.
+/// Unknown fields are rejected so wire drift fails loudly (#23).
 #[derive(Debug, Clone, Deserialize)]
-// `dx`/`ms` are part of the ACI v0 wire contract; read in later milestones.
+#[serde(deny_unknown_fields)]
+// `dx`/`ms`/`scope` are part of the ACI v0 wire contract; read in later milestones.
 #[allow(dead_code)]
 pub struct ActionSpec {
     pub verb: String,
@@ -60,6 +62,8 @@ pub struct ActionSpec {
     pub dy: Option<f64>,
     #[serde(default)]
     pub ms: Option<u64>,
+    #[serde(default)]
+    pub scope: Option<String>,
 }
 
 /// A captured frame: a base64-encoded PNG plus its pixel dimensions.
@@ -450,6 +454,18 @@ mod tests {
         let a = spec(r#"{"verb":"click","target":{"kind":"point_px","x":10,"y":20}}"#);
         assert_eq!(a.verb, "click");
         assert!(matches!(a.target, Some(Target::PointPx { .. })));
+    }
+
+    #[test]
+    fn rejects_unknown_action_fields() {
+        let r = serde_json::from_str::<ActionSpec>(r#"{"verb":"click","bogus":1}"#);
+        assert!(r.is_err(), "unknown fields must be rejected");
+    }
+
+    #[test]
+    fn screenshot_scope_is_accepted() {
+        let a = spec(r#"{"verb":"screenshot","scope":"screen"}"#);
+        assert_eq!(a.scope.as_deref(), Some("screen"));
     }
 
     #[test]
