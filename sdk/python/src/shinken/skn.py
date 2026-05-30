@@ -68,14 +68,33 @@ def _validate_bundle(manifest: dict, events: list[dict]) -> None:
         jsonschema.validate(ev, {**base, "$ref": "#/$defs/Event"})
 
 
+_REDACTED = "[redacted]"
+
+
+def _redact_fields(d: dict, fields: tuple[str, ...]) -> dict:
+    """Return ``d`` with the named string fields replaced by ``[redacted]`` (only if
+    present; original untouched)."""
+    if not any(f in d for f in fields):
+        return d
+    return {**d, **{f: _REDACTED for f in fields if f in d}}
+
+
+def _redact_elements(elements: list) -> list:
+    """Redact the free-text ``name``/``value`` of each ACI Element (roles, bboxes, refs,
+    states, provenance are structural and kept)."""
+    return [_redact_fields(e, ("name", "value")) if isinstance(e, dict) else e for e in elements]
+
+
 class Recorder:
     """Accumulates timestamped events + content-addressed media for one session.
 
     A `.skn` bundle can contain screenshots, typed text, and boundary context, so it
     is a **sensitive artifact** — store and share it accordingly. For sensitive runs,
     ``redact_media`` drops captured screenshot/media bytes (recording only dimensions,
-    marked redacted) and ``redact_text`` strips typed text from actions, so plaintext
-    secrets are never persisted (#88).
+    marked redacted) and ``redact_text`` strips free-text capture-side (#88/#151):
+    action ``text``/``keys``, structured-observation element ``name``/``value`` (full +
+    diff), file-transfer ``path``, permission ``reason``, and verifier-check ``evidence``
+    — so plaintext secrets/PII are never persisted.
     """
 
     def __init__(
@@ -117,8 +136,8 @@ class Recorder:
     def action(
         self, verb: str, action: dict, action_id: str, *, batch_id: str | None = None
     ) -> dict:
-        if self.redact_text and "text" in action:
-            action = {**action, "text": "[redacted]"}  # never persist typed secrets
+        if self.redact_text:
+            action = _redact_fields(action, ("text", "keys"))  # typed text + key chords (#151)
         ev = self._emit("action", verb, action, action_id)
         if batch_id is not None:
             ev["batch_id"] = batch_id  # groups actions dispatched as one ordered batch (#73)
@@ -128,6 +147,10 @@ class Recorder:
         self, payload: dict, *, action_id: str | None = None, png: bytes | None = None
     ) -> dict:
         payload = dict(payload)
+        if self.redact_text:  # structured/diff element name/value (#151)
+            for key in ("elements", "added", "removed", "changed"):
+                if isinstance(payload.get(key), list):
+                    payload[key] = _redact_elements(payload[key])
         src = "a11y"
         if png is not None:
             image = dict(payload.get("image") or {})
@@ -155,6 +178,8 @@ class Recorder:
 
     def permission(self, payload: dict) -> dict:
         """Record a boundary decision (grant / deny / narrow) as a permission event."""
+        if self.redact_text:
+            payload = _redact_fields(payload, ("reason",))  # reasons may carry detail (#151)
         return self._emit("permission", payload.get("decision", "ask"), payload)
 
     def marker(self, name: str) -> dict:
@@ -164,8 +189,14 @@ class Recorder:
         """Record an eval verifier verdict as a first-class ``verifier_receipt`` event
         (#149) — so a `.skn` is self-contained eval evidence (pass/fail + checks), not
         just a side summary. ``src`` is ``pass``/``fail`` for quick timeline scanning."""
+        receipt = dict(receipt)
+        if self.redact_text and isinstance(receipt.get("checks"), list):  # evidence (#151)
+            receipt["checks"] = [
+                _redact_fields(c, ("evidence",)) if isinstance(c, dict) else c
+                for c in receipt["checks"]
+            ]
         return self._emit(
-            "verifier_receipt", "pass" if receipt.get("passed") else "fail", dict(receipt)
+            "verifier_receipt", "pass" if receipt.get("passed") else "fail", receipt
         )
 
     def file_transfer(self, ref: dict, data: bytes | None = None) -> dict:
@@ -175,6 +206,8 @@ class Recorder:
         artifact; otherwise only the ref is kept (the default — large payloads stay out
         of the bundle)."""
         payload = dict(ref)
+        if self.redact_text and "path" in payload:
+            payload["path"] = _REDACTED  # file paths can reveal user dirs/names (#151)
         if data is not None and not self.redact_media:
             sha = ref.get("sha256") or hashlib.sha256(data).hexdigest()
             self._media[sha] = data
