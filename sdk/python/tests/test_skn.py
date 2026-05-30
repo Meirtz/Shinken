@@ -177,3 +177,47 @@ def test_capability_envelope_override():
     assert rec.capabilities["egress"] == "github.com"
     assert rec.capabilities["clipboard"] is True
     assert rec.capabilities["screenshot"] is True  # defaults retained
+
+
+def test_redact_media_drops_bytes(tmp_path):
+    import zipfile
+
+    rec = Recorder(platform="linux", redact_media=True)
+    rec.observation({"image": {"w": 2, "h": 2, "scope": "screen"}}, png=_PNG)
+    path = rec.save(str(tmp_path / "red.skn"))
+    rp = Replay.load(path)
+    assert rp.manifest["redaction"]["media"] is True
+    img = next(e for e in rp.events if e["kind"] == "observation")["payload"]["image"]
+    assert img.get("redacted") is True and "ref" not in img  # no media reference
+    assert img["w"] == 2 and img["h"] == 2  # dimensions retained
+    with zipfile.ZipFile(path) as z:  # and no raw bytes anywhere in the bundle
+        assert not any(n.startswith("media/") for n in z.namelist())
+
+
+def test_redact_text_strips_typed_secret():
+    rec = Recorder(redact_text=True)
+    ev = rec.action("type_text", {"verb": "type_text", "text": "hunter2"}, "c1")
+    assert ev["payload"]["text"] == "[redacted]"
+
+
+def test_sdk_redacted_run(mock_shinkend, tmp_path):
+    import zipfile
+
+    path = str(tmp_path / "s.skn")
+    with shinken.connect(mock_shinkend, record=True, redact_media=True, redact_text=True) as env:
+        env.type_text("s3cret")
+        env.screenshot()
+        env.record_permission("deny", capability="credentials", sensitive=True)
+        env.save_replay(path)
+
+    rp = Replay.load(path)
+    rp.validate()
+    assert rp.manifest["redaction"] == {"media": True, "text": True}
+    act = next(e for e in rp.events if e["kind"] == "action" and e["src"] == "type_text")
+    assert act["payload"]["text"] == "[redacted]"  # typed secret not persisted
+    obs = next(e for e in rp.events if e["kind"] == "observation")
+    assert obs["payload"]["image"].get("redacted") is True
+    with zipfile.ZipFile(path) as z:
+        assert not any(n.startswith("media/") for n in z.namelist())
+    perm = next(e for e in rp.events if e["kind"] == "permission")
+    assert perm["payload"]["sensitive"] is True  # permission can mark a sensitive scope

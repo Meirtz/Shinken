@@ -92,6 +92,8 @@ class AsyncSandbox:
         platform: str,
         record: bool = False,
         sandbox_capabilities: dict | None = None,
+        redact_media: bool = False,
+        redact_text: bool = False,
     ) -> None:
         self._ws = ws
         self.capabilities = capabilities
@@ -101,7 +103,14 @@ class AsyncSandbox:
         # semantics, recorded into .skn; distinct from the ACI `capabilities` above.
         self.sandbox_capabilities = {**DEFAULT_CAPABILITIES, **(sandbox_capabilities or {})}
         self._recorder = (
-            Recorder(platform=platform, capabilities=self.sandbox_capabilities) if record else None
+            Recorder(
+                platform=platform,
+                capabilities=self.sandbox_capabilities,
+                redact_media=redact_media,
+                redact_text=redact_text,
+            )
+            if record
+            else None
         )
         if self._recorder is not None:
             self._recorder.capability_envelope()  # declare the envelope at session start
@@ -343,6 +352,8 @@ async def aconnect(
     record: bool = False,
     token: str | None = None,
     sandbox_capabilities: dict | None = None,
+    redact_media: bool = False,
+    redact_text: bool = False,
 ) -> AsyncSandbox:
     """Open an async session and complete the ACI handshake."""
     ws = await _ws_connect(_to_uri(addr))
@@ -356,7 +367,9 @@ async def aconnect(
     except Exception:
         await ws.close()
         raise
-    sandbox = AsyncSandbox(ws, capabilities, platform, record, sandbox_capabilities)
+    sandbox = AsyncSandbox(
+        ws, capabilities, platform, record, sandbox_capabilities, redact_media, redact_text
+    )
     sandbox._start_reader()  # the reader owns recv() from here on
     return sandbox
 
@@ -554,15 +567,26 @@ def connect(
     record: bool = False,
     token: str | None = None,
     sandbox_capabilities: dict | None = None,
+    redact_media: bool = False,
+    redact_text: bool = False,
 ) -> Sandbox:
     """Connect to a running ``shinkend`` and complete the ACI handshake (blocking).
 
     ``sandbox_capabilities`` overrides the session's v0 capability envelope (recorded
-    into the `.skn` replay as reference semantics)."""
+    into the `.skn` replay as reference semantics). For sensitive runs, ``redact_media``
+    drops captured screenshot bytes and ``redact_text`` strips typed text from the
+    recording (#88)."""
     loop = _BackgroundLoop()
     try:
         inner = loop.run(
-            aconnect(addr, record=record, token=token, sandbox_capabilities=sandbox_capabilities)
+            aconnect(
+                addr,
+                record=record,
+                token=token,
+                sandbox_capabilities=sandbox_capabilities,
+                redact_media=redact_media,
+                redact_text=redact_text,
+            )
         )
     except Exception:
         loop.stop()

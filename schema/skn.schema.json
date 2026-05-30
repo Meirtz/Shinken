@@ -16,6 +16,14 @@
         "platform": { "enum": ["linux", "windows", "macos"] },
         "aci_version": { "type": "integer" },
         "capabilities": { "$ref": "#/$defs/CapabilityEnvelope" },
+        "redaction": {
+          "type": "object",
+          "description": "privacy controls applied to this run (#88)",
+          "properties": {
+            "media": { "type": "boolean", "description": "screenshot/media bytes dropped" },
+            "text": { "type": "boolean", "description": "typed text stripped from actions" }
+          }
+        },
         "channels": { "type": "array", "items": { "$ref": "#/$defs/EventKind" } },
         "title": { "type": "string" }
       }

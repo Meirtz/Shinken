@@ -69,7 +69,14 @@ def _validate_bundle(manifest: dict, events: list[dict]) -> None:
 
 
 class Recorder:
-    """Accumulates timestamped events + content-addressed media for one session."""
+    """Accumulates timestamped events + content-addressed media for one session.
+
+    A `.skn` bundle can contain screenshots, typed text, and boundary context, so it
+    is a **sensitive artifact** — store and share it accordingly. For sensitive runs,
+    ``redact_media`` drops captured screenshot/media bytes (recording only dimensions,
+    marked redacted) and ``redact_text`` strips typed text from actions, so plaintext
+    secrets are never persisted (#88).
+    """
 
     def __init__(
         self,
@@ -77,12 +84,16 @@ class Recorder:
         platform: str = "linux",
         aci_version: int = 0,
         capabilities: dict | None = None,
+        redact_media: bool = False,
+        redact_text: bool = False,
     ):
         self.session_id = session_id or f"sbx-{uuid.uuid4().hex[:12]}"
         self.run_id = f"run-{uuid.uuid4().hex[:12]}"
         self.platform = platform
         self.aci_version = aci_version
         self.capabilities = {**DEFAULT_CAPABILITIES, **(capabilities or {})}
+        self.redact_media = redact_media
+        self.redact_text = redact_text
         self._events: list[dict] = []
         self._media: dict[str, bytes] = {}
         self._seq = 0
@@ -104,6 +115,8 @@ class Recorder:
         return ev
 
     def action(self, verb: str, action: dict, action_id: str) -> dict:
+        if self.redact_text and "text" in action:
+            action = {**action, "text": "[redacted]"}  # never persist typed secrets
         return self._emit("action", verb, action, action_id)
 
     def observation(
@@ -112,10 +125,15 @@ class Recorder:
         payload = dict(payload)
         src = "a11y"
         if png is not None:
-            sha = hashlib.sha256(png).hexdigest()
-            self._media[sha] = png
             image = dict(payload.get("image") or {})
-            image["ref"] = sha
+            if self.redact_media:
+                # record dimensions only — no raw bytes, no content-addressed media
+                image.pop("ref", None)
+                image["redacted"] = True
+            else:
+                sha = hashlib.sha256(png).hexdigest()
+                self._media[sha] = png
+                image["ref"] = sha
             payload["image"] = image
             src = "image"
         return self._emit("observation", src, payload, action_id)
@@ -142,6 +160,7 @@ class Recorder:
             "platform": self.platform,
             "aci_version": self.aci_version,
             "capabilities": self.capabilities,
+            "redaction": {"media": self.redact_media, "text": self.redact_text},
             "channels": sorted({e["kind"] for e in self._events}),
         }
 
