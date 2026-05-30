@@ -1,0 +1,40 @@
+# External assets — cloned/vendored, not part of this repo's history.
+# Provenance & re-clone instructions live in references/README.md (tracked).
+references/*
+!references/README.md
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+*.egg-info/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+.turbo/
+
+# Rust
+target/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Local scratch
+scratch/
+*.local
+
+# Internal-only design references (non-confidential internal architecture notes used as
+# design input; NEVER published — public docs/ + notes/ must stay vendor-neutral).
+internal/
