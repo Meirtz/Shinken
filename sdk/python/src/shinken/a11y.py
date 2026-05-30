@@ -97,6 +97,90 @@ def to_elements(root: A11yNode, source: str = "atspi") -> list[dict]:
     return elements
 
 
+def element_key(el: dict) -> tuple:
+    """A stable-ish identity for an `Element` across captures: backend provenance id when
+    present (CDP ``backend_dom_node_id`` / ``ax_node_id`` — stable), else ``(role, name)``.
+
+    Per-capture ``ref``s (``e0``, ``e1`` …) are positional and intentionally *not* used —
+    they would make every element look 'changed' whenever ordering shifts."""
+    prov = el.get("provenance") or {}
+    if prov.get("backend_dom_node_id") is not None:
+        return ("dom", prov["backend_dom_node_id"])
+    if prov.get("ax_node_id") is not None:
+        return ("ax", prov["ax_node_id"])
+    return ("rn", el.get("role", ""), el.get("name", ""))
+
+
+def _content(el: dict) -> tuple:
+    """The fields whose change marks an element 'changed' (vs identity, which is the key)."""
+    return (
+        tuple(el.get("bbox", [])),
+        el.get("name", ""),
+        el.get("value", ""),
+        tuple(el.get("states", [])),
+    )
+
+
+def diff_elements(prev: list[dict], curr: list[dict]) -> dict:
+    """Diff two `Element` lists into ``added`` / ``removed`` / ``changed`` keyed by stable
+    identity (:func:`element_key`) — the bandwidth-saving structured-observation upgrade
+    (D3): between turns, send only what changed instead of the whole tree.
+
+    Identity is exact for CDP (backend ids) and best-effort for AT-SPI (``role``+``name``,
+    with same-key elements paired in document order). Where no stable id exists, a content
+    change on a colliding key may surface as a removed+added pair rather than ``changed``.
+    The first diff (empty ``prev``) reports every element as ``added``."""
+    from collections import defaultdict
+
+    prev_buckets: dict[tuple, list[dict]] = defaultdict(list)
+    curr_buckets: dict[tuple, list[dict]] = defaultdict(list)
+    for el in prev:
+        prev_buckets[element_key(el)].append(el)
+    for el in curr:
+        curr_buckets[element_key(el)].append(el)
+
+    added: list[dict] = []
+    removed: list[dict] = []
+    changed: list[dict] = []
+    keys = list(prev_buckets) + [k for k in curr_buckets if k not in prev_buckets]
+    for k in keys:
+        p = prev_buckets.get(k, [])
+        c = curr_buckets.get(k, [])
+        for i in range(max(len(p), len(c))):
+            pe = p[i] if i < len(p) else None
+            ce = c[i] if i < len(c) else None
+            if pe is None:
+                added.append(ce)
+            elif ce is None:
+                removed.append(pe)
+            elif _content(pe) != _content(ce):
+                changed.append(ce)
+            # else: unchanged → omitted from the diff
+    return {
+        "added": added,
+        "removed": removed,
+        "changed": changed,
+        "unchanged": len(curr) - len(added) - len(changed),
+        "prev_count": len(prev),
+        "curr_count": len(curr),
+    }
+
+
+def diff_size(diff: dict, full: list[dict]) -> dict:
+    """Serialized byte sizes — the diff payload (added+removed+changed) vs the full element
+    list — i.e. the **tree-diff bandwidth** measurement (D3 / Spike A #2)."""
+    import json
+
+    payload = {k: diff[k] for k in ("added", "removed", "changed")}
+    diff_bytes = len(json.dumps(payload, separators=(",", ":")).encode())
+    full_bytes = len(json.dumps(full, separators=(",", ":")).encode())
+    return {
+        "diff_bytes": diff_bytes,
+        "full_bytes": full_bytes,
+        "ratio": round(diff_bytes / full_bytes, 4) if full_bytes else 0.0,
+    }
+
+
 class A11ySource(Protocol):
     """Anything that can produce an accessibility tree (AT-SPI/UIA/AX/CDP backends).
 

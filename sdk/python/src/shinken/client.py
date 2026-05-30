@@ -650,6 +650,7 @@ class Sandbox:
         self._loop = loop
         self._closed = False
         self._elements: dict[str, dict] = {}  # ref -> Element, from the last observe(structured)
+        self._last_structured: list[dict] = []  # last full element list, for observe_diff (#4)
 
     @property
     def capabilities(self) -> Capabilities:
@@ -729,6 +730,34 @@ class Sandbox:
             "image": {"w": shot["w"], "h": shot["h"], "scope": "screen"},
             "png": shot["png"],
         }
+
+    def observe_diff(self, source: Any = None) -> dict:
+        """Structured observation as a **diff** from the previous one (#4 / D3): returns
+        ``{added, removed, changed, unchanged, size, available}`` — only what changed
+        since the last ``observe_diff`` / ``observe(structured=True)``, plus the
+        serialized diff-vs-full byte sizes (the tree-diff bandwidth measure). The first
+        call has no baseline, so every element is ``added``. Falls back to
+        ``available=False`` (like the full structured path) when the source is
+        unavailable. Also refreshes the ``element_ref`` map, so ``resolve``/``act_on``
+        keep working."""
+        from .a11y import diff_elements, diff_size
+
+        obs = self.observe(structured=True, source=source)
+        if not obs.get("available", False):
+            return {
+                "available": False,
+                "added": [],
+                "removed": [],
+                "changed": [],
+                "unchanged": 0,
+                "error": obs.get("error"),
+            }
+        curr = obs.get("elements", [])
+        diff = diff_elements(self._last_structured, curr)
+        diff["size"] = diff_size(diff, curr)
+        diff["available"] = True
+        self._last_structured = curr
+        return diff
 
     def resolve(self, ref: str) -> dict:
         """Resolve an `element_ref` (from the last ``observe(structured=True)``) to a
