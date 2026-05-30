@@ -4,7 +4,7 @@
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 <p align="center">
-  <img src="https://github.com/Meirtz/Project-ShinKen/raw/main/docs/assets/logo.png" alt="Shinken logo" width="720">
+  <img src="https://github.com/Meirtz/Project-ShinKen/raw/main/docs/assets/logo.png" alt="Shinken logo" width="100%">
 </p>
 
 > An **AI-native computer runtime**: give an agent a safe desktop, stream what it does,
@@ -15,14 +15,6 @@ computer-use agents. It is the production-grade successor to research harnesses 
 [OSWorld](https://github.com/xlang-ai/OSWorld): structured-first instead of screenshot-polling,
 replayable instead of write-only, permission-gated instead of all-or-nothing, and built to serve
 both production agent deployment and evaluation.
-
-<p align="center">
-  <img src="docs/assets/shinken-agent-sandbox-overview.png" alt="Shinken agent sandbox: sharp by default, safe by design" width="900">
-</p>
-
-Most sandbox demos are training swords: safe places to practice, experiment, fail, and retry.
-Shinken keeps that developer ergonomics, then adds the real-runtime edge: real power for real work,
-permissioned controls, replayable runs, and auditable actions.
 
 ## Why "Shinken"?
 
@@ -39,6 +31,13 @@ is gated, recorded, replayable, and under human control.
 </p>
 
 That is Shinken's stance: **real desktops, real actions, real permissions, real replay.**
+
+<p align="center">
+  <img src="docs/assets/shinken-agent-sandbox-overview.png" alt="Shinken agent sandbox: sharp by default, safe by design" width="900">
+</p>
+
+The product shape follows from that stance: keep the practice-friendly ergonomics, then add the
+real-runtime edge: permissioned controls, replayable runs, and auditable actions.
 
 ```mermaid
 flowchart LR
