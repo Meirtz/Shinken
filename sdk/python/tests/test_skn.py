@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import jsonschema
+import pytest
+
 import shinken
-from shinken.skn import Recorder, Replay, summarize
+from shinken.skn import Recorder, Replay, _validate_bundle, summarize
 
 _PNG = b"\x89PNG\r\n\x1a\nDATA"
 
@@ -34,6 +37,40 @@ def test_media_dedup():
     rec.observation({}, png=_PNG)
     rec.observation({}, png=_PNG)  # identical → same sha, stored once
     assert len(rec._media) == 1
+
+
+def test_save_is_atomic_no_leftover_temp(tmp_path):
+    rec = Recorder(platform="linux")
+    rec.marker("x")
+    path = str(tmp_path / "run.skn")
+    rec.save(path)
+    assert Replay.load(path)  # complete + re-openable
+    # the temp file is renamed into place, never left behind
+    leftovers = [p.name for p in tmp_path.iterdir() if p.name != "run.skn"]
+    assert leftovers == [], f"unexpected leftover files: {leftovers}"
+
+
+def test_save_rejects_malformed_event_then_writes_when_unvalidated(tmp_path):
+    rec = Recorder(platform="linux")
+    rec.action("click", {"verb": "click"}, "c1")
+    # a malformed event slips into the log (bad kind) — strict save must reject it...
+    rec._events.append({"seq": 99, "dt": 0.0, "kind": "teleport", "src": "x", "payload": {}})
+    with pytest.raises(jsonschema.ValidationError):
+        rec.save(str(tmp_path / "bad.skn"))
+    # ...and validation runs BEFORE any write, so no partial/temp file is left
+    assert list(tmp_path.iterdir()) == []
+    # opt-out still writes a (re-loadable) bundle
+    path = rec.save(str(tmp_path / "bad.skn"), validate=False)
+    assert Replay.load(path)
+    assert not any(p.name.endswith(".tmp") for p in tmp_path.iterdir())
+
+
+def test_valid_bundle_passes_schema_validation():
+    rec = Recorder(platform="linux")
+    rec.action("click", {"verb": "click", "target": {"kind": "point_px", "x": 1, "y": 2}}, "c1")
+    rec.observation({"image": {"w": 1, "h": 1, "scope": "screen"}}, png=_PNG, action_id="c1")
+    rec.marker("done")
+    _validate_bundle(rec.manifest(), rec.events)  # must not raise
 
 
 def test_record_session_to_skn(mock_shinkend, tmp_path):

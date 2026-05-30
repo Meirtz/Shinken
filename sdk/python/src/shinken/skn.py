@@ -8,15 +8,50 @@ session and writes a bundle; :class:`Replay` loads one back for scrubbing.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
+import os
+import tempfile
 import time
 import uuid
 import zipfile
 from datetime import datetime, timezone
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 SKN_VERSION = 0
+
+
+@lru_cache(maxsize=1)
+def skn_schema() -> dict:
+    """Load the `.skn` v0 JSON Schema (packaged copy, with a repo-root fallback)."""
+    try:
+        from importlib.resources import files
+
+        text = files("shinken").joinpath("schemas", "skn.schema.json").read_text(encoding="utf-8")
+        return json.loads(text)
+    except (FileNotFoundError, ModuleNotFoundError, NotADirectoryError):
+        root = Path(__file__).resolve().parents[4]
+        return json.loads((root / "schema" / "skn.schema.json").read_text())
+
+
+def _validate_bundle(manifest: dict, events: list[dict]) -> None:
+    """Validate the manifest + each event against `schema/skn.schema.json`.
+
+    Best-effort: silently skips if the optional ``jsonschema`` dependency is absent
+    (so recording works without the ``[dev]`` extra); when it is present, raises
+    ``jsonschema.ValidationError`` on a malformed bundle.
+    """
+    try:
+        import jsonschema
+    except ImportError:  # pragma: no cover - exercised only without the dev extra
+        return
+    base = {"$defs": skn_schema().get("$defs", {})}
+    jsonschema.validate(manifest, {**base, "$ref": "#/$defs/Manifest"})
+    for ev in events:
+        jsonschema.validate(ev, {**base, "$ref": "#/$defs/Event"})
 
 
 class Recorder:
@@ -84,13 +119,31 @@ class Recorder:
             "channels": sorted({e["kind"] for e in self._events}),
         }
 
-    def save(self, path: str) -> str:
-        """Write the bundle to ``path`` (a ``.skn`` ZIP). Crash-safe / re-openable."""
-        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
-            z.writestr("manifest.json", json.dumps(self.manifest(), indent=2))
-            z.writestr("events.jsonl", "".join(json.dumps(e) + "\n" for e in self._events))
-            for sha, data in self._media.items():
-                z.writestr(f"media/{sha}", data)
+    def save(self, path: str, *, validate: bool = True) -> str:
+        """Write the bundle to ``path`` (a ``.skn`` ZIP), **atomically**.
+
+        The bundle is built in a temp file in the same directory and ``os.replace``d
+        into place, so a crash mid-write can never leave a partial/corrupt ``.skn``.
+        When ``validate`` is set (and the optional ``jsonschema`` dep is available) the
+        manifest and every event are checked against ``schema/skn.schema.json`` first.
+        """
+        manifest = self.manifest()
+        if validate:
+            _validate_bundle(manifest, self._events)
+        directory = os.path.dirname(os.path.abspath(path)) or "."
+        fd, tmp = tempfile.mkstemp(suffix=".skn.tmp", dir=directory)
+        os.close(fd)
+        try:
+            with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
+                z.writestr("manifest.json", json.dumps(manifest, indent=2))
+                z.writestr("events.jsonl", "".join(json.dumps(e) + "\n" for e in self._events))
+                for sha, data in self._media.items():
+                    z.writestr(f"media/{sha}", data)
+            os.replace(tmp, path)  # atomic on the same filesystem
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.remove(tmp)
+            raise
         return path
 
     @property
