@@ -132,6 +132,12 @@ class AsyncSandbox:
         img = reply.get("image") or {}
         return {"png": base64.b64decode(img.get("ref", "")), "w": img.get("w"), "h": img.get("h")}
 
+    async def type_text(self, text: str):
+        return await self.act("type_text", text=text)
+
+    async def key(self, keys: str):
+        return await self.act("key", keys=keys)
+
     async def close(self) -> None:
         await self._ws.close()
 
@@ -220,6 +226,12 @@ class Sandbox:
 
     def screenshot(self, scope: str = "screen") -> dict:
         return self._loop.run(self._inner.screenshot(scope))
+
+    def type_text(self, text: str):
+        return self._loop.run(self._inner.type_text(text))
+
+    def key(self, keys: str):
+        return self._loop.run(self._inner.key(keys))
 
     def close(self) -> None:
         try:

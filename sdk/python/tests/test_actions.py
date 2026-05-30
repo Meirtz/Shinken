@@ -16,6 +16,12 @@ def test_click_move_scroll_acked(mock_shinkend):
         assert env.act("double_click", {"kind": "point_px", "x": 1, "y": 2})["ok"] is True
 
 
+def test_type_text_and_key_acked(mock_shinkend):
+    with shinken.connect(mock_shinkend) as env:
+        assert env.type_text("hello shinken")["ok"] is True
+        assert env.key("ctrl+a")["ok"] is True
+
+
 def test_screenshot_returns_png(mock_shinkend):
     with shinken.connect(mock_shinkend) as env:
         shot = env.screenshot()

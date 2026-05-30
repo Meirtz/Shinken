@@ -6,6 +6,7 @@
 //! router prefers semantic actuation later (CDP/AT-SPI); X11/XTEST is the P0 baseline
 //! for the Linux fork tier we control (see docs/11-aci-spec.md §3.1).
 
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 use anyhow::{bail, ensure, Context, Result};
@@ -15,7 +16,7 @@ use serde::Deserialize;
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{
     ConnectionExt as _, ImageFormat, Window, BUTTON_PRESS_EVENT, BUTTON_RELEASE_EVENT,
-    MOTION_NOTIFY_EVENT,
+    KEY_PRESS_EVENT, KEY_RELEASE_EVENT, MOTION_NOTIFY_EVENT,
 };
 use x11rb::protocol::xtest::ConnectionExt as _;
 
@@ -43,7 +44,7 @@ pub enum Target {
 
 /// A typed action parsed from the `action` field of an ACI `action` message.
 #[derive(Debug, Clone, Deserialize)]
-// `text`/`keys`/`dx`/`ms` are part of the ACI v0 wire contract; first read in M1b.
+// `dx`/`ms` are part of the ACI v0 wire contract; read in later milestones.
 #[allow(dead_code)]
 pub struct ActionSpec {
     pub verb: String,
@@ -118,25 +119,56 @@ const BTN_RIGHT: u8 = 3;
 const BTN_SCROLL_UP: u8 = 4;
 const BTN_SCROLL_DOWN: u8 = 5;
 
-/// X11 backend: synthetic pointer input via the XTEST extension.
+/// X11 backend: synthetic pointer + keyboard input via the XTEST extension.
 pub struct X11Executor {
     conn: Mutex<x11rb::rust_connection::RustConnection>,
     root: Window,
     width: u16,
     height: u16,
+    /// keysym -> (keycode, needs_shift), built from the server's keyboard mapping.
+    keymap: HashMap<u32, (u8, bool)>,
 }
 
 impl X11Executor {
     pub fn connect() -> Result<Self> {
         let (conn, screen_num) = x11rb::connect(None).context("connect to X display")?;
-        let screen = &conn.setup().roots[screen_num];
-        let root = screen.root;
-        let (width, height) = (screen.width_in_pixels, screen.height_in_pixels);
+        let (root, width, height, min_kc, max_kc) = {
+            let setup = conn.setup();
+            let screen = &setup.roots[screen_num];
+            (
+                screen.root,
+                screen.width_in_pixels,
+                screen.height_in_pixels,
+                setup.min_keycode,
+                setup.max_keycode,
+            )
+        };
+        let mapping = conn
+            .get_keyboard_mapping(min_kc, max_kc - min_kc + 1)?
+            .reply()?;
+        let per = mapping.keysyms_per_keycode as usize;
+        let mut keymap: HashMap<u32, (u8, bool)> = HashMap::new();
+        for (i, chunk) in mapping.keysyms.chunks(per).enumerate() {
+            let kc = min_kc + i as u8;
+            for (col, &ks) in chunk.iter().enumerate() {
+                match (col, ks) {
+                    (_, 0) => {}
+                    (0, _) => {
+                        keymap.insert(ks, (kc, false));
+                    }
+                    (1, _) => {
+                        keymap.entry(ks).or_insert((kc, true));
+                    }
+                    _ => {}
+                }
+            }
+        }
         Ok(Self {
             conn: Mutex::new(conn),
             root,
             width,
             height,
+            keymap,
         })
     }
 
@@ -168,6 +200,128 @@ impl X11Executor {
                 bail!("element_ref resolution needs the observation engine (M1b, #4)")
             }
         }
+    }
+
+    fn key_event(&self, keycode: u8, press: bool) -> Result<()> {
+        let ty = if press {
+            KEY_PRESS_EVENT
+        } else {
+            KEY_RELEASE_EVENT
+        };
+        self.fake(ty, keycode, 0, 0)
+    }
+
+    fn keycode_for(&self, keysym: u32) -> Result<(u8, bool)> {
+        self.keymap
+            .get(&keysym)
+            .copied()
+            .with_context(|| format!("no keycode for keysym {keysym:#x}"))
+    }
+
+    fn type_text(&self, text: &str) -> Result<usize> {
+        for ch in text.chars() {
+            let ks = char_keysym(ch).with_context(|| format!("cannot type char {ch:?}"))?;
+            let (kc, shift) = self.keycode_for(ks)?;
+            let shift_kc = if shift {
+                Some(self.keycode_for(KS_SHIFT_L)?.0)
+            } else {
+                None
+            };
+            if let Some(s) = shift_kc {
+                self.key_event(s, true)?;
+            }
+            self.key_event(kc, true)?;
+            self.key_event(kc, false)?;
+            if let Some(s) = shift_kc {
+                self.key_event(s, false)?;
+            }
+        }
+        Ok(text.chars().count())
+    }
+
+    fn key_combo(&self, combo: &str) -> Result<()> {
+        let (mods, key) = parse_combo(combo);
+        ensure!(!key.is_empty(), "empty key combo");
+        let mut mod_kcs = Vec::with_capacity(mods.len());
+        for m in &mods {
+            let ks = mod_keysym(m).with_context(|| format!("unknown modifier {m:?}"))?;
+            mod_kcs.push(self.keycode_for(ks)?.0);
+        }
+        let key_ks = key_keysym(key).with_context(|| format!("unknown key {key:?}"))?;
+        let key_kc = self.keycode_for(key_ks)?.0;
+        for &m in &mod_kcs {
+            self.key_event(m, true)?;
+        }
+        self.key_event(key_kc, true)?;
+        self.key_event(key_kc, false)?;
+        for &m in mod_kcs.iter().rev() {
+            self.key_event(m, false)?;
+        }
+        Ok(())
+    }
+}
+
+/// Shift_L keysym.
+const KS_SHIFT_L: u32 = 0xffe1;
+
+/// Map a character to an X keysym (Latin-1 maps 1:1; plus newline/tab).
+fn char_keysym(ch: char) -> Option<u32> {
+    let c = ch as u32;
+    if (0x20..=0x7e).contains(&c) || (0xa0..=0xff).contains(&c) {
+        Some(c)
+    } else {
+        match ch {
+            '\n' => Some(0xff0d),
+            '\t' => Some(0xff09),
+            _ => None,
+        }
+    }
+}
+
+fn mod_keysym(name: &str) -> Option<u32> {
+    match name.to_ascii_lowercase().as_str() {
+        "ctrl" | "control" => Some(0xffe3),
+        "shift" => Some(0xffe1),
+        "alt" | "option" => Some(0xffe9),
+        "super" | "meta" | "cmd" | "command" | "win" => Some(0xffeb),
+        _ => None,
+    }
+}
+
+fn key_keysym(key: &str) -> Option<u32> {
+    let mut it = key.chars();
+    if let (Some(c), None) = (it.next(), it.next()) {
+        return char_keysym(c);
+    }
+    match key.to_ascii_lowercase().as_str() {
+        "enter" | "return" => Some(0xff0d),
+        "tab" => Some(0xff09),
+        "escape" | "esc" => Some(0xff1b),
+        "space" => Some(0x20),
+        "backspace" => Some(0xff08),
+        "delete" | "del" => Some(0xffff),
+        "up" => Some(0xff52),
+        "down" => Some(0xff54),
+        "left" => Some(0xff51),
+        "right" => Some(0xff53),
+        "home" => Some(0xff50),
+        "end" => Some(0xff57),
+        "pageup" => Some(0xff55),
+        "pagedown" => Some(0xff56),
+        _ => None,
+    }
+}
+
+/// Split `"ctrl+shift+s"` into (`["ctrl","shift"]`, `"s"`).
+fn parse_combo(combo: &str) -> (Vec<&str>, &str) {
+    let parts: Vec<&str> = combo
+        .split('+')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    match parts.split_last() {
+        Some((key, mods)) => (mods.to_vec(), key),
+        None => (Vec::new(), ""),
     }
 }
 
@@ -246,8 +400,16 @@ impl Executor for X11Executor {
                 }
                 Ok(format!("scrolled {steps} step(s)"))
             }
-            // M1b: keysym mapping + IME.
-            "type_text" | "key" => bail!("{} lands in M1b (keysym mapping)", a.verb),
+            "type_text" => {
+                let text = a.text.as_deref().context("type_text requires `text`")?;
+                let n = self.type_text(text)?;
+                Ok(format!("typed {n} chars"))
+            }
+            "key" => {
+                let keys = a.keys.as_deref().context("key requires `keys`")?;
+                self.key_combo(keys)?;
+                Ok(format!("key {keys}"))
+            }
             // Dispatched via the capture path (screenshot()), not execute().
             "screenshot" => bail!("screenshot is handled via the capture path"),
             // We discourage fixed sleeps (prefer readiness probes, D7) — ack as a no-op.
@@ -306,5 +468,27 @@ mod tests {
         assert!(out.contains("scroll"));
         assert_eq!(ex.log.lock().unwrap().as_slice(), ["scroll"]);
         assert_eq!(ex.backend(), "virtual");
+    }
+
+    #[test]
+    fn parse_combo_splits_modifiers_and_key() {
+        assert_eq!(parse_combo("ctrl+s"), (vec!["ctrl"], "s"));
+        assert_eq!(
+            parse_combo("ctrl + shift + a"),
+            (vec!["ctrl", "shift"], "a")
+        );
+        assert_eq!(parse_combo("Return"), (Vec::<&str>::new(), "Return"));
+    }
+
+    #[test]
+    fn keysym_lookups() {
+        assert_eq!(char_keysym('a'), Some(0x61));
+        assert_eq!(char_keysym('A'), Some(0x41));
+        assert_eq!(char_keysym(' '), Some(0x20));
+        assert_eq!(char_keysym('€'), None);
+        assert_eq!(mod_keysym("CTRL"), Some(0xffe3));
+        assert_eq!(key_keysym("enter"), Some(0xff0d));
+        assert_eq!(key_keysym("s"), Some(0x73));
+        assert_eq!(key_keysym("nope"), None);
     }
 }

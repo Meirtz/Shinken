@@ -19,5 +19,10 @@ assert shot["png"][:8] == b"\x89PNG\r\n\x1a\n", "screenshot is not a PNG"
 print(f"screenshot: {shot['w']}x{shot['h']}, {len(shot['png'])} bytes")
 assert (shot["w"], shot["h"]) == (1280, 800), f"unexpected screen size {shot['w']}x{shot['h']}"
 
+# keyboard: executes against the real X server without error (no focused app to read back)
+env.type_text("hello shinken")
+env.key("ctrl+a")
+print("type_text + key executed")
+
 env.close()
-print("M1 smoke: move + click + screenshot OK")
+print("M1 smoke: move + click + screenshot + type + key OK")
