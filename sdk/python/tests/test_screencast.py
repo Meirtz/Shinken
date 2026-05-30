@@ -38,6 +38,16 @@ def test_rpc_still_works_after_screencast(mock_shinkend):
         assert shot["png"][:8] == _PNG_SIG
 
 
+def test_screencast_sends_max_long_edge(mock_shinkend):
+    """The bandwidth cap must travel over the wire to the runtime (the mock echoes
+    it back as the frame width)."""
+    with shinken.connect(mock_shinkend) as env:
+        with env.screencast(fps=100, timeout=5, limit=3, max_long_edge=640) as stream:
+            frames = list(stream)
+        assert len(frames) == 3
+        assert all(f["w"] == 640 for f in frames)
+
+
 def test_screencast_records_frames(mock_shinkend, tmp_path):
     path = tmp_path / "cast.skn"
     with shinken.connect(mock_shinkend, record=True) as env:

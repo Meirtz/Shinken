@@ -173,16 +173,20 @@ fn spawn_screencast(
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_secs_f64(1.0 / spec.fps));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let max_long_edge = spec.max_long_edge;
         let mut seq: u64 = 0;
         let mut last_hash: Option<u64> = None;
         loop {
             tick.tick().await;
             // Capture off the runtime's worker threads — X11 GetImage is blocking.
             let exec = exec.clone();
-            let img = match tokio::task::spawn_blocking(move || exec.screenshot()).await {
-                Ok(Ok(img)) => img,
-                _ => break, // capture failed or the blocking pool is gone
-            };
+            let img =
+                match tokio::task::spawn_blocking(move || exec.screenshot_scaled(max_long_edge))
+                    .await
+                {
+                    Ok(Ok(img)) => img,
+                    _ => break, // capture failed or the blocking pool is gone
+                };
             let hash = fnv1a(img.png_base64.as_bytes());
             if last_hash == Some(hash) {
                 continue; // unchanged frame — skip

@@ -241,17 +241,17 @@ class AsyncSandbox:
     async def key(self, keys: str):
         return await self.act("key", keys=keys)
 
-    async def astart_screencast(self, fps: float = 5.0) -> str:
+    async def astart_screencast(
+        self, fps: float = 5.0, max_long_edge: int | None = None
+    ) -> str:
         """Start a server-pushed screencast; returns its stream id. Frames arrive
-        asynchronously and are read with :meth:`next_frame`."""
+        asynchronously and are read with :meth:`next_frame`. ``max_long_edge`` caps
+        each frame's longer edge (px) to save bandwidth."""
+        action: dict = {"verb": "start_screencast", "fps": fps}
+        if max_long_edge is not None:
+            action["max_long_edge"] = max_long_edge
         call_id = self._next_id()
-        reply = await self._rpc(
-            {
-                "type": "action",
-                "call_id": call_id,
-                "action": {"verb": "start_screencast", "fps": fps},
-            }
-        )
+        reply = await self._rpc({"type": "action", "call_id": call_id, "action": action})
         if not reply.get("ok"):
             raise RuntimeError(reply.get("error", "start_screencast failed"))
         return call_id
@@ -371,17 +371,25 @@ class _Screencast:
     """
 
     def __init__(
-        self, sandbox: Sandbox, fps: float, timeout: float | None, limit: int | None
+        self,
+        sandbox: Sandbox,
+        fps: float,
+        timeout: float | None,
+        limit: int | None,
+        max_long_edge: int | None,
     ) -> None:
         self._sb = sandbox
         self._fps = fps
         self._timeout = timeout
         self._limit = limit
+        self._max_long_edge = max_long_edge
         self._count = 0
         self._started = False
 
     def __enter__(self) -> _Screencast:
-        self._sb._loop.run(self._sb._inner.astart_screencast(self._fps))
+        self._sb._loop.run(
+            self._sb._inner.astart_screencast(self._fps, self._max_long_edge)
+        )
         self._started = True
         return self
 
@@ -456,19 +464,25 @@ class Sandbox:
         return self._loop.run(self._inner.key(keys))
 
     def screencast(
-        self, fps: float = 5.0, *, timeout: float | None = 30.0, limit: int | None = None
+        self,
+        fps: float = 5.0,
+        *,
+        timeout: float | None = 30.0,
+        limit: int | None = None,
+        max_long_edge: int | None = None,
     ) -> _Screencast:
         """Stream the screen in real time as a context manager yielding frames::
 
-            with env.screencast(fps=10, limit=30) as frames:
+            with env.screencast(fps=10, limit=30, max_long_edge=720) as frames:
                 for frame in frames:
                     ...  # frame: {'png', 'w', 'h', 'seq', 'stream'}
 
         Frames identical to the previous one are suppressed server-side, so an idle
         screen yields nothing until it changes. ``timeout`` bounds the wait per frame
-        (None blocks indefinitely); ``limit`` caps the number of frames.
+        (None blocks indefinitely); ``limit`` caps the number of frames;
+        ``max_long_edge`` downscales each frame to save bandwidth.
         """
-        return _Screencast(self, fps, timeout, limit)
+        return _Screencast(self, fps, timeout, limit, max_long_edge)
 
     def save_replay(self, path: str) -> str:
         return self._inner.save_replay(path)

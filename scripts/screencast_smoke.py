@@ -22,24 +22,21 @@ print(f"connected: platform={env.platform}, observation_types={env.capabilities.
 assert "start_screencast" in env.capabilities.verbs, "runtime does not advertise screencast"
 assert "screencast" in env.capabilities.observation_types
 
-frames = []
-with env.screencast(fps=10, timeout=3, limit=8) as stream:
-    it = iter(stream)
-    frames.append(next(it))  # initial capture — always delivered
-    for i in range(5):
-        # nudge the desktop, then opportunistically grab any changed frame
-        env.move(x=200 + i * 150, y=150 + i * 90)
-        env.click(x=200 + i * 150, y=150 + i * 90)
-        try:
-            frames.append(next(it))
-        except StopIteration:
-            break
+# Phase 1: a full-resolution frame over the wire.
+with env.screencast(fps=10, timeout=3, limit=1) as stream:
+    full = next(iter(stream))
+assert full["png"][:8] == _PNG_SIG, "frame is not a PNG"
+assert full["w"] == 1280 and full["h"] == 800, f"unexpected full-res size {full['w']}x{full['h']}"
+print(f"  full-res frame: {full['w']}x{full['h']}, {len(full['png'])} bytes")
 
-assert len(frames) >= 1, "no screencast frame received"
-first = frames[0]
-assert first["png"][:8] == _PNG_SIG, "frame is not a PNG"
-assert first["w"] == 1280 and first["h"] == 800, f"unexpected frame size {first['w']}x{first['h']}"
-seqs = [f["seq"] for f in frames]
-assert seqs == sorted(seqs), f"frame seq not monotonic: {seqs}"
+# Phase 2: a bandwidth-capped frame — the longer edge must be downscaled to 640.
+with env.screencast(fps=10, timeout=3, limit=1, max_long_edge=640) as stream:
+    small = next(iter(stream))
+assert small["png"][:8] == _PNG_SIG, "capped frame is not a PNG"
+long_edge = max(small["w"], small["h"])
+assert long_edge == 640, f"downscale not applied (1280 long edge → expected 640, got {long_edge})"
+assert len(small["png"]) < len(full["png"]), "downscaled frame should be smaller on the wire"
+print(f"  capped frame:   {small['w']}x{small['h']}, {len(small['png'])} bytes")
+
 env.close()
-print(f"screencast smoke OK — {len(frames)} live frame(s) over the wire, seqs={seqs}")
+print("screencast smoke OK — full-res + bandwidth-capped frames verified over the wire")

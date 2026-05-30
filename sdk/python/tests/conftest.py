@@ -26,10 +26,13 @@ def _free_port() -> int:
     return port
 
 
-async def _push_frames(ws, stream_id: str, fps: float) -> None:
-    """Push server-pushed screencast frames with advancing seq until cancelled."""
+async def _push_frames(ws, stream_id: str, fps: float, max_long_edge: int | None = None) -> None:
+    """Push server-pushed screencast frames with advancing seq until cancelled. The
+    frame's reported width echoes ``max_long_edge`` so a test can confirm the cap
+    travelled over the wire from the SDK."""
     seq = 0
     period = max(1.0 / fps, 0.005)
+    width = max_long_edge or 1
     with contextlib.suppress(asyncio.CancelledError, Exception):
         while True:
             await ws.send(
@@ -39,7 +42,7 @@ async def _push_frames(ws, stream_id: str, fps: float) -> None:
                         "obs_id": f"{stream_id}-{seq}",
                         "stream": stream_id,
                         "seq": seq,
-                        "image": {"ref": _PNG_1X1, "w": 1, "h": 1, "scope": "screen"},
+                        "image": {"ref": _PNG_1X1, "w": width, "h": 1, "scope": "screen"},
                     }
                 )
             )
@@ -99,8 +102,11 @@ async def _handler(ws) -> None:
                 )
             elif verb == "start_screencast":
                 await ws.send(json.dumps({"type": "ack", "call_id": cid, "ok": True}))
-                fps = (msg.get("action") or {}).get("fps") or 50
-                cast = asyncio.create_task(_push_frames(ws, cid, fps))
+                action = msg.get("action") or {}
+                fps = action.get("fps") or 50
+                cast = asyncio.create_task(
+                    _push_frames(ws, cid, fps, action.get("max_long_edge"))
+                )
             elif verb == "stop_screencast":
                 if cast is not None:
                     cast.cancel()

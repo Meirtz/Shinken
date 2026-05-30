@@ -67,6 +67,10 @@ pub struct ActionSpec {
     /// Target frame rate for `start_screencast` (frames/sec).
     #[serde(default)]
     pub fps: Option<f64>,
+    /// Cap the captured frame's longer edge (px) — a screencast/screenshot bandwidth
+    /// lever. Larger frames are downscaled; `None` keeps full resolution.
+    #[serde(default)]
+    pub max_long_edge: Option<u32>,
 }
 
 /// A captured frame: a base64-encoded PNG plus its pixel dimensions.
@@ -87,6 +91,34 @@ pub trait Executor: Send + Sync {
     fn screenshot(&self) -> Result<CapturedImage> {
         bail!("screenshot not supported by the {} backend", self.backend())
     }
+    /// Capture the screen, downscaling so the longer edge is at most `max_long_edge`
+    /// pixels (a bandwidth lever for screencast). Default: ignore scaling.
+    fn screenshot_scaled(&self, _max_long_edge: Option<u32>) -> Result<CapturedImage> {
+        self.screenshot()
+    }
+}
+
+/// Downscale an RGB8 buffer with nearest-neighbour sampling so its longer edge is at
+/// most `max_long_edge` px. Returns the buffer unchanged if it already fits (or the
+/// cap is 0). Cheap and dependency-free — good enough for a bandwidth preview.
+fn downscale_rgb(rgb: &[u8], w: u16, h: u16, max_long_edge: u32) -> (Vec<u8>, u16, u16) {
+    let (wu, hu) = (w as u32, h as u32);
+    let long = wu.max(hu);
+    if max_long_edge == 0 || long <= max_long_edge {
+        return (rgb.to_vec(), w, h);
+    }
+    let nw = (wu * max_long_edge).div_ceil(long).max(1);
+    let nh = (hu * max_long_edge).div_ceil(long).max(1);
+    let mut out = Vec::with_capacity((nw * nh * 3) as usize);
+    for y in 0..nh {
+        let sy = (y as u64 * hu as u64 / nh as u64) as usize;
+        for x in 0..nw {
+            let sx = (x as u64 * wu as u64 / nw as u64) as usize;
+            let idx = (sy * wu as usize + sx) * 3;
+            out.extend_from_slice(&rgb[idx..idx + 3]);
+        }
+    }
+    (out, nw as u16, nh as u16)
 }
 
 /// Encode raw RGB8 pixels as a PNG byte stream.
@@ -177,6 +209,34 @@ impl X11Executor {
             height,
             keymap,
         })
+    }
+
+    /// Grab the full root window as RGB8 (X delivers BGR[X]; reorder for PNG).
+    fn capture_rgb(&self) -> Result<(Vec<u8>, u16, u16)> {
+        let reply = {
+            let conn = self.conn.lock().expect("x11 conn lock");
+            let cookie = conn.get_image(
+                ImageFormat::Z_PIXMAP,
+                self.root,
+                0,
+                0,
+                self.width,
+                self.height,
+                !0,
+            )?;
+            cookie.reply()?
+        };
+        let (w, h) = (self.width as usize, self.height as usize);
+        ensure!(w * h > 0, "zero-sized screen");
+        let bpp = reply.data.len() / (w * h);
+        ensure!(bpp == 3 || bpp == 4, "unexpected bytes-per-pixel: {bpp}");
+        let mut rgb = Vec::with_capacity(w * h * 3);
+        for px in reply.data.chunks_exact(bpp) {
+            rgb.push(px[2]);
+            rgb.push(px[1]);
+            rgb.push(px[0]);
+        }
+        Ok((rgb, self.width, self.height))
     }
 
     fn fake(&self, type_: u8, detail: u8, x: i16, y: i16) -> Result<()> {
@@ -338,35 +398,20 @@ impl Executor for X11Executor {
     }
 
     fn screenshot(&self) -> Result<CapturedImage> {
-        let reply = {
-            let conn = self.conn.lock().expect("x11 conn lock");
-            let cookie = conn.get_image(
-                ImageFormat::Z_PIXMAP,
-                self.root,
-                0,
-                0,
-                self.width,
-                self.height,
-                !0,
-            )?;
-            cookie.reply()?
+        self.screenshot_scaled(None)
+    }
+
+    fn screenshot_scaled(&self, max_long_edge: Option<u32>) -> Result<CapturedImage> {
+        let (rgb, w, h) = self.capture_rgb()?;
+        let (rgb, w, h) = match max_long_edge {
+            Some(m) => downscale_rgb(&rgb, w, h, m),
+            None => (rgb, w, h),
         };
-        let (w, h) = (self.width as usize, self.height as usize);
-        ensure!(w * h > 0, "zero-sized screen");
-        let bpp = reply.data.len() / (w * h);
-        ensure!(bpp == 3 || bpp == 4, "unexpected bytes-per-pixel: {bpp}");
-        // X delivers BGR[X]; reorder to RGB for PNG.
-        let mut rgb = Vec::with_capacity(w * h * 3);
-        for px in reply.data.chunks_exact(bpp) {
-            rgb.push(px[2]);
-            rgb.push(px[1]);
-            rgb.push(px[0]);
-        }
-        let png = encode_png(&rgb, self.width as u32, self.height as u32)?;
+        let png = encode_png(&rgb, w as u32, h as u32)?;
         Ok(CapturedImage {
             png_base64: B64.encode(png),
-            w: self.width,
-            h: self.height,
+            w,
+            h,
         })
     }
 
@@ -504,6 +549,26 @@ mod tests {
         assert!(out.contains("scroll"));
         assert_eq!(ex.log.lock().unwrap().as_slice(), ["scroll"]);
         assert_eq!(ex.backend(), "virtual");
+    }
+
+    #[test]
+    fn downscale_caps_the_long_edge() {
+        // 4x2 RGB → cap long edge at 2 → 2x1.
+        let rgb = vec![0u8; 4 * 2 * 3];
+        let (out, w, h) = downscale_rgb(&rgb, 4, 2, 2);
+        assert_eq!((w, h), (2, 1));
+        assert_eq!(out.len(), (w as usize) * (h as usize) * 3);
+    }
+
+    #[test]
+    fn downscale_is_noop_when_within_cap() {
+        let rgb = vec![7u8; 3 * 3 * 3];
+        let (out, w, h) = downscale_rgb(&rgb, 3, 3, 10);
+        assert_eq!((w, h), (3, 3));
+        assert_eq!(out, rgb);
+        // a cap of 0 means "no limit" — also a no-op
+        let (_, w0, h0) = downscale_rgb(&rgb, 3, 3, 0);
+        assert_eq!((w0, h0), (3, 3));
     }
 
     #[test]
