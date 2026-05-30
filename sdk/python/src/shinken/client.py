@@ -518,6 +518,14 @@ class AsyncSandbox:
         payload.update(fields)
         self._recorder.permission(payload)
 
+    def record_verifier_receipt(self, receipt: dict) -> bool:
+        """Record an eval verifier receipt as a first-class `.skn` event (#149). Returns
+        True if it was recorded, False when the session isn't recording (no-op)."""
+        if self._recorder is None:
+            return False
+        self._recorder.verifier_receipt(receipt)
+        return True
+
     def save_replay(self, path: str) -> str:
         """Write the recorded session to a `.skn` bundle. Requires record=True."""
         if self._recorder is None:
@@ -740,6 +748,11 @@ class Sandbox:
     ) -> None:
         """Record a boundary decision (grant / deny / narrow) into the `.skn` replay."""
         self._inner.record_permission(decision, capability, **fields)
+
+    def record_verifier_receipt(self, receipt: dict) -> bool:
+        """Record an eval verifier receipt as a first-class `.skn` event (#149); returns
+        True if recorded (no-op + False when not recording)."""
+        return self._inner.record_verifier_receipt(receipt)
 
     def ping(self) -> float:
         return self._loop.run(self._inner.ping())

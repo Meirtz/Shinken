@@ -161,6 +161,10 @@ def run_eval(
             )
             receipt = task.verify(rp)
             passed = receipt.passed
+            # persist the verdict into the bundle as a first-class event (#149), then
+            # re-save so the .skn is self-contained eval evidence
+            if env.record_verifier_receipt(receipt.to_dict()):
+                bundle = env.save_replay(os.path.join(out_dir, f"{task.name}-{i}.skn"))
         except SetupError as exc:
             wall = time.perf_counter() - t0
             err = f"setup: {exc}"

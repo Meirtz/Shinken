@@ -57,7 +57,8 @@
         "payload": { "type": "object" }
       }
     },
-    "EventKind": { "enum": ["action", "observation", "decision", "permission", "marker", "snapshot_ref", "file_transfer", "meta"] }
+    "EventKind": { "enum": ["action", "observation", "decision", "permission", "marker", "snapshot_ref", "file_transfer", "verifier_receipt", "meta"] },
+    "VerifierReceipt": { "type": "object", "additionalProperties": false, "required": ["passed", "checks"], "description": "eval verifier verdict recorded as a verifier_receipt event (#149)", "properties": { "passed": { "type": "boolean" }, "checks": { "type": "array", "items": { "type": "object", "required": ["name", "ok"], "properties": { "name": { "type": "string" }, "ok": { "type": "boolean" }, "evidence": {} } } } } }
   },
   "oneOf": [
     { "$ref": "#/$defs/Manifest" },

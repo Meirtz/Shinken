@@ -160,6 +160,14 @@ class Recorder:
     def marker(self, name: str) -> dict:
         return self._emit("marker", name, {})
 
+    def verifier_receipt(self, receipt: dict) -> dict:
+        """Record an eval verifier verdict as a first-class ``verifier_receipt`` event
+        (#149) — so a `.skn` is self-contained eval evidence (pass/fail + checks), not
+        just a side summary. ``src`` is ``pass``/``fail`` for quick timeline scanning."""
+        return self._emit(
+            "verifier_receipt", "pass" if receipt.get("passed") else "fail", dict(receipt)
+        )
+
     def file_transfer(self, ref: dict, data: bytes | None = None) -> dict:
         """Record a file transfer (#85) by content hash/path/scope — never inlining the
         bytes into the event. When ``data`` is supplied (and media isn't redacted) the
