@@ -19,6 +19,7 @@ from typing import Any
 
 from websockets.asyncio.client import connect as _ws_connect
 
+from .gateway import CapabilityDenied, check_action
 from .skn import DEFAULT_CAPABILITIES, Recorder
 
 __all__ = ["connect", "aconnect", "Sandbox", "AsyncSandbox", "Capabilities"]
@@ -94,6 +95,7 @@ class AsyncSandbox:
         sandbox_capabilities: dict | None = None,
         redact_media: bool = False,
         redact_text: bool = False,
+        enforce_capabilities: bool = False,
     ) -> None:
         self._ws = ws
         self.capabilities = capabilities
@@ -102,6 +104,7 @@ class AsyncSandbox:
         # The session capability envelope (what the Sandbox may do) — reference
         # semantics, recorded into .skn; distinct from the ACI `capabilities` above.
         self.sandbox_capabilities = {**DEFAULT_CAPABILITIES, **(sandbox_capabilities or {})}
+        self._enforce = enforce_capabilities  # Action Gateway shim (#84)
         self._recorder = (
             Recorder(
                 platform=platform,
@@ -202,8 +205,23 @@ class AsyncSandbox:
     async def screen_size(self) -> dict:
         return await self.query("screen_size")
 
+    def _gate(self, verb: str) -> None:
+        """Action Gateway check (#84): when enforcing, deny verbs whose capability is
+        not granted — before dispatch, so they never reach shinkend — and record the
+        decision. GUI input passes when input_automation is granted (the default)."""
+        if not self._enforce:
+            return
+        allowed, cap, reason = check_action(verb, self.sandbox_capabilities)
+        if not allowed:
+            if self._recorder is not None:
+                self._recorder.permission(
+                    {"decision": "deny", "capability": cap, "verb": verb, "reason": reason}
+                )
+            raise CapabilityDenied(f"{verb}: {reason}")
+
     async def act(self, verb: str, target: dict | None = None, **kwargs: Any) -> dict:
         """Send one typed action and await its ack. Raises on failure."""
+        self._gate(verb)
         action: dict = {"verb": verb}
         if target is not None:
             action["target"] = target
@@ -239,6 +257,7 @@ class AsyncSandbox:
 
     async def screenshot(self, scope: str = "screen") -> dict:
         """Capture pixels on demand. Returns {'png': bytes, 'w': int, 'h': int}."""
+        self._gate("screenshot")
         reply = await self._rpc(
             {
                 "type": "action",
@@ -269,6 +288,7 @@ class AsyncSandbox:
         asynchronously and are read with :meth:`next_frame`. ``max_long_edge`` caps
         each frame's longer edge (px) to save bandwidth; ``scope`` selects the capture
         region (``screen``, ``active_window``, or ``window:<id>``)."""
+        self._gate("start_screencast")
         action: dict = {"verb": "start_screencast", "fps": fps}
         if max_long_edge is not None:
             action["max_long_edge"] = max_long_edge
@@ -354,6 +374,7 @@ async def aconnect(
     sandbox_capabilities: dict | None = None,
     redact_media: bool = False,
     redact_text: bool = False,
+    enforce_capabilities: bool = False,
 ) -> AsyncSandbox:
     """Open an async session and complete the ACI handshake."""
     ws = await _ws_connect(_to_uri(addr))
@@ -368,7 +389,14 @@ async def aconnect(
         await ws.close()
         raise
     sandbox = AsyncSandbox(
-        ws, capabilities, platform, record, sandbox_capabilities, redact_media, redact_text
+        ws,
+        capabilities,
+        platform,
+        record,
+        sandbox_capabilities,
+        redact_media,
+        redact_text,
+        enforce_capabilities,
     )
     sandbox._start_reader()  # the reader owns recv() from here on
     return sandbox
@@ -569,13 +597,15 @@ def connect(
     sandbox_capabilities: dict | None = None,
     redact_media: bool = False,
     redact_text: bool = False,
+    enforce_capabilities: bool = False,
 ) -> Sandbox:
     """Connect to a running ``shinkend`` and complete the ACI handshake (blocking).
 
     ``sandbox_capabilities`` overrides the session's v0 capability envelope (recorded
     into the `.skn` replay as reference semantics). For sensitive runs, ``redact_media``
     drops captured screenshot bytes and ``redact_text`` strips typed text from the
-    recording (#88)."""
+    recording (#88). With ``enforce_capabilities``, the local Action Gateway shim (#84)
+    denies actions whose capability the envelope does not grant, before dispatch."""
     loop = _BackgroundLoop()
     try:
         inner = loop.run(
@@ -586,6 +616,7 @@ def connect(
                 sandbox_capabilities=sandbox_capabilities,
                 redact_media=redact_media,
                 redact_text=redact_text,
+                enforce_capabilities=enforce_capabilities,
             )
         )
     except Exception:
