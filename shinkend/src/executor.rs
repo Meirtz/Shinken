@@ -15,7 +15,7 @@ use base64::Engine as _;
 use serde::Deserialize;
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{
-    ConnectionExt as _, ImageFormat, Window, BUTTON_PRESS_EVENT, BUTTON_RELEASE_EVENT,
+    AtomEnum, ConnectionExt as _, ImageFormat, Window, BUTTON_PRESS_EVENT, BUTTON_RELEASE_EVENT,
     KEY_PRESS_EVENT, KEY_RELEASE_EVENT, MOTION_NOTIFY_EVENT,
 };
 use x11rb::protocol::xtest::ConnectionExt as _;
@@ -87,14 +87,40 @@ pub trait Executor: Send + Sync {
     fn execute(&self, action: &ActionSpec) -> Result<String>;
     /// A human label for the active backend.
     fn backend(&self) -> &'static str;
-    /// Capture the screen as a PNG (M1b). Default: unsupported.
+    /// Capture the full screen as a PNG (M1b). Default: unsupported.
     fn screenshot(&self) -> Result<CapturedImage> {
         bail!("screenshot not supported by the {} backend", self.backend())
     }
-    /// Capture the screen, downscaling so the longer edge is at most `max_long_edge`
-    /// pixels (a bandwidth lever for screencast). Default: ignore scaling.
-    fn screenshot_scaled(&self, _max_long_edge: Option<u32>) -> Result<CapturedImage> {
+    /// Capture a region (`scope`) as a PNG, optionally downscaled so the longer edge
+    /// is at most `max_long_edge` px (a screencast bandwidth lever). `scope` is one of
+    /// `screen`, `active_window`, or `window:<id>`. Default: full screen, no scaling.
+    fn capture(&self, _scope: &str, _max_long_edge: Option<u32>) -> Result<CapturedImage> {
         self.screenshot()
+    }
+}
+
+/// What region a capture should cover (parsed from the ACI `scope` string).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Scope {
+    Screen,
+    ActiveWindow,
+    Window(u32),
+}
+
+/// Parse a capture scope. `window:<id>` accepts decimal or `0x`-hex. Unknown scopes
+/// fall back to the full screen so a typo degrades gracefully rather than erroring.
+fn parse_scope(scope: &str) -> Scope {
+    match scope {
+        "screen" | "" => Scope::Screen,
+        "active_window" | "active" => Scope::ActiveWindow,
+        s => s
+            .strip_prefix("window:")
+            .and_then(|id| {
+                id.strip_prefix("0x")
+                    .and_then(|h| u32::from_str_radix(h, 16).ok())
+                    .or_else(|| id.parse::<u32>().ok())
+            })
+            .map_or(Scope::Screen, Scope::Window),
     }
 }
 
@@ -211,32 +237,66 @@ impl X11Executor {
         })
     }
 
-    /// Grab the full root window as RGB8 (X delivers BGR[X]; reorder for PNG).
-    fn capture_rgb(&self) -> Result<(Vec<u8>, u16, u16)> {
+    /// Resolve a [`Scope`] to captured RGB8 + dimensions.
+    fn capture_scope(&self, scope: Scope) -> Result<(Vec<u8>, u16, u16)> {
+        match scope {
+            Scope::Screen => self.capture_drawable(self.root, self.width, self.height),
+            Scope::ActiveWindow => match self.active_window()? {
+                Some(win) => self.capture_window(win),
+                // No focused window (e.g. a bare desktop) — fall back to full screen.
+                None => self.capture_drawable(self.root, self.width, self.height),
+            },
+            Scope::Window(id) => self.capture_window(id),
+        }
+    }
+
+    /// The EWMH `_NET_ACTIVE_WINDOW`, if the window manager publishes one.
+    fn active_window(&self) -> Result<Option<Window>> {
+        let conn = self.conn.lock().expect("x11 conn lock");
+        let atom = conn.intern_atom(true, b"_NET_ACTIVE_WINDOW")?.reply()?.atom;
+        if atom == 0 {
+            return Ok(None);
+        }
+        let prop = conn
+            .get_property(false, self.root, atom, AtomEnum::WINDOW, 0, 1)?
+            .reply()?;
+        Ok(prop
+            .value32()
+            .and_then(|mut it| it.next())
+            .filter(|w| *w != 0))
+    }
+
+    /// Capture one window by id, sized to its current geometry.
+    fn capture_window(&self, win: Window) -> Result<(Vec<u8>, u16, u16)> {
+        let (w, h) = {
+            let conn = self.conn.lock().expect("x11 conn lock");
+            let geo = conn
+                .get_geometry(win)?
+                .reply()
+                .context("window geometry (is the window id valid and mapped?)")?;
+            (geo.width, geo.height)
+        };
+        self.capture_drawable(win, w, h)
+    }
+
+    /// Grab a drawable's `w`x`h` region as RGB8 (X delivers BGR[X]; reorder for PNG).
+    fn capture_drawable(&self, drawable: Window, w: u16, h: u16) -> Result<(Vec<u8>, u16, u16)> {
+        let (wu, hu) = (w as usize, h as usize);
+        ensure!(wu * hu > 0, "zero-sized capture region");
         let reply = {
             let conn = self.conn.lock().expect("x11 conn lock");
-            let cookie = conn.get_image(
-                ImageFormat::Z_PIXMAP,
-                self.root,
-                0,
-                0,
-                self.width,
-                self.height,
-                !0,
-            )?;
+            let cookie = conn.get_image(ImageFormat::Z_PIXMAP, drawable, 0, 0, w, h, !0)?;
             cookie.reply()?
         };
-        let (w, h) = (self.width as usize, self.height as usize);
-        ensure!(w * h > 0, "zero-sized screen");
-        let bpp = reply.data.len() / (w * h);
+        let bpp = reply.data.len() / (wu * hu);
         ensure!(bpp == 3 || bpp == 4, "unexpected bytes-per-pixel: {bpp}");
-        let mut rgb = Vec::with_capacity(w * h * 3);
+        let mut rgb = Vec::with_capacity(wu * hu * 3);
         for px in reply.data.chunks_exact(bpp) {
             rgb.push(px[2]);
             rgb.push(px[1]);
             rgb.push(px[0]);
         }
-        Ok((rgb, self.width, self.height))
+        Ok((rgb, w, h))
     }
 
     fn fake(&self, type_: u8, detail: u8, x: i16, y: i16) -> Result<()> {
@@ -398,11 +458,11 @@ impl Executor for X11Executor {
     }
 
     fn screenshot(&self) -> Result<CapturedImage> {
-        self.screenshot_scaled(None)
+        self.capture("screen", None)
     }
 
-    fn screenshot_scaled(&self, max_long_edge: Option<u32>) -> Result<CapturedImage> {
-        let (rgb, w, h) = self.capture_rgb()?;
+    fn capture(&self, scope: &str, max_long_edge: Option<u32>) -> Result<CapturedImage> {
+        let (rgb, w, h) = self.capture_scope(parse_scope(scope))?;
         let (rgb, w, h) = match max_long_edge {
             Some(m) => downscale_rgb(&rgb, w, h, m),
             None => (rgb, w, h),
@@ -549,6 +609,18 @@ mod tests {
         assert!(out.contains("scroll"));
         assert_eq!(ex.log.lock().unwrap().as_slice(), ["scroll"]);
         assert_eq!(ex.backend(), "virtual");
+    }
+
+    #[test]
+    fn parse_scope_handles_screen_window_and_active() {
+        assert_eq!(parse_scope("screen"), Scope::Screen);
+        assert_eq!(parse_scope(""), Scope::Screen);
+        assert_eq!(parse_scope("active_window"), Scope::ActiveWindow);
+        assert_eq!(parse_scope("window:42"), Scope::Window(42));
+        assert_eq!(parse_scope("window:0x1a"), Scope::Window(26));
+        // garbage / unknown → graceful full-screen fallback
+        assert_eq!(parse_scope("window:nope"), Scope::Screen);
+        assert_eq!(parse_scope("bogus"), Scope::Screen);
     }
 
     #[test]

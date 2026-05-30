@@ -19,6 +19,8 @@ pub struct ScreencastSpec {
     pub fps: f64,
     /// Cap each frame's longer edge (px) to save bandwidth; `None` = full resolution.
     pub max_long_edge: Option<u32>,
+    /// Capture region: `screen`, `active_window`, or `window:<id>`.
+    pub scope: String,
 }
 
 /// A side effect on the connection's frame stream, returned alongside a reply.
@@ -183,9 +185,10 @@ fn dispatch_action(
             )
         }
     };
+    let scope = spec.scope.clone().unwrap_or_else(|| "screen".to_string());
     match spec.verb.as_str() {
         "screenshot" => {
-            let msg = match exec.screenshot_scaled(spec.max_long_edge) {
+            let msg = match exec.capture(&scope, spec.max_long_edge) {
                 Ok(img) => Message::Observation {
                     obs_id: format!("obs-{call_id}"),
                     cause: Some(call_id.to_string()),
@@ -195,7 +198,7 @@ fn dispatch_action(
                         data: img.png_base64,
                         w: img.w,
                         h: img.h,
-                        scope: "screen".to_string(),
+                        scope,
                     }),
                 },
                 Err(e) => ack(call_id, false, Some(e.to_string())),
@@ -208,6 +211,7 @@ fn dispatch_action(
                 stream_id: call_id.to_string(),
                 fps,
                 max_long_edge: spec.max_long_edge,
+                scope,
             };
             (ack(call_id, true, None), StreamCtl::Start(cast))
         }
@@ -301,7 +305,7 @@ mod tests {
         let mut s = session(None);
         s.on_text(HELLO);
         let step = s.on_text(
-            r#"{"type":"action","call_id":"sc1","action":{"verb":"start_screencast","fps":12,"max_long_edge":640}}"#,
+            r#"{"type":"action","call_id":"sc1","action":{"verb":"start_screencast","fps":12,"max_long_edge":640,"scope":"active_window"}}"#,
         );
         assert!(step.reply.unwrap().contains("\"type\":\"ack\""));
         match step.stream {
@@ -309,6 +313,7 @@ mod tests {
                 assert_eq!(spec.stream_id, "sc1");
                 assert_eq!(spec.fps, 12.0);
                 assert_eq!(spec.max_long_edge, Some(640));
+                assert_eq!(spec.scope, "active_window");
             }
             other => panic!("expected Start, got {other:?}"),
         }

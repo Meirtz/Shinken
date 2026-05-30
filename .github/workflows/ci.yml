@@ -91,7 +91,7 @@ jobs:
         with:
           python-version: "3.11"
       - if: steps.present.outputs.go == 'true'
-        run: sudo apt-get update && sudo apt-get install -y xvfb xdotool
+        run: sudo apt-get update && sudo apt-get install -y xvfb xdotool x11-apps
       - if: steps.present.outputs.go == 'true'
         run: cargo build --manifest-path shinkend/Cargo.toml
       - if: steps.present.outputs.go == 'true'
@@ -112,6 +112,18 @@ jobs:
           if [ -f scripts/screencast_smoke.py ]; then
             python scripts/screencast_smoke.py
             echo "✅ live screencast frames verified"
+          fi
+          if [ -f scripts/window_smoke.py ]; then
+            xclock -geometry 200x200+40+40 &
+            WID=""
+            for _ in $(seq 1 50); do
+              WID=$(xdotool search --class xclock 2>/dev/null | head -1 || true)
+              [ -z "$WID" ] && WID=$(xdotool search --name xclock 2>/dev/null | head -1 || true)
+              [ -n "$WID" ] && break; sleep 0.1
+            done
+            test -n "$WID" || { echo "xclock window not found"; exit 1; }
+            SHK_WINDOW="$WID" python scripts/window_smoke.py
+            echo "✅ live focused-window capture verified (window:$WID)"
           fi
       - if: steps.present.outputs.go == 'false'
         run: echo "shinkend or smoke script not present yet — skipping"

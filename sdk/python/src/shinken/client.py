@@ -242,14 +242,17 @@ class AsyncSandbox:
         return await self.act("key", keys=keys)
 
     async def astart_screencast(
-        self, fps: float = 5.0, max_long_edge: int | None = None
+        self, fps: float = 5.0, max_long_edge: int | None = None, scope: str | None = None
     ) -> str:
         """Start a server-pushed screencast; returns its stream id. Frames arrive
         asynchronously and are read with :meth:`next_frame`. ``max_long_edge`` caps
-        each frame's longer edge (px) to save bandwidth."""
+        each frame's longer edge (px) to save bandwidth; ``scope`` selects the capture
+        region (``screen``, ``active_window``, or ``window:<id>``)."""
         action: dict = {"verb": "start_screencast", "fps": fps}
         if max_long_edge is not None:
             action["max_long_edge"] = max_long_edge
+        if scope is not None:
+            action["scope"] = scope
         call_id = self._next_id()
         reply = await self._rpc({"type": "action", "call_id": call_id, "action": action})
         if not reply.get("ok"):
@@ -377,18 +380,20 @@ class _Screencast:
         timeout: float | None,
         limit: int | None,
         max_long_edge: int | None,
+        scope: str | None,
     ) -> None:
         self._sb = sandbox
         self._fps = fps
         self._timeout = timeout
         self._limit = limit
         self._max_long_edge = max_long_edge
+        self._scope = scope
         self._count = 0
         self._started = False
 
     def __enter__(self) -> _Screencast:
         self._sb._loop.run(
-            self._sb._inner.astart_screencast(self._fps, self._max_long_edge)
+            self._sb._inner.astart_screencast(self._fps, self._max_long_edge, self._scope)
         )
         self._started = True
         return self
@@ -470,6 +475,7 @@ class Sandbox:
         timeout: float | None = 30.0,
         limit: int | None = None,
         max_long_edge: int | None = None,
+        scope: str | None = None,
     ) -> _Screencast:
         """Stream the screen in real time as a context manager yielding frames::
 
@@ -480,9 +486,10 @@ class Sandbox:
         Frames identical to the previous one are suppressed server-side, so an idle
         screen yields nothing until it changes. ``timeout`` bounds the wait per frame
         (None blocks indefinitely); ``limit`` caps the number of frames;
-        ``max_long_edge`` downscales each frame to save bandwidth.
+        ``max_long_edge`` downscales each frame to save bandwidth; ``scope`` selects
+        the region (``screen``, ``active_window``, ``window:<id>``).
         """
-        return _Screencast(self, fps, timeout, limit, max_long_edge)
+        return _Screencast(self, fps, timeout, limit, max_long_edge, scope)
 
     def save_replay(self, path: str) -> str:
         return self._inner.save_replay(path)
