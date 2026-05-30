@@ -49,6 +49,12 @@ def screenshot_image_block(png: bytes) -> dict:
     }
 
 
+def data_uri_png(png: bytes) -> str:
+    """PNG bytes → a ``data:image/png;base64,…`` URI — the shape OpenAI's
+    ``computer_call_output`` uses to carry a screenshot back to the model."""
+    return "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+
+
 def image_size(observation: dict) -> dict:
     """Pull ``{w, h, scope}`` out of a screenshot observation for coordinate-space
     metadata (recorded so model pixels can be mapped back to the display)."""

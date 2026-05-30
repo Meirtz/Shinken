@@ -7,5 +7,6 @@ off-the-shelf CU agent can drive Shinken. Fixture-tested, no live API calls.
 
 from .anthropic import AnthropicComputerUseAdapter
 from .base import AdapterError
+from .openai import OpenAIComputerUseAdapter
 
-__all__ = ["AdapterError", "AnthropicComputerUseAdapter"]
+__all__ = ["AdapterError", "AnthropicComputerUseAdapter", "OpenAIComputerUseAdapter"]
