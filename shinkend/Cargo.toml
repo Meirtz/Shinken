@@ -1,6 +1,6 @@
 [package]
 name = "shinkend"
-version = "0.0.1"
+version = "0.0.0"
 edition = "2021"
 description = "Shinken Guest Runtime — the in-Sandbox daemon that executes the ACI and emits the event stream."
 license = "Apache-2.0"
