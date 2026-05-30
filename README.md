@@ -64,8 +64,9 @@ in a teardown of OSWorld + 8 other cloned reference projects (`references/`) and
 rounds (62 sub-agents) across the sandbox / streaming / replay / permission / agent-interface
 landscape.
 
-- **[`docs/`](docs/README.md)** — 10 authoritative docs (~52k words): vision, PRD, architecture,
-  OSWorld teardown, landscape, ADRs (D1–D12), roadmap, glossary, threat model, economics.
+- **[`docs/`](docs/README.md)** — 11 authoritative docs (~57k words): vision, PRD, architecture,
+  OSWorld teardown, landscape, ADRs (D1–D12), roadmap, glossary, threat model, economics, and the
+  Phase-0 implementation plan.
 - **[`notes/`](notes/README.md)** — 9 working notes (~45k words): per-domain deep dives,
   open questions, and sources.
 
