@@ -26,6 +26,9 @@ use executor::Executor;
 
 const DEFAULT_ADDR: &str = "127.0.0.1:8765";
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+/// Outbound writer-channel depth. Bounds buffered frames+replies so a slow client
+/// cannot grow memory without bound; screencast frames beyond this are dropped.
+const OUTBOUND_CAP: usize = 32;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -85,8 +88,10 @@ async fn serve(stream: TcpStream, exec: Arc<dyn Executor>, token: Option<String>
     let ws = tokio_tungstenite::accept_async(stream).await?;
     let (mut tx, mut rx) = ws.split();
 
-    // Single writer: every frame to the client goes through this channel.
-    let (out, mut out_rx) = mpsc::unbounded_channel::<WsMessage>();
+    // Single writer behind a BOUNDED channel: replies are sent reliably (awaited),
+    // but screencast frames are dropped when the client falls behind (see
+    // spawn_screencast) so a slow/stalled reader cannot grow memory without bound.
+    let (out, mut out_rx) = mpsc::channel::<WsMessage>(OUTBOUND_CAP);
     let writer: JoinHandle<()> = tokio::spawn(async move {
         while let Some(msg) = out_rx.recv().await {
             if tx.send(msg).await.is_err() {
@@ -107,10 +112,12 @@ async fn serve(stream: TcpStream, exec: Arc<dyn Executor>, token: Option<String>
             match tokio::time::timeout(HANDSHAKE_TIMEOUT, rx.next()).await {
                 Ok(frame) => frame,
                 Err(_) => {
-                    let _ = out.send(WsMessage::Text(protocol::error_result_text(
-                        "?",
-                        "handshake timeout",
-                    )));
+                    let _ = out
+                        .send(WsMessage::Text(protocol::error_result_text(
+                            "?",
+                            "handshake timeout",
+                        )))
+                        .await;
                     break Ok(());
                 }
             }
@@ -124,7 +131,7 @@ async fn serve(stream: TcpStream, exec: Arc<dyn Executor>, token: Option<String>
             WsMessage::Text(text) => {
                 let step = session.on_text(&text);
                 if let Some(reply) = step.reply {
-                    if out.send(WsMessage::Text(reply)).is_err() {
+                    if out.send(WsMessage::Text(reply)).await.is_err() {
                         break Ok(());
                     }
                 }
@@ -147,7 +154,7 @@ async fn serve(stream: TcpStream, exec: Arc<dyn Executor>, token: Option<String>
                 }
             }
             WsMessage::Ping(payload) => {
-                let _ = out.send(WsMessage::Pong(payload));
+                let _ = out.send(WsMessage::Pong(payload)).await;
             }
             WsMessage::Close(_) => break Ok(()),
             _ => {}
@@ -168,7 +175,7 @@ async fn serve(stream: TcpStream, exec: Arc<dyn Executor>, token: Option<String>
 /// bandwidth lever; resolution/codec controls follow.
 fn spawn_screencast(
     exec: Arc<dyn Executor>,
-    out: mpsc::UnboundedSender<WsMessage>,
+    out: mpsc::Sender<WsMessage>,
     spec: ScreencastSpec,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
@@ -201,15 +208,19 @@ fn spawn_screencast(
                     data: img.png_base64,
                     w: img.w,
                     h: img.h,
-                    scope: "screen".to_string(),
+                    scope: spec.scope.clone(),
                 },
             );
             seq += 1;
             let Ok(text) = serde_json::to_string(&frame) else {
                 break;
             };
-            if out.send(WsMessage::Text(text)).is_err() {
-                break; // client gone
+            // Drop the frame if the client is behind (bounded memory); a live preview
+            // wants recent frames, not a backlog. Only stop if the client is gone.
+            match out.try_send(WsMessage::Text(text)) {
+                Ok(()) => {}
+                Err(mpsc::error::TrySendError::Full(_)) => continue,
+                Err(mpsc::error::TrySendError::Closed(_)) => break,
             }
         }
     })
