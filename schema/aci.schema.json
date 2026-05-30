@@ -122,7 +122,8 @@
         "value": { "type": "string" },
         "states": { "type": "array", "items": { "type": "string" } },
         "bbox": { "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4, "description": "[x, y, w, h] in display pixels" },
-        "source": { "$ref": "#/$defs/ElementSource" }
+        "source": { "$ref": "#/$defs/ElementSource" },
+        "provenance": { "type": "object", "description": "backend-specific node identity for re-resolution (e.g. CDP backendDOMNodeId/AX nodeId, AT-SPI path)" }
       }
     },
     "ElementSource": { "enum": ["atspi", "uia", "ax", "cdp", "som"] },

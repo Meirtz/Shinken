@@ -19,4 +19,13 @@ Authoritative, relatively-stable design corpus. Read in order; each builds on th
 
 Legend: ⏳ pending · 🚧 drafting · ✅ drafted
 
+## Implementation notes
+
+Operational docs that track the M0→M1 build (kept beside the design canon above):
+
+- [Status](STATUS.md) — what is implemented vs designed, per subsystem.
+- [Release gate](release-gate.md) — the v0.0.1 contract checks that must pass to ship.
+- [Smoke workflow](smoke-workflow.md) — provider-neutral end-to-end agent smoke.
+- [Observation backends](observation-backends.md) — the structured-observation backend ladder (AT-SPI / CDP / …) and when to prefer CDP over AT-SPI.
+
 Working research and raw teardowns live in [`../notes/`](../notes/README.md).

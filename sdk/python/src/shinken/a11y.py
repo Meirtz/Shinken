@@ -33,6 +33,20 @@ ACTIONABLE_ROLES = {
     "tab",
     "slider",
     "spin button",
+    # CDP/ARIA role names (#79) — never appear in AT-SPI trees, so adding them here lets
+    # the same coverage metric score CDP trees without affecting AT-SPI measurements.
+    "textbox",
+    "searchbox",
+    "checkbox",
+    "radio",
+    "menuitem",
+    "menuitemcheckbox",
+    "menuitemradio",
+    "option",
+    "combobox",
+    "listitem",
+    "switch",
+    "spinbutton",
 }
 
 
@@ -46,6 +60,9 @@ class A11yNode:
     bbox: tuple[int, int, int, int] | None = None  # (x, y, w, h)
     states: list[str] = field(default_factory=list)
     children: list[A11yNode] = field(default_factory=list)
+    #: backend-specific node identity (e.g. CDP backendDOMNodeId/AX id) — provenance
+    #: for re-resolution; emitted into the ACI Element when set.
+    provenance: dict | None = None
 
 
 def iter_nodes(root: A11yNode) -> Iterable[A11yNode]:
@@ -74,12 +91,20 @@ def to_elements(root: A11yNode, source: str = "atspi") -> list[dict]:
             el["name"] = n.name
         if n.states:
             el["states"] = list(n.states)
+        if n.provenance:
+            el["provenance"] = dict(n.provenance)
         elements.append(el)
     return elements
 
 
 class A11ySource(Protocol):
-    """Anything that can produce an accessibility tree (AT-SPI/UIA/AX/CDP backends)."""
+    """Anything that can produce an accessibility tree (AT-SPI/UIA/AX/CDP backends).
+
+    ``source_name`` labels the backend on emitted ``Element``s (one of the ACI
+    ``ElementSource`` values); it defaults to ``"atspi"`` when a source omits it.
+    """
+
+    source_name: str
 
     def tree(self) -> A11yNode: ...
 
@@ -103,7 +128,7 @@ def observe_structured(src: A11ySource) -> dict:
             "error": type(exc).__name__,
             "capture_ms": round((time.perf_counter() - t0) * 1000, 2),
         }
-    elements = to_elements(tree)
+    elements = to_elements(tree, source=getattr(src, "source_name", "atspi"))
     return {
         "type": "observation",
         "tree": "full",
@@ -181,6 +206,8 @@ class AtspiSource:
     ``gi`` + a running accessibility bus. ``tree()`` walks the desktop, optionally
     filtered to one application by name, into normalized :class:`A11yNode`s.
     """
+
+    source_name = "atspi"
 
     def __init__(self, app_name: str | None = None, max_nodes: int = 5000):
         self.app_name = app_name
