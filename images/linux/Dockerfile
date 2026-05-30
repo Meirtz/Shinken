@@ -6,7 +6,11 @@
 # executor backends land in M1 (#4).
 #
 # Build (from repo root):  docker build -f images/linux/Dockerfile -t shinken/sandbox-linux .
-# Run:                     docker run --rm -p 8765:8765 shinken/sandbox-linux
+# Run (bind to HOST loopback + require a dev token — shinkend refuses a non-loopback
+# bind without SHINKEND_TOKEN):
+#   docker run --rm -p 127.0.0.1:8765:8765 \
+#     -e SHINKEND_TOKEN="$(openssl rand -hex 16)" shinken/sandbox-linux
+# Then: shinken.connect("127.0.0.1:8765", token="<that token>")
 
 # --- build shinkend ---
 FROM rust:1-slim AS build

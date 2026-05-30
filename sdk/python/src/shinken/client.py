@@ -161,10 +161,15 @@ class AsyncSandbox:
         await self._ws.close()
 
 
-async def aconnect(addr: str = DEFAULT_ADDR, record: bool = False) -> AsyncSandbox:
+async def aconnect(
+    addr: str = DEFAULT_ADDR, record: bool = False, token: str | None = None
+) -> AsyncSandbox:
     """Open an async session and complete the ACI handshake."""
     ws = await _ws_connect(_to_uri(addr))
-    await ws.send(json.dumps({"type": "hello", "v": 0, "client": _CLIENT}))
+    hello: dict = {"type": "hello", "v": 0, "client": _CLIENT}
+    if token:
+        hello["token"] = token
+    await ws.send(json.dumps(hello))
     welcome = json.loads(await ws.recv())
     if welcome.get("type") != "welcome":
         await ws.close()
@@ -269,11 +274,11 @@ class Sandbox:
         self.close()
 
 
-def connect(addr: str = DEFAULT_ADDR, record: bool = False) -> Sandbox:
+def connect(addr: str = DEFAULT_ADDR, record: bool = False, token: str | None = None) -> Sandbox:
     """Connect to a running ``shinkend`` and complete the ACI handshake (blocking)."""
     loop = _BackgroundLoop()
     try:
-        inner = loop.run(aconnect(addr, record=record))
+        inner = loop.run(aconnect(addr, record=record, token=token))
     except Exception:
         loop.stop()
         raise

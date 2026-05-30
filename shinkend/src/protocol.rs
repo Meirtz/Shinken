@@ -50,6 +50,8 @@ pub enum Message {
         client: Client,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         accept: Option<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        token: Option<String>,
     },
     Welcome {
         v: u8,

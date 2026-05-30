@@ -4,6 +4,10 @@ set -euo pipefail
 
 : "${DISPLAY:=:0}"
 : "${SCREEN_GEOMETRY:=1280x800x24}"
+# In-container default binds all interfaces so the host port-mapping reaches it; the
+# container is meant to be published to HOST loopback only (-p 127.0.0.1:8765:8765).
+# Because that is a non-loopback bind, shinkend REQUIRES $SHINKEND_TOKEN (it refuses
+# to start otherwise) — pass one with `-e SHINKEND_TOKEN=...`.
 : "${SHINKEND_ADDR:=0.0.0.0:8765}"
 export DISPLAY SHINKEND_ADDR
 

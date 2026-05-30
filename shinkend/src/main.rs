@@ -1,58 +1,110 @@
 //! shinkend — the Shinken Guest Runtime.
 //!
-//! M1a: a WebSocket server doing the ACI v0 handshake + **pointer action execution**
-//! (move/click/double_click/right_click/scroll) via a backend-pluggable [`Executor`].
-//! `type_text`/`key`, `element_ref` resolution, observation, and `screenshot` land in
-//! M1b. Listens on `$SHINKEND_ADDR` (default `127.0.0.1:8765`).
+//! A WebSocket server speaking the ACI: handshake (`hello`→`welcome`) + pointer/
+//! keyboard action execution + screenshot capture, via a backend-pluggable
+//! [`executor::Executor`]. Connections run a [`connection::Session`] state machine
+//! (handshake-first, optional dev-token auth). Listens on `$SHINKEND_ADDR`
+//! (default `127.0.0.1:8765`); a non-loopback bind requires `$SHINKEND_TOKEN`.
 
+mod connection;
 mod executor;
 mod protocol;
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Result;
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
-use executor::{ActionSpec, Executor};
-use protocol::Message;
+use connection::Session;
+use executor::Executor;
 
 const DEFAULT_ADDR: &str = "127.0.0.1:8765";
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let addr = std::env::var("SHINKEND_ADDR").unwrap_or_else(|_| DEFAULT_ADDR.to_string());
+    let token = std::env::var("SHINKEND_TOKEN")
+        .ok()
+        .filter(|t| !t.is_empty());
+
+    if !is_loopback(&addr) && token.is_none() {
+        eprintln!(
+            "shinkend: refusing to bind non-loopback address {addr} without SHINKEND_TOKEN.\n         \
+             Set SHINKEND_TOKEN to require a dev bearer token, or bind a loopback address (127.0.0.1)."
+        );
+        std::process::exit(1);
+    }
+
     let listener = TcpListener::bind(&addr).await?;
     let exec = executor::default_executor();
     eprintln!(
-        "shinkend v{} listening on ws://{addr} (platform: {}, backend: {})",
+        "shinkend v{} listening on ws://{addr} (platform: {}, backend: {}, auth: {})",
         env!("CARGO_PKG_VERSION"),
         protocol::platform(),
-        exec.backend()
+        exec.backend(),
+        if token.is_some() {
+            "token"
+        } else {
+            "none (loopback)"
+        },
     );
 
     loop {
         let (stream, peer) = listener.accept().await?;
         let exec = exec.clone();
+        let token = token.clone();
         tokio::spawn(async move {
-            if let Err(e) = serve(stream, exec).await {
+            if let Err(e) = serve(stream, exec, token).await {
                 eprintln!("connection {peer} closed with error: {e}");
             }
         });
     }
 }
 
-/// Handle one client connection: ACI messages in, replies out.
-async fn serve(stream: TcpStream, exec: Arc<dyn Executor>) -> Result<()> {
+/// True if `addr`'s host is a loopback address (no token required to bind).
+fn is_loopback(addr: &str) -> bool {
+    let host = addr.rsplit_once(':').map_or(addr, |(h, _)| h);
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    host == "::1" || host == "localhost" || host.starts_with("127.")
+}
+
+/// Handle one client connection through its [`Session`] state machine.
+async fn serve(stream: TcpStream, exec: Arc<dyn Executor>, token: Option<String>) -> Result<()> {
     let ws = tokio_tungstenite::accept_async(stream).await?;
     let (mut tx, mut rx) = ws.split();
+    let mut session = Session::new(token, exec);
 
-    while let Some(frame) = rx.next().await {
+    loop {
+        // Bound the time a client may stay unauthenticated.
+        let next = if session.is_authenticated() {
+            rx.next().await
+        } else {
+            match tokio::time::timeout(HANDSHAKE_TIMEOUT, rx.next()).await {
+                Ok(frame) => frame,
+                Err(_) => {
+                    let _ = tx
+                        .send(WsMessage::Text(protocol::error_result_text(
+                            "?",
+                            "handshake timeout",
+                        )))
+                        .await;
+                    break;
+                }
+            }
+        };
+        let Some(frame) = next else { break };
         match frame? {
             WsMessage::Text(text) => {
-                if let Some(reply) = handle_message(&text, exec.as_ref()) {
+                let step = session.on_text(&text);
+                if let Some(reply) = step.reply {
                     tx.send(WsMessage::Text(reply)).await?;
+                }
+                if step.close {
+                    break;
                 }
             }
             WsMessage::Ping(payload) => tx.send(WsMessage::Pong(payload)).await?,
@@ -63,96 +115,16 @@ async fn serve(stream: TcpStream, exec: Arc<dyn Executor>) -> Result<()> {
     Ok(())
 }
 
-/// Parse one inbound text frame and produce the JSON reply, if any.
-fn handle_message(text: &str, exec: &dyn Executor) -> Option<String> {
-    let msg: Message = match serde_json::from_str(text) {
-        Ok(m) => m,
-        Err(e) => {
-            return Some(protocol::error_result_text(
-                "?",
-                &format!("bad message: {e}"),
-            ))
-        }
-    };
-    let reply: Option<Message> = match msg {
-        Message::Action { call_id, action } => Some(dispatch_action(&call_id, action, exec)),
-        other => protocol::respond(other),
-    };
-    reply.map(|m| {
-        serde_json::to_string(&m).unwrap_or_else(|e| {
-            protocol::error_result_text("?", &format!("failed to encode reply: {e}"))
-        })
-    })
-}
-
-/// Run one `action` message through the executor; `screenshot` replies with an
-/// `observation`, every other verb with an `ack`.
-fn dispatch_action(call_id: &str, action: serde_json::Value, exec: &dyn Executor) -> Message {
-    let spec = match serde_json::from_value::<ActionSpec>(action) {
-        Ok(s) => s,
-        Err(e) => return ack(call_id, false, Some(format!("bad action: {e}"))),
-    };
-
-    if spec.verb == "screenshot" {
-        return match exec.screenshot() {
-            Ok(img) => Message::Observation {
-                obs_id: format!("obs-{call_id}"),
-                cause: Some(call_id.to_string()),
-                image: Some(protocol::ImageRef {
-                    data: img.png_base64,
-                    w: img.w,
-                    h: img.h,
-                    scope: "screen".to_string(),
-                }),
-            },
-            Err(e) => ack(call_id, false, Some(e.to_string())),
-        };
-    }
-
-    match exec.execute(&spec) {
-        Ok(_) => ack(call_id, true, None),
-        Err(e) => ack(call_id, false, Some(e.to_string())),
-    }
-}
-
-fn ack(call_id: &str, ok: bool, error: Option<String>) -> Message {
-    Message::Ack {
-        call_id: call_id.to_string(),
-        ok,
-        error,
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use executor::VirtualExecutor;
+    use super::is_loopback;
 
     #[test]
-    fn handle_message_hello_returns_welcome_json() {
-        let ex = VirtualExecutor::default();
-        let reply = handle_message(
-            r#"{"type":"hello","v":0,"client":{"name":"t","version":"0"}}"#,
-            &ex,
-        )
-        .expect("reply");
-        assert!(reply.contains("\"type\":\"welcome\""));
-    }
-
-    #[test]
-    fn handle_message_action_dispatches_to_executor() {
-        let ex = VirtualExecutor::default();
-        let msg = r#"{"type":"action","call_id":"c1","action":{"verb":"click","target":{"kind":"point_px","x":1,"y":2}}}"#;
-        let reply = handle_message(msg, &ex).expect("reply");
-        assert!(reply.contains("\"type\":\"ack\""));
-        assert!(reply.contains("\"ok\":true"));
-        assert_eq!(ex.log.lock().unwrap().as_slice(), ["click"]);
-    }
-
-    #[test]
-    fn handle_message_garbage_returns_error_result() {
-        let ex = VirtualExecutor::default();
-        let reply = handle_message("not json", &ex).expect("reply");
-        assert!(reply.contains("\"ok\":false"));
+    fn loopback_detection() {
+        assert!(is_loopback("127.0.0.1:8765"));
+        assert!(is_loopback("localhost:8765"));
+        assert!(is_loopback("[::1]:8765"));
+        assert!(!is_loopback("0.0.0.0:8765"));
+        assert!(!is_loopback("10.0.0.5:8765"));
     }
 }

@@ -12,7 +12,7 @@ name = "shinkend"
 path = "src/main.rs"
 
 [dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "signal"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "signal", "time"] }
 tokio-tungstenite = "0.21"
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 serde = { version = "1", features = ["derive"] }
