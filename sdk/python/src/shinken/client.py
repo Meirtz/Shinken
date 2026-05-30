@@ -586,9 +586,12 @@ class AsyncSandbox:
     async def close(self) -> None:
         if self._reader is not None:
             self._reader.cancel()
-            with contextlib.suppress(Exception):
+            # awaiting a cancelled task raises CancelledError (a BaseException, so plain
+            # suppress(Exception) misses it) — suppress it explicitly (#155)
+            with contextlib.suppress(Exception, asyncio.CancelledError):
                 await self._reader
-        await self._ws.close()
+        with contextlib.suppress(Exception):
+            await self._ws.close()
         self._fail_pending(ConnectionError("session closed"))
         if self._artifact_tmp is not None:  # clean the per-session temp store, if we made one
             with contextlib.suppress(Exception):
