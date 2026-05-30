@@ -20,7 +20,7 @@ Shinken is four cooperating subsystems plus a pluggable substrate:
 - **Control Plane** — orchestration: a **Fleet Manager** (warm pools + fork-on-demand), an **Action Gateway** (the single auth → rate-limit → policy choke point), a **scheduler**, a **replay store**, an **eval service**, plus telemetry, a policy/capability store, WebRTC signaling, and an SFU fan-out layer.
 - **Sandbox + Guest Runtime** — one isolated guest computer (substrate-pluggable) running the in-guest daemon **`shinkend`**, which executes the Agent-Computer Interface (ACI), produces the structured observation stream, and publishes the optional video track.
 - **Operator** — the client-side adapter that drives a Sandbox for a given agent/model and is the human-takeover seam. The agent loop itself is **provider-agnostic** behind the Operator contract.
-- **Control Panel** — the human web UI: live structured + video view, permission approvals, replay/scrub, cross-session search, takeover.
+- **Control Panel** — the human web UI: live structured + video view, Sandbox capability configuration, replay/scrub, cross-session search, takeover.
 - **Substrate / Providers** — the pluggable virtualization backends (Firecracker, QEMU-microvm, crosvm, Cloud Hypervisor, Apple Virtualization.framework, or the OSS `agent-sandbox` CRD over gVisor/Kata).
 
 The crisp seam is: the **Control Plane never enters the guest**; the **Guest Runtime never makes a policy decision**; the **Operator never touches a privileged capability without a gateway-issued token**. This is the structural privilege separation that makes the permission model (D6) enforceable rather than advisory.
@@ -31,7 +31,7 @@ The crisp seam is: the **Control Plane never enters the guest**; the **Guest Run
 flowchart TB
   subgraph Client["Client side"]
     OP["Operator<br/>(provider-agnostic agent loop,<br/>model adapters, human-takeover seam)"]
-    CP["Control Panel<br/>(live structured+video view,<br/>permission approvals, replay/scrub,<br/>cross-session search)"]
+    CP["Control Panel<br/>(live structured+video view,<br/>capability config, replay/scrub,<br/>cross-session search)"]
     SDK["SDKs (py/ts) + optional MCP facade<br/>(granular tools + agent-task altitudes)"]
   end
 
@@ -67,7 +67,7 @@ flowchart TB
   OP -->|"ACI: actions + observations<br/>(event plane)"| AG
   OP -. "takeover" .-> CP
   SDK --> OP
-  CP -->|"approvals, scrub, search"| AG
+  CP -->|"capabilities, scrub, search"| AG
   CP -->|"WHEP subscribe (media plane)"| SFU
 
   AG -->|"dispatch validated actions"| GR
@@ -100,7 +100,7 @@ the guest runtime executes only validated ACI.
 | Lane | Owns | Must not own |
 |---|---|---|
 | **Client side** | SDKs, Operator, model adapters, Control Panel views, optional MCP facade | Direct privileged access to a Sandbox |
-| **Control Server / Control Plane** | Action Gateway, policy/capability decisions, budgets, replay store, Fleet Manager, eval orchestration | In-guest actuation or app-specific UI logic |
+| **Control Server / Control Plane** | Action Gateway, sandbox capability policy, budgets, replay store, Fleet Manager, eval orchestration | In-guest actuation or app-specific UI logic |
 | **Guest server (`shinkend`)** | ACI execution, observation capture, event emission, media publishing | Authorization, tenant policy, secret decisions |
 | **Guest OS / apps** | Desktop state, app processes, a11y/DOM sources, framebuffer | Trust boundary or policy enforcement by itself |
 | **Substrate host** | VM/container lifecycle, isolation, reset/fork, egress proxy attachment | Model-facing API semantics |
@@ -116,9 +116,9 @@ sequenceDiagram
     participant A as Guest OS / app
     participant R as Replay Store
 
-    C->>G: typed ACI action
-    G->>P: authorize capability + budget
-    P-->>G: allow / ask / deny
+    C->>G: typed ACI action or capability request
+    G->>P: check budget + sandbox capability envelope
+    P-->>G: capability handle / deny
     alt allowed
         G->>S: dispatch validated action
         S->>A: actuate / observe
@@ -126,9 +126,9 @@ sequenceDiagram
         S-->>G: ack + observation
         G-->>C: result + observation
         G->>R: append action / observation / permission events
-    else denied or needs approval
-        G-->>C: denied / needs_approval
-        G->>R: append permission decision event
+    else boundary capability unavailable
+        G-->>C: capability_required / denied
+        G->>R: append capability decision event
     end
 ```
 
@@ -142,14 +142,14 @@ The Control Plane is the orchestration brain. It is stateless where it can be (t
 
 **Fleet Manager (D9).** Owns the sandbox lifecycle: warm pools per `(image, region, tier)`, fork-on-demand from immutable golden snapshots, and a cheap suspended **cold pool** that replenishes the warm pool. It adopts the CRD shape of the OSS `kubernetes-sigs/agent-sandbox` project — `Sandbox`, `SandboxTemplate`, `SandboxClaim`, `SandboxWarmPool` — as its internal API even where Shinken does not run that controller upstream. Reference numbers to design against: a managed implementation of that CRD reports ~300 sandboxes/second/cluster with p90 allocation ~200 ms (vendor-published, unverified). The Fleet Manager handles **dual-timer sessions** — an idle timeout (~15 min, resets on activity) and an absolute max-lifetime (~4–8 h, does not reset) — with **auto-suspend-to-snapshot** on idle, because idle wall-clock dominates cost (a mostly-waiting session on a 10–15 min minimum-billing keep-alive can cost ~5×; vendor-published, unverified). A heartbeat/lease-based **reaper** GCs orphans from crashed control-plane nodes, not just timer expiries.
 
-**Action Gateway (D9).** The single request-path choke point. **Nothing reaches a sandbox or a model provider without passing through it.** Its pipeline, in order:
+**Action Gateway (D9).** The single request-path choke point for session lifecycle, boundary-crossing capabilities, budget, and replay. Routine in-sandbox GUI/input actions are expected to be allowed once the Sandbox has been provisioned; the Gateway is not meant to ask a human before every click or install inside an isolated guest. Its pipeline, in order:
 
 ```
 tenant-auth  →  per-(tenant,workload,model) token-bucket + WFQ rate-limit
              →  combined budget check (tokens + sandbox-seconds + egress)
-             →  Cedar policy decision (capability authorization)
+             →  Cedar policy decision (sandbox capability / entitlement authorization)
              →  prompt-injection / untrusted-content classifier
-             →  Rule-of-Two / HITL / hard-block policy
+             →  Rule-of-Two / HITL only for boundary-crossing capabilities
              →  dispatch validated typed action to the Guest Runtime
 ```
 
@@ -161,11 +161,11 @@ Rate limiting is per-`(tenant, workload, model)` token buckets (Redis + Lua, ato
 
 **Eval Service (D7).** Thin orchestration on top of the runtime that inverts OSWorld: a typed **verifier DAG** (not stringly-typed `getattr`), programmatic-primary with a constrained model-verifier fallback, a golden snapshot per task, and `N≥5` CoW-forked replicas producing `pass@k / pass^k` with confidence intervals. It uses readiness probes, not sleeps. It is a *consumer* of the Fleet Manager's fork primitive and the Replay Store's bundle format — eval is the production runtime, layered.
 
-**Telemetry, Policy/Capability Store, Signaling, SFU, Secret broker.** OpenTelemetry-GenAI is the native trace/metering format (one span stream feeds tracing + cost attribution + per-tenant metering). The Policy/Capability Store holds Cedar policies and the live ocap **handle registry** (D6). WebRTC signaling is WHIP/WHEP. The SFU fans video out encode-once. The Secret broker fronts Vault/KMS so the model never sees plaintext credentials (§5.3, D6).
+**Telemetry, Policy/Capability Store, Signaling, SFU, Secret broker.** OpenTelemetry-GenAI is the native trace/metering format (one span stream feeds tracing + cost attribution + per-tenant metering). The Policy/Capability Store holds Cedar policies and the live ocap **handle registry** for sandbox capabilities and OS entitlements (D6). WebRTC signaling is WHIP/WHEP. The SFU fans video out encode-once. The Secret broker fronts Vault/KMS so the model never sees plaintext credentials (§5.3, D6).
 
 ### 1.3 Sandbox + Guest Runtime (`shinkend`)
 
-A **Sandbox** is one isolated guest computer; a **Session** is a live attach/run against it. Inside every Sandbox runs **`shinkend`**, the Guest Runtime — Shinken's replacement for OSWorld's unauthenticated Flask `main.py`. `shinkend` is the only thing in the guest Shinken trusts to *execute*, and it trusts nothing about *authorization*: it executes only typed actions the Action Gateway has already validated and authorized.
+A **Sandbox** is one isolated guest computer; a **Session** is a live attach/run against it. Inside every Sandbox runs **`shinkend`**, the Guest Runtime — Shinken's replacement for OSWorld's unauthenticated Flask `main.py`. `shinkend` is the only thing in the guest Shinken trusts to *execute*. It should be powerful inside the Sandbox (install, type, click, capture, run code where enabled), while relying on the Control Plane and OS/substrate layer for boundary authorization.
 
 `shinkend` responsibilities:
 
@@ -188,8 +188,8 @@ The Operator is also the **human-takeover seam**. A human reviewer in the Contro
 The Control Panel is the human web UI and the home of three of Shinken's four headline features. It subscribes to the **event plane** for the live structured view and (on demand) to the **media plane** via WHEP for video. It renders:
 
 - **Live view** — the structured a11y/DOM tree and (optionally) the video track, side by side.
-- **Permission Panel (D6)** — the capability-unlock / approval UI: live HITL approval cards (Run / Escalate / Deny), a tri-state model (granted / denied / prompt) over the 8 capability classes and 4 risk tiers.
-- **Replay / scrub (D5)** — open any `.skn` bundle, scrub frame-accurately to any `seq`, jump to markers (step boundaries, permission gates, fork points), and **branch** from any checkpoint node.
+- **Capability Manager (D6)** — the sandbox capability / entitlement UI: grant, narrow, revoke, and audit boundary powers such as egress, credentials, GPU, persistence, host filesystem scopes, and OS automation readiness.
+- **Replay / scrub (D5)** — open any `.skn` bundle, scrub frame-accurately to any `seq`, jump to markers (step boundaries, capability grants, fork points), and **branch** from any checkpoint node.
 - **Cross-session search** — query across sessions by action, element, decision, or permission event.
 
 ### 1.6 Substrate / Providers
@@ -323,13 +323,13 @@ sequenceDiagram
     AG->>POL: Cedar IsAuthorized(capability, scope, context)
     alt capability auto-grant (Advisory tier)
         POL-->>AG: permit (handle issued)
-    else needs approval (Soft/Hard tier)
-        AG->>CP: HITL approval card (Run / Escalate / Deny)
-        CP-->>AG: approve (logged override) — emits permission event
+    else needs boundary capability
+        AG->>CP: capability card (Grant / Narrow / Deny)
+        CP-->>AG: grant scoped capability — emits capability event
         POL-->>AG: permit (ocap handle issued)
     else forbid-override (hard-deny)
         POL-->>AG: deny (fail-closed)
-        AG-->>Op: needs_approval / denied (teaching error)
+        AG-->>Op: capability_required / denied
     end
     opt action needs a credential
         AG->>SEC: request scoped short-lived token
@@ -364,7 +364,7 @@ Step-by-step, mapped to decisions:
 
 3. **Act (D2).** The Operator emits a typed action: a tagged union discriminated by `verb`, whose `target` is `oneof{ point_px | point_norm | element_ref }` with an explicit `CoordinateSpace`. The agent acts on **element refs/marks by default**; raw `x,y` only at the pixel rung. Code-as-action (`exec_code` / `run_bash` / `edit_file`) is a **separate, off-by-default capability class** behind the `tool_runner` boundary — never the default actuation path.
 
-4. **Permission-gate (D6).** The Gateway resolves the action's capability through the **three-layer** model: (1) a **Cedar** declarative decision (`IsAuthorized` over Principal=session/agent, Action=use-capability, Resource=capability/feature, Context=trust-tier/approval-state/time-window/params — formally analyzable, sub-ms); (2) an **ocap caretaker/membrane handle** that is the live, attenuable, O(1)-revocable switch the panel toggles (because Cedar decision caching leaves a stale-revocation window, revoke must be a handle bit-flip checked at use-time, not a policy delete); (3) **OS enforcement** that ignores model intent. The 8 capability classes are `net.egress, fs.scope, clipboard, gpu, install.privileged/sudo (the "unlock"), persistence, credentials, peripheral`, each with a risk tier — **Advisory** (auto-grant), **Soft-Mandatory** (logged human override in-panel), **Hard-Mandatory** (admin-policy only, no in-session override). Live HITL cards default to **escalation-on-failure** (Run / Escalate / Deny). Approvals and denials are first-class replay events.
+4. **Capability management (D6).** The Gateway resolves boundary powers through the **three-layer** model: (1) a **Cedar** declarative decision (`IsAuthorized` over Principal=session/agent, Action=use-capability, Resource=capability/feature, Context=trust-tier/scope/lifecycle/params — formally analyzable, sub-ms); (2) an **ocap caretaker/membrane handle** that is the live, attenuable, O(1)-revocable switch the panel toggles (because Cedar decision caching leaves a stale-revocation window, revoke must be a handle bit-flip checked at use-time, not a policy delete); (3) **OS/substrate enforcement** that ignores model intent. The 8 capability classes are `net.egress, fs.scope, clipboard, gpu, install.privileged/sudo, persistence, credentials, peripheral/OS automation`. Ordinary in-sandbox actions run within the provisioned envelope; boundary grants and denials are first-class replay events.
 
 5. **Secret injection (D6).** If the action needs a credential, the Gateway asks the **secret broker** (Vault/KMS) for a scoped, short-lived token and arranges header injection at the **egress proxy** — the token is never returned to the model or written to the replay. Interactive secrets go through human takeover with keystrokes excluded from capture.
 
@@ -455,7 +455,7 @@ flowchart TB
 
 ## 8. How Shinken builds on existing components
 
-Shinken composes mature, publicly-available building blocks and adds the four things they lack in combination: streaming-first observation, the capability-unlock permission panel, event-sourced forkable replay, and an optional GPU-accelerated tier. See [09 Economics & build-vs-buy](09-economics-and-build-vs-buy.md) for the full analysis.
+Shinken composes mature, publicly-available building blocks and adds the four things they lack in combination: streaming-first observation, sandbox capability/entitlement management, event-sourced forkable replay, and an optional GPU-accelerated tier. See [09 Economics & build-vs-buy](09-economics-and-build-vs-buy.md) for the full analysis.
 
 | Need | Build on (public/OSS) | What Shinken adds |
 |------|------------------------|-------------------|

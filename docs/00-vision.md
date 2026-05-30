@@ -4,7 +4,7 @@
 >
 > Sibling docs: [01 PRD](01-prd.md) · [02 Architecture](02-architecture.md) · [03 OSWorld teardown](03-osworld-analysis.md) · [04 Landscape](04-landscape.md) · [05 Tech decisions (ADRs)](05-tech-decisions.md) · [06 Roadmap](06-roadmap.md) · [07 Glossary](07-glossary.md) · [08 Threat model](08-threat-model.md) · [09 Economics & build-vs-buy](09-economics-and-build-vs-buy.md) · Sources: [`../notes/sources.md`](../notes/sources.md)
 
-**Shinken is an AI-native, cross-platform sandbox runtime, control plane, and control panel for computer-use agents — a production-grade, streaming-first successor to OSWorld.** It boots isolated desktop **Sandboxes** (Linux/Windows/macOS; Android on the roadmap), drives them through a single typed **Agent-Computer Interface (ACI)** with a **structured-first, pixels-on-demand** observation model, streams every operation live and records it as a **scrubbable, forkable, event-sourced replay**, gates every privileged action through a **capability-unlock permission panel**, and exposes an **eval layer** (OSWorld-Verified and friends) on the *same* runtime. The north star is **one platform serving both production agent deployment and evaluation, layered.** Design decisions are referenced as **D1–D12** and detailed in [05 Tech decisions](05-tech-decisions.md).
+**Shinken is an AI-native, cross-platform sandbox runtime, control plane, and control panel for computer-use agents — a production-grade, streaming-first successor to OSWorld.** It boots isolated desktop **Sandboxes** (Linux/Windows/macOS; Android on the roadmap), drives them through a single typed **Agent-Computer Interface (ACI)** with a **structured-first, pixels-on-demand** observation model, streams every operation live and records it as a **scrubbable, forkable, event-sourced replay**, provisions the **sandbox capabilities / OS entitlements** each run needs, and exposes an **eval layer** (OSWorld-Verified and friends) on the *same* runtime. The north star is **one platform serving both production agent deployment and evaluation, layered.** Design decisions are referenced as **D1–D12** and detailed in [05 Tech decisions](05-tech-decisions.md).
 
 ---
 
@@ -18,7 +18,7 @@ In 2026, frontier models can drive a desktop better than a median human on the s
 - **trycua/cua** — the closest, best-engineered analog — still observes by **pulling a base64 PNG per step over HTTP/SSE**, serializes one command at a time, has no live video streaming, and its permission story is effectively a TODO ([github.com/trycua/cua](https://github.com/trycua/cua)).
 - **E2B Desktop** spawns an `xdotool`/`scrot` process **per click/keystroke/screenshot**, streams raw VNC over WebSocket, and has no action/observation replay ([github.com/e2b-dev/desktop](https://github.com/e2b-dev/desktop)).
 
-The pattern is consistent: **poll a screenshot, click a pixel, throw the trace away, and trust the sandbox boundary to be the entire safety story.** That is fine for a paper. It is not fine for running thousands of concurrent agents, handing one the keys to credentials and `sudo`, or generating defensible training data and eval scores. The bandwidth is wasteful, the observation is brittle (pixel coordinates drift with resolution and DPI), the safety model is binary, and the trajectory is unforkable.
+The pattern is consistent: **poll a screenshot, click a pixel, throw the trace away, and trust the sandbox boundary to be the entire product story.** That is fine for a paper. It is not fine for running thousands of concurrent agents, handing one a real desktop with `sudo`, credentials, network, or GPU, or generating defensible training data and eval scores. The bandwidth is wasteful, the observation is brittle (pixel coordinates drift with resolution and DPI), the capability model is binary, and the trajectory is unforkable.
 
 Shinken's thesis: **the bottleneck has moved from the model to the runtime, and the runtime needs rebuilding as production infrastructure** — not a polling loop.
 
@@ -32,14 +32,14 @@ Three curves crossed in the last ~18 months that make this the right moment:
 
 ## 3. What Shinken is (one crisp definition)
 
-> **Shinken is the operating system for computer-use agents:** a single typed interface and streaming runtime that lets any model drive an isolated Linux/Windows/macOS desktop, watches and records everything it does as a forkable timeline, asks a human before it does anything dangerous, and runs the same way whether you are deploying it in production or scoring it on a benchmark.
+> **Shinken is the operating system for computer-use agents:** a single typed interface and streaming runtime that lets any model drive an isolated Linux/Windows/macOS desktop, gives that desktop the capabilities it needs, watches and records everything it does as a forkable timeline, and runs the same way whether you are deploying it in production or scoring it on a benchmark.
 
 Concretely, Shinken is **three layers**:
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
 │  CONTROL PANEL  (human web UI)                                         │
-│  live structured + on-demand video · permission approval cards ·       │
+│  live structured + on-demand video · capability configuration ·        │
 │  replay scrub / fork · cross-session search · human takeover           │
 ├──────────────────────────────────────────────────────────────────────┤
 │  CONTROL PLANE                                                         │
@@ -58,7 +58,7 @@ Concretely, Shinken is **three layers**:
 
 The vocabulary (full definitions in [07 Glossary](07-glossary.md)): a **Sandbox** is one isolated guest computer (substrate-pluggable); a **Session** is a live attach/run; the **Guest Runtime** (`shinkend`) is the in-Sandbox daemon that executes the ACI and emits the event stream (the structured successor to OSWorld's Flask `main.py`); the **ACI** is the versioned protocol plus the typed action/observation schema; the **Operator** is the client-side adapter that drives a Sandbox and is the human-takeover seam, with a provider-agnostic agent loop behind it. The **three planes** are *control* (lifecycle/signaling), *event* (actions + observations + permissions — the reliable data channel that **is** the replay log), and *media* (an on-demand video track).
 
-What makes it AI-native rather than a remote desktop: the **primary observation is a normalized cross-OS accessibility/DOM tree**, not pixels (D3); the **agent acts on stable element refs**, not raw `x,y`; **pixels and video are escalation tiers requested on demand**; and the **live structured event stream the model consumes is the same stream that becomes the replay** (D4, D5). It is deliberately the inversion of OSWorld: structured-first, event-sourced, capability-gated.
+What makes it AI-native rather than a remote desktop: the **primary observation is a normalized cross-OS accessibility/DOM tree**, not pixels (D3); the **agent acts on stable element refs**, not raw `x,y`; **pixels and video are escalation tiers requested on demand**; and the **live structured event stream the model consumes is the same stream that becomes the replay** (D4, D5). It is deliberately the inversion of OSWorld: structured-first, event-sourced, capability-managed.
 
 ## 4. The four headline outcomes (as user value)
 
@@ -67,11 +67,11 @@ These map one-to-one to the design decisions; the *value* framing is what a user
 | Outcome | What the user gets | Backed by |
 |---|---|---|
 | **1. Replay** | "Scrub any agent run like a video, branch from step N, and re-run a counterfactual — without re-running the whole task." A `.skn` bundle is a forkable, event-sourced trajectory, not a write-only log; the same bundle harvests as RL/SFT training data. | **D5** — `.skn` (Playwright-trace model), immutable checkpoint DAG, append-only event log; instant-reset and replay-branching are the *same* CoW-fork primitive (D1). |
-| **2. Permission-unlock panel** | "Approve `sudo`, network egress, or credential access from a live card — and the model never sees the plaintext secret." Eight capability classes (`net.egress, fs.scope, clipboard, gpu, install.privileged/sudo, persistence, credentials, peripheral`) across four risk tiers (Auto/Notify/Ask/Block), taint-aware, instant-revoke. It *unlocks* advanced features safely rather than forbidding them. | **D6** — Cedar policy + object-capability membrane + OS enforcement; secrets brokered via Vault/KMS + egress proxy so plaintext never reaches the model. |
+| **2. Sandbox capability manager** | "Give this Sandbox network egress, credentials, GPU, persistence, privileged installs, clipboard, screen capture, or OS automation — and keep those powers scoped, revocable, replayed, and isolated." Sandbox-internal dangerous work is allowed by design; crossing the boundary is explicit. | **D6** — capability/entitlement policy + object-capability handles + OS enforcement; secrets brokered via Vault/KMS + egress proxy so plaintext never reaches the model. |
 | **3. Bandwidth optimization** | "Run thousands of agents without a six-figure monthly egress bill." Structured a11y/DOM observation is **~150× cheaper** than H.264 office video (~20 kbps vs ~3 Mbps) and **~6× cheaper** in tokens (~25k vs ~150k/task) (vendor-published, unverified). Pixels flow only when the model or a human asks. | **D3** (structured-first) + **D4** (dual-channel, NVENC-on-demand). |
 | **4. Real-time streaming** | "Watch and take over a live agent with sub-second, glass-to-glass lag — over a single WebRTC connection in the browser, no native client." Reliable data channel for the event stream + on-demand media track; host↔guest over virtio-vsock, never HTTP polling; target ~50–120 ms same-region. | **D4** — single-PeerConnection WebRTC dual-transport, SFU fan-out, WHIP/WHEP. |
 
-Every competitor leaks on at least three of these. Replay and the permission panel are **greenfield** across the field; streaming/bandwidth is the clear **beat** axis where every competitor is screenshot-poll or VNC/pixel. See [04 Landscape](04-landscape.md) for the per-axis comparison.
+Every competitor leaks on at least three of these. Replay and sandbox capability management are **greenfield** across the field; streaming/bandwidth is the clear **beat** axis where every competitor is screenshot-poll or VNC/pixel. See [04 Landscape](04-landscape.md) for the per-axis comparison.
 
 ## 5. Who it's for
 
@@ -80,7 +80,7 @@ Every competitor leaks on at least three of these. Replay and the permission pan
 | **Agent developers** | A clean SDK to drive a real desktop with their existing model loop, without writing virtualization or streaming glue. | Native streaming py/ts SDK + optional MCP facade (D8); version-pinned adapters for the Anthropic, OpenAI, UI-TARS, and OSWorld schemas (D2) so an off-the-shelf agent drives Shinken unchanged. Open, self-hostable core (D12) — no lock-in. |
 | **Eval engineers & CUA researchers** | Reproducible, massively parallel, *defensible* evaluation — plus trajectory data to train on. | Eval is thin orchestration on the same runtime (D7): a typed verifier DAG, N≥5 CoW-forked replicas → pass@k / pass^k with confidence intervals, task+grader+env versioned together. `.skn` replay doubles as RL/SFT training data — the adoption wedge (D5, D12). |
 | **Platform admins** | Fleet operability, cost control, multi-tenant safety, audit. | A control plane with warm pools + fork-on-demand, an Action Gateway choke point, dual-timer auto-suspend (idle dominates cost), circuit-breakable Sandbox health, and OTel-GenAI telemetry (D9). Permission grants/denials are first-class, auditable replay events. |
-| **Human supervisors** | To watch, approve risky actions, and take over mid-run. | The Control Panel: live structured + on-demand pixel view, HITL approval cards with escalation-on-failure (Run/Escalate/Deny), replay scrubbing, cross-session search, and takeover via the Operator seam (D6, D8). |
+| **Human supervisors** | To watch, configure sandbox capabilities, and take over mid-run. | The Control Panel: live structured + on-demand pixel view, capability configuration, replay scrubbing, cross-session search, and takeover via the Operator seam (D6, D8). |
 
 These four roles share one runtime: the developer's agent, the researcher's eval, the admin's fleet, and the supervisor's panel all see the same Sandboxes, the same ACI, and the same `.skn` replays.
 
@@ -105,7 +105,7 @@ Shinken's stance toward each axis is **match the leaders, then exceed their scop
 
 - **MATCH:** Morph-class sub-ms CoW fork/reset on the Linux tier; the model ecosystem via thin version-pinned adapters; the OSWorld-Verified eval bar; cua's clean `Image → Runtime → Transport → Interfaces → Sandbox` layering and developer experience.
 - **BEAT:** streaming and bandwidth — everyone else polls screenshots or pushes VNC/full pixels; Shinken's dual-channel ACI is the literal thing it is built to win.
-- **DIFFERENTIATE:** event-sourced replay/branching; the capability-unlock permission panel; an optional GPU-accelerated tier no Firecracker-based competitor can hold (Firecracker has *zero* GPU passthrough by design); and full cross-platform *desktop* (not browser-only — even Scrapybara never did macOS, and it sunset).
+- **DIFFERENTIATE:** event-sourced replay/branching; sandbox capability and OS-entitlement management; an optional GPU-accelerated tier no Firecracker-based competitor can hold (Firecracker has *zero* GPU passthrough by design); and full cross-platform *desktop* (not browser-only — even Scrapybara never did macOS, and it sunset).
 
 The unclaimed center is **"full-spectrum desktop computer-use, structured-streamed, replayable, capability-gated, at cloud concurrency."** cua owns breadth ("one API, any OS, cloud or local"); Shinken does not out-breadth them on day one — it wins on **streaming, replay, permissions, and GPU**, the four things cua's own design flags as gaps.
 
@@ -124,7 +124,7 @@ Shinken is **composed, not monolithic.** Each layer is pluggable, and for each t
 
 Two opinionated constraints carry into the GPU tier (D11): the **encode tier never runs on A100/H100/H200/B200** (those data-center accelerators ship with **zero NVENC engines**, a public NVIDIA fact — [en.wikipedia.org/wiki/Nvidia_NVENC](https://en.wikipedia.org/wiki/Nvidia_NVENC)); it uses Ada L4/L40S instead. And the consumer **8-session NVENC cap does not apply to qualified data-center GPUs** (vendor-published, unverified). All speed/density/cost numbers here are vendor-published and **unverified** pending a first-party measurement plan; see [09 Economics & build-vs-buy](09-economics-and-build-vs-buy.md).
 
-The posture is deliberate: **Shinken's value is the union and the seams — the ACI, the dual-channel streaming, the event-sourced replay, and the permission panel — not the virtualization itself.** Where a mature OSS substrate or public product already exists, Shinken integrates it behind a pluggable interface rather than re-implementing it.
+The posture is deliberate: **Shinken's value is the union and the seams — the ACI, the dual-channel streaming, the event-sourced replay, and the Sandbox Capability Manager — not the virtualization itself.** Where a mature OSS substrate or public product already exists, Shinken integrates it behind a pluggable interface rather than re-implementing it.
 
 ## 8. The north star: one platform, production + eval, layered
 
@@ -139,7 +139,7 @@ The single organizing principle: **production agent deployment and evaluation ru
    ┌──────────────────────┴──────────────────────┐
    │      PRODUCTION RUNTIME + CONTROL PLANE      │  Sandbox · ACI · dual-channel
    │   ONE Guest Runtime · ONE ACI · ONE plane    │  streaming · .skn replay ·
-   └──────────────────────────────────────────────┘  permission panel
+   └──────────────────────────────────────────────┘  capability manager
 ```
 
 This inverts the OSWorld world, where the benchmark *was* the platform and production was an afterthought. Built-in conformance ships task + grader + environment **versioned together** — OSWorld-Verified, WindowsAgentArena ([arxiv.org/abs/2409.08264](https://arxiv.org/abs/2409.08264)), AndroidWorld ([arxiv.org/abs/2405.14573](https://arxiv.org/abs/2405.14573)), WebArena/VisualWebArena/WebVoyager — because graders are tested artifacts, not stringly-typed afterthoughts (the lesson of OSWorld's 300+ grader bugs). Phasing (see [06 Roadmap](06-roadmap.md)): **local single-VM v0 → Linux fast-fork cloud tier → eval layer at concurrency → Windows/macOS heavier tiers → GPU/trusted tiers.** Linux is first-class v1; Windows and macOS ship v1 as heavier, longer-lived tiers; Android is roadmap (D10).

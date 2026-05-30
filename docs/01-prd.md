@@ -3,7 +3,7 @@
 > **Status:** drafting · **Date:** 2026-05-30
 > **Siblings:** [00 Vision](00-vision.md) · [02 Architecture](02-architecture.md) · [03 OSWorld teardown](03-osworld-analysis.md) · [04 Landscape](04-landscape.md) · [05 Tech decisions / ADRs](05-tech-decisions.md) · [06 Roadmap](06-roadmap.md) · [07 Glossary](07-glossary.md) · [08 Threat model](08-threat-model.md) · [09 Economics & build-vs-buy](09-economics-and-build-vs-buy.md)
 
-Shinken is an AI-native, cross-platform **Sandbox runtime + Control Plane + Control Panel** for computer-use agents — a production-grade, streaming-first successor to OSWorld that serves *both* production agent deployment *and* evaluation on one runtime. This PRD enumerates the personas and their top journeys, then the **functional requirements** grouped by subsystem (Sandbox lifecycle, ACI actions [D2], observation [D3], streaming [D4], replay [D5], permission panel [D6], eval [D7], control plane [D9], interfaces/SDK/MCP [D8]), the **non-functional requirements** (concurrency, latency budgets, cost, security/isolation, availability, multi-tenancy, compliance), explicit **in/out-of-scope**, and **success KPIs**. Every requirement carries an ID (`FR-<SUBSYS>-N` / `NFR-<CLASS>-N`) and is reconciled to its governing decision **D1–D12** (see [05 Tech decisions](05-tech-decisions.md)). Numeric speed/density/cost figures are marked **(vendor-published, unverified)** unless first-party; these gate a first-party measurement plan and are *not* load-bearing for v1 commitments.
+Shinken is an AI-native, cross-platform **Sandbox runtime + Control Plane + Control Panel** for computer-use agents — a production-grade, streaming-first successor to OSWorld that serves *both* production agent deployment *and* evaluation on one runtime. This PRD enumerates the personas and their top journeys, then the **functional requirements** grouped by subsystem (Sandbox lifecycle, ACI actions [D2], observation [D3], streaming [D4], replay [D5], sandbox capability management [D6], eval [D7], control plane [D9], interfaces/SDK/MCP [D8]), the **non-functional requirements** (concurrency, latency budgets, cost, security/isolation, availability, multi-tenancy, compliance), explicit **in/out-of-scope**, and **success KPIs**. Every requirement carries an ID (`FR-<SUBSYS>-N` / `NFR-<CLASS>-N`) and is reconciled to its governing decision **D1–D12** (see [05 Tech decisions](05-tech-decisions.md)). Numeric speed/density/cost figures are marked **(vendor-published, unverified)** unless first-party; these gate a first-party measurement plan and are *not* load-bearing for v1 commitments.
 
 ---
 
@@ -16,10 +16,10 @@ Shinken's north star (D12) is *one* platform with a production runtime and an ev
 | P1 | **Agent developer** | Build and ship a computer-use agent against a stable, provider-agnostic runtime | py/ts SDK over the streaming ACI (D8); the Operator contract (§ below) | D2, D3, D8, D9 |
 | P2 | **CUA eval researcher** (who also harvests replay as training data) | Run reproducible, massively-parallel benchmarks *and* mine the resulting trajectories as SFT/RL data | Eval service + Control Panel leaderboard (D7); `.skn` bundles + branch/fork (D5) | D1, D5, D7, D9 |
 | P3 | **Platform admin / operator (SRE)** | Run the fleet at ultra-high concurrency within cost and SLOs; administer tenants and policy | Control plane telemetry, Fleet Manager, Action Gateway, managed policy (D9) | D1, D6, D9, D11 |
-| P4 | **Human supervisor** | Watch a running agent, approve/deny privileged actions, take over, and later audit | Control Panel: live view + Permission Panel + replay/scrub (D4, D6, D5) | D4, D5, D6 |
+| P4 | **Human supervisor / capability operator** | Watch a running agent, configure Sandbox capabilities, take over, and later audit | Control Panel: live view + Capability Manager + replay/scrub (D4, D6, D5) | D4, D5, D6 |
 | P5 | **MCP-host integrator** *(supporting)* | Drive Shinken from a model-agnostic agent host | MCP facade at two altitudes (D8) | D8 |
 
-The four primary personas (P1–P4) map directly to the brief: an *agent developer*; a *CUA eval/researcher who also harvests replay as training data*; a *platform admin/operator*; and a *human supervisor*. P5 (MCP-host integrator) is a supporting persona that exercises the optional model-agnostic facade. The human supervisor (P4) absorbs two adjacent roles — the **live approver** (real-time permission gating, takeover) and the **auditor/compliance reviewer** (post-hoc reconstruction) — because both operate over the same event-sourced replay surface and the same permission timeline.
+The four primary personas (P1–P4) map directly to the brief: an *agent developer*; a *CUA eval/researcher who also harvests replay as training data*; a *platform admin/operator*; and a *human supervisor*. P5 (MCP-host integrator) is a supporting persona that exercises the optional model-agnostic facade. The human supervisor (P4) absorbs two adjacent roles — the **capability operator** (configure egress, credentials, GPU, persistence, OS automation, takeover) and the **auditor/compliance reviewer** (post-hoc reconstruction) — because both operate over the same event-sourced replay surface and the same capability timeline.
 
 ```
         ┌─────────────────────────── Shinken ───────────────────────────┐
@@ -27,7 +27,7 @@ The four primary personas (P1–P4) map directly to the brief: an *agent develop
  P5 ───▶ │  MCP facade ───────────┘                  (Sandbox: L/W/mac)  │
          │                                ┌── event plane (replay log) ──┐│
  P4 ───▶ │  Control Panel  ◀── streaming ─┤   control · event · media    ││
-         │   (live view, Permission Panel, replay/scrub, takeover)       ││
+         │   (live view, Capability Manager, replay/scrub, takeover)     ││
  P2 ───▶ │  Eval service ──▶ N×CoW forks ──▶ verifier DAG ──▶ .skn data  ││
  P3 ───▶ │  Fleet Manager · warm pools · budgets · telemetry · policy    ││
          └────────────────────────────────────────────────────────────────┘
@@ -35,15 +35,15 @@ The four primary personas (P1–P4) map directly to the brief: an *agent develop
 
 ### Top journeys
 
-**J1 — Deploy a production agent (P1).** The developer authors an **Operator** (the client-side adapter that drives a Sandbox for a given agent/model and is the human-takeover seam) against the generated SDK. `create_session` claims a warm Sandbox (D9); the agent loop drives the typed ACI (D2) over the streaming transport; observation defaults to the structured a11y/DOM tier (D3); privileged actions surface as Permission Panel cards (D6); and the whole run is recorded as a `.skn` replay (D5). The agent loop stays **provider-agnostic** behind the Operator contract — no vendor lock-in.
+**J1 — Deploy a production agent (P1).** The developer authors an **Operator** (the client-side adapter that drives a Sandbox for a given agent/model and is the human-takeover seam) against the generated SDK. `create_session` claims a warm Sandbox (D9); the agent loop drives the typed ACI (D2) over the streaming transport; observation defaults to the structured a11y/DOM tier (D3); the Sandbox is provisioned with an explicit capability envelope (D6); and the whole run is recorded as a `.skn` replay (D5). The agent loop stays **provider-agnostic** behind the Operator contract — no vendor lock-in.
 
 **J2 — Run a benchmark suite (P2).** The eval researcher picks a pinned conformance suite (OSWorld-Verified 369 tasks, WindowsAgentArena ~154, AndroidWorld 116, WebArena 812). Each task forks N≥5 CoW replicas from an immutable golden snapshot (D7, D1); a typed verifier DAG grades end + milestone state (D7); and the Control Panel reports Average / pass@k / pass^k with confidence intervals — never single-run pass@1, which hides 10–30 points of variance.
 
 **J3 — Capture training data (P2, second hat).** The same researcher (or a colleague on the training side) runs rollouts whose every step is recorded to `events.jsonl` with the decision channel in OpenTelemetry GenAI semantic conventions (D5). Replay-as-training-data and branch-from-step-N counterfactuals feed RL/SFT pipelines. Because instant reset and replay-branching are the *same* primitive (D1, D5), generating diverse counterfactual rollouts from a single golden state is cheap.
 
-**J4 — Supervise a privileged run (P4 as live approver).** The supervisor attaches to a live Session; the structured event stream and an on-demand video track render glass-to-glass (D4). When the agent hits a capability boundary, the session pauses and streams a blocking approval card (**Run / Escalate / Deny**); on takeover, the human drives the *same* Sandbox through the *same* Operator seam.
+**J4 — Supervise a real-capability run (P4 as capability operator).** The supervisor attaches to a live Session; the structured event stream and an on-demand video track render glass-to-glass (D4). When the run needs a new boundary capability, the panel shows a scoped configuration card (**Grant / Narrow / Deny**); on takeover, the human drives the *same* Sandbox through the *same* Operator seam.
 
-**J5 — Audit / debug a run (P4 as auditor).** The supervisor opens a `.skn` in the replay panel, scrubs the master logical clock, inspects the Thought–Action–Observation step list and the permission/approval markers (the highest-priority marker class), and forks from any checkpoint to re-run a counterfactual.
+**J5 — Audit / debug a run (P4 as auditor).** The supervisor opens a `.skn` in the replay panel, scrubs the master logical clock, inspects the Thought–Action–Observation step list and the capability markers (the highest-priority marker class), and forks from any checkpoint to re-run a counterfactual.
 
 **J6 — Operate the fleet (P3).** The SRE watches per-(image, region, tier) warm pools, Action Gateway rate-limit/budget telemetry, and circuit-breaker kill-and-replace events (D9), tuning warm-pool depth against the idle-cost driver, and administers tenant budgets and managed policy.
 
@@ -101,7 +101,7 @@ Observation is **structured-first, layered escalation** — the bandwidth/cost/l
 | FR-OBS-5 | The structured/pixel duality MUST be a property of the action grammar (one verb takes a ref OR a coord), never two parallel APIs. | D2, D3 |
 | FR-OBS-6 | Structured-only MUST NOT ship alone: vision + grounding is a first-class fallback because a11y goes blind on Electron/Qt/canvas/WebGL — **the load-bearing unverified assumption**, requiring a first-party a11y-coverage measurement spike before any density/cost commitment. | D3 |
 | FR-OBS-7 | Each observation MUST carry `{obs_id, ts, session_id, cause(action_id\|push), display, tree_mode, elements\|delta, marks?, CoordinateSpace}` and be `action_id`-correlated to its causing action. | D3, D5 |
-| FR-OBS-8 | The diff-based observation stream MUST BE the same append-only event stream used for live view, replay, and permission-audit (one source of truth). | D3, D4, D5 |
+| FR-OBS-8 | The diff-based observation stream MUST BE the same append-only event stream used for live view, replay, and capability audit (one source of truth). | D3, D4, D5 |
 | FR-OBS-9 | Sensitive element values MUST be maskable at capture, before they enter the stream or replay. | D3, D6, NFR-COMP |
 
 ### 2.4 Streaming (D4)
@@ -131,30 +131,30 @@ Replay is the event stream + bisected snapshots, packaged as a self-contained `.
 | FR-RPL-2 | `events.jsonl` MUST be the source of truth: line 1 = a Meta header `{v, session_id, run_id, t0_wall, t0_mono, tz}`; each row a **two-level discriminated envelope** `kind ∈ {action, observation, decision, permission, marker, snapshot_ref, meta}` with a per-kind `src`, a logical-clock `seq`, and an interval `dt`. | D5 |
 | FR-RPL-3 | Each action event MUST pair to its observation via `action_id`, carrying before/after snapshot refs. | D5, D3 |
 | FR-RPL-4 | The **decision channel** MUST emit [OpenTelemetry GenAI](https://opentelemetry.io/docs/specs/semconv/gen-ai/) semantic-convention records (with OpenInference fields as compatibility aliases). | D5, D9 |
-| FR-RPL-5 | Snapshots MUST be **bisected** (an ENV CoW-fork + a serialized AGENT checkpoint) and anchored to **semantic step boundaries** (permission gates, side-effecting tool calls, model decisions), each storing the exact `(run_id, step_id, event_log_offset)`. The agent snapshot MUST use a language-neutral schema, **not Python pickle**. | D5 |
+| FR-RPL-5 | Snapshots MUST be **bisected** (an ENV CoW-fork + a serialized AGENT checkpoint) and anchored to **semantic step boundaries** (capability grants, side-effecting tool calls, model decisions), each storing the exact `(run_id, step_id, event_log_offset)`. The agent snapshot MUST use a language-neutral schema, **not Python pickle**. | D5 |
 | FR-RPL-6 | The fork tree MUST be an **immutable git-style parent-pointer DAG**; a branch = a new child checkpoint; the original timeline is NEVER mutated; re-convergence (multiple parents) is permitted. | D5 |
 | FR-RPL-7 | **Branch** = CoW-fork the ENV snapshot + deserialize the AGENT checkpoint → re-run from step N (counterfactual eval/debug); seek-to-T and re-run-from-T MUST be O(nearest snapshot + tail), not O(whole history). | D1, D5 |
 | FR-RPL-8 | Every LLM/tool result MUST be a recorded event with a per-event mode flag `{replay-stub \| live-reinference \| mock}`; pure-stub replay MUST reproduce the agent core bit-for-bit (enforced as a CI determinism test). | D5 |
 | FR-RPL-9 | On a **live re-inference branch**, side-effecting tool calls MUST default to a record/mock proxy and require explicit opt-in to go live. | D5, D6 |
-| FR-RPL-10 | Permission requests / grants / denials / overrides MUST be **first-class replay events** (the highest-priority marker class). | D5, D6 |
+| FR-RPL-10 | Capability requests / grants / denials / revocations MUST be **first-class replay events** (the highest-priority marker class). | D5, D6 |
 
-### 2.6 Permission panel (D6)
+### 2.6 Sandbox capability manager (D6)
 
-Permission is a **3-layer, capability-unlock** model that aligns with the generic `tool_runner` policy boundary (D2): a declarative decision layer, an object-capability handle layer, and OS enforcement.
+Sandbox capability management is a **3-layer entitlement + boundary-enforcement** model. A Shinken Sandbox is expected to perform dangerous work *inside* the isolated guest; D6 controls which boundary powers, host resources, credentials, OS automation entitlements, and external side effects the Sandbox is provisioned with.
 
 | ID | Requirement | Reconciles |
 |----|-------------|-----------|
-| FR-PRM-1 | The decision layer MUST be **[Cedar](https://docs.cedarpolicy.com/)** (formally verifiable via SMT/Lean, sub-ms), **NOT** OPA/Rego, evaluating `deny → ask → allow` first-match-wins, deny-wins-at-any-scope, with managed > project > session precedence. | D6 |
+| FR-PRM-1 | The decision layer MUST be **[Cedar](https://docs.cedarpolicy.com/)** (formally verifiable via SMT/Lean, sub-ms), **NOT** OPA/Rego, evaluating sandbox capability grants with deny-wins-at-any-scope and managed > project > session precedence. | D6 |
 | FR-PRM-2 | A separate **[object-capability](https://en.wikipedia.org/wiki/Object-capability_model) caretaker/membrane handle layer** MUST provide O(1) instant, synchronous revoke (fail-closed at next use), independent of any policy-cache window. | D6 |
-| FR-PRM-3 | OS enforcement MUST bind per guest: Linux = bubblewrap + seccomp (network-gate) + [Landlock](https://docs.kernel.org/userspace-api/landlock.html) + cgroups + an **out-of-VM egress proxy**; macOS = Seatbelt + TCC; Windows = restricted token + per-workspace capability-SID. | D6 |
+| FR-PRM-3 | OS enforcement MUST bind per guest: Linux = bubblewrap + seccomp (network-gate) + [Landlock](https://docs.kernel.org/userspace-api/landlock.html) + cgroups + an **out-of-VM egress proxy**; macOS = Seatbelt + TCC entitlement preflight; Windows = restricted token + per-workspace capability-SID. | D6 |
 | FR-PRM-4 | The egress proxy MUST be deny-by-default, scoped-domain (`host` / `*.host` / `**.host`, rejecting a bare global `*`), anti-domain-fronting, and fail-closed, with optional TLS-terminating MITM for high-risk sessions, and MUST harden DNS as a first-class egress channel (block raw port 53, force a controlled resolver). | D6, NFR-SEC |
-| FR-PRM-5 | The capability grammar MUST be **8 typed, default-empty classes**: `net.egress`, `fs.scope`, `clipboard`, `gpu`, `install.privileged/sudo` (the "unlock"), `persistence`, `credentials`, `peripheral` — each carrying `{scope, risk_tier, lifecycle, enforcement_binding}`. | D6 |
-| FR-PRM-6 | Actions MUST be classified into **4 risk tiers** — Auto / Notify / Ask / Block — and the classifier MUST be **taint-aware**: any action whose parameters derive from untrusted input (a web page, an untrusted file, a tool output) is promoted up a tier regardless of the tool's base risk. | D6 |
-| FR-PRM-7 | On an `Ask`, the session MUST pause and stream a typed, blocking **approval card** showing the actor (agent id + version), the verb, the resource, a computed blast-radius/preview, and **Run / Escalate / Deny**; the default interaction model MUST be **escalation-on-failure** (start every session at least-authority). | D6 |
+| FR-PRM-5 | The capability grammar MUST be **8 typed boundary/entitlement classes**: `net.egress`, `fs.scope` / host mounts, `clipboard`, `gpu`, `install.privileged/sudo`, `persistence`, `credentials`, `peripheral` / OS automation — each carrying `{scope, risk_tier, lifecycle, enforcement_binding}`. | D6 |
+| FR-PRM-6 | Sandbox-internal actions SHOULD run without per-action human approval once the Sandbox is provisioned. The classifier MUST focus on boundary crossings: external egress, credential use, host filesystem scopes, persistence, expensive compute, and production-side effects. | D6 |
+| FR-PRM-7 | On an exceptional boundary `Ask`, the session MUST pause and stream a typed approval/configuration card showing the actor, requested capability, scope, blast radius, lifecycle, and **Grant / Narrow / Deny**. | D6 |
 | FR-PRM-8 | Grants MUST be scoped, time-boxed, and lifecycle-revocable: `once` / `session` / persisted policy amendment; an agent MUST never be able to widen its own authority (the policy store is write-protected under managed precedence). | D6 |
 | FR-PRM-9 | Secrets MUST be brokered at the proxy via header-injection from a secret broker ([HashiCorp Vault](https://www.hashicorp.com/products/vault), any cloud KMS, or [SPIFFE/SPIRE](https://spiffe.io/)) with JIT short-lived credentials; the model MUST never see plaintext, and credentials MUST never enter the agent context or the replay. | D6, NFR-SEC |
-| FR-PRM-10 | The system MUST **fail closed on ambiguity**: an unmatched action → Ask; a human/reviewer timeout → the action does NOT run (record `timed_out`); a Critical action → auto-deny; and a denial-threshold circuit breaker (e.g. 3 consecutive denials) trips the session. | D6, NFR-SEC |
-| FR-PRM-11 | A **Watch-Mode** presence requirement MUST be available for the Block-unless-watched edge of the Ask tier (production systems, bulk deletes, sensitive sites): require an attached, active human and pause if they detach. | D6 |
+| FR-PRM-10 | The system MUST **fail closed on ambiguous boundary grants**: unmatched external capability → deny/ask; reviewer timeout → capability not granted; critical boundary capability → pre-authorized only. Ordinary in-sandbox actions continue within the existing entitlement envelope. | D6, NFR-SEC |
+| FR-PRM-11 | macOS/Windows/Linux OS entitlement state MUST be observable before a run. For macOS in particular, Accessibility, Screen Recording, Input Monitoring, Automation/Apple Events, Full Disk Access, code signing, and TCC state are part of Sandbox readiness. | D6, D10 |
 
 ### 2.7 Eval (D7)
 
@@ -204,7 +204,7 @@ A native streaming SDK core plus an optional MCP facade.
 | FR-IFC-4 | The high-frequency action/observation loop and media MUST **never** route through MCP (MCP lacks a bidirectional/media transport and may force SSE→polling). | D8, D4 |
 | FR-IFC-5 | The granular MCP facade's default observation MUST be a pruned a11y tree with stable element IDs; screenshots exposed only as on-demand Resources with a scale parameter. | D8, D3 |
 | FR-IFC-6 | The MCP facade MUST implement **OAuth 2.1** Resource Server semantics ([RFC 9728](https://www.rfc-editor.org/rfc/rfc9728.html) Protected Resource Metadata, PKCE, Bearer-per-request, 403 + WWW-Authenticate, Origin validation); stdio for local, Streamable HTTP + SSE for remote. | D8, NFR-SEC |
-| FR-IFC-7 | The granular MCP facade MUST keep the agent loop OUT of its tools so the Control Panel retains per-step reasoning and permission gating. | D8, D6 |
+| FR-IFC-7 | The granular MCP facade MUST keep the agent loop OUT of its tools so the Control Panel retains per-step reasoning, capability state, and replay visibility. | D8, D6 |
 | FR-IFC-8 | The **Operator** contract MUST be the documented seam for human takeover and the provider-agnostic boundary; the agent loop is open and self-hostable (no lock-in). | D8, D12 |
 
 ---
@@ -291,7 +291,7 @@ A native streaming SDK core plus an optional MCP facade.
 
 - **Guests:** Linux (first-class fork tier), Windows + macOS (heavier longer-lived tiers) — D1, D10.
 - **One** control plane + **one** Guest Runtime contract + **one** ACI across all OSes (D10).
-- Structured-first observation, dual-channel streaming, event-sourced branchable replay, the capability-unlock permission panel, the eval layer, and the native SDK + MCP facade (D2–D9).
+- Structured-first observation, dual-channel streaming, event-sourced branchable replay, the sandbox Capability Manager, the eval layer, and the native SDK + MCP facade (D2–D9).
 - GPU as an **opt-in** acceleration wedge (encode tier + accelerated guest tier); NICE DCV as a build-vs-buy pixel channel (D11).
 - An open, self-hostable core + a reusable Operator + an open, provider-agnostic agent loop; an optional hosted Control Panel / observability / permission-audit / eval as a commercial layer (D12).
 

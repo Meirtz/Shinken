@@ -32,7 +32,7 @@
 | **D3** | Observation = structured-first, layered escalation | Accepted | a11y/DOM diff → Set-of-Marks → region pixels → full frame; act on refs by default |
 | **D4** | Streaming = single-PeerConnection WebRTC, dual-transport | Accepted | Reliable data channel = event stream (= the replay log); on-demand media track |
 | **D5** | Replay = event stream + bisected snapshots; `.skn` bundle | Accepted | Append-only `events.jsonl` + immutable checkpoint DAG; reset and branch are one primitive |
-| **D6** | Permission = 3-layer capability-unlock (Cedar + ocap + OS) | Accepted | Cedar decides, an ocap handle is the live switch, the OS is the wall; routes through the `tool_runner` boundary |
+| **D6** | Sandbox capabilities = entitlement provisioning + boundary enforcement (Cedar + ocap + OS) | Accepted | Sandboxes can do real work inside the boundary; Cedar/ocap/OS control the capabilities and boundary crossings |
 | **D7** | Eval layer = thin orchestration on the runtime, inverting OSWorld | Accepted (phased) | Typed verifier DAG, golden snapshot per task, N≥5 forked replicas, readiness probes |
 | **D8** | Interfaces = native streaming SDK core + optional MCP facade | Accepted | One IDL → py/ts SDKs; MCP facade at two altitudes; never the hot loop over MCP |
 | **D9** | Control plane = Fleet Manager + Action Gateway | Accepted | Warm pools + fork-on-demand; single auth→rate→budget→policy chokepoint; dual-timer sessions |
@@ -303,29 +303,31 @@ Replay = **the event stream + bisected snapshots**, packaged as the **`.skn` bun
 
 ---
 
-## D6 — Permission: 3-layer capability-unlock (Cedar + ocap handle + OS), routed through the `tool_runner` boundary
+## D6 — Sandbox capabilities: entitlement provisioning + boundary enforcement (Cedar + ocap handle + OS)
 
-**Status:** Accepted. The cornerstone differentiator: the capability-unlock permission panel.
+**Status:** Accepted. The cornerstone differentiator: Sandboxes are powerful by default inside the isolation boundary, while their boundary-crossing capabilities and OS entitlements are explicit, revocable, replayed, and enforceable.
 
 ### Context
 
-Model-level prompt-injection defenses are unreliable — measured at 0–62% robust against static attacks and 80–100% defeated by adaptive attacks, with human red-teaming at 100% success. The boundary must therefore be **architectural**, holding even when the model is jailbroken. Round-1 established the layered-defense landscape; the load-bearing round-2 questions were **(a) which policy engine** and **(b) why a policy engine is not enough**.
+An agent sandbox is valuable precisely because it lets an agent do real, risky work in an isolated computer: install packages, edit files, drive UI, run code, capture screens, and even break the guest before resetting it. The permission model must not turn every ordinary in-sandbox action into a human approval. The boundary must instead decide **what powers this Sandbox is provisioned with** and **what leaves or enters the Sandbox**.
 
-On the engine: **Cedar** is the only candidate that is **statically analyzable** — its SMT/Lean-verified symbolic compiler lets Shinken *prove* a grant or policy edit "never grants more than before," which is exactly the safety property a privilege-escalation surface needs. Cedar's PARC + permit/forbid + forbid-overrides + deny-by-default *is* the capability-unlock semantics; it is reportedly **42–60× faster than OPA/Rego** with sub-ms decisions (vendor-published, unverified); and there is a direct production precedent (AWS Bedrock AgentCore gates every agent tool call with Cedar in ENFORCE mode). **Rego is Turing-flexible — you cannot statically prove a change never widens access** — which is disqualifying for the catastrophic-capability tier.
+Model-level prompt-injection defenses are unreliable — measured at 0–62% robust against static attacks and 80–100% defeated by adaptive attacks, with human red-teaming at 100% success. The boundary must therefore be **architectural**, holding even when the model is jailbroken. The load-bearing questions are **(a) how to describe sandbox capabilities/entitlements**, **(b) which policy engine can prove grants do not widen accidentally**, and **(c) why policy alone is not enough for live revocation or OS-level friction**.
 
-The deeper insight: **a policy engine alone cannot do live revocation.** Decision caching (a published authorizer TTL of ~120 s, ~2 min agent cache refresh) leaves a stale-authorization window. Revocation must be a synchronous bit-flip checked at *use* time, not a wait for a cache to expire.
+On the engine: **Cedar** is the only candidate that is **statically analyzable** — its SMT/Lean-verified symbolic compiler lets Shinken *prove* a sandbox capability grant or policy edit "never grants more than before." Cedar's PARC + permit/forbid + forbid-overrides + deny-by-default fits capability provisioning; it is reportedly **42–60× faster than OPA/Rego** with sub-ms decisions (vendor-published, unverified). **Rego is Turing-flexible — you cannot statically prove a change never widens access** — which is disqualifying for boundary capabilities such as credentials, host mounts, external egress, GPU, and persistence.
+
+The deeper insight: **a policy engine alone cannot do live revocation or OS entitlement provisioning.** Decision caching (a published authorizer TTL of ~120 s, ~2 min agent cache refresh) leaves a stale-authorization window. Revocation must be a synchronous bit-flip checked at *use* time, not a wait for a cache to expire. Separately, macOS TCC, Windows tokens, Linux seccomp/Landlock, screen capture, input injection, and accessibility automation require OS-specific preflight and provisioning work; this is part of the product, not a mere approval dialog.
 
 Egress is the highest-leverage control but **SNI/Host filtering is not a hard boundary**: a SOCKS5 null-byte parser differential and DNS-tunneling via subdomain labels both bypass it. The forced **out-of-VM egress proxy** (deny-by-default, scoped wildcards, anti-domain-fronting, optional TLS-MITM, fail-closed) is the production pattern, backed by an OS netns/firewall so an agent ignoring proxy env still cannot reach the internet.
 
 ### Decision
 
-A **three-layer capability-unlock** model:
+A **three-layer sandbox capability** model:
 
 ```
-   Request to use a capability (e.g. net.egress to api.github.com)
+   Request/provision a sandbox capability (e.g. net.egress to api.github.com)
                          │
    ┌─────────────────────▼──────────────────────┐
-   │  (1) CEDAR  — decision / grammar layer      │   "Is this grant permitted by policy?"
+   │  (1) CEDAR  — decision / grammar layer      │   "May this Sandbox have this capability?"
    │  PARC, permit/forbid, forbid-overrides,     │   statically analyzable (SMT/Lean):
    │  deny-by-default; template-linked per grant │   prove "no more permissive than before"
    └─────────────────────┬──────────────────────┘   BEFORE the grant ships (pre-grant gate + CI)
@@ -344,21 +346,24 @@ A **three-layer capability-unlock** model:
    └─────────────────────────────────────────────┘
 ```
 
-**Cedar decides; the handle is the switch; the OS is the wall.**
+**Cedar decides the capability envelope; the handle is the live switch; the OS/substrate is the wall.**
 
-- **8 capability classes**, each default-empty (zero ambient authority): `net.egress`, `fs.scope`, `clipboard`, `gpu`, `install.privileged/sudo` (the "unlock"), `persistence`, `credentials`, `peripheral`.
-- **4 risk tiers** (borrowing Sentinel's enforcement ladder, not its engine), taint-aware: **Auto** (advisory, auto-grant a fixed safe allowlist) / **Notify** / **Ask** (soft-mandatory, logged human override) / **Block** (hard-mandatory, pre-authorized only, no in-session override — sudo/root, raw-device GPU, credential broker, system-path persistence, input-injection).
-- A live **HITL approval card**; **escalation-on-failure** is the default (Run / Escalate / Deny). Approvals/denials are **first-class replay events** (D5); secret entry is excluded from capture.
+- **8 capability classes**, each default-empty at the boundary: `net.egress`, `fs.scope` / host mounts, `clipboard`, `gpu`, `install.privileged/sudo`, `persistence`, `credentials`, `peripheral` / OS automation.
+- **Sandbox-internal power is expected.** A Sandbox image may intentionally include sudo, package managers, screen capture, clipboard, and automation APIs so the agent can do real work. Those powers are safe because they are scoped to the disposable guest unless paired with a boundary capability.
+- **Boundary capabilities are explicit and recorded.** External egress, credential brokering, host filesystem scopes, persistence, expensive compute, peripheral access, and production-side effects are granted by policy, time-boxed, revocable, and emitted as replay events (D5).
+- **HITL is exceptional, not the hot path.** Humans approve unusual boundary grants or policy changes; they should not approve every click, keypress, install, or file edit inside an isolated Sandbox.
+- **OS entitlement management is first-class.** macOS TCC (Accessibility, Screen Recording, Input Monitoring, Automation, Full Disk Access), Windows restricted tokens/capability SIDs, and Linux Landlock/seccomp/netns must be preflighted, provisioned, and surfaced honestly in the capability descriptor.
 - **Secrets brokered via Vault/KMS + proxy header-injection — the model never sees plaintext.** Prefer JIT short-lived credentials (SPIFFE SVIDs, Vault dynamic secrets) tied to the grant lifecycle. Apply the **Rule-of-Two / lethal-trifecta** constraint: at most two of {untrusted input, sensitive data, external comms} unattended, else force human-in-the-loop.
 
-**The `tool_runner` boundary (generic pattern):** the agent loop runs *outside* the sandbox; tool calls route through a controlled API that enforces the egress allowlist and the capability decision **before executing**. D2's code-as-action class and every privileged action flow through this boundary, so policy is enforced in one place rather than scattered across the agent.
+**The boundary rule:** policy is enforced where a capability crosses the Sandbox boundary or binds scarce/privileged host resources. D2's code-as-action and GUI actions are ordinary in-sandbox powers when the Sandbox is provisioned for them; egress, credentials, host mounts, persistence, GPU, and OS automation entitlements flow through the controlled capability layer.
 
 ### Alternatives (and why rejected)
 
 | Alternative | Why rejected |
 |---|---|
 | **OPA / Rego as the decision engine** | Turing-flexible → cannot statically prove a policy change never widens access; ~42–60× slower; error-prone in independent benchmarking. Kept only as an *optional outer fleet/org-rule layer* that can further restrict, never widen. |
-| **Policy engine as the enforcement / revoke mechanism** | A decision is advisory until something OS-level enforces it; decision caching leaves a stale-revocation window. Hence the separate ocap handle + OS layers. |
+| **Policy engine as the enforcement / revoke mechanism** | A decision is advisory until something OS-level enforces it; decision caching leaves a stale-revocation window; OS entitlements still must be provisioned. Hence the separate ocap handle + OS/substrate layers. |
+| **Ask before every dangerous in-sandbox action** | This turns a sandbox runtime into a permission nag. A real agent sandbox should let agents perform risky operations inside the disposable guest; only boundary powers and scarce resources need capability control. |
 | **In-runtime / in-process network allowlist** | Multiple 2025–2026 CVEs (a Claude Code SOCKS5 bypass, AWS AgentCore escapes) show in-runtime allowlists are bypassable. Enforce egress out-of-VM. |
 | **SNI/Host-only egress filtering** | Defeated by domain fronting, broad allowlist entries, and parser differentials; canonicalize at the seam, fail-closed on MITM-required, block raw port 53. |
 | **Hand the agent raw credentials** | The model leaking/exfiltrating a long-lived key has unbounded blast radius; broker at the proxy, prefer JIT SVIDs, exclude secrets from replay. |
@@ -366,7 +371,7 @@ A **three-layer capability-unlock** model:
 
 ### Consequences
 
-- **Positive:** provable non-escalation at author time; synchronous revoke; a boundary that holds against a jailbroken model; a complete, forkable, non-repudiable authority timeline in the replay; the panel is the category-defining product surface.
+- **Positive:** powerful Sandboxes that can do real work; provable non-escalation for boundary grants; synchronous revoke; OS entitlement preflight; a complete, forkable, non-repudiable capability timeline in the replay; the panel is the category-defining product surface.
 - **Negative:** more plumbing (a proxy/indirection handle at each enforcement point); cross-OS enforcement diverges sharply (macOS Seatbelt/TCC, Windows AppContainer egress is coarse) and the panel must degrade to the weakest per-OS enforcement and *say so*.
 - **Risks:** Cedar's tooling/community is younger than OPA's; some mechanisms need recent kernels (Landlock network 6.7+, unprivileged userns disabled on some hosts) — feature-detect with fallback; the egress host-canonicalization gap must be fixed explicitly (do not copy a `normalize_host` that does not strip NUL/control chars).
 

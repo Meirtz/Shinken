@@ -7,47 +7,47 @@
   <img src="https://github.com/Meirtz/Project-ShinKen/raw/main/docs/assets/logo.png" alt="Shinken logo" width="100%">
 </p>
 
-> An **AI-native computer runtime**: give an agent a safe desktop, stream what it does,
-> gate risky actions, and replay the whole run as data.
+> An **AI-native computer runtime**: give an agent a real desktop, unlock the capabilities
+> that desktop needs, and replay the whole run as data.
 
 Shinken is a cross-platform sandbox runtime, control plane, and control panel for
 computer-use agents. It is the production-grade successor to research harnesses like
 [OSWorld](https://github.com/xlang-ai/OSWorld): structured-first instead of screenshot-polling,
-replayable instead of write-only, permission-gated instead of all-or-nothing, and built to serve
+replayable instead of write-only, capability-managed instead of all-or-nothing, and built to serve
 both production agent deployment and evaluation.
 
 ## Why "Shinken"?
 
 Most computer-use sandboxes today are **mogitō**: training swords. They are useful for demos,
 benchmarks, and learning the motions, but they are not built for real side effects, real
-permissions, real audit, or real scale.
+capabilities, real audit, or real scale.
 
 **Shinken (真剣)** means a real sword. The point is not recklessness; it is discipline. A real
-agent runtime must be sharp enough to do production work, and safe enough that every dangerous edge
-is gated, recorded, replayable, and under human control.
+agent runtime must be sharp enough to do production work, and safe enough that every boundary
+capability is scoped, recorded, replayable, and under operator control.
 
 <p align="center">
   <img src="docs/assets/shinken-vs-mogito.png" alt="Mogito training sword versus Shinken real sword" width="900">
 </p>
 
-That is Shinken's stance: **real desktops, real actions, real permissions, real replay.**
+That is Shinken's stance: **real desktops, real actions, real capabilities, real replay.**
 
 <p align="center">
   <img src="docs/assets/shinken-agent-sandbox-overview.png" alt="Shinken agent sandbox: sharp by default, safe by design" width="900">
 </p>
 
 The product shape follows from that stance: keep the practice-friendly ergonomics, then add the
-real-runtime edge: permissioned controls, replayable runs, and auditable actions.
+real-runtime edge: sandbox entitlements, replayable runs, and auditable boundary crossings.
 
 ```mermaid
 flowchart LR
   Agent["Agent / Operator<br/>Claude, OpenAI, UI-TARS, custom"] --> SDK["Shinken SDK<br/>one typed ACI"]
-  SDK --> GW["Action Gateway<br/>auth / budget / permission"]
+  SDK --> GW["Action Gateway<br/>auth / budget / capabilities"]
   GW --> SK["shinkend<br/>Guest Runtime"]
   SK --> Desktop["Sandbox Desktop<br/>Linux now · Win/macOS later"]
   SK --> Obs["a11y tree + pixels on demand"]
   GW --> Replay[".skn replay<br/>events.jsonl + media + snapshots"]
-  Human["Human reviewer"] --> Panel["Control Panel<br/>watch / approve / take over"]
+  Human["Human reviewer"] --> Panel["Control Panel<br/>watch / configure / take over"]
   Panel --> GW
   Replay --> Eval["Eval + training data"]
 ```
@@ -59,8 +59,9 @@ flowchart LR
   `pyautogui` strings.
 - **Observe structure first.** The default observation is an accessibility/DOM tree diff with
   stable element refs; screenshots and video are escalation tiers, not the hot path.
-- **Watch and approve live.** A human can see the structured stream, request pixels when needed,
-  approve privileged capabilities, or take over the session.
+- **Grant real sandbox capabilities.** A Sandbox can be provisioned with network egress,
+  credentials, GPU, persistence, privileged installs, clipboard, screenshots, or OS automation
+  entitlements.
 - **Replay every run.** The event stream is the replay log: actions, observations, permission
   decisions, and media references become a `.skn` bundle for debugging, eval, and training data.
 - **Scale beyond one laptop.** The local PoC grows into a control plane with warm pools,
@@ -77,7 +78,7 @@ screenshot -> model -> pixel click -> sleep -> screenshot -> throw trace away
 Shinken is designed around a different loop:
 
 ```text
-structured observation -> typed action -> permission gate -> verified result -> replay event
+structured observation -> typed action -> sandbox capability -> verified result -> replay event
 ```
 
 That difference is the product:
@@ -85,8 +86,8 @@ That difference is the product:
 - **Lower bandwidth and token cost:** send a11y/DOM diffs by default; send pixels only when the UI
   is not structurally visible.
 - **Stable actions:** click element refs when available, not only raw coordinates.
-- **Auditable authority:** risky capabilities such as network egress, credentials, privileged
-  installs, GPU, and persistence go through a permission panel.
+- **Auditable authority:** sandbox capabilities such as network egress, credentials, GPU,
+  persistence, host mounts, and OS automation are explicit, scoped, revocable, and recorded.
 - **Forkable trajectories:** the same run can be scrubbed, audited, branched, and exported.
 
 ## Client / Server Shape
@@ -99,7 +100,7 @@ flowchart TB
   subgraph Client["Client side"]
     CLI["CLI / Python SDK"]
     OP["Operator<br/>agent loop + model adapter"]
-    CP["Control Panel<br/>human supervise/approve"]
+    CP["Control Panel<br/>human supervise/configure"]
   end
 
   subgraph Control["Control Server / Control Plane"]
@@ -150,11 +151,11 @@ with shinken.connect() as env:
     run = env.save("search-demo.skn")           # replay/debug/train later
 ```
 
-Risky work should be just as explicit:
+Boundary-crossing capabilities should be just as explicit:
 
 ```python
 with shinken.connect() as env:
-    env.unlock("net.egress", scope="github.com")  # prompts or uses policy
+    env.unlock("net.egress", scope="github.com")  # provisioned capability, recorded in replay
     env.run_task("open the project repo and file a bug")
 ```
 
@@ -170,9 +171,10 @@ milestones that make them real.
 
 ## What Works Today
 
-**M0 is implemented:** schema scaffold, Rust `shinkend`, Python SDK/CLI, and a Linux Docker image
-skeleton. M0 proves the ACI v0 handshake and basic query path. Actions, observations, replay,
-permission gating, eval, and model adapters are the next Phase-0 milestones.
+**M1/M2 is underway:** schema scaffold, Rust `shinkend`, Python SDK/CLI, a Linux Docker image
+skeleton, pointer/keyboard actions, screenshots, an OSWorld shim, and a minimal `.skn` replay
+recorder exist. A11y observation, sandbox capability management, eval, real checkpoint/restore,
+and model adapters are the next Phase-0 milestones.
 
 ```bash
 # 1) run the Guest Runtime
@@ -194,8 +196,9 @@ print(env.capabilities)
 env.close()
 ```
 
-Expected today: connect, print platform/RTT/screen/capabilities. Not expected yet: real clicks,
-screenshots, a11y trees, `.skn` replay, or permission approvals.
+Expected today: connect, print platform/RTT/screen/capabilities, run basic pointer/keyboard actions,
+capture screenshots, and save a minimal `.skn` replay. Not expected yet: a11y trees, sandbox
+capability UI, eval, real checkpoint/restore, or cloud fork.
 
 ## Roadmap
 
@@ -205,7 +208,7 @@ flowchart LR
   SA --> M1["M1<br/>act + observe"]
   M1 --> M2["M2<br/>.skn record + replay"]
   M2 --> M3["M3<br/>agent completes task"]
-  M3 --> M4["M4<br/>permission gate + tiny eval"]
+  M3 --> M4["M4<br/>capability config + tiny eval"]
   M4 --> P1["Phase 1+<br/>fork tier + streaming + panel"]
 ```
 

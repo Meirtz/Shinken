@@ -16,11 +16,11 @@ The versioned protocol plus typed action/observation schema that every agent use
 
 ### Action Gateway
 
-The single choke point in the *Control Plane* through which every privileged action passes (**D9**). Pipeline: tenant-auth → token-bucket / weighted-fair-queue rate-limit → combined budget → *Cedar* policy decision → dispatch. Centralizing this makes auth, rate-limiting, and policy one auditable surface instead of scattered checks. Aligns with the generic *tool_runner boundary*.
+The single choke point in the *Control Plane* for session lifecycle, budgets, boundary capabilities, and dispatch (**D9**). Pipeline: tenant-auth → token-bucket / weighted-fair-queue rate-limit → combined budget → *Cedar* capability decision → dispatch. Centralizing this makes auth, rate-limiting, capability state, and replay one auditable surface instead of scattered checks.
 
 ### Capability
 
-A typed permission class — the unit the *Permission Panel* grants or denies (**D6**). Shinken defines **8 classes**: `net.egress`, `fs.scope`, `clipboard`, `gpu`, `install.privileged/sudo` (the headline "unlock"), `persistence`, `credentials`, `peripheral`. Each request is evaluated against **4 risk tiers** — Auto / Notify / Ask / Block — and is *taint-aware* (see *taint-tracking*).
+A typed sandbox power — the unit the *Capability Manager* grants, narrows, revokes, and records (**D6**). Shinken defines **8 boundary/entitlement classes**: `net.egress`, `fs.scope` / host mounts, `clipboard`, `gpu`, `install.privileged/sudo`, `persistence`, `credentials`, `peripheral` / OS automation. Ordinary in-sandbox actions run inside the provisioned envelope; boundary capabilities are scoped and *taint-aware* (see *taint-tracking*).
 
 ### CDP (Chrome DevTools Protocol)
 
@@ -28,7 +28,7 @@ The browser automation/inspection protocol used to extract the DOM accessibility
 
 ### Cedar
 
-The declarative policy language/engine that forms layer 1 of Shinken's 3-layer permission model (**D6**). Chosen over OPA/Rego because Cedar policies are formally verifiable (the policy set can be analyzed by tooling) and evaluate sub-millisecond. Cedar renders the *decision* ("is this action allowed?"); enforcement happens below it in the *ocap/caretaker* handle layer and the OS layer. References: [Cedar policy syntax](https://docs.cedarpolicy.com/policies/syntax-policy.html), [AWS Cedar analysis tooling](https://aws.amazon.com/blogs/opensource/introducing-cedar-analysis-open-source-tools-for-verifying-authorization-policies/).
+The declarative policy language/engine that forms layer 1 of Shinken's 3-layer capability model (**D6**). Chosen over OPA/Rego because Cedar policies are formally verifiable (the policy set can be analyzed by tooling) and evaluate sub-millisecond. Cedar renders the *decision* ("may this Sandbox have this capability?"); enforcement happens below it in the *ocap/caretaker* handle layer and the OS/substrate layer. References: [Cedar policy syntax](https://docs.cedarpolicy.com/policies/syntax-policy.html), [AWS Cedar analysis tooling](https://aws.amazon.com/blogs/opensource/introducing-cedar-analysis-open-source-tools-for-verifying-authorization-policies/).
 
 ### Confidential Containers
 
@@ -40,7 +40,7 @@ The server-side orchestration layer (**D9**). Components: the Sandbox *Fleet Man
 
 ### Control Panel
 
-The human-facing web UI: live structured + on-demand video view, *Permission Panel* approvals, replay scrubbing/branching, cross-session search, and takeover. It is a category-defining surface for Shinken and the optional commercial layer in the open-core split (**D12**). Do not confuse with the *Control Plane*.
+The human-facing web UI: live structured + on-demand video view, *Capability Manager*, replay scrubbing/branching, cross-session search, and takeover. It is a category-defining surface for Shinken and the optional commercial layer in the open-core split (**D12**). Do not confuse with the *Control Plane*.
 
 ### CoW (copy-on-write)
 
@@ -76,7 +76,7 @@ The OSS Kubernetes SIG **agent-sandbox** CRD: the emerging standard pattern for 
 
 ### MIG (Multi-Instance GPU)
 
-An NVIDIA hardware partitioning feature (up to 7 slices on H100) that splits one physical GPU into isolated instances with dedicated memory and engines. In Shinken, **MIG-backed** is one of the two GPU pools (**D11**): the isolation-sensitive/trusted pool (paired with *Confidential Containers* / *GPU-TEE*), and the per-session GPU *Capability* the *Permission Panel* hands out. **Not used for the encode tier** (no MIG for *NVENC*). Reference: [nvidia.com Multi-Instance GPU](https://www.nvidia.com/en-us/technologies/multi-instance-gpu/), [MIG user guide](https://docs.nvidia.com/datacenter/tesla/mig-user-guide/latest/).
+An NVIDIA hardware partitioning feature (up to 7 slices on H100) that splits one physical GPU into isolated instances with dedicated memory and engines. In Shinken, **MIG-backed** is one of the two GPU pools (**D11**): the isolation-sensitive/trusted pool (paired with *Confidential Containers* / *GPU-TEE*), and the per-session GPU *Capability* the *Capability Manager* provisions. **Not used for the encode tier** (no MIG for *NVENC*). Reference: [nvidia.com Multi-Instance GPU](https://www.nvidia.com/en-us/technologies/multi-instance-gpu/), [MIG user guide](https://docs.nvidia.com/datacenter/tesla/mig-user-guide/latest/).
 
 ### NICE DCV
 
@@ -106,9 +106,9 @@ The client-side adapter that drives a *Sandbox* for a given agent/model, and the
 
 Eval metrics for the *Control Plane* eval layer (**D7**). **pass@k** — the probability that at least one of k attempts succeeds (a capability ceiling). **pass^k** — the probability that *all* k attempts succeed (a reliability floor). Shinken computes both over **N≥5 *CoW*-forked replicas per task** with confidence intervals; the forking is what makes high-N statistics cheap.
 
-### Permission Panel
+### Capability Manager
 
-The human-facing *Capability*-unlock/approval UI inside the *Control Panel* (**D6**). It surfaces a live human-in-the-loop approval card with a Run / Escalate / Deny shape, escalation-on-failure by default, and source-attributed rules (which rule/scope produced the decision). Approvals and denials are first-class *replay* events. This is one of Shinken's four headline features ("unlock advanced image features").
+The human/operator UI inside the *Control Panel* for provisioning Sandbox powers (**D6**). It grants, narrows, revokes, and audits boundary capabilities such as network egress, credentials, GPU, persistence, host filesystem scopes, clipboard, and OS automation entitlements. Capability changes are first-class *replay* events. This is one of Shinken's headline features: agents can use a real computer, but the boundary is explicit and observable.
 
 ### Provider — see *Substrate / Provider*
 
@@ -130,7 +130,7 @@ A WebRTC media topology that encodes a stream once and forwards it to many subsc
 
 ### Shinken
 
-The platform/product: an AI-native, cross-platform **sandbox runtime + control plane + control panel** for computer-use agents — a production-grade, streaming-first successor to OSWorld. North star: **one** platform serving both production agent deployment *and* evaluation, layered. It boots *Sandboxes*, drives them through one typed *ACI*, streams live, records a scrubbable/forkable event-sourced *replay*, and gates privileged actions through a *Permission Panel*. Shinken is a public, vendor-neutral open-source project; NVIDIA GPUs are a supported acceleration *option*, not a dependency.
+The platform/product: an AI-native, cross-platform **sandbox runtime + control plane + control panel** for computer-use agents — a production-grade, streaming-first successor to OSWorld. North star: **one** platform serving both production agent deployment *and* evaluation, layered. It boots *Sandboxes*, drives them through one typed *ACI*, streams live, records a scrubbable/forkable event-sourced *replay*, and provisions sandbox capabilities through a *Capability Manager*. Shinken is a public, vendor-neutral open-source project; NVIDIA GPUs are a supported acceleration *option*, not a dependency.
 
 ### `.skn` bundle
 
@@ -142,11 +142,11 @@ A pluggable virtualization backend under a *Sandbox*. Candidates: Firecracker (h
 
 ### taint-tracking
 
-Propagating an "untrusted-derived" label through the dataflow so that action parameters built from untrusted content (e.g. web text → a shell command) get **promoted to a stricter risk tier** in the *Permission Panel* (**D6**). It is the mitigation for the prompt-injection → exfiltration kill chain. See the [Threat Model](08-threat-model.md) for the full chain and rules.
+Propagating an "untrusted-derived" label through the dataflow so that boundary capability requests built from untrusted content (e.g. web text → external egress with credentials) get stricter handling in the *Capability Manager* (**D6**). It is the mitigation for the prompt-injection → exfiltration kill chain. See the [Threat Model](08-threat-model.md) for the full chain and rules.
 
 ### tool_runner boundary
 
-The generic policy/execution boundary pattern Shinken adopts: the agent loop runs *outside* the sandbox, and tool calls route through a controlled API that enforces the egress allowlist and capability policy *before* executing (**D2**, **D6**). Code-as-action (`exec`/`bash`/`edit`) is a separate, off-by-default *Capability* class behind this boundary. It is the same idea behind out-of-sandbox egress proxies in agentic-coding tools — described here generically, not as any vendor's product.
+The generic boundary pattern Shinken adopts: the agent loop runs *outside* the sandbox where useful, and boundary-crossing tool calls route through a controlled API that enforces the egress allowlist and capability policy (**D2**, **D6**). Code-as-action (`exec`/`bash`/`edit`) can be an ordinary in-sandbox power for disposable guests, but host filesystem, credentials, external egress, persistence, and production side effects remain boundary capabilities.
 
 ### vGPU
 
@@ -170,7 +170,7 @@ The standard HTTP-based WebRTC signaling protocols. **WHIP** (WebRTC-HTTP Ingest
 | accessibility tree, SoM, CDP, observation rungs | D3 |
 | control/event/media planes, NVENC, SFU, WHIP/WHEP, virtio-vsock, NICE DCV | D4 |
 | `.skn` bundle, fork-from-snapshot (as replay), CoW | D5 |
-| Capability, Permission Panel, Cedar, ocap/caretaker, taint-tracking, tool_runner boundary | D6 |
+| Capability, Capability Manager, Cedar, ocap/caretaker, taint-tracking, boundary controls | D6 |
 | pass@k / pass^k, OSWorld / OSWorld-Verified eval | D7 |
 | Action Gateway, Fleet Manager, Control Plane, Session timers | D9 |
 | Substrate/Provider, fork-from-snapshot, kubernetes-sigs/agent-sandbox, Guest Runtime (cross-OS) | D1, D10 |

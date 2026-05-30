@@ -25,7 +25,7 @@ reconciles to decisions **D2** (actions), **D3** (observation), **D5** (replay),
 5. **Progressive disclosure.** Simple by default (`observe()` returns structure); power on demand (`observe(pixels=True)`, `fork`, `unlock`).
 6. **Same object, local or remote, any OS.** `connect()` local, `connect(id)` cloud — identical surface.
 7. **The agent loop is one call** (`drive`), but `observe`/`act` are always exposed for control.
-8. **Safe by default, powerful on unlock.** Dangerous capabilities are gated, not forbidden (`unlock`).
+8. **Powerful in the Sandbox, explicit at the boundary.** The guest is allowed to do real work; boundary capabilities are provisioned, scoped, and replayed (`unlock`).
 
 ---
 
@@ -62,8 +62,8 @@ out = env.drive(shinken.agent("claude-opus-4-8"), task="Make every .txt in ~/doc
 # 7) replay is free — the live event stream IS the recording
 env.replay.save("run.skn")
 
-# 8) capability-unlock — dangerous features are unlocked, not forbidden
-with env.unlock("install.privileged", reason="pip install pandas"):
+# 8) capability provisioning — boundary powers are explicit and replayed
+with env.unlock("net.egress", scope="pypi.org", reason="install pandas"):
     env.run("pip install pandas")
 
 env.close()
@@ -169,9 +169,10 @@ done?, info)`; `observe()`; `save()/restore()/fork()`; `events()` stream; `close
 Observation`; `execute(actions: Action[]) -> ExecuteResult{status, executed_target_logical_px,
 error?}`; `supported() -> {verbs, targets, observation_types}`.
 
-**Control + permission channel:** a `needs_approval{capability, token}` event (generalizing OpenAI
-`pending_safety_checks` and LangGraph `interrupt()`) pauses the run until the controller (human panel
-or policy) resolves it — recorded as a `permission` event in `.skn`.
+**Control + capability channel:** a `capability_required{capability, scope, token}` event pauses the
+run only when it needs a new boundary power (external egress, credential broker, host mount, GPU,
+persistence, OS entitlement). The controller or policy resolves it, and the decision is recorded as
+a capability/permission event in `.skn`. Ordinary in-sandbox actions do not prompt.
 
 **Four thin adapters, generated from one IDL:**
 1. **Gym/Gymnasium shim** — `reset()->(obs,info)`, `step()->(obs,reward,terminated,truncated,info)` for RL users.
@@ -197,7 +198,7 @@ client uses only advertised capabilities. The ACI is semver-versioned; adapters 
 | Observation | screenshot + screen video + focused-app capture + a11y track | SoM/OmniParser service, multi-OS a11y, hardware NVENC streaming pipeline |
 | Replay | `.skn` event log + state snapshots; qcow2-eval (revert only) | video sidecar, mid-execution branching (fork tier), agent-core determinism |
 | Harness | async Env+Operator core; Gym shim; OSWorld shim; 1 vendor adapter | MCP server, full adapter set, RL gym at scale |
-| API | `connect/observe/act/run/save/restore/close` + handshake | `fork/drive/unlock/events/video`, cloud `connect(id)` |
+| API | `connect/observe/act/run/save/restore/close` + handshake | `fork/drive/unlock(capability)/events/video`, cloud `connect(id)` |
 
 This spec is the contract M1–M4 implement against; changes here update the relevant ADR in
 [05-tech-decisions.md](05-tech-decisions.md). Evidence + sources: [notes/p0-deepdive.md](../notes/p0-deepdive.md).

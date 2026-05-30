@@ -4,7 +4,7 @@
 >
 > Date of survey: **2026-05-30.**
 
-Shinken is an AI-native, cross-platform sandbox **runtime + control plane + control panel** for computer-use agents: a streaming-first successor to OSWorld that boots isolated desktops, drives them through one typed Agent-Computer Interface (ACI), streams operations live, records them as a scrubbable/forkable event-sourced replay, gates privileged actions behind a capability-unlock permission panel, and exposes an eval layer on the same runtime. The question this document answers is: **who else is in this space, what have they actually shipped, and where exactly does Shinken match, beat, or differentiate?**
+Shinken is an AI-native, cross-platform sandbox **runtime + control plane + control panel** for computer-use agents: a streaming-first successor to OSWorld that boots isolated desktops, drives them through one typed Agent-Computer Interface (ACI), streams operations live, records them as a scrubbable/forkable event-sourced replay, provisions sandbox capabilities behind an explicit Capability Manager, and exposes an eval layer on the same runtime. The question this document answers is: **who else is in this space, what have they actually shipped, and where exactly does Shinken match, beat, or differentiate?**
 
 ---
 
@@ -37,11 +37,11 @@ The single most useful map of this market is that it is **four non-overlapping c
 | Camp | What it owns | What it lacks vs. Shinken |
 |---|---|---|
 | **Cross-platform runtimes** | One SDK, any OS, cloud-or-local, model-agnostic loop, MCP everywhere (trycua/cua) | Pull-based screenshot observation, coarse permissions, no event-sourced replay, no fast snapshot-restore |
-| **Linux fast-sandboxes** | Sub-second/sub-ms CoW fork, microVM density, warm pools (Morph, E2B, Daytona) | Linux-only, browser/desktop layer is thin or BYO, no replay timeline, no permission panel, **no GPU passthrough on Firecracker** |
+| **Linux fast-sandboxes** | Sub-second/sub-ms CoW fork, microVM density, warm pools (Morph, E2B, Daytona) | Linux-only, browser/desktop layer is thin or BYO, no replay timeline, no capability manager, **no GPU passthrough on Firecracker** |
 | **Browser-only SaaS** | Sub-second provisioning, embeddable WebRTC live view, session record/replay, scoped tokens | Chromium-only — no native desktop apps, installers, OS dialogs, multi-window, no macOS |
 | **Models + evals** | The action grammars (Anthropic/OpenAI), grounding (OmniParser/UI-TARS), the eval contract (HUD) and benchmark (OSWorld-Verified) | These are *clients and graders* of a runtime, not a runtime; each is one layer of the stack Shinken integrates |
 
-The strategic read (reconciled to canon §3): **MATCH** the fork/branch leaders and the model ecosystem and the eval bar; **BEAT** everyone on streaming/bandwidth (every competitor polls screenshots or pushes raw VNC pixels); **DIFFERENTIATE** on event-sourced replay/branching, the capability-unlock permission panel, full cross-platform *desktop* (not browser-only), and an optional GPU-accelerated tier.
+The strategic read (reconciled to canon §3): **MATCH** the fork/branch leaders and the model ecosystem and the eval bar; **BEAT** everyone on streaming/bandwidth (every competitor polls screenshots or pushes raw VNC pixels); **DIFFERENTIATE** on event-sourced replay/branching, sandbox capability/entitlement management, full cross-platform *desktop* (not browser-only), and an optional GPU-accelerated tier.
 
 ---
 
@@ -97,13 +97,13 @@ Each capsule: **What** it is · **Strengths** · **Weaknesses** · **Lesson** (w
 
 **Weaknesses.** Model feedback is **screenshot-per-step, not streaming** — a hardcoded 2.0 s settle delay plus a synchronous ImageMagick resize before every capture. noVNC streaming is stock x11vnc + websockify with **no tuning** (no adaptive quality, region encoding, H.264, or bandwidth negotiation) and re-sends full frames. Two parallel pixel paths (screenshots for the model, VNC for humans) double the capture cost. No durable structured replay in the canonical demo.
 
-**Lesson.** **MATCH** (non-negotiable): the exact tool schema, version/beta-flag grammar, coordinate space, and the resize math (so the pixels sent equal the pixels the model reasons over) — via a version-pinned `AnthropicComputerAdapter` (D2). **BEAT** the screenshot-per-step model and the stock-VNC wire (D3/D4 — this is literally what Shinken exists to win). ADD what Anthropic lacks: durable event-sourced replay (D5) and an in-loop permission gate (D6). AVOID leaving `~/.ssh`/`~/.aws` readable by default (a Claude Code footgun) — deny credential dirs by default.
+**Lesson.** **MATCH** (non-negotiable): the exact tool schema, version/beta-flag grammar, coordinate space, and the resize math (so the pixels sent equal the pixels the model reasons over) — via a version-pinned `AnthropicComputerAdapter` (D2). **BEAT** the screenshot-per-step model and the stock-VNC wire (D3/D4 — this is literally what Shinken exists to win). ADD what Anthropic lacks: durable event-sourced replay (D5) and explicit sandbox capability/boundary management (D6). AVOID leaving `~/.ssh`/`~/.aws` readable by default (a Claude Code footgun) — deny credential dirs by default.
 
 ### 2.6 OpenAI Operator + computer-use-preview (CUA)
 
 **What.** OpenAI's computer-use offering: Operator (consumer agent, later folded into ChatGPT Agent mode) driving a cloud-hosted remote browser in an OpenAI VM, and `computer-use-preview` (the CUA model) exposed via the Responses API `computer` tool — `computer_call` / `computer_call_output`, an `actions[]` array + `call_id`, and a `pending_safety_checks → acknowledged_safety_checks` approval seam. Docs: <https://developers.openai.com/api/docs/guides/tools-computer-use>, <https://openai.com/index/operator-system-card/>.
 
-**Strengths.** Together with Anthropic, it defines the small stable action vocabulary Shinken's ACI must speak natively, the **batched `actions[]` per turn** pattern (cuts round-trips), and a machine-readable permission gate (`pending_safety_checks`) plus a takeover/watch mode so secrets never enter the observation stream. A prompt-injection screenshot classifier reports 99% recall / 98.4% accuracy (vendor-published, unverified).
+**Strengths.** Together with Anthropic, it defines the small stable action vocabulary Shinken's ACI must speak natively, the **batched `actions[]` per turn** pattern (cuts round-trips), and a machine-readable safety-check seam (`pending_safety_checks`) plus a takeover/watch mode so secrets never enter the observation stream. A prompt-injection screenshot classifier reports 99% recall / 98.4% accuracy (vendor-published, unverified).
 
 **Weaknesses.** Pixel-coordinate clicking is **brittle** and resolution-sensitive (docs prescribe exact resolutions + coordinate clamping). Explicitly preview/experimental — not for production; reports of 3+ minute responses under load. Bandwidth-heavy: a fresh full-resolution PNG every turn (up to ~10.24M px), no native frame diffing. The safety acknowledgement is under-implemented in tooling — the official sample errors with `unsupported_safety_acknowledgement`.
 
@@ -167,7 +167,7 @@ Each capsule: **What** it is · **Strengths** · **Weaknesses** · **Lesson** (w
 
 **Weaknesses.** Selkies is **Linux/X11 only** today (no Wayland/Windows/macOS) — fails the cross-platform mandate alone. Sunshine is **not browser-deliverable** (needs a native Moonlight client). Guacamole transports images/instructions over TCP → higher latency, WebSocket head-of-line blocking, no GPU encode. KasmVNC's HW encode is **VAAPI-only (no NVENC)** and uses TCP/WebSocket RFB.
 
-**Lesson.** ADOPT the Selkies GStreamer→NVENC→webrtcbin model as the Linux streaming reference and likely starting point; ADAPT Sunshine's zero-copy capture abstraction across guests; ADAPT KasmVNC's per-rectangle adaptive quality + content heuristic but pair it with NVENC; ADAPT Guacamole's stateless-web-tier scaling pattern (and heed its per-session-RAM × cores × connections failure mode). KEEP noVNC/websockify only as a universal low-fidelity fallback viewer. **BUILD** (don't adopt) the differentiators on top: the structured event-replay/fork timeline, the permission panel, and the ACI (D4/D5/D6).
+**Lesson.** ADOPT the Selkies GStreamer→NVENC→webrtcbin model as the Linux streaming reference and likely starting point; ADAPT Sunshine's zero-copy capture abstraction across guests; ADAPT KasmVNC's per-rectangle adaptive quality + content heuristic but pair it with NVENC; ADAPT Guacamole's stateless-web-tier scaling pattern (and heed its per-session-RAM × cores × connections failure mode). KEEP noVNC/websockify only as a universal low-fidelity fallback viewer. **BUILD** (don't adopt) the differentiators on top: the structured event-replay/fork timeline, the Capability Manager, and the ACI (D4/D5/D6).
 
 ### 2.13 The rest of the field (briefly)
 
@@ -244,11 +244,11 @@ For each Shinken pillar, the public technology menu and the choice reconciled to
 
 | Layer | Option | Choice |
 |---|---|---|
-| Decision | **Cedar** (Lean-verified, SMT-backed, ~sub-ms, statically analyzable) vs. OPA/Rego (~1-10 ms, error-prone) | **Cedar** — the unlock panel is a privilege-escalation surface; provable grants matter most (<https://docs.cedarpolicy.com/policies/syntax-policy.html>, <https://aws.amazon.com/blogs/opensource/introducing-cedar-analysis-open-source-tools-for-verifying-authorization-policies/>) |
+| Decision | **Cedar** (Lean-verified, SMT-backed, ~sub-ms, statically analyzable) vs. OPA/Rego (~1-10 ms, error-prone) | **Cedar** — sandbox capability provisioning is a privilege-escalation surface; provable grants matter most (<https://docs.cedarpolicy.com/policies/syntax-policy.html>, <https://aws.amazon.com/blogs/opensource/introducing-cedar-analysis-open-source-tools-for-verifying-authorization-policies/>) |
 | Handle | ocap caretaker/membrane (O(1) instant revoke) | Live, attenuable, instantly-revocable switch — Cedar is *not* the revoke mechanism |
-| OS enforcement | Linux: bubblewrap + seccomp(network-gate) + Landlock + cgroups + out-of-VM egress proxy. macOS: Seatbelt + TCC. Windows: restricted token + per-workspace capability SID | Per-OS, degrade honestly (Codex/Claude Code patterns) |
+| OS enforcement | Linux: bubblewrap + seccomp(network-gate) + Landlock + cgroups + out-of-VM egress proxy. macOS: Seatbelt + TCC entitlement preflight. Windows: restricted token + per-workspace capability SID | Per-OS, degrade honestly (Codex/Claude Code patterns) |
 
-**Choice (D6):** 3-layer capability-unlock. **8 capability classes** (`net.egress, fs.scope, clipboard, gpu, install.privileged/sudo` [the "unlock"], `persistence, credentials, peripheral`), **4 risk tiers** (Auto/Notify/Ask/Block), taint-aware (untrusted input promotes an action up a tier). Live HITL approval card with escalation-on-failure as the default interaction model. Egress = forced out-of-VM proxy (deny-by-default, scoped-domain, anti-domain-fronting, optional TLS-MITM, fail-closed); secrets brokered via Vault/KMS + proxy header-injection — the model never sees plaintext. Approvals/denials are first-class replay events. See [08 Threat Model](08-threat-model.md) and [`notes/permissions.md`](../notes/permissions.md).
+**Choice (D6):** 3-layer Sandbox Capability Manager. **8 boundary/entitlement classes** (`net.egress, fs.scope, clipboard, gpu, install.privileged/sudo`, `persistence, credentials, peripheral/OS automation`), scoped and taint-aware. Ordinary in-sandbox actions run without prompts; boundary powers are granted, narrowed, revoked, and replayed. Egress = forced out-of-VM proxy (deny-by-default, scoped-domain, anti-domain-fronting, optional TLS-MITM, fail-closed); secrets brokered via Vault/KMS + proxy header-injection — the model never sees plaintext. See [08 Threat Model](08-threat-model.md) and [`notes/permissions.md`](../notes/permissions.md).
 
 ### 4.5 ACI — Agent-Computer Interface (D2/D3)
 

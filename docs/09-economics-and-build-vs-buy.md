@@ -21,7 +21,7 @@ host density a function of *private dirty RSS*, not snapshot size, so hundreds o
 share a single warm parent. On build-vs-buy the call is to **buy the substrate, broker, and pixel
 codec as commodities** — they are well-served by mature open-source and public products — and **build
 only the layers nobody ships**: the typed ACI, the structured-first streaming protocol, the
-event-sourced forkable replay, the capability-unlock permission panel, and the eval layer. Every
+event-sourced forkable replay, the Sandbox Capability Manager, and the eval layer. Every
 speed, density, and cost number below that we did not generate ourselves is marked
 **(vendor-published, unverified)**. Section 6 is the plan to retire those labels.
 
@@ -240,7 +240,7 @@ macOS.
 
 Why not just rent E2B / Morph / Daytona wholesale? Because they are Linux-only sandboxes that expose
 snapshot/restore as a low-level API, not as a forkable replay *product*, and they leave the
-cross-platform story (Windows/macOS/GPU), the structured streaming, the permission panel, and the
+cross-platform story (Windows/macOS/GPU), the structured streaming, the Capability Manager, and the
 replay timeline entirely to the consumer. Renting them would buy table stakes and forfeit every
 differentiator. The honest counter-argument: operating an in-house microVM fleet is real, ongoing SRE
 cost, and a small team should start by *renting* to validate product-market fit before committing to
@@ -296,7 +296,7 @@ by encoder throughput, not licensing.
 The substrate, broker, and (optionally) the pixel codec are commodities. **The product is the layers
 none of the options above ship:** the typed versioned **ACI** (**D2**), the **structured-first
 streaming protocol** and tier-escalation logic (**D3**/**D4**), the **event-sourced forkable replay**
-and `.skn` bundle (**D5**), the **capability-unlock permission panel** (**D6**), and the **eval
+and `.skn` bundle (**D5**), the **Sandbox Capability Manager** (**D6**), and the **eval
 layer** on the same runtime (**D7**). Every buy-vs-build above resolves to "buy the substrate so we
 can spend our engineering on these."
 

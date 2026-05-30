@@ -5,7 +5,7 @@
 This is the concrete build plan for **Phase 0** from the [roadmap](06-roadmap.md): a **local,
 single-Sandbox proof-of-concept on Linux** that proves the spine end-to-end — an agent driving a
 real desktop app through the **ACI**, observed **structured-first**, recorded as a **`.skn`
-replay**, with a **permission gate** in the loop — while empirically de-risking the one assumption
+replay**, with explicit **sandbox capabilities / entitlements** — while empirically de-risking the one assumption
 the whole thesis rests on (accessibility-tree coverage, D3). It deliberately builds the *thinnest
 vertical slice* of [D1–D12](05-tech-decisions.md) and defers everything that doesn't serve that
 proof. No cloud, no fork tier, no GPU, no Windows/macOS, no SFU, no Cedar engine yet.
@@ -26,7 +26,7 @@ and scrubbed; and we have **first-party numbers** for a11y coverage and observat
 | E1 | An agent completes a scripted ≥5-step task in a real Linux GUI app (e.g. a LibreOffice or file-manager task) entirely through the ACI, no direct host access. | The ACI + Guest Runtime spine works. |
 | E2 | The session is recorded as a `.skn` v0 bundle and replays in a scrubber (CLI minimum, web stretch) with synchronized action + observation timeline. | Replay (D5) at v0. |
 | E3 | Default observation is the **normalized a11y-tree diff**; pixels are fetched only on demand. Measured: per-step observation bytes (structured) and token estimate vs a screenshot baseline. | Structured-first (D3) + bandwidth thesis, with real data. |
-| E4 | At least one action is **gated by a permission check** (allow/ask/deny) and the decision is a first-class `.skn` event. | Permission spine (D6) at v0. |
+| E4 | The run declares its sandbox capability envelope (for example screenshot/input automation, local filesystem scope, optional egress) and records any boundary grant/denial as a first-class `.skn` event. | Capability/entitlement spine (D6) at v0. |
 | E5 | **Spike A (a11y coverage)** has run against the target app set and produced a coverage + diff-bandwidth report meeting (or honestly failing) its threshold. | The load-bearing D3 assumption is measured, not assumed. |
 | E6 | An off-the-shelf model drives the Sandbox unchanged via one adapter (Anthropic *or* OpenAI computer-use). | The adapter strategy (D2) works against a real provider. |
 
@@ -55,7 +55,7 @@ transport**) once validated.
 | **SDK / Operator** | **Python** (`sdk/python/`) + thin CLI | The agent/model ecosystem is Python-first; adapters for Anthropic/OpenAI computer-use are easiest here (D2). | Generate **TypeScript** SDK from the same schema (D8); web Operator. |
 | **Substrate (Sandbox)** | **Docker** container: Xvfb + a lightweight WM (Openbox/XFCE) + target apps + `shinkend` | Simplest local isolated Linux desktop; mirrors the proven E2B / Anthropic-demo image pattern; runs on the dev machine via Docker. | OSS **`kubernetes-sigs/agent-sandbox`** CRD + Firecracker/QEMU-microvm fork tier (D1) in Phase 1. |
 | **Observation** | **AT-SPI** a11y tree → normalized `Element` diff (D3 rung 0) + on-demand screenshot (rung 2/3) | Validates the structured-first default on Linux where AT-SPI is richest. | SoM/OmniParser (rung 1), UIA/AX, CDP for browsers. |
-| **Permission** | Minimal: capability flags + allow/ask/deny check at the Action Gateway shim, decisions logged to `.skn` | Proves the *gate + audit* spine without the full engine. | Cedar decision + ocap caretaker + OS enforcement (D6) in Phase 1. |
+| **Capabilities** | Minimal: a capability descriptor for the local Sandbox plus boundary grant/deny events logged to `.skn` | Proves the *capability + audit* spine without turning every in-sandbox action into an approval. | Cedar decision + ocap caretaker + OS/TCC entitlement enforcement (D6) in Phase 1. |
 | **Replay viewer** | CLI scrubber (required) + minimal static web viewer (stretch) | Prove `.skn` is replayable; full Control-Panel UX later. | rrweb-player-style web panel, branching (D5) in Phase 1. |
 
 > Dev environment note: the primary dev machine is macOS, so the Linux Sandbox runs in Docker
@@ -96,9 +96,9 @@ For Phase-0, keep the mental model simple and explicit:
 
 - **Client side:** Python SDK, CLI, Operator loop, and the one model adapter. The client asks to
   observe and act; it does not own privileged authority.
-- **Phase-0 control shim:** a local Action Gateway shim that checks allow/ask/deny decisions and
-  writes the `.skn` event stream. This is deliberately small, but it preserves the future control
-  plane boundary.
+- **Phase-0 control shim:** a local Action Gateway shim that records the Sandbox capability envelope
+  and any boundary grant/deny events into the `.skn` event stream. This is deliberately small, but it
+  preserves the future control plane boundary.
 - **Guest server:** `shinkend`, running inside the Linux Sandbox. It executes ACI actions and
   captures observations. It does not make policy decisions.
 - **Guest OS / apps:** the desktop session, target GUI apps, AT-SPI/CDP sources, and screenshots.
@@ -124,19 +124,19 @@ sequenceDiagram
     S-->>C: pong / result
 
     Note over C,R: M1-M4 target: gateway shim becomes the local policy + replay boundary.
-    C->>G: act(Action)
-    G->>G: allow / ask / deny
+    C->>G: act(Action) within capability envelope
+    G->>G: check boundary capabilities if needed
     G->>S: dispatch validated action
     S->>A: execute input / capture state
     A-->>S: UI state
     S-->>G: ack + observation
     G-->>C: result + observation
-    G->>R: append action / observation / permission event
+    G->>R: append action / observation / capability event
 ```
 
 This split is intentionally the same split used later by the full architecture: the future Control
-Plane replaces the local Gateway shim, but the client still requests, the server still authorizes
-and records, and `shinkend` still only executes validated ACI.
+Plane replaces the local Gateway shim, but the client still requests, the server still provisions
+capabilities and records, and `shinkend` still only executes validated ACI.
 
 ---
 
@@ -153,7 +153,7 @@ timeline
     M1 : shinkend act+observe
     M2 : .skn record + replay
     M3 : agent completes a task
-    M4 : permission gate + tiny eval (EXIT)
+    M4 : capability descriptor + tiny eval (EXIT)
 ```
 
 ### M0 — Scaffold, schema, stack (foundation)
@@ -199,17 +199,18 @@ timeline
   the whole run is a single `.skn` bundle.
 - **Realizes:** D2 (adapters), D8 (Operator contract), and E1/E6.
 
-### M4 — permission gate + tiny eval (EXIT)
-- **Build:** the **Action Gateway shim** — a deny/ask/allow check in front of dispatch with a small
-  capability map (e.g. `net.egress`, `fs.scope`, `install.privileged`); risky verbs trigger `ask`
-  (CLI prompt in Phase-0), and every decision is a `permission` `.skn` event. A **tiny eval
+### M4 — capability descriptor + tiny eval (EXIT)
+- **Build:** the **Action Gateway shim** — a small capability map (e.g. `net.egress`, `fs.scope`,
+  `install.privileged`, `screenshot`, `input.automation`) recorded at session start; boundary grants
+  or denials become `permission` / `capability` `.skn` events. Ordinary in-sandbox GUI actions do not
+  require a prompt. A **tiny eval
   harness** (`eval/`): run the M3 task, then a **programmatic verifier** (inspect real app/file
   state) emits a 0/1 reward; run **N replicas** (sequential in Phase-0; fork in Phase-1) and report
   pass-rate.
-- **Acceptance:** a task with a risky step pauses for approval and records the decision; the eval
-  prints pass/fail with the verifier's evidence; the run replays with permission markers on the
-  timeline.
-- **Realizes:** D6 (gate + audit, v0), D7 (verifier-first eval, v0). Hits E2/E3/E4.
+- **Acceptance:** the run records the capability envelope and at least one boundary grant/deny event;
+  the eval prints pass/fail with the verifier's evidence; the run replays with capability markers on
+  the timeline.
+- **Realizes:** D6 (capability + audit, v0), D7 (verifier-first eval, v0). Hits E2/E3/E4.
 
 ---
 
