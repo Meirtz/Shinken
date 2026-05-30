@@ -5,6 +5,7 @@
 //! [`executor::Executor`]. Connections run a [`connection::Session`] state machine
 //! (handshake-first, optional dev-token auth). Listens on `$SHINKEND_ADDR`
 //! (default `127.0.0.1:8765`); a non-loopback bind requires `$SHINKEND_TOKEN`.
+//! `$SHINKEND_EXECUTOR` selects the action backend (`auto`, `x11_xtest`, `virtual`).
 
 mod connection;
 mod executor;
@@ -42,7 +43,7 @@ async fn main() -> Result<()> {
     }
 
     let listener = TcpListener::bind(&addr).await?;
-    let exec = executor::default_executor();
+    let exec = executor::default_executor()?;
     eprintln!(
         "shinkend v{} listening on ws://{addr} (platform: {}, backend: {}, auth: {})",
         env!("CARGO_PKG_VERSION"),

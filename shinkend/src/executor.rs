@@ -7,7 +7,7 @@
 //! for the Linux fork tier we control (see docs/11-aci-spec.md §3.1).
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{bail, ensure, Context, Result};
 use base64::engine::general_purpose::STANDARD as B64;
@@ -161,19 +161,68 @@ fn encode_png(rgb: &[u8], w: u32, h: u32) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-/// Pick the best available executor: X11 if a display is reachable, else virtual.
-pub fn default_executor() -> std::sync::Arc<dyn Executor> {
-    match X11Executor::connect() {
-        Ok(x) => {
+const EXECUTOR_ENV: &str = "SHINKEND_EXECUTOR";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BackendChoice {
+    Auto,
+    X11Xtest,
+    Virtual,
+}
+
+impl BackendChoice {
+    fn parse(value: &str) -> Result<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "" | "auto" => Ok(Self::Auto),
+            "x11_xtest" | "x11/xtest" | "xtest" | "x11" => Ok(Self::X11Xtest),
+            "virtual" => Ok(Self::Virtual),
+            other => bail!(
+                "unknown {EXECUTOR_ENV} value {other:?}; expected auto, x11_xtest, or virtual"
+            ),
+        }
+    }
+
+    fn from_env() -> Result<Self> {
+        match std::env::var(EXECUTOR_ENV) {
+            Ok(value) => Self::parse(&value),
+            Err(std::env::VarError::NotPresent) => Ok(Self::Auto),
+            Err(e) => bail!("invalid {EXECUTOR_ENV}: {e}"),
+        }
+    }
+}
+
+/// Pick the configured executor. `auto` preserves the Phase-0 behavior: X11 if a
+/// display is reachable, otherwise the virtual test backend.
+pub fn default_executor() -> Result<Arc<dyn Executor>> {
+    build_executor(BackendChoice::from_env()?)
+}
+
+fn build_executor(choice: BackendChoice) -> Result<Arc<dyn Executor>> {
+    match choice {
+        BackendChoice::Auto => match X11Executor::connect() {
+            Ok(x) => {
+                eprintln!(
+                    "shinkend: action backend = x11/xtest ({}x{})",
+                    x.width, x.height
+                );
+                Ok(Arc::new(x))
+            }
+            Err(e) => {
+                eprintln!("shinkend: no X11 display ({e}); action backend = virtual (no-op)");
+                Ok(Arc::new(VirtualExecutor::default()))
+            }
+        },
+        BackendChoice::X11Xtest => {
+            let x = X11Executor::connect().context("SHINKEND_EXECUTOR=x11_xtest")?;
             eprintln!(
                 "shinkend: action backend = x11/xtest ({}x{})",
                 x.width, x.height
             );
-            std::sync::Arc::new(x)
+            Ok(Arc::new(x))
         }
-        Err(e) => {
-            eprintln!("shinkend: no X11 display ({e}); action backend = virtual (no-op)");
-            std::sync::Arc::new(VirtualExecutor::default())
+        BackendChoice::Virtual => {
+            eprintln!("shinkend: action backend = virtual (configured)");
+            Ok(Arc::new(VirtualExecutor::default()))
         }
     }
 }
@@ -572,6 +621,31 @@ mod tests {
 
     fn spec(json: &str) -> ActionSpec {
         serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn backend_choice_parses_stable_ids() {
+        assert_eq!(BackendChoice::parse("").unwrap(), BackendChoice::Auto);
+        assert_eq!(BackendChoice::parse("auto").unwrap(), BackendChoice::Auto);
+        assert_eq!(
+            BackendChoice::parse("x11_xtest").unwrap(),
+            BackendChoice::X11Xtest
+        );
+        assert_eq!(
+            BackendChoice::parse("x11/xtest").unwrap(),
+            BackendChoice::X11Xtest
+        );
+        assert_eq!(
+            BackendChoice::parse("virtual").unwrap(),
+            BackendChoice::Virtual
+        );
+        assert!(BackendChoice::parse("python").is_err());
+    }
+
+    #[test]
+    fn explicit_virtual_backend_builds_without_display() {
+        let ex = build_executor(BackendChoice::Virtual).unwrap();
+        assert_eq!(ex.backend(), "virtual");
     }
 
     #[test]
