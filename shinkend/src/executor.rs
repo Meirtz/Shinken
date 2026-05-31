@@ -87,6 +87,11 @@ pub trait Executor: Send + Sync {
     fn execute(&self, action: &ActionSpec) -> Result<String>;
     /// A human label for the active backend.
     fn backend(&self) -> &'static str;
+    /// The display geometry `(width, height)` in px, for the `screen_size` query (#138).
+    /// Default suits a headless/no-display backend; X11 reports the real root size.
+    fn screen_size(&self) -> (u16, u16) {
+        (1280, 800)
+    }
     /// Capture the full screen as a PNG (M1b). Default: unsupported.
     fn screenshot(&self) -> Result<CapturedImage> {
         bail!("screenshot not supported by the {} backend", self.backend())
@@ -512,6 +517,10 @@ impl Executor for X11Executor {
         "x11/xtest"
     }
 
+    fn screen_size(&self) -> (u16, u16) {
+        (self.width, self.height) // real X11 root geometry (#138)
+    }
+
     fn screenshot(&self) -> Result<CapturedImage> {
         self.capture("screen", None)
     }
@@ -636,6 +645,11 @@ mod tests {
         assert_eq!(norm_to_px(0.5, 0.5, 800, 600).unwrap(), (400, 300));
         assert!(norm_to_px(1.5, 0.5, 800, 600).is_err()); // x > 1
         assert!(norm_to_px(0.5, -0.1, 800, 600).is_err()); // y < 0
+    }
+
+    #[test]
+    fn virtual_executor_reports_default_screen_size() {
+        assert_eq!(VirtualExecutor::default().screen_size(), (1280, 800));
     }
 
     #[test]

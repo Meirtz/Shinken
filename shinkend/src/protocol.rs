@@ -188,6 +188,11 @@ fn ok_result(call_id: &str, value: serde_json::Value) -> Message {
     }
 }
 
+/// Build a `screen_size` query result from real executor geometry (#138).
+pub fn screen_size_result(call_id: &str, w: u16, h: u16) -> Message {
+    ok_result(call_id, serde_json::json!({ "w": w, "h": h }))
+}
+
 fn err_result(call_id: &str, error: &str) -> Message {
     Message::Result {
         call_id: call_id.to_string(),
@@ -211,7 +216,8 @@ pub fn respond(msg: Message) -> Option<Message> {
         Message::Ping { t } => Some(Message::Pong { t }),
         Message::Query { call_id, q } => Some(match q.as_str() {
             "platform" => ok_result(&call_id, serde_json::json!(platform())),
-            // M0 stub: real capture (and true screen size) lands in M1 (#4).
+            // Fallback only — the live session answers screen_size from real executor
+            // geometry (connection::on_authed → screen_size_result, #138).
             "screen_size" => ok_result(&call_id, serde_json::json!({ "w": 1280, "h": 800 })),
             other => err_result(&call_id, &format!("unknown query: {other}")),
         }),

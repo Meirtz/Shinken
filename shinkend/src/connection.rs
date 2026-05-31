@@ -166,6 +166,11 @@ impl Session {
                     stream,
                 }
             }
+            // screen_size must report the real executor geometry, not a stub (#138)
+            Message::Query { call_id, q } if q == "screen_size" => {
+                let (w, h) = self.exec.screen_size();
+                Step::reply(&protocol::screen_size_result(&call_id, w, h))
+            }
             other => match protocol::respond(other) {
                 Some(r) => Step::reply(&r),
                 None => Step::silent(),
@@ -297,7 +302,33 @@ mod tests {
         )
     }
 
+    /// A minimal executor with a fixed geometry, to prove screen_size routes through it.
+    struct SizedExec(u16, u16);
+    impl Executor for SizedExec {
+        fn execute(&self, _action: &ActionSpec) -> anyhow::Result<String> {
+            Ok("ok".into())
+        }
+        fn backend(&self) -> &'static str {
+            "sized-test"
+        }
+        fn screen_size(&self) -> (u16, u16) {
+            (self.0, self.1)
+        }
+    }
+
     const HELLO: &str = r#"{"type":"hello","v":0,"client":{"name":"t","version":"0"}}"#;
+
+    #[test]
+    fn screen_size_reports_executor_geometry() {
+        let mut s = Session::new(None, Arc::new(SizedExec(640, 480)));
+        s.on_text(HELLO);
+        let reply = s
+            .on_text(r#"{"type":"query","call_id":"c1","q":"screen_size"}"#)
+            .reply
+            .unwrap();
+        // reflects the executor's geometry, not the 1280x800 stub (#138)
+        assert!(reply.contains("\"w\":640") && reply.contains("\"h\":480"));
+    }
 
     #[test]
     fn first_message_must_be_hello() {
