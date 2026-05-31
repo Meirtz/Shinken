@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import secrets
 import socket
 import struct
@@ -31,6 +32,18 @@ def _free_port(host: str = "127.0.0.1") -> int:
     return int(port)
 
 
+# Mask secret env values when rendering a command for an error/log (#153). Matches a
+# `KEY=VALUE` arg whose KEY ends in TOKEN/SECRET/PASSWORD/KEY (e.g. SHINKEND_TOKEN).
+_SECRET_ENV_RE = re.compile(r"^([A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|KEY))=.+$")
+
+
+def _redact_cmd(cmd: list[str]) -> str:
+    """Render a Docker command for error messages with secret env values masked (#153)
+    — e.g. ``SHINKEND_TOKEN=deadbeef`` → ``SHINKEND_TOKEN=***`` — so a failing invocation
+    never echoes the runtime token into an exception or log."""
+    return " ".join(_SECRET_ENV_RE.sub(r"\1=***", arg) for arg in cmd)
+
+
 def _run(cmd: list[str], timeout: float = 30.0) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=timeout)
@@ -38,7 +51,7 @@ def _run(cmd: list[str], timeout: float = 30.0) -> subprocess.CompletedProcess[s
         raise ProviderError(f"command not found: {cmd[0]}") from exc
     except subprocess.CalledProcessError as exc:
         stderr = exc.stderr.strip() or exc.stdout.strip()
-        raise ProviderError(f"{' '.join(cmd)} failed: {stderr}") from exc
+        raise ProviderError(f"{_redact_cmd(cmd)} failed: {stderr}") from exc
 
 
 class DockerLocalProvider(SandboxProvider):
@@ -94,6 +107,10 @@ class DockerLocalProvider(SandboxProvider):
             "-p",
             f"{self.host}:{port}:8765",
             "-e",
+            # Dev-only: the token is delivered via env, so it is readable by any process
+            # in the guest (and from /proc) — not a real boundary (#153). It is redacted
+            # from provider errors/logs; a faithful boundary needs fd/mounted-secret
+            # delivery plus the server-side Action Gateway (D6).
             f"SHINKEND_TOKEN={token}",
             "-e",
             f"SCREEN_GEOMETRY={spec.screen_geometry}",

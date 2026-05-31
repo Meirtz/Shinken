@@ -13,7 +13,8 @@ from shinken.providers import (
     SandboxSpec,
     UnsupportedProviderOperation,
 )
-from shinken.providers.docker import _parse_mem_usage
+from shinken.providers.base import ProviderError
+from shinken.providers.docker import _parse_mem_usage, _redact_cmd, _run
 
 
 def test_external_provider_connects_to_existing_runtime(mock_shinkend):
@@ -134,6 +135,28 @@ def test_docker_memory_parser():
     assert _parse_mem_usage("12.5MiB / 1GiB") == 13_107_200
     assert _parse_mem_usage("1.25GB / 2GB") == 1_250_000_000
     assert _parse_mem_usage("") is None
+
+
+def test_redact_cmd_masks_secret_env():
+    # #153: secret env values are masked when a command is rendered for an error/log
+    masked = _redact_cmd(["docker", "run", "-e", "SHINKEND_TOKEN=deadbeef", "img"])
+    assert "deadbeef" not in masked
+    assert "SHINKEND_TOKEN=***" in masked
+    # non-secret args are preserved verbatim
+    assert _redact_cmd(["SCREEN_GEOMETRY=1280x800x24"]) == "SCREEN_GEOMETRY=1280x800x24"
+
+
+def test_run_error_does_not_leak_token(monkeypatch):
+    # #153: a failing docker invocation must not echo the runtime token into the error
+    def boom(cmd, **_kwargs):
+        raise subprocess.CalledProcessError(1, cmd, output="", stderr="boom")
+
+    monkeypatch.setattr(subprocess, "run", boom)
+    with pytest.raises(ProviderError) as exc:
+        _run(["docker", "run", "-e", "SHINKEND_TOKEN=supersecret", "img"])
+    msg = str(exc.value)
+    assert "supersecret" not in msg
+    assert "SHINKEND_TOKEN=***" in msg
 
 
 def test_top_level_exports_provider_types():
