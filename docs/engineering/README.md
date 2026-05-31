@@ -16,6 +16,7 @@ verified**. It should stay aligned with the GitHub milestone and issues.
 - Release checklist: [`release-checklist.md`](release-checklist.md)
 - Milestone triage rules: [`milestone-triage.md`](milestone-triage.md)
 - Spike A — a11y/structured-observation coverage report: [`spike-a11y-coverage.md`](spike-a11y-coverage.md)
+- Spike — macOS sandbox automation readiness (entitlements + TCC): [`spike-macos-readiness.md`](spike-macos-readiness.md)
 
 ## v0.0.1 Meaning
 
