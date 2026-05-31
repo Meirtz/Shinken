@@ -12,9 +12,12 @@
 cross-platform **sandbox runtime + control plane + control panel** that boots real desktop/browser
 Sandboxes (Linux/Windows/macOS; Android on the roadmap), drives them through one typed
 **Agent-Computer Interface (ACI)**, layers screenshot observation with structured a11y/DOM/SoM
-signals, streams and supervises sessions live, records every operation as a **scrubbable,
-forkable, event-sourced replay**, provisions the **sandbox capabilities / OS entitlements** each run
-needs, and exposes an **eval layer** (OSWorld-Verified and friends) on the *same* runtime. The north
+signals, streams and supervises sessions live, makes every Sandbox **stateful and branchable** —
+name a runnable **checkpoint**, **fork** it into N live replicas from one golden state, reset
+instantly, and **resume** a suspended run — backed by a **scrubbable, event-sourced replay** that
+records every operation as the audit and training ledger, provisions the **sandbox capabilities /
+OS entitlements** each run needs, and exposes an **eval layer** (OSWorld-Verified and friends) on
+the *same* runtime. The north
 star is not a demo sandbox or benchmark harness; it is **one full CUA infrastructure layer serving
 production deployment, evaluation, and trajectory-data capture.** Design decisions are referenced
 as **D1–D12** and detailed in [05 Tech decisions](tech-decisions.md).
@@ -34,8 +37,9 @@ In 2026, frontier models can drive a desktop better than a median human on the s
 The pattern is consistent: **poll a screenshot, click a pixel, throw the trace away, and trust the sandbox boundary to be the entire product story.** That is fine for a paper. It is not fine for running thousands of concurrent agents, handing one a real desktop with `sudo`, credentials, network, or GPU, or generating defensible training data and eval scores. The bandwidth is wasteful, the observation is brittle (pixel coordinates drift with resolution and DPI), the capability model is binary, and the trajectory is unforkable.
 
 Shinken's thesis: **the bottleneck has moved from the model to the CUA infrastructure layer, and
-that layer needs to be rebuilt end-to-end** — runtime, capabilities, replay, eval, streaming,
-artifacts, fleet management, and supervision — not just replaced with a better polling loop.
+that layer needs to be rebuilt end-to-end** — stateful runtime (checkpoint/fork/resume),
+capabilities, eval, streaming, replay, artifacts, fleet management, and supervision — not just
+replaced with a better polling loop.
 
 ## 2. Why now (2026)
 
@@ -96,18 +100,21 @@ should all exist and be tested at local scale. Later milestones are not where th
 appears; they are where the same semantics become fast, forkable, multi-tenant, cross-substrate,
 cross-OS, and production-hardened.
 
-## 4. The four headline outcomes (as user value)
+## 4. The five headline outcomes (as user value)
 
-These map one-to-one to the design decisions; the *value* framing is what a user actually gets.
+These map to the design decisions; the *value* framing is what a user actually gets. The headline
+is the **stateful, branchable runtime** — checkpoint/fork/resume — with replay as the supporting
+audit and training ledger it branches from.
 
 | Outcome | What the user gets | Backed by |
 |---|---|---|
-| **1. Replay** | "Scrub any agent run like a video, branch from step N, and re-run a counterfactual — without re-running the whole task." A `.skn` bundle is a forkable, event-sourced trajectory, not a write-only log; the same bundle harvests as RL/SFT training data. | **D5** — `.skn` (Playwright-trace model), immutable checkpoint DAG, append-only event log; instant-reset and replay-branching are the *same* CoW-fork primitive (D1). |
-| **2. Sandbox capability manager** | "Give this Sandbox network egress, credentials, GPU, persistence, privileged installs, clipboard, screen capture, or OS automation — and keep those powers scoped, revocable, replayed, and isolated." Sandbox-internal dangerous work is allowed by design; crossing the boundary is explicit. | **D6** — capability/entitlement policy + object-capability handles + OS enforcement; secrets brokered via Vault/KMS + egress proxy so plaintext never reaches the model. |
-| **3. Bandwidth optimization** | "Start with screenshots so every GUI agent works, then pay less when structure exists." Structured a11y/DOM observation is the intended fast path for tree-rich apps; the exact blended win must be measured because canvas, Electron, games, and custom UIs can fall back to pixels. Published anchors are **~150× cheaper** than H.264 office video (~20 kbps vs ~3 Mbps) and **~6× cheaper** in tokens (~25k vs ~150k/task), both vendor-published and unverified. | **D3** (screenshot baseline + structured upgrade) + **D4** (dual-channel, NVENC-on-demand). |
-| **4. Real-time streaming** | "Watch and take over a live agent with sub-second, glass-to-glass lag — over a single WebRTC connection in the browser, no native client." Reliable data channel for the event stream + on-demand media track; host↔guest over virtio-vsock, never HTTP polling; target ~50–120 ms same-region. | **D4** — single-PeerConnection WebRTC dual-transport, SFU fan-out, WHIP/WHEP. |
+| **1. Stateful, branchable sandboxes** | "Name a runnable checkpoint of any agent run, fork it into N live replicas from one golden state, reset instantly, and resume a suspended session — without re-running the whole task." This is the primitive behind instant reset, N-run eval replicas, best-of-N / counterfactual branches, and long-running or idle-suspended tasks; competitors throw the trace away and have no fork/resume. | **D1** (CoW fork-from-snapshot) + **D5** — immutable checkpoint DAG; a checkpoint references a replay offset (snapshot + event_seq + agent state); instant-reset and branching are the *same* CoW-fork primitive (D7, N≥5 forked eval replicas). |
+| **2. Replay ledger** | "Scrub any agent run like a video and re-run from step N off a checkpoint, with a complete record of what happened." A `.skn` bundle is the event-sourced audit and training ledger — actions, observations, permission decisions, verifier receipts, media refs — that the checkpoint DAG branches from; the same bundle harvests as RL/SFT training data. | **D5** — `.skn` (Playwright-trace model), append-only event log referenced *by* the runtime-state checkpoints, not the reverse (D1). |
+| **3. Sandbox capability manager** | "Give this Sandbox network egress, credentials, GPU, persistence, privileged installs, clipboard, screen capture, or OS automation — and keep those powers scoped, revocable, replayed, and isolated." Sandbox-internal dangerous work is allowed by design; crossing the boundary is explicit. | **D6** — capability/entitlement policy + object-capability handles + OS enforcement; secrets brokered via Vault/KMS + egress proxy so plaintext never reaches the model. |
+| **4. Bandwidth optimization** | "Start with screenshots so every GUI agent works, then pay less when structure exists." Structured a11y/DOM observation is the intended fast path for tree-rich apps; the exact blended win must be measured because canvas, Electron, games, and custom UIs can fall back to pixels. Published anchors are **~150× cheaper** than H.264 office video (~20 kbps vs ~3 Mbps) and **~6× cheaper** in tokens (~25k vs ~150k/task), both vendor-published and unverified. | **D3** (screenshot baseline + structured upgrade) + **D4** (dual-channel, NVENC-on-demand). |
+| **5. Real-time streaming** | "Watch and take over a live agent with sub-second, glass-to-glass lag — over a single WebRTC connection in the browser, no native client." Reliable data channel for the event stream + on-demand media track; host↔guest over virtio-vsock, never HTTP polling; target ~50–120 ms same-region. | **D4** — single-PeerConnection WebRTC dual-transport, SFU fan-out, WHIP/WHEP. |
 
-Every competitor leaks on at least three of these. Replay and sandbox capability management are **greenfield** across the field; streaming/bandwidth is the clear **beat** axis where every competitor is screenshot-poll or VNC/pixel. See [04 Landscape](landscape.md) for the per-axis comparison.
+Every competitor leaks on at least three of these. Stateful checkpoint/fork/resume and sandbox capability management are **greenfield** across the field — every other CUA stack throws the trace away and has no fork or resume; streaming/bandwidth is the clear **beat** axis where every competitor is screenshot-poll or VNC/pixel. See [04 Landscape](landscape.md) for the per-axis comparison.
 
 ## 5. Who it's for
 

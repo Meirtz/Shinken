@@ -10,8 +10,8 @@ Shinken is the open infrastructure stack for computer-use agents: an AI-native, 
 **sandbox runtime + control plane + control panel** that also exposes evaluation and trajectory-data
 capture on the same substrate. It is a streaming-first successor to OSWorld, but the scope is larger
 than a benchmark runtime: Shinken defines the full CUA infrastructure layer for real computers,
-typed ACI, layered observation, sandbox capabilities, replay/data, artifact movement, eval evidence,
-and fleet-scale execution. This document is the central technical specification. It defines the
+typed ACI, layered observation, sandbox capabilities, runtime state (checkpoint/fork/resume),
+artifact movement, eval evidence, replay/audit data, and fleet-scale execution. This document is the central technical specification. It defines the
 **component model**, the **three planes** (control / event / media), the **end-to-end data flow**,
 the **substrate matrix** (per-OS × GPU × fast-fork), the **host↔guest transport**, the **reset /
 fork-from-snapshot** primitive, and the **scaling topology**.
@@ -35,7 +35,7 @@ cross-substrate scheduling, and cross-OS production tiers.
 Shinken is four cooperating subsystems plus a pluggable substrate. In v0.0.1 these can collapse into
 a local reference process/SDK path; in production they become the full distributed control plane:
 
-- **Control Plane** — orchestration: a **Fleet Manager** (warm pools + fork-on-demand), an **Action Gateway** (the single auth → rate-limit → policy choke point), a **scheduler**, a **replay store**, an **artifact/file-transfer service**, an **eval service**, plus telemetry, a policy/capability store, WebRTC signaling, and an SFU fan-out layer.
+- **Control Plane** — orchestration: a **Fleet Manager** (warm pools + fork-on-demand), an **Action Gateway** (the single auth → rate-limit → policy choke point), a **scheduler**, a **state store** (named checkpoints + the fork/resume DAG), an **artifact/file-transfer service**, an **eval service**, a **replay store** (the audit/training-data ledger), plus telemetry, a policy/capability store, WebRTC signaling, and an SFU fan-out layer.
 - **Sandbox + Guest Runtime** — one isolated guest computer (substrate-pluggable) running the in-guest daemon **`shinkend`**, which executes the Agent-Computer Interface (ACI), produces the structured observation stream, and publishes the optional video track.
 - **Operator** — the client-side adapter that drives a Sandbox for a given agent/model and is the human-takeover seam. The agent loop itself is **provider-agnostic** behind the Operator contract.
 - **Control Panel** — the human web UI: live structured + video view, Sandbox capability configuration, replay/scrub, cross-session search, takeover.
@@ -57,7 +57,7 @@ flowchart TB
     AG["Action Gateway<br/>auth → rate-limit → budget → policy → dispatch"]
     SCH["Scheduler<br/>(routes by OS × GPU × fast-fork)"]
     FM["Fleet Manager<br/>warm pools + fork-on-demand + cold replenish"]
-    RS["Replay Store<br/>(.skn bundles, checkpoint DAG)"]
+    RS["State + Replay Store<br/>(checkpoint/fork DAG;<br/>.skn evidence bundles)"]
     ART["Artifact Transfer<br/>(fixtures, outputs, media resources,<br/>checksums, resumable chunks)"]
     EV["Eval Service<br/>(verifier DAG, pass@k / pass^k)"]
     TEL["Telemetry<br/>(OTel-GenAI)"]
@@ -520,7 +520,7 @@ flowchart TB
 
 ## 8. How Shinken builds on existing components
 
-Shinken composes mature, publicly-available building blocks and adds the four things they lack in combination: streaming-first observation, sandbox capability/entitlement management, event-sourced forkable replay, and an optional GPU-accelerated tier. See [09 Economics & build-vs-buy](economics-and-build-vs-buy.md) for the full analysis.
+Shinken composes mature, publicly-available building blocks and adds the four things they lack in combination: runtime-state management (named checkpoint/fork/resume over a branchable snapshot DAG), streaming-first observation, sandbox capability/entitlement management, and an optional GPU-accelerated tier. The event-sourced `.skn` replay is the audit/training-data ledger those runtime-state primitives produce and reference (a checkpoint points at a replay offset), not a peer headline. See [09 Economics & build-vs-buy](economics-and-build-vs-buy.md) for the full analysis.
 
 | Need | Build on (public/OSS) | What Shinken adds |
 |------|------------------------|-------------------|

@@ -44,24 +44,30 @@ Observation is layered:
 v0.0.1 must implement reference screenshot and structured paths. Later versions optimize defaults
 based on measured coverage.
 
-## `.skn`
-
-`.skn` is the replay/data bundle. It stores the event timeline, media refs, artifacts, capability
-events, and verifier receipts. It is replay evidence and training/eval data. Runtime
-checkpoint/restore/fork is a later substrate primitive and is not the same thing as saving a replay.
-
 ## Runtime State
 
-Runtime state is the live or restorable computer state behind a Sandbox. The key terms are:
+Runtime state is the live, branchable computer state behind a Sandbox — Shinken's headline
+primitive. The key terms are:
 
 - **Snapshot**: substrate-captured state such as disk, memory, or device state.
 - **Checkpoint**: Shinken restore point that links substrate snapshot(s), event offset, and optional
   agent state.
-- **Fork**: create a new Sandbox/run branch from a checkpoint.
+- **Fork**: create a new Sandbox/run branch from a checkpoint — one golden state into N live
+  replicas.
 - **Resume**: continue a paused/suspended Sandbox or Session.
 
-See [`runtime-state.md`](runtime-state.md). `.skn` can reference checkpoints, but `.skn` is not
-itself a VM snapshot.
+These are the primitives behind instant reset, N-run eval replicas, counterfactual / best-of-N
+branches, and long-running or idle-suspended tasks. See [`runtime-state.md`](runtime-state.md).
+Docker disk-tier checkpoint/fork/resume is a reference-tier implementation; the memory/fast tiers
+and the control plane are designed.
+
+## `.skn`
+
+`.skn` is the replay/data bundle: the audit and training/eval ledger that records what happened. It
+stores the event timeline, media refs, artifacts, capability events, and verifier receipts. A
+checkpoint *references* a `.skn` event offset (snapshot + event seq + agent state) — runtime state
+points at replay, not the reverse. `.skn` recording is built and on by default; it can reference
+checkpoints, but `.skn` is not itself a VM snapshot.
 
 ## Capabilities
 

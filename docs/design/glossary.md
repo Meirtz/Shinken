@@ -162,7 +162,8 @@ The platform/product: the open infrastructure stack for computer-use agents — 
 cross-platform **sandbox runtime + control plane + control panel** and a production-grade,
 streaming-first successor to OSWorld. North star: **one** full CUA substrate serving production
 agent deployment, evaluation, and trajectory-data capture. It boots *Sandboxes*, drives them
-through one typed *ACI*, streams live, records a scrubbable/forkable event-sourced *replay*, moves
+through one typed *ACI*, streams live, names runnable *checkpoints* it can *fork* and *resume*,
+records an event-sourced *replay* for evidence, moves
 artifacts, verifies tasks, and provisions sandbox capabilities through a *Capability Manager*.
 Shinken is a public, vendor-neutral open-source project; NVIDIA GPUs are a supported acceleration
 *option*, not a dependency.

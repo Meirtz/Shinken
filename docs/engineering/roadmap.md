@@ -86,7 +86,7 @@ gantt
 
 | Phase | Theme | Primary decisions exercised | External dependency | Gating spike(s) |
 |-------|-------|-----------------------------|---------------------|-----------------|
-| **0 / v0.0.1** | Feature-complete local/reference CUA runtime | D2, D3, D5, D6, D7, D8 | none (local Docker/QEMU) | contract tests; a11y coverage measured, not a pixel-loop blocker; runtime-state support advertised honestly |
+| **0 / v0.0.1** | Feature-complete local/reference CUA runtime | D2, D3, D5, D6, D7, D8 | none (local Docker/QEMU) | runtime-state support (checkpoint/fork/resume) advertised + Docker disk-tier reference impl; `.skn` audit ledger round-trips; contract tests; a11y coverage measured, not a pixel-loop blocker |
 | **1** | Performance and productionization: Linux fast-fork + streaming + panel | D1, D3, D4, D6, D9 | `agent-sandbox` CRD, Vault, NICE DCV or WebRTC+NVENC | a11y-coverage, CoW-fork density, dual-channel latency |
 | **2** | Eval + OSWorld-Verified + first eval/training users | D5, D7, D8 | `agent-sandbox` CRD (parallel replicas) | reuses Phase 1 spikes |
 | **3** | Cross-OS (Windows + macOS) | D1, D10 | Apple hardware pool; Windows licensing | macOS-reset feasibility, Windows-licensing |
@@ -125,15 +125,16 @@ No cluster substrate dependency yet. The limit is scale, not scope.
   full-frame/focused/region screenshots, screencast, AT-SPI and CDP normalized `Element` output,
   and `element_ref` resolution. Efficient diffs and SoM/OmniParser can improve later; the reference
   semantics must exist now.
-- **`.skn` replay and runtime-state descriptors** ([D5](../design/tech-decisions.md)): write
-  `manifest.json` + append-only `events.jsonl`, content-addressed media/artifact refs,
-  action-observation pairing, capability and permission events, verifier receipts, atomic bundle
-  writes, and a CLI scrubber. Also provider-advertised `snapshot`, `checkpoint`, `fork`,
-  `restore`, and `resume` capabilities (so unsupported providers fail honestly) **and a Docker
+- **Runtime-state descriptors + `.skn` audit ledger** ([D5](../design/tech-decisions.md)): the headline
+  is the stateful, branchable runtime — provider-advertised `snapshot`, `checkpoint`, `fork`,
+  `restore`, and `resume` capabilities (so unsupported providers fail honestly) **plus a Docker
   disk-tier reference implementation of them** (`docker commit` snapshot → restore/resume/fork +
   event-offset-bound checkpoint, #206/#209). The **memory** (CRIU) and **sub-second CoW
-  fork-from-snapshot fast** substrate tiers remain later Phase-1 primitives — and runtime state
-  must not be conflated with replay (a checkpoint *references* a replay event offset; #42).
+  fork-from-snapshot fast** substrate tiers remain later Phase-1 primitives. Underneath, the `.skn`
+  **audit/recording ledger** captures what happened: write `manifest.json` + append-only
+  `events.jsonl`, content-addressed media/artifact refs, action-observation pairing, capability and
+  permission events, verifier receipts, atomic bundle writes, and a CLI scrubber. Runtime state must
+  not be conflated with replay — a checkpoint *references* a replay event offset, not the reverse (#42).
 - **File/artifact transfer:** move fixtures into the Sandbox and artifacts out with checksums and
   replay refs. High throughput and resumability can improve later; the semantic API must exist in
   v0.0.1.
@@ -235,13 +236,13 @@ Control Panel human UI.
 
 ## Phase 2 — Eval layer + OSWorld-Verified conformance + first CUA eval/model-training users
 
-**Objective:** Layer the **eval service** on the same runtime (the north-star inversion of OSWorld, [D7](../design/tech-decisions.md)) and **land the first users** — CUA eval and model-training teams — via **replay-as-training-data** ([D12](../design/tech-decisions.md)). This is where Shinken proves the "one platform, eval layered on production" thesis and earns its first real adoption.
+**Objective:** Layer the **eval service** on the same runtime (the north-star inversion of OSWorld, [D7](../design/tech-decisions.md)) and **land the first users** — CUA eval and model-training teams — on the **runtime fork tier**: cheap **N≥5 CoW-forked replicas** and deterministic resets are what make pass@k eval economical ([D1](../design/tech-decisions.md)/[D7](../design/tech-decisions.md)), and the `.skn` ledger then turns every one of those runs into versioned, branchable training data ([D12](../design/tech-decisions.md)). This is where Shinken proves the "one platform, eval layered on production" thesis and earns its first real adoption.
 
 ### Goals
 
 - **Eval layer = thin orchestration on the runtime ([D7](../design/tech-decisions.md)):** a typed **verifier DAG** (not OSWorld's stringly-typed `getattr` evaluators — see the teardown in [03](../design/osworld-analysis.md)); **programmatic-primary verification + a constrained model-verifier fallback**; a **golden snapshot per task**; **N≥5 CoW-forked replicas → pass@k / pass^k with confidence intervals** (cheap *because* Phase 1's fork works); and **readiness probes, not sleeps** (verify-then-retry and explicit wait-for-actionability over fixed sleeps, the production-ops reliability pattern documented for [Playwright auto-wait](https://www.qabash.com/playwright-auto-waits-selenium-flake-killer/)).
 - **OSWorld-Verified conformance ([D7](../design/tech-decisions.md)):** ship it as a built-in suite with **task + grader + environment versioned together**, treating the grader as a *tested artifact* — explicitly heeding the 300+ grader/task bugs that [OSWorld-Verified](https://xlang.ai/blog/osworld-verified) fixed over 15 months. SOTA anchor for calibration: the leaderboard reports a top score of ~83% on OSWorld-Verified, above the ~72.4% human baseline (vendor/leaderboard, unverified). Add an independent-verification policy so Shinken does not republish unreproduced vendor scores.
-- **Replay-as-training-data ([D5](../design/tech-decisions.md)/[D7](../design/tech-decisions.md)/[D12](../design/tech-decisions.md)):** a `.skn` capture pipeline producing RL/SFT trajectories. The wedge is that every eval run *and* every production session becomes versioned, branchable training data on the same `.skn` substrate — the synchronized screen+input+a11y → state-action-CoT recording pattern proven by [OpenCUA](https://github.com/xlang-ai/OpenCUA). This is the concrete adoption argument for the first eval/model-training users, who otherwise pay to acquire OSWorld-style datasets.
+- **Replay-as-training-data ([D5](../design/tech-decisions.md)/[D7](../design/tech-decisions.md)/[D12](../design/tech-decisions.md)):** a `.skn` capture pipeline producing RL/SFT trajectories. The adoption wedge is the runtime fork tier — fork/resume economics give eval/model-training teams cheap N-run replicas and deterministic resets they cannot get elsewhere; the `.skn` ledger is the byproduct that then turns every eval run *and* every production session into versioned, branchable training data on the same substrate — the synchronized screen+input+a11y → state-action-CoT recording pattern proven by [OpenCUA](https://github.com/xlang-ai/OpenCUA). Together this is the concrete adoption argument for the first eval/model-training users, who otherwise pay to acquire OSWorld-style datasets and have no fork/resume at all.
 - **MCP facade ([D8](../design/tech-decisions.md)):** the optional MCP facade at two altitudes (granular `create_session/act/observe/snapshot/grant_permission`; agent-task `run_task`) for model-agnostic hosts, with OAuth 2.1 ([MCP authorization spec](https://modelcontextprotocol.io/specification/draft/basic/authorization)) — but **never** routing the high-frequency action/observation/video loop or media through MCP. This is what lets MCP-native agent hosts and toolkits drive Shinken without taking on the hot loop.
 
 ### Deliverables

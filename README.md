@@ -8,13 +8,14 @@
 </p>
 
 > The open infrastructure stack for computer-use agents: real computers, one typed interface,
-> scoped capabilities, replayable trajectories, and eval on the same substrate.
+> scoped capabilities, checkpoint/fork/resume of live runtime state, replayable trajectories for
+> audit, and eval on the same substrate.
 
 Shinken is an AI-native, cross-platform **runtime + control plane + control panel** for
 computer-use agents. It is meant to be the full CUA infrastructure layer: boot real desktops and
 browsers, drive them through one Agent-Computer Interface (ACI), grant the sandbox capabilities
-they need, stream and supervise sessions live, record every run as replay/training data, and run
-evals on the same substrate.
+they need, stream and supervise sessions live, checkpoint/fork/resume that live runtime state,
+record every run as a replay/training ledger, and run evals on the same substrate.
 
 The ambition is deliberately broad. Shinken is not just a benchmark harness, a cloud browser, a
 VNC desktop, or a model adapter. It is the foundation those pieces plug into: production agent
@@ -52,7 +53,8 @@ capability is scoped, recorded, replayable, and under operator control.
   <img src="docs/assets/shinken-vs-mogito.png" alt="Mogito training sword versus Shinken real sword" width="900">
 </p>
 
-That is Shinken's stance: **real desktops, real actions, real capabilities, real replay.**
+That is Shinken's stance: **real desktops, real actions, real capabilities, real checkpoint/fork/resume,
+and real replay to audit it all.**
 
 <p align="center">
   <img src="docs/assets/shinken-agent-sandbox-overview.png" alt="Shinken agent sandbox: sharp by default, safe by design" width="900">
@@ -69,10 +71,12 @@ flowchart LR
   GW --> SK["shinkend<br/>Guest Runtime"]
   SK --> Desktop["Sandbox Desktop<br/>Linux now · Win/macOS later"]
   SK --> Obs["a11y tree + pixels on demand"]
-  GW --> Replay[".skn replay<br/>events.jsonl + media + snapshots"]
+  SK --> State["Runtime state<br/>checkpoint · fork · resume"]
+  State --> Replay[".skn ledger<br/>events.jsonl + media + snapshot refs"]
   Human["Human reviewer"] --> Panel["Control Panel<br/>watch / configure / take over"]
   Panel --> GW
-  Replay --> Eval["Eval + training data"]
+  State --> Eval["Eval + training data"]
+  Replay --> Eval
 ```
 
 ## What It Lets You Do
@@ -91,9 +95,15 @@ flowchart LR
 - **Move files and artifacts as first-class data.** Task fixtures, generated artifacts, logs,
   media, and replay resources need a Sandbox↔client transfer path with checksums, backpressure,
   and replay references.
-- **Replay every run.** The event stream is the replay log: actions, observations, permission
-  decisions, verifier receipts, artifacts, and media references become a `.skn` bundle for
-  debugging, eval, and training data.
+- **Checkpoint, restore, fork, and resume runtime state.** Name a runnable checkpoint of a live
+  sandbox, fork it into N replicas from one golden state, reset instantly, or resume a suspended
+  session. This is the primitive behind instant reset, N-run eval replicas, best-of-N /
+  counterfactual branches, and long-running or idle-suspended tasks.
+- **Keep a replay ledger of every run.** The event stream is the audit log that runtime state
+  references: actions, observations, permission decisions, verifier receipts, artifacts, and media
+  references become a `.skn` bundle for debugging, eval evidence, and training data. A checkpoint
+  binds a substrate snapshot to a replay event offset, so the ledger says *what happened* while the
+  checkpoint says *where this can continue from*.
 - **Run evals on the runtime, not beside it.** OSWorld-style tasks, browser tasks, mobile tasks,
   and custom enterprise tasks should all become verifier-backed runs over the same ACI and replay
   substrate.
@@ -112,7 +122,7 @@ screenshot -> model -> pixel click -> sleep -> screenshot -> throw trace away
 Shinken is designed around a different loop:
 
 ```text
-screenshot observation -> typed action -> sandbox capability -> verified result -> replay event
+screenshot observation -> typed action -> sandbox capability -> verified result -> checkpointable state (referenced by replay ledger)
 ```
 
 That difference is the product. v0.0.1 should implement these semantics at local/reference scale;
@@ -170,7 +180,8 @@ flowchart TB
 ```
 
 The rule of thumb: **clients request, the Control Plane authorizes and records, `shinkend` executes,
-the guest OS changes, and `.skn` preserves the timeline.**
+the guest OS changes, the Fleet Manager checkpoints/forks/resumes that state, and the `.skn` ledger
+preserves the timeline it references.**
 
 ## How Agent-Native It Should Feel
 
@@ -218,11 +229,16 @@ with shinken.connect() as env:
     env.run_task("open the project repo and file a bug")
 ```
 
-And replay should become a first-class artifact:
+And runtime state should be first-class — name a checkpoint, fork it, or resume it — with replay as
+the ledger those operations reference:
 
 ```bash
-shinken replay search-demo.skn                  # scrub by action/observation seq
-shinken branch search-demo.skn --at 42          # rerun a counterfactual from step 42
+shinken checkpoint search-demo --name golden     # name a runnable checkpoint of live state
+shinken fork golden --replicas 5                  # fork N live replicas from one golden state
+shinken resume golden                             # resume a suspended session
+
+shinken replay search-demo.skn                    # scrub the audit ledger by action/observation seq
+shinken branch search-demo.skn --at 42            # rerun a counterfactual from step 42
 ```
 
 Those examples are the product target. v0.0.1 should make the semantics real locally/reference
