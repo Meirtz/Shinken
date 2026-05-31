@@ -19,7 +19,12 @@ class ExternalProvider(SandboxProvider):
         supports_gpu=False,
         supports_vsock=False,
         supports_egress_policy=False,
+        supports_checkpoint=False,
+        supports_resume=False,
         reset_strategy="provider_managed",
+        transport="tcp_ws",
+        snapshot_kind="none",
+        tier="external",
         max_sessions=1,
         notes=("Lifecycle is owned by the external provider; Shinken only connects.",),
     )

@@ -7,9 +7,19 @@ returns an address and token for a running ``shinkend``.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from shinken.client import Sandbox, connect
+
+# Structured routing semantics for providers (#206 / D1/D5). Enums keep the descriptor
+# honest and machine-routable for future Firecracker/QEMU/gVisor/Kata tiers.
+ResetStrategy = Literal["recreate", "provider_managed", "snapshot_restore", "fork_from_snapshot"]
+TransportKind = Literal["tcp_ws", "vsock", "provider_managed"]
+IsolationKind = Literal["container", "gvisor", "kata", "microvm", "vm", "provider_managed"]
+DisplayKind = Literal["none", "x11", "wayland", "browser", "provider_managed"]
+# What a provider's snapshot captures: nothing, filesystem only, full memory, process
+# tree (CRIU), or an opaque provider-managed snapshot.
+SnapshotKind = Literal["none", "disk", "memory", "process", "provider_managed"]
 
 
 class ProviderError(RuntimeError):
@@ -22,7 +32,10 @@ class UnsupportedProviderOperation(ProviderError):
 
 @dataclass(frozen=True)
 class ProviderCapabilities:
-    """Honest capabilities advertised by a sandbox provider."""
+    """Honest capabilities advertised by a sandbox provider.
+
+    Boolean fields are convenience flags; the structured fields carry the routing
+    semantics the Control Plane needs to pick a provider for a runtime-state operation."""
 
     name: str
     supports_lifecycle: bool
@@ -32,7 +45,14 @@ class ProviderCapabilities:
     supports_gpu: bool = False
     supports_vsock: bool = False
     supports_egress_policy: bool = False
-    reset_strategy: str = "recreate"
+    supports_checkpoint: bool = False
+    supports_resume: bool = False
+    reset_strategy: ResetStrategy = "recreate"
+    isolation: IsolationKind = "provider_managed"
+    transport: TransportKind = "provider_managed"
+    display: DisplayKind = "provider_managed"
+    snapshot_kind: SnapshotKind = "none"
+    tier: str = "unspecified"
     max_sessions: int | None = None
     notes: tuple[str, ...] = ()
 
@@ -125,3 +145,20 @@ class SandboxProvider:
 
     def fork(self, handle: SandboxHandle) -> SandboxHandle:
         raise UnsupportedProviderOperation(f"{self.capabilities.name} does not support fork")
+
+    def checkpoint(
+        self,
+        handle: SandboxHandle,
+        *,
+        event_seq: int | None = None,
+        agent_state_ref: str | None = None,
+    ) -> str:
+        """Create a named Shinken restore point binding a substrate snapshot to a `.skn`
+        event offset (`event_seq`) + optional agent state — the node in the checkpoint DAG
+        (D5). Returns a checkpoint id. Unsupported by default."""
+        raise UnsupportedProviderOperation(f"{self.capabilities.name} does not support checkpoint")
+
+    def resume(self, handle_or_checkpoint: SandboxHandle | str) -> SandboxHandle:
+        """Bring a paused/snapshotted sandbox (or a checkpoint id) back to a live,
+        connectable state. Unsupported by default."""
+        raise UnsupportedProviderOperation(f"{self.capabilities.name} does not support resume")
