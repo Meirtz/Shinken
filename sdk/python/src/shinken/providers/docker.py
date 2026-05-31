@@ -64,18 +64,18 @@ class DockerLocalProvider(SandboxProvider):
         name="docker-local",
         supports_lifecycle=True,
         supports_gui=True,
-        supports_snapshot=False,
-        supports_fork=False,
+        supports_snapshot=True,
+        supports_fork=True,
         supports_gpu=False,
         supports_vsock=False,
         supports_egress_policy=False,
-        supports_checkpoint=False,
-        supports_resume=False,
+        supports_checkpoint=True,
+        supports_resume=True,
         reset_strategy="recreate",
         isolation="container",
         transport="tcp_ws",
         display="x11",
-        snapshot_kind="none",
+        snapshot_kind="disk",
         tier="local",
         max_sessions=None,
         notes=("Local/CI compatibility provider; Docker is not the production isolation tier.",),
@@ -107,6 +107,9 @@ class DockerLocalProvider(SandboxProvider):
                 f"unsupported network_mode {network_mode!r} (expected 'bridge' or 'none')"
             )
         self.network_mode = network_mode
+        # Checkpoint registry (#206): ckpt_id -> {snapshot_id, event_seq, agent_state_ref}.
+        # In-memory for the local reference tier; a real Control Plane persists the DAG.
+        self._checkpoints: dict[str, dict[str, Any]] = {}
 
     def connect(self, handle: SandboxHandle, *, record: bool = False):
         """Connect, then wire file transfer through the **actual guest** filesystem via
@@ -273,6 +276,62 @@ class DockerLocalProvider(SandboxProvider):
         except subprocess.TimeoutExpired as exc:
             raise ProviderError(f"timed out destroying sandbox {handle.sandbox_id}") from exc
         handle.metadata["destroyed"] = True
+
+    # --- runtime-state primitives (disk tier, #206) -----------------------------------
+    # Reference implementation on Docker's filesystem layer via `docker commit` (no live
+    # memory — that is the CRIU/process tier, and the sub-ms CoW fast tier is Phase-1).
+
+    def _container_of(self, handle: SandboxHandle) -> str:
+        cid = handle.metadata.get("container_id") or handle.sandbox_id
+        if not cid:
+            raise ProviderError("sandbox handle has no container id to snapshot")
+        return str(cid)
+
+    def snapshot(self, handle: SandboxHandle, name: str | None = None) -> str:
+        """Disk snapshot via `docker commit` → a tagged image id (snapshot_kind=disk)."""
+        tag = f"shinken-snap:{name or uuid.uuid4().hex[:12]}"
+        commit = [self.docker_bin, "commit", self._container_of(handle), tag]
+        _run(commit, timeout=self.startup_timeout)
+        return tag
+
+    def restore(self, snapshot_id: str) -> SandboxHandle:
+        """Launch a fresh sandbox from a snapshot image (or a checkpoint id) — a new live
+        container off the committed filesystem layer."""
+        image = self._checkpoints.get(snapshot_id, {}).get("snapshot_id", snapshot_id)
+        return self.create(SandboxSpec(image=image))
+
+    def resume(self, handle_or_checkpoint: SandboxHandle | str) -> SandboxHandle:
+        """Bring a snapshot/checkpoint back live. Docker containers are ephemeral (`--rm`),
+        so resume takes a snapshot/checkpoint id, not a live handle."""
+        if isinstance(handle_or_checkpoint, str):
+            return self.restore(handle_or_checkpoint)
+        raise ProviderError(
+            "Docker resume needs a snapshot/checkpoint id "
+            "(containers are ephemeral; snapshot() first)"
+        )
+
+    def fork(self, handle: SandboxHandle) -> SandboxHandle:
+        """Branch a new live sandbox from the current state: snapshot + restore. Disk CoW
+        via the new container's writable layer (~0.3–0.5 s) — not the sub-ms fast tier."""
+        return self.restore(self.snapshot(handle))
+
+    def checkpoint(
+        self,
+        handle: SandboxHandle,
+        *,
+        event_seq: int | None = None,
+        agent_state_ref: str | None = None,
+    ) -> str:
+        """Named restore point binding a disk snapshot to a `.skn` event offset + optional
+        agent state — a node in the checkpoint DAG (D5). `resume(ckpt_id)` restores it."""
+        snapshot_id = self.snapshot(handle)
+        ckpt_id = f"ckpt-{uuid.uuid4().hex[:12]}"
+        self._checkpoints[ckpt_id] = {
+            "snapshot_id": snapshot_id,
+            "event_seq": event_seq,
+            "agent_state_ref": agent_state_ref,
+        }
+        return ckpt_id
 
     def cleanup_orphans(self) -> int:
         # Select strictly by the labels we stamp at create time (#157). Docker's `name`

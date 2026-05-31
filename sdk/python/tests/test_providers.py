@@ -13,7 +13,7 @@ from shinken.providers import (
     SandboxSpec,
     UnsupportedProviderOperation,
 )
-from shinken.providers.base import ProviderError
+from shinken.providers.base import ProviderError, SandboxHandle
 from shinken.providers.docker import _parse_mem_usage, _redact_cmd, _run
 
 
@@ -202,3 +202,65 @@ def test_top_level_exports_provider_types():
     assert shinken.DockerLocalProvider is DockerLocalProvider
     assert shinken.ExternalProvider is ExternalProvider
     assert shinken.SandboxSpec is SandboxSpec
+
+
+# --- runtime-state primitives, disk tier (#206) -----------------------------------
+
+
+def _handle(cid: str = "c1") -> SandboxHandle:
+    return SandboxHandle(
+        provider="docker-local", sandbox_id=cid, addr="127.0.0.1:1", metadata={"container_id": cid}
+    )
+
+
+def _mock_docker(monkeypatch) -> list[list[str]]:
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, timeout=30.0):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="cid\n", stderr="")
+
+    monkeypatch.setattr("shinken.providers.docker._run", fake_run)
+    monkeypatch.setattr("shinken.providers.docker._free_port", lambda _host: 19010)
+    monkeypatch.setattr(DockerLocalProvider, "_wait_ready", lambda _self, _handle: None)
+    return calls
+
+
+def test_docker_advertises_disk_runtime_state():
+    caps = DockerLocalProvider().capabilities
+    assert caps.supports_snapshot and caps.supports_fork
+    assert caps.supports_checkpoint and caps.supports_resume
+    assert caps.snapshot_kind == "disk"
+
+
+def test_docker_snapshot_uses_commit(monkeypatch):
+    calls = _mock_docker(monkeypatch)
+    snap = DockerLocalProvider().snapshot(_handle("c1"), name="base")
+    assert calls[0][:2] == ["docker", "commit"]
+    assert "c1" in calls[0]
+    assert snap == "shinken-snap:base"
+
+
+def test_docker_fork_snapshots_then_launches_from_image(monkeypatch):
+    calls = _mock_docker(monkeypatch)
+    child = DockerLocalProvider().fork(_handle("c1"))
+    assert any(c[:2] == ["docker", "commit"] for c in calls)
+    run_cmd = next(c for c in calls if c[:2] == ["docker", "run"])
+    assert run_cmd[-1].startswith("shinken-snap:")  # launched from the snapshot image
+    assert child.metadata["image"].startswith("shinken-snap:")
+
+
+def test_docker_checkpoint_binds_offset_and_resume_restores_it(monkeypatch):
+    _mock_docker(monkeypatch)
+    p = DockerLocalProvider()
+    ckpt = p.checkpoint(_handle("c1"), event_seq=42, agent_state_ref="agent://x")
+    assert ckpt.startswith("ckpt-")
+    rec = p._checkpoints[ckpt]
+    assert rec["event_seq"] == 42 and rec["agent_state_ref"] == "agent://x"
+    resumed = p.resume(ckpt)  # resume a checkpoint id -> restore its snapshot
+    assert resumed.metadata["image"] == rec["snapshot_id"]
+
+
+def test_docker_resume_requires_id_not_live_handle():
+    with pytest.raises(ProviderError):
+        DockerLocalProvider().resume(_handle("c1"))

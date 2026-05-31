@@ -81,15 +81,21 @@ def test_unsupported_runtime_state_ops_raise(provider: SandboxProvider) -> None:
             provider.resume(handle)
 
 
-def test_no_provider_silently_claims_unimplemented_runtime_state() -> None:
-    # v0.0.1 reference providers do not implement snapshot/fork (that is the Phase-1
-    # CoW fork tier) — guard against a future provider flipping the flag without wiring it.
-    for provider in PROVIDERS:
-        caps = provider.capabilities
-        assert not caps.supports_snapshot, f"{caps.name} claims snapshot but none is wired yet"
-        assert not caps.supports_fork, f"{caps.name} claims fork but none is wired yet"
-        assert not caps.supports_checkpoint, f"{caps.name} claims checkpoint but none is wired yet"
-        assert not caps.supports_resume, f"{caps.name} claims resume but none is wired yet"
+@pytest.mark.parametrize("provider", PROVIDERS, ids=lambda p: p.capabilities.name)
+def test_claimed_support_is_actually_wired(provider: SandboxProvider) -> None:
+    # A provider that CLAIMS a runtime-state op must override the base method (not the
+    # raising stub) — guard against flipping a flag without implementing it (#206).
+    caps = provider.capabilities
+    claims = {
+        "snapshot": caps.supports_snapshot,
+        "fork": caps.supports_fork,
+        "checkpoint": caps.supports_checkpoint,
+        "resume": caps.supports_resume,
+    }
+    for op, claimed in claims.items():
+        overridden = getattr(type(provider), op) is not getattr(SandboxProvider, op)
+        if claimed:
+            assert overridden, f"{caps.name} advertises {op} but does not override the stub"
 
 
 def test_external_provider_is_not_a_lifecycle_owner() -> None:
