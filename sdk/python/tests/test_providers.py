@@ -124,6 +124,9 @@ def test_docker_provider_cleanup_uses_labels(monkeypatch):
     assert provider.cleanup_orphans() == 2
     assert "label=shinken.provider=docker-local" in commands[0]
     assert "label=shinken.name_prefix=test-sandbox" in commands[0]
+    # cleanup selects by label only — the fragile substring `name=^prefix-` filter is
+    # gone, so it can't silently miss containers and leave orphans (#157)
+    assert not any(arg.startswith("name=") for arg in commands[0])
     assert commands[1] == ["docker", "rm", "-f", "a", "b"]
 
 

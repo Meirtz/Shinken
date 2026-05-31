@@ -218,6 +218,10 @@ class DockerLocalProvider(SandboxProvider):
         handle.metadata["destroyed"] = True
 
     def cleanup_orphans(self) -> int:
+        # Select strictly by the labels we stamp at create time (#157). Docker's `name`
+        # filter is substring-based, not the anchored regex `name=^prefix-` implies, so
+        # it could miss intended containers (or match unintended ones) and leave orphans;
+        # the two labels already identify our containers precisely.
         result = _run(
             [
                 self.docker_bin,
@@ -227,8 +231,6 @@ class DockerLocalProvider(SandboxProvider):
                 "label=shinken.provider=docker-local",
                 "--filter",
                 f"label=shinken.name_prefix={self.name_prefix}",
-                "--filter",
-                f"name=^{self.name_prefix}-",
             ]
         )
         ids = [line.strip() for line in result.stdout.splitlines() if line.strip()]
