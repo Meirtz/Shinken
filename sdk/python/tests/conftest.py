@@ -26,10 +26,13 @@ def _free_port() -> int:
     return port
 
 
-async def _push_frames(ws, stream_id: str, fps: float, max_long_edge: int | None = None) -> None:
+async def _push_frames(
+    ws, stream_id: str, fps: float, max_long_edge: int | None = None, scope: str = "screen"
+) -> None:
     """Push server-pushed screencast frames with advancing seq until cancelled. The
     frame's reported width echoes ``max_long_edge`` so a test can confirm the cap
-    travelled over the wire from the SDK."""
+    travelled over the wire from the SDK; ``scope`` echoes the requested capture
+    region, as the real runtime tags every frame with ``spec.scope`` (#143)."""
     seq = 0
     period = max(1.0 / fps, 0.005)
     width = max_long_edge or 1
@@ -42,7 +45,7 @@ async def _push_frames(ws, stream_id: str, fps: float, max_long_edge: int | None
                         "obs_id": f"{stream_id}-{seq}",
                         "stream": stream_id,
                         "seq": seq,
-                        "image": {"ref": _PNG_1X1, "w": width, "h": 1, "scope": "screen"},
+                        "image": {"ref": _PNG_1X1, "w": width, "h": 1, "scope": scope},
                     }
                 )
             )
@@ -110,7 +113,9 @@ async def _handler(ws) -> None:
                 action = msg.get("action") or {}
                 fps = action.get("fps") or 50
                 cast = asyncio.create_task(
-                    _push_frames(ws, cid, fps, action.get("max_long_edge"))
+                    _push_frames(
+                        ws, cid, fps, action.get("max_long_edge"), action.get("scope") or "screen"
+                    )
                 )
             elif verb == "stop_screencast":
                 if cast is not None:

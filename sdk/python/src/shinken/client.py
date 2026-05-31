@@ -147,6 +147,7 @@ class AsyncSandbox:
         self._frames: asyncio.Queue = asyncio.Queue(maxsize=_FRAME_QUEUE_MAX)
         self._reader: asyncio.Task | None = None
         self._rpc_timeout = 30.0  # per-RPC reply deadline (#142); async callers never hang
+        self._stream_scope = "screen"  # capture region of the active screencast (#143)
 
     def _next_id(self) -> str:
         self._seq += 1
@@ -457,6 +458,9 @@ class AsyncSandbox:
         region (``screen``, ``active_window``, or ``window:<id>``)."""
         self._gate("start_screencast")
         self._clear_frames()
+        # Remember the requested capture region so recorded frames carry the true
+        # scope, not a hardcoded "screen" (#143). Frames also echo it from shinkend.
+        self._stream_scope = scope or "screen"
         action: dict = {"verb": "start_screencast", "fps": fps}
         if max_long_edge is not None:
             action["max_long_edge"] = max_long_edge
@@ -498,8 +502,11 @@ class AsyncSandbox:
         img = item.get("image") or {}
         png = base64.b64decode(img.get("ref", ""))
         if self._recorder is not None:
+            # Record the frame's true capture region (#143): prefer the scope the
+            # runtime tagged the frame with, falling back to the requested scope.
+            scope = img.get("scope") or self._stream_scope
             self._recorder.observation(
-                {"image": {"w": img.get("w"), "h": img.get("h"), "scope": "screen"}}, png=png
+                {"image": {"w": img.get("w"), "h": img.get("h"), "scope": scope}}, png=png
             )
         return {
             "png": png,

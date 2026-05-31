@@ -64,6 +64,22 @@ def test_screencast_records_frames(mock_shinkend, tmp_path):
     assert replay.media(sha)[:8] == _PNG_SIG
 
 
+def test_screencast_records_scoped_capture_region(mock_shinkend, tmp_path):
+    """A scoped screencast must record its true capture region in the .skn, not a
+    hardcoded ``screen`` — replay metadata otherwise overstates captured pixels (#143)."""
+    path = tmp_path / "scoped.skn"
+    with shinken.connect(mock_shinkend, record=True) as env:
+        with env.screencast(fps=100, timeout=5, limit=3, scope="active_window") as stream:
+            for _ in stream:
+                pass
+        env.save_replay(str(path))
+
+    replay = Replay.load(str(path))
+    obs = [e for e in replay.events if e["kind"] == "observation"]
+    assert len(obs) == 3
+    assert all(e["payload"]["image"]["scope"] == "active_window" for e in obs)
+
+
 def test_screencast_stop_makes_next_frame_end(mock_shinkend):
     with shinken.connect(mock_shinkend) as env:
         with env.screencast(fps=100, timeout=5, limit=2) as stream:
