@@ -185,6 +185,22 @@ const FPS_MIN: f64 = 0.1;
 const FPS_MAX: f64 = 30.0;
 const FPS_DEFAULT: f64 = 5.0;
 
+/// Whether a capture scope is well-formed per the ACI Scope contract: `screen`,
+/// `active_window`, or `window:<id>` (id = decimal or `0x`-hex). Malformed scopes are
+/// rejected rather than silently falling back to full-screen capture (#139).
+fn valid_scope(s: &str) -> bool {
+    if s == "screen" || s == "active_window" {
+        return true;
+    }
+    match s.strip_prefix("window:") {
+        Some(id) => match id.strip_prefix("0x") {
+            Some(hex) => !hex.is_empty() && hex.bytes().all(|b| b.is_ascii_hexdigit()),
+            None => !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()),
+        },
+        None => false,
+    }
+}
+
 /// Run one `action`. `screenshot` → one-shot `observation`; `start_screencast`/
 /// `stop_screencast` → `ack` plus a [`StreamCtl`] for the serve loop; every other
 /// verb → `ack`.
@@ -203,6 +219,21 @@ fn dispatch_action(
         }
     };
     let scope = spec.scope.clone().unwrap_or_else(|| "screen".to_string());
+    // Reject a provided-but-malformed capture scope instead of silently capturing the
+    // full screen — a privacy/contract issue (#139). (An absent scope defaults to "screen".)
+    if spec.scope.is_some()
+        && matches!(spec.verb.as_str(), "screenshot" | "start_screencast")
+        && !valid_scope(&scope)
+    {
+        return (
+            ack(
+                call_id,
+                false,
+                Some(format!("invalid capture scope: {scope}")),
+            ),
+            StreamCtl::None,
+        );
+    }
     match spec.verb.as_str() {
         "screenshot" => {
             let msg = match exec.capture(&scope, spec.max_long_edge) {
@@ -306,6 +337,38 @@ mod tests {
         assert!(!ct_eq(b"abc", b"abcdef")); // different length
         assert!(!ct_eq(b"", b"x"));
         assert!(ct_eq(b"", b"")); // empty == empty
+    }
+
+    #[test]
+    fn valid_scope_accepts_known_forms_only() {
+        for s in ["screen", "active_window", "window:42", "window:0x1a2b"] {
+            assert!(valid_scope(s), "{s} should be valid");
+        }
+        for s in ["bogus", "window:", "window:xyz", "window:0x", "", "Screen"] {
+            assert!(!valid_scope(s), "{s} should be invalid");
+        }
+    }
+
+    #[test]
+    fn invalid_capture_scope_is_rejected() {
+        let mut s = session(None);
+        s.on_text(HELLO); // authenticate first
+        let step = s.on_text(
+            r#"{"type":"action","call_id":"c1","action":{"verb":"screenshot","scope":"bogus"}}"#,
+        );
+        let reply = step.reply.unwrap();
+        assert!(reply.contains("\"ok\":false") && reply.contains("invalid capture scope"));
+    }
+
+    #[test]
+    fn valid_window_scope_is_not_rejected_as_invalid() {
+        let mut s = session(None);
+        s.on_text(HELLO);
+        // a well-formed window:<id> must not hit the invalid-scope rejection
+        let step = s.on_text(
+            r#"{"type":"action","call_id":"c2","action":{"verb":"screenshot","scope":"window:0x1a"}}"#,
+        );
+        assert!(!step.reply.unwrap().contains("invalid capture scope"));
     }
 
     #[test]
