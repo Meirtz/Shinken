@@ -82,6 +82,45 @@ def test_docker_provider_builds_run_command(monkeypatch):
     assert handle.metadata["container_id"] == "container-id"
 
 
+def _docker_create(monkeypatch, **kwargs):
+    commands: list[list[str]] = []
+
+    def fake_run(cmd: list[str], timeout: float = 30.0):
+        commands.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="cid\n", stderr="")
+
+    monkeypatch.setattr("shinken.providers.docker._run", fake_run)
+    monkeypatch.setattr("shinken.providers.docker._free_port", lambda _host: 19009)
+    monkeypatch.setattr(DockerLocalProvider, "_wait_ready", lambda _self, _handle: None)
+    handle = DockerLocalProvider(**kwargs).create()
+    return commands[0], handle
+
+
+def test_docker_default_network_mode_is_bridge_and_recorded(monkeypatch):
+    # #152: default is bridge (guest has egress), the port is published, and the actual
+    # mode + egress posture are recorded so callers aren't misled.
+    cmd, handle = _docker_create(monkeypatch)
+    assert "--network" in cmd and cmd[cmd.index("--network") + 1] == "bridge"
+    assert "-p" in cmd and "127.0.0.1:19009:8765" in cmd
+    assert handle.metadata["network_mode"] == "bridge"
+    assert handle.metadata["guest_egress"] is True
+
+
+def test_docker_network_none_omits_port_and_records_no_egress(monkeypatch):
+    # #152: network_mode="none" gives the guest no network (no egress) and omits -p
+    # (incompatible with --network none); metadata records the no-egress posture.
+    cmd, handle = _docker_create(monkeypatch, network_mode="none")
+    assert "--network" in cmd and cmd[cmd.index("--network") + 1] == "none"
+    assert "-p" not in cmd
+    assert handle.metadata["network_mode"] == "none"
+    assert handle.metadata["guest_egress"] is False
+
+
+def test_docker_invalid_network_mode_rejected():
+    with pytest.raises(ProviderError):
+        DockerLocalProvider(network_mode="airplane")
+
+
 def test_docker_provider_cleans_up_if_readiness_fails(monkeypatch):
     commands: list[list[str]] = []
 

@@ -79,12 +79,24 @@ class DockerLocalProvider(SandboxProvider):
         host: str = "127.0.0.1",
         name_prefix: str = "shinken-local",
         startup_timeout: float = 45.0,
+        network_mode: str = "bridge",
     ) -> None:
         self.image = image
         self.docker_bin = docker_bin
         self.host = host
         self.name_prefix = name_prefix
         self.startup_timeout = startup_timeout
+        # Guest network posture (#152). Default "bridge": the guest shares Docker's bridge
+        # and HAS egress — this local reference provider is not an egress boundary (true
+        # isolation needs the out-of-VM egress proxy, D6). "none" gives the guest no
+        # network, but also removes the published-port host->shinkend WS path, so the
+        # provider can't connect/health-check it — only for self-contained, unsupervised
+        # runs. The actual mode is recorded in handle metadata so callers aren't misled.
+        if network_mode not in ("bridge", "none"):
+            raise ProviderError(
+                f"unsupported network_mode {network_mode!r} (expected 'bridge' or 'none')"
+            )
+        self.network_mode = network_mode
 
     def create(self, spec: SandboxSpec | None = None) -> SandboxHandle:
         spec = replace(spec, image=spec.image or self.image) if spec is not None else SandboxSpec(
@@ -98,14 +110,14 @@ class DockerLocalProvider(SandboxProvider):
             "run",
             "-d",
             "--rm",
+            "--network",
+            self.network_mode,
             "--name",
             name,
             "--label",
             "shinken.provider=docker-local",
             "--label",
             f"shinken.name_prefix={self.name_prefix}",
-            "-p",
-            f"{self.host}:{port}:8765",
             "-e",
             # Dev-only: the token is delivered via env, so it is readable by any process
             # in the guest (and from /proc) — not a real boundary (#153). It is redacted
@@ -115,6 +127,10 @@ class DockerLocalProvider(SandboxProvider):
             "-e",
             f"SCREEN_GEOMETRY={spec.screen_geometry}",
         ]
+        # Publish the shinkend port only when the guest has a network; --network none is
+        # incompatible with -p (and leaves the guest unreachable by the WS transport).
+        if self.network_mode != "none":
+            cmd += ["-p", f"{self.host}:{port}:8765"]
         if spec.memory:
             cmd += ["--memory", spec.memory]
         if spec.cpus is not None:
@@ -139,6 +155,10 @@ class DockerLocalProvider(SandboxProvider):
                 "image": spec.image or self.image,
                 "port": port,
                 "screen_geometry": spec.screen_geometry,
+                # Honest egress posture (#152): record the actual network mode so callers
+                # aren't misled — bridge means the guest HAS egress (not isolated here).
+                "network_mode": self.network_mode,
+                "guest_egress": self.network_mode != "none",
                 "resources": {
                     "memory": spec.memory,
                     "cpus": spec.cpus,
