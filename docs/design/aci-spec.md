@@ -159,9 +159,9 @@ differentiator), not a prerequisite for the first GUI agent.
 **One capture contract, three operations, one capture source per OS:**
 
 ```
-screenshot(target=screen|window|region, region?, format, quality, max_dim) -> image
-start_video(target, fps, codec) -> stream     # continuous; for the human/Control Panel
-stop_video(stream)
+screenshot(scope=screen|active_window|window:<id>, max_long_edge?) -> image
+start_screencast(scope=screen|active_window|window:<id>, fps=0.1..30, max_long_edge?) -> stream
+stop_screencast(stream)
 ```
 
 - **macOS:** ScreenCaptureKit (`SCScreenshotManager` for stills incl. occluded per-window; `SCStream` for video).

@@ -84,7 +84,11 @@
         "elements": { "type": "array", "items": { "$ref": "#/$defs/Element" } },
         "delta": { "type": "object", "properties": { "added": { "type": "array", "items": { "$ref": "#/$defs/Element" } }, "removed": { "type": "array", "items": { "type": "string" } }, "changed": { "type": "array", "items": { "$ref": "#/$defs/Element" } } } },
         "image": { "type": "object", "required": ["ref", "w", "h"], "properties": { "ref": { "type": "string" }, "w": { "type": "integer" }, "h": { "type": "integer" }, "scope": { "$ref": "#/$defs/Scope" } } }
-      }
+      },
+      "allOf": [
+        { "if": { "required": ["stream"] }, "then": { "required": ["stream", "seq", "image"] } },
+        { "if": { "required": ["seq"] }, "then": { "required": ["stream"] } }
+      ]
     },
     "Action": {
       "type": "object", "additionalProperties": false,
@@ -98,7 +102,7 @@
         "dy": { "type": "number" },
         "ms": { "type": "integer", "minimum": 0 },
         "scope": { "$ref": "#/$defs/Scope" },
-        "fps": { "type": "number", "exclusiveMinimum": 0, "description": "start_screencast target frame rate (frames/sec)" },
+        "fps": { "type": "number", "minimum": 0.1, "maximum": 30, "description": "start_screencast target frame rate (frames/sec), matching runtime clamp bounds" },
         "max_long_edge": { "type": "integer", "minimum": 1, "description": "downscale cap (px) for screencast/screenshot frames" }
       },
       "allOf": [

@@ -38,6 +38,17 @@ from shinken import protocol
             "action": {"verb": "start_screencast", "fps": 10, "max_long_edge": 640},
         },
         {"type": "action", "call_id": "sc2", "action": {"verb": "stop_screencast"}},
+        # fps at the runtime clamp boundaries (0.1 .. 30) is valid (#70)
+        {
+            "type": "action",
+            "call_id": "sc3",
+            "action": {"verb": "start_screencast", "fps": 0.1, "max_long_edge": 1},
+        },
+        {
+            "type": "action",
+            "call_id": "sc4",
+            "action": {"verb": "start_screencast", "fps": 30, "max_long_edge": 2576},
+        },
         {
             "type": "action",
             "call_id": "c",
@@ -77,6 +88,39 @@ def test_valid_messages_pass_schema(message):
             "type": "action",
             "call_id": "c",
             "action": {"verb": "screenshot", "scope": "region"},
+        },
+        {  # fps below the runtime lower clamp bound (#70)
+            "type": "action",
+            "call_id": "sc",
+            "action": {"verb": "start_screencast", "fps": 0},
+        },
+        {  # fps above the runtime upper clamp bound (#70)
+            "type": "action",
+            "call_id": "sc",
+            "action": {"verb": "start_screencast", "fps": 60},
+        },
+        {  # invalid long-edge cap
+            "type": "action",
+            "call_id": "sc",
+            "action": {"verb": "start_screencast", "max_long_edge": 0},
+        },
+        {  # a stream frame must include seq (#70)
+            "type": "observation",
+            "obs_id": "sc-0",
+            "stream": "sc",
+            "image": {"ref": "abc", "w": 640, "h": 400, "scope": "screen"},
+        },
+        {  # seq implies a stream id (#70)
+            "type": "observation",
+            "obs_id": "sc-0",
+            "seq": 0,
+            "image": {"ref": "abc", "w": 640, "h": 400, "scope": "screen"},
+        },
+        {  # stream frames carry image payloads (#70)
+            "type": "observation",
+            "obs_id": "sc-0",
+            "stream": "sc",
+            "seq": 0,
         },
     ],
 )
