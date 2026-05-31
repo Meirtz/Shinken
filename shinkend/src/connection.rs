@@ -10,6 +10,20 @@ use std::sync::Arc;
 use crate::executor::{ActionSpec, Executor};
 use crate::protocol::{self, Message};
 
+/// Constant-time byte-string equality for bearer-token comparison (#135), so token auth
+/// doesn't leak a match prefix via early-exit timing. The length check can leak length,
+/// which is acceptable for fixed-length dev tokens; the token *value* is the secret.
+fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff: u8 = 0;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
 /// A screencast the runtime should start streaming (see [`StreamCtl`]).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScreencastSpec {
@@ -119,7 +133,10 @@ impl Session {
                     ));
                 }
                 if let Some(expected) = self.token.as_deref() {
-                    if token.as_deref() != Some(expected) {
+                    if !ct_eq(
+                        token.as_deref().unwrap_or("").as_bytes(),
+                        expected.as_bytes(),
+                    ) {
                         return Step::close(protocol::error_result_text(
                             "?",
                             "authentication required: missing or invalid token",
@@ -271,6 +288,24 @@ mod tests {
             r#"{"type":"hello","v":0,"client":{"name":"t","version":"0"},"token":"secret"}"#,
         );
         assert!(!ok.close && s.is_authenticated());
+    }
+
+    #[test]
+    fn wrong_token_is_rejected() {
+        let mut s = session(Some("secret"));
+        let step = s.on_text(
+            r#"{"type":"hello","v":0,"client":{"name":"t","version":"0"},"token":"wrong"}"#,
+        );
+        assert!(step.close && !s.is_authenticated());
+    }
+
+    #[test]
+    fn ct_eq_matches_only_equal_byte_strings() {
+        assert!(ct_eq(b"abc123", b"abc123"));
+        assert!(!ct_eq(b"abc123", b"abc124")); // same length, one byte differs
+        assert!(!ct_eq(b"abc", b"abcdef")); // different length
+        assert!(!ct_eq(b"", b"x"));
+        assert!(ct_eq(b"", b"")); // empty == empty
     }
 
     #[test]
