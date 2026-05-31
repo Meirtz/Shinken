@@ -97,6 +97,28 @@ jobs:
       - if: steps.present.outputs.exists == 'false'
         run: echo "sdk/python not present yet — skipping"
 
+  sdk-typescript:
+    name: SDK (TypeScript)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: present
+        run: |
+          if [ -f sdk/typescript/package.json ]; then echo "exists=true" >> "$GITHUB_OUTPUT"; else echo "exists=false" >> "$GITHUB_OUTPUT"; fi
+      - if: steps.present.outputs.exists == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - if: steps.present.outputs.exists == 'true'
+        run: npm ci
+      - if: steps.present.outputs.exists == 'true'
+        run: |
+          npm run ts:check
+          npm run ts:test
+      - if: steps.present.outputs.exists == 'false'
+        run: echo "sdk/typescript not present yet — skipping"
+
   integration-linux:
     name: Linux integration (Xvfb)
     runs-on: ubuntu-latest

@@ -1,0 +1,16 @@
+{
+  "name": "shinken",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "sdk/typescript"
+  ],
+  "scripts": {
+    "ts:build": "npm run -w @shinken/sdk build",
+    "ts:check": "npm run -w @shinken/sdk typecheck",
+    "ts:test": "npm run -w @shinken/sdk test"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
+}

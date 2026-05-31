@@ -11,14 +11,16 @@ fmt: ## format rust + python
 	cargo fmt --manifest-path shinkend/Cargo.toml
 	cd sdk/python && ruff format .
 
-lint: ## lint rust + python (matches CI)
+lint: ## lint rust + python + typescript (matches CI)
 	cargo fmt --manifest-path shinkend/Cargo.toml -- --check
 	cargo clippy --manifest-path shinkend/Cargo.toml --all-targets -- -D warnings
 	cd sdk/python && ruff check .
+	npm run ts:check
 
-test: ## test rust + python
+test: ## test rust + python + typescript
 	cargo test --manifest-path shinkend/Cargo.toml --all
 	cd sdk/python && pytest -q
+	npm run ts:test
 
 run: ## run the Guest Runtime (ws://127.0.0.1:8765)
 	cargo run --manifest-path shinkend/Cargo.toml
