@@ -290,7 +290,10 @@ fn spawn_screencast(
         let mut last_hash: Option<u64> = None;
         loop {
             tick.tick().await;
-            // Capture off the runtime's worker threads — X11 GetImage is blocking.
+            // Capture off the runtime's worker threads — X11 GetImage is blocking. Awaiting
+            // the blocking task here serializes captures: at most one is in flight per
+            // screencast, and MissedTickBehavior::Skip drops ticks that arrive while busy,
+            // so slow capture can't pile up blocking tasks/buffers behind the X11 mutex (#137).
             let exec = exec.clone();
             let scope = scope.clone();
             let img = match tokio::task::spawn_blocking(move || exec.capture(&scope, max_long_edge))
@@ -463,5 +466,53 @@ mod tests {
         }
         assert!(saw_stop_ack, "stop_screencast must be acked");
         assert!(went_quiet, "frames must cease after stop_screencast");
+    }
+
+    #[tokio::test]
+    async fn screencast_runs_at_most_one_capture_at_a_time() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        use executor::{ActionSpec, CapturedImage};
+
+        // A slow executor that records the peak number of concurrent captures.
+        #[derive(Default)]
+        struct SlowCounter {
+            inflight: AtomicUsize,
+            max: AtomicUsize,
+        }
+        impl Executor for SlowCounter {
+            fn execute(&self, _: &ActionSpec) -> anyhow::Result<String> {
+                Ok(String::new())
+            }
+            fn backend(&self) -> &'static str {
+                "slow-counter"
+            }
+            fn capture(&self, _: &str, _: Option<u32>) -> anyhow::Result<CapturedImage> {
+                let n = self.inflight.fetch_add(1, Ordering::SeqCst) + 1;
+                self.max.fetch_max(n, Ordering::SeqCst);
+                std::thread::sleep(Duration::from_millis(20)); // slow capture
+                self.inflight.fetch_sub(1, Ordering::SeqCst);
+                Ok(CapturedImage {
+                    png_base64: format!("f{n}"),
+                    w: 1,
+                    h: 1,
+                })
+            }
+        }
+
+        let exec = Arc::new(SlowCounter::default());
+        let (out, _rx) = mpsc::channel::<WsMessage>(8);
+        let permit = Arc::new(Semaphore::new(1)).try_acquire_owned().unwrap();
+        let spec = ScreencastSpec {
+            stream_id: "s".into(),
+            fps: 50.0, // 20ms ticks vs 20ms captures — would pile up if not serialized
+            max_long_edge: None,
+            scope: "screen".into(),
+        };
+        let handle = spawn_screencast(exec.clone(), out, spec, permit);
+        tokio::time::sleep(Duration::from_millis(120)).await; // several ticks
+        handle.abort();
+        // the loop awaits each blocking capture before the next tick → never concurrent (#137)
+        assert_eq!(exec.max.load(Ordering::SeqCst), 1);
     }
 }
