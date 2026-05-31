@@ -182,6 +182,7 @@ enum BackendChoice {
     Auto,
     X11Xtest,
     Virtual,
+    PyAutoGui,
 }
 
 impl BackendChoice {
@@ -190,8 +191,10 @@ impl BackendChoice {
             "" | "auto" => Ok(Self::Auto),
             "x11_xtest" | "x11/xtest" | "xtest" | "x11" => Ok(Self::X11Xtest),
             "virtual" => Ok(Self::Virtual),
+            "pyautogui" | "pyautogui_subprocess" => Ok(Self::PyAutoGui),
             other => bail!(
-                "unknown {EXECUTOR_ENV} value {other:?}; expected auto, x11_xtest, or virtual"
+                "unknown {EXECUTOR_ENV} value {other:?}; \
+                 expected auto, x11_xtest, virtual, or pyautogui"
             ),
         }
     }
@@ -237,6 +240,12 @@ fn build_executor(choice: BackendChoice) -> Result<Arc<dyn Executor>> {
         BackendChoice::Virtual => {
             eprintln!("shinkend: action backend = virtual (configured)");
             Ok(Arc::new(VirtualExecutor::default()))
+        }
+        BackendChoice::PyAutoGui => {
+            let e = crate::pyautogui::PyAutoGuiExecutor::new()
+                .context("SHINKEND_EXECUTOR=pyautogui")?;
+            eprintln!("shinkend: action backend = pyautogui (subprocess)");
+            Ok(Arc::new(e))
         }
     }
 }
