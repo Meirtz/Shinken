@@ -32,6 +32,10 @@ __all__ = ["connect", "aconnect", "Sandbox", "AsyncSandbox", "Capabilities"]
 DEFAULT_ADDR = "127.0.0.1:8765"
 _CLIENT = {"name": "shinken-py", "version": "0.0.0"}
 _FRAME_QUEUE_MAX = 32
+# Bound inbound WebSocket frames (#136): generous enough for 4K screenshots / large a11y
+# trees, but not unbounded — a malformed or hostile peer can't force unbounded buffering.
+# (websockets' 1 MiB default would also reject legitimate large screenshots.)
+_MAX_WS_MESSAGE = 16 * 1024 * 1024
 
 # Sentinel pushed onto the frame queue when the stream/connection ends.
 _STREAM_END = object()
@@ -611,7 +615,7 @@ async def aconnect(
     on_ask: Callable[[str, str | None, str], bool] | None = None,
 ) -> AsyncSandbox:
     """Open an async session and complete the ACI handshake."""
-    ws = await _ws_connect(_to_uri(addr))
+    ws = await _ws_connect(_to_uri(addr), max_size=_MAX_WS_MESSAGE)
     hello: dict = {"type": "hello", "v": 0, "client": _CLIENT}
     if token:
         hello["token"] = token
