@@ -45,6 +45,7 @@ sandbox image), not just by design.
 | `.skn` **playback** | Only *recording* exists; there is no replay execution/scrubbing engine yet |
 | Wire schema vs implementation | The runtime/SDK emit verbs/fields (`start_screencast`, `screencast`, `scope`, `fps`, `max_long_edge`, `stream`/`seq`) that **`schema/aci.schema.json` does not yet validate** — tracked in #56 |
 | Hardening | A 22-finding adversarial review (incl. an unbounded-frame-queue OOM vector) is open as #56 |
+| **Runtime state** (snapshot/restore/resume/fork/checkpoint) | **Implemented on the Docker disk tier** (#209, via `docker commit` + container launch) behind the provider interface (#207); Docker advertises `supports_snapshot/fork/checkpoint/resume`, `snapshot_kind="disk"`. Still missing: the SDK `sandbox.checkpoint()` + `snapshot_ref` replay link, the CRIU memory tier, and the sub-ms CoW fast tier (#206) |
 
 ## 🔵 Designed-only — documented, **not implemented**
 
@@ -53,7 +54,7 @@ These appear in the vision/PRD/architecture/README in present-ish tense, but **n
 - **Cross-platform**: macOS and Windows tiers (today: Linux only). Even on Linux, capture/input is **X11 only** — **Wayland** (the modern Linux default) is unaddressed and would break XTEST/GetImage.
 - **Structured / accessibility observation (ADR D3)** — a11y tree + element-ref resolution + diffing. This is the core differentiator and **does not exist**.
 - **Permission / capability panel + enforcement gate** — described as a headline feature; currently docs only.
-- **Runtime snapshot / checkpoint / fork / resume** — the provider **interface** now exists (typed routing descriptors + `checkpoint()`/`resume()` methods, #207), but no provider **implements** it yet (all advertise `False`). This is the **headline differentiator** (D1/D5) and the **active v0.0.1 priority** (#206): a Docker reference tier — `docker commit` snapshot → restore → fork → CRIU checkpoint — comes next. `.skn` replay is the **evidence ledger** these checkpoints reference (a checkpoint binds a substrate snapshot to a replay event offset, #42), not the speed story. Sub-second CoW-fork density stays a Phase-1 spike.
+- **Runtime-state memory + fast tier** — the Docker **disk** tier is implemented (see Partial, above); the **CRIU memory checkpoint** (`snapshot_kind="process"`) and the **sub-second CoW fork-from-snapshot fast tier** (Firecracker/QEMU) are **not built** and stay Phase-1, gated on a first-party latency spike. Runtime-state time-travel is the **headline differentiator** (D1/D5, #206); `.skn` replay is the **evidence ledger** its checkpoints reference (a checkpoint binds a substrate snapshot to a replay event offset, #42), not the speed story.
 - **Control plane + ultra-high-concurrency / multi-tenant orchestration** — a single local `shinkend` is all that exists.
 - **Dual-channel WebRTC media plane + GPU/NVENC encode** — today streaming is **base64 PNG over the control WebSocket**, fine for an MVP but not the low-latency/bandwidth story at scale.
 - **High-throughput file-transfer path** (#49/#50) — design only.

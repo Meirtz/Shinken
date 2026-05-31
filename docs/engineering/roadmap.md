@@ -128,10 +128,12 @@ No cluster substrate dependency yet. The limit is scale, not scope.
 - **`.skn` replay and runtime-state descriptors** ([D5](../design/tech-decisions.md)): write
   `manifest.json` + append-only `events.jsonl`, content-addressed media/artifact refs,
   action-observation pairing, capability and permission events, verifier receipts, atomic bundle
-  writes, and a CLI scrubber. Also define provider-advertised `snapshot`, `checkpoint`, `fork`,
-  `restore`, and `resume` capabilities so unsupported providers fail honestly. Runtime
-  checkpoint/restore implementation remains a later substrate primitive and must not be conflated
-  with replay.
+  writes, and a CLI scrubber. Also provider-advertised `snapshot`, `checkpoint`, `fork`,
+  `restore`, and `resume` capabilities (so unsupported providers fail honestly) **and a Docker
+  disk-tier reference implementation of them** (`docker commit` snapshot → restore/resume/fork +
+  event-offset-bound checkpoint, #206/#209). The **memory** (CRIU) and **sub-second CoW
+  fork-from-snapshot fast** substrate tiers remain later Phase-1 primitives — and runtime state
+  must not be conflated with replay (a checkpoint *references* a replay event offset; #42).
 - **File/artifact transfer:** move fixtures into the Sandbox and artifacts out with checksums and
   replay refs. High throughput and resumability can improve later; the semantic API must exist in
   v0.0.1.

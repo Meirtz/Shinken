@@ -56,28 +56,32 @@ operation, but by itself it does not make the old desktop live again.
 - media refs,
 - artifact refs,
 - verifier receipts,
-- future `checkpoint_ref` / `snapshot_ref` events.
+- `snapshot_ref` events (reserved event kind) — emitted by `sandbox.checkpoint()` to bind a
+  checkpoint id to its `.skn` event offset (wiring in progress, #206).
 
-When runtime state is implemented, `.skn` should reference checkpoint ids at meaningful boundaries:
-task start, step boundaries, capability grants, side-effecting operations, verifier milestones, and
-manual markers.
+`.skn` references checkpoint ids at meaningful boundaries: task start, step boundaries, capability
+grants, side-effecting operations, verifier milestones, and manual markers.
 
 ## Provider Honesty
 
-Every provider should advertise what state operations it truly supports:
+Every provider advertises what state operations it truly supports, in its `ProviderCapabilities`:
 
-- `supports_snapshot`
-- `supports_fork`
-- `reset_strategy`
-- `snapshot_kind`
-- `transport`
-- `isolation`
+- `supports_snapshot`, `supports_fork`, `supports_checkpoint`, `supports_resume`
+- `reset_strategy`, `snapshot_kind`, `transport`, `isolation`, `display`, `tier`
 
-If a provider cannot restore or fork, it must say so. v0.0.1 Docker-local reset is recreate, not
-fork-from-snapshot.
+If a provider cannot restore or fork, it must say so (the contract tests enforce that a claimed
+operation is actually wired, not a raising stub). The **Docker** provider now advertises
+`supports_snapshot/fork/checkpoint/resume = True` with `snapshot_kind="disk"`; note its `reset()`
+is still `recreate` (a fresh container), distinct from `fork()` (a new branch off a snapshot).
 
 ## Current Status
 
-Today Shinken has `.skn` recording and local provider capability descriptors. Runtime
-checkpoint/restore/fork/resume are design targets and provider contracts, not complete production
-features. See [`../engineering/status.md`](../engineering/status.md).
+The **Docker disk tier is implemented** (#209): `provider.snapshot()` (`docker commit`) /
+`restore()` / `resume()` / `fork()` (snapshot + restore, disk copy-on-write) / `checkpoint()` (a
+disk snapshot bound to a `.skn` event offset + agent-state ref). `.skn` recording and the provider
+runtime-state interface (#207) ship too.
+
+**Not yet built:** the SDK `sandbox.checkpoint()` + `snapshot_ref` replay-event wiring (#206), the
+**CRIU memory** checkpoint tier (`snapshot_kind="process"`), and the **sub-second CoW fork-from-snapshot
+fast tier** (Firecracker/QEMU, Phase-1, gated on a first-party latency spike). See
+[`../engineering/status.md`](../engineering/status.md).
