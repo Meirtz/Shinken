@@ -16,6 +16,7 @@ later milestones (see docs/10-phase0-plan.md).
 """
 
 from .client import AsyncSandbox, Capabilities, Sandbox, aconnect, connect
+from .dialect import DialectError, parse_actions
 from .gateway import CapabilityDenied
 from .providers import DockerLocalProvider, ExternalProvider, SandboxSpec
 from .skn import Recorder, Replay
@@ -30,6 +31,8 @@ __all__ = [
     "CapabilityDenied",
     "Recorder",
     "Replay",
+    "parse_actions",
+    "DialectError",
     "DockerLocalProvider",
     "ExternalProvider",
     "SandboxSpec",
