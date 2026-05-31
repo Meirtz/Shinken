@@ -98,6 +98,20 @@ def test_record_session_to_skn(mock_shinkend, tmp_path):
     # the screenshot observation is paired to its screenshot action via action_id (#160)
     shot = next(e for e in rp.events if e["kind"] == "action" and e["src"] == "screenshot")
     assert obs.get("action_id") == shot.get("action_id") and shot.get("action_id")
+
+
+def test_replay_is_not_a_runtime_checkpoint(mock_shinkend, tmp_path):
+    """save_replay() produces a replay bundle, never a runtime checkpoint: it must not
+    emit snapshot_ref events, since runtime checkpoint/restore/fork is unimplemented (#42)."""
+    path = str(tmp_path / "session.skn")
+    with shinken.connect(mock_shinkend, record=True) as env:
+        env.click(x=1, y=2)
+        env.screenshot()
+        env.save_replay(path)
+
+    rp = Replay.load(path)
+    assert not any(e["kind"] == "snapshot_ref" for e in rp.events)
+    assert not any("snapshot_ref" in e for e in rp.events)
     assert "run.skn" not in summarize(path)  # summarize names the given path
     assert "events" in summarize(path)
 

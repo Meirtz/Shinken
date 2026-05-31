@@ -538,7 +538,13 @@ class AsyncSandbox:
         return True
 
     def save_replay(self, path: str) -> str:
-        """Write the recorded session to a `.skn` bundle. Requires record=True."""
+        """Write the recorded session to a `.skn` **replay** bundle (atomically).
+
+        This is a replay/trajectory bundle (actions, observations, media refs) — *not*
+        a runtime checkpoint. It cannot restore live environment or agent state;
+        runtime checkpoint/restore/fork are separate, not-yet-implemented primitives
+        (see the glossary, "Checkpoint", and #42). Requires ``record=True``.
+        """
         if self._recorder is None:
             raise RuntimeError("session is not recording; reconnect with record=True")
         return self._recorder.save(path)
@@ -913,6 +919,8 @@ class Sandbox:
         return _Screencast(self, fps, timeout, limit, max_long_edge, scope)
 
     def save_replay(self, path: str) -> str:
+        """Write the recorded session to a `.skn` **replay** bundle (replay-only, not a
+        runtime checkpoint; see :meth:`AsyncSandbox.save_replay` and #42)."""
         return self._inner.save_replay(path)
 
     def put_file(self, local_path: str, sandbox_path: str, *, archive: bool = False) -> dict:
