@@ -121,7 +121,9 @@ This gives Shinken four distinct action classes:
   verbs and produce replayable action/observation events.
 - **CLI / code actions** — shell, Python, editor, install, and other command execution. These are not
   GUI backends. They are powerful side-effecting capabilities behind the D6 `tool_runner` policy
-  boundary, with scoped filesystem, egress, credential, timeout, and replay-redaction rules.
+  boundary, with scoped filesystem, egress, credential, timeout, and replay-redaction rules. The
+  Phase-0 boundary, request/result shape, and `.skn` event mapping are specified in
+  [`code-execution.md`](code-execution.md) (#60).
 - **Artifact and file operations** — fixture upload, result download, directory sync, and replay
   resource attachment. These use the artifact/file-transfer channel, not the low-latency GUI action
   path.

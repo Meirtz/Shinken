@@ -15,6 +15,7 @@ eval, substrates, streaming, and future cross-OS/GPU tiers.
 - OSWorld teardown: [`osworld-analysis.md`](osworld-analysis.md)
 - Competitive landscape: [`landscape.md`](landscape.md)
 - ADRs / technical decisions: [`tech-decisions.md`](tech-decisions.md)
+- CLI / code execution boundary: [`code-execution.md`](code-execution.md)
 - Threat model: [`threat-model.md`](threat-model.md)
 - Economics and build-vs-buy: [`economics-and-build-vs-buy.md`](economics-and-build-vs-buy.md)
 - Glossary: [`glossary.md`](glossary.md)
