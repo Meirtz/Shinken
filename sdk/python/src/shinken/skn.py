@@ -17,9 +17,26 @@ import time
 import uuid
 import zipfile
 from datetime import datetime, timezone
+from enum import Enum
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+
+
+class Redaction(str, Enum):
+    """Replay redaction posture for a recorded session (#206). The default when recording
+    is privacy-safe (:data:`FULL`): no free text, media as content hashes only."""
+
+    NONE = "none"  # store everything — typed text + media bytes
+    TEXT = "text"  # redact free text; keep media bytes
+    MEDIA = "media"  # metadata-only media (w/h/scope/sha256, no bytes); keep text
+    FULL = "full"  # redact text + metadata-only media — privacy-safe
+
+
+def redaction_flags(redaction: Redaction | str) -> tuple[bool, bool]:
+    """Map a :class:`Redaction` (or its string value) to ``(redact_media, redact_text)``."""
+    r = redaction if isinstance(redaction, Redaction) else Redaction(redaction)
+    return (r in (Redaction.MEDIA, Redaction.FULL), r in (Redaction.TEXT, Redaction.FULL))
 
 SKN_VERSION = 0
 
@@ -154,14 +171,15 @@ class Recorder:
         src = "a11y"
         if png is not None:
             image = dict(payload.get("image") or {})
+            # Content-address the frame regardless: the hash is identity (dedup / audit /
+            # verification). Metadata-only mode keeps (w, h, scope, sha256) but omits the
+            # bytes — lighter + privacy-safe (#206); full mode also stores the PNG.
+            sha = hashlib.sha256(png).hexdigest()
+            image["ref"] = sha
             if self.redact_media:
-                # record dimensions only — no raw bytes, no content-addressed media
-                image.pop("ref", None)
-                image["redacted"] = True
+                image["redacted"] = True  # metadata-only: hash kept, bytes not stored
             else:
-                sha = hashlib.sha256(png).hexdigest()
                 self._media[sha] = png
-                image["ref"] = sha
             payload["image"] = image
             src = "image"
         return self._emit("observation", src, payload, action_id)

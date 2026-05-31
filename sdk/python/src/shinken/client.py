@@ -25,7 +25,7 @@ from websockets.asyncio.client import connect as _ws_connect
 
 from .artifacts import LocalArtifactStore
 from .gateway import CapabilityDenied, check_file_transfer, decide_action
-from .skn import DEFAULT_CAPABILITIES, Recorder
+from .skn import DEFAULT_CAPABILITIES, Recorder, Redaction, redaction_flags
 
 __all__ = ["connect", "aconnect", "Sandbox", "AsyncSandbox", "Capabilities"]
 
@@ -103,8 +103,9 @@ class AsyncSandbox:
         platform: str,
         record: bool = False,
         sandbox_capabilities: dict | None = None,
-        redact_media: bool = False,
-        redact_text: bool = False,
+        redact_media: bool | None = None,
+        redact_text: bool | None = None,
+        redaction: Redaction | str | None = None,
         enforce_capabilities: bool | None = None,
         artifact_root: str | None = None,
         on_ask: Callable[[str, str | None, str], bool] | None = None,
@@ -140,12 +141,21 @@ class AsyncSandbox:
         # Approval handler for risky ("ask") capabilities (#7): (verb, cap, reason) -> bool.
         # None means risky steps are denied by default (conservative, still recorded).
         self._on_ask = on_ask
+        # Resolve the redaction posture (#206). `redaction` (enum/str: none/text/media/full)
+        # sets both flags; otherwise the `redact_media`/`redact_text` flags apply (default
+        # off). The privacy-safe-by-default flip is deferred — it needs eval/verifier
+        # fidelity handling (a verifier reads recorded content), tracked in #206.
+        if redaction is not None:
+            eff_media, eff_text = redaction_flags(redaction)
+        else:
+            eff_media = bool(redact_media)
+            eff_text = bool(redact_text)
         self._recorder = (
             Recorder(
                 platform=platform,
                 capabilities=self.sandbox_capabilities,
-                redact_media=redact_media,
-                redact_text=redact_text,
+                redact_media=eff_media,
+                redact_text=eff_text,
             )
             if record
             else None
@@ -677,8 +687,9 @@ async def aconnect(
     record: bool = False,
     token: str | None = None,
     sandbox_capabilities: dict | None = None,
-    redact_media: bool = False,
-    redact_text: bool = False,
+    redact_media: bool | None = None,
+    redact_text: bool | None = None,
+    redaction: Redaction | str | None = None,
     enforce_capabilities: bool | None = None,
     artifact_root: str | None = None,
     on_ask: Callable[[str, str | None, str], bool] | None = None,
@@ -699,13 +710,14 @@ async def aconnect(
         ws,
         capabilities,
         platform,
-        record,
-        sandbox_capabilities,
-        redact_media,
-        redact_text,
-        enforce_capabilities,
-        artifact_root,
-        on_ask,
+        record=record,
+        sandbox_capabilities=sandbox_capabilities,
+        redact_media=redact_media,
+        redact_text=redact_text,
+        redaction=redaction,
+        enforce_capabilities=enforce_capabilities,
+        artifact_root=artifact_root,
+        on_ask=on_ask,
     )
     sandbox._start_reader()  # the reader owns recv() from here on
     return sandbox
@@ -1023,8 +1035,9 @@ def connect(
     record: bool = False,
     token: str | None = None,
     sandbox_capabilities: dict | None = None,
-    redact_media: bool = False,
-    redact_text: bool = False,
+    redact_media: bool | None = None,
+    redact_text: bool | None = None,
+    redaction: Redaction | str | None = None,
     enforce_capabilities: bool | None = None,
     artifact_root: str | None = None,
     on_ask: Callable[[str, str | None, str], bool] | None = None,
@@ -1032,9 +1045,11 @@ def connect(
     """Connect to a running ``shinkend`` and complete the ACI handshake (blocking).
 
     ``sandbox_capabilities`` overrides the session's v0 capability envelope (recorded
-    into the `.skn` replay as reference semantics). For sensitive runs, ``redact_media``
-    drops captured screenshot bytes and ``redact_text`` strips typed text from the
-    recording (#88). ``enforce_capabilities`` controls the local Action Gateway shim
+    into the `.skn` replay as reference semantics). ``redaction`` sets the replay redaction
+    posture (#206): ``"none"`` (default — full text + media bytes), ``"text"`` (strip typed
+    text), ``"media"`` (**metadata-only media** — keep ``w``/``h``/``scope``/``sha256`` but
+    not the PNG bytes), or ``"full"`` (both). The ``redact_media``/``redact_text`` flags are
+    the equivalent low-level knobs. ``enforce_capabilities`` controls the local Action Gateway shim
     (#84/#161): when on, an action whose capability the envelope does not grant is denied
     before dispatch (so it never reaches shinkend), and a capability valued ``"ask"`` is
     *risky* and pauses for approval via ``on_ask`` (#7). Default (``None``) enforces when
@@ -1052,6 +1067,7 @@ def connect(
                 sandbox_capabilities=sandbox_capabilities,
                 redact_media=redact_media,
                 redact_text=redact_text,
+                redaction=redaction,
                 enforce_capabilities=enforce_capabilities,
                 artifact_root=artifact_root,
                 on_ask=on_ask,

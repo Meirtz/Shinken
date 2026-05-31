@@ -206,10 +206,48 @@ def test_redact_media_drops_bytes(tmp_path):
     rp = Replay.load(path)
     assert rp.manifest["redaction"]["media"] is True
     img = next(e for e in rp.events if e["kind"] == "observation")["payload"]["image"]
-    assert img.get("redacted") is True and "ref" not in img  # no media reference
-    assert img["w"] == 2 and img["h"] == 2  # dimensions retained
+    # metadata-only (#206): the content hash (identity) is kept, the bytes are not
+    assert img.get("redacted") is True
+    assert isinstance(img["ref"], str) and len(img["ref"]) == 64  # sha256 retained
+    assert img["w"] == 2 and img["h"] == 2 and img["scope"] == "screen"  # dimensions retained
     with zipfile.ZipFile(path) as z:  # and no raw bytes anywhere in the bundle
         assert not any(n.startswith("media/") for n in z.namelist())
+
+
+def test_redaction_enum_maps_to_flags():
+    from shinken.skn import Redaction, redaction_flags
+
+    assert redaction_flags(Redaction.NONE) == (False, False)
+    assert redaction_flags("text") == (False, True)
+    assert redaction_flags("media") == (True, False)  # metadata-only media, text kept
+    assert redaction_flags(Redaction.FULL) == (True, True)
+
+
+def test_connect_redaction_full_redacts_text_and_keeps_media_hash(mock_shinkend, tmp_path):
+    path = str(tmp_path / "r.skn")
+    with shinken.connect(mock_shinkend, record=True, redaction="full") as env:
+        env.type_text("s3cret")
+        env.screenshot()
+        env.save_replay(path)
+    rp = Replay.load(path)
+    assert rp.manifest["redaction"] == {"media": True, "text": True}
+    act = next(e for e in rp.events if e["kind"] == "action" and e["src"] == "type_text")
+    assert act["payload"]["text"] == "[redacted]"
+    img = next(e for e in rp.events if e["kind"] == "observation")["payload"]["image"]
+    assert img.get("redacted") is True and len(img["ref"]) == 64  # metadata-only: hash kept
+
+
+def test_connect_default_keeps_full_content(mock_shinkend, tmp_path):
+    # Default (no redaction) keeps full text + media — the privacy-safe-by-default flip is
+    # deferred pending eval/verifier fidelity handling (#206).
+    path = str(tmp_path / "n.skn")
+    with shinken.connect(mock_shinkend, record=True) as env:
+        env.type_text("plain")
+        env.save_replay(path)
+    rp = Replay.load(path)
+    assert rp.manifest["redaction"] == {"media": False, "text": False}
+    act = next(e for e in rp.events if e["kind"] == "action" and e["src"] == "type_text")
+    assert act["payload"]["text"] == "plain"
 
 
 def test_redact_text_strips_typed_secret():
