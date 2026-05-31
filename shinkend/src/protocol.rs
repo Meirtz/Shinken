@@ -116,6 +116,10 @@ pub fn platform() -> &'static str {
     }
 }
 
+/// Negotiated maximum for `max_long_edge` (px) — advertised in the handshake and
+/// enforced (clamped) on capture requests so a client can't bypass the limit (#141).
+pub const MAX_LONG_EDGE: u32 = 2576;
+
 /// Capabilities advertised in the handshake. M0 advertises the v0 verb set even
 /// though execution lands in M1, so clients can negotiate up front.
 pub fn capabilities() -> Capabilities {
@@ -147,7 +151,7 @@ pub fn capabilities() -> Capabilities {
             .iter()
             .map(|s| s.to_string())
             .collect(),
-        max_long_edge: 2576,
+        max_long_edge: MAX_LONG_EDGE,
     }
 }
 

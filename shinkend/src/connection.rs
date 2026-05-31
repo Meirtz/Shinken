@@ -201,6 +201,12 @@ fn valid_scope(s: &str) -> bool {
     }
 }
 
+/// Clamp a requested `max_long_edge` to the negotiated maximum (#141), so a client can't
+/// request a larger capture than the handshake advertised.
+fn clamp_long_edge(m: Option<u32>) -> Option<u32> {
+    m.map(|v| v.min(protocol::MAX_LONG_EDGE))
+}
+
 /// Run one `action`. `screenshot` → one-shot `observation`; `start_screencast`/
 /// `stop_screencast` → `ack` plus a [`StreamCtl`] for the serve loop; every other
 /// verb → `ack`.
@@ -236,7 +242,7 @@ fn dispatch_action(
     }
     match spec.verb.as_str() {
         "screenshot" => {
-            let msg = match exec.capture(&scope, spec.max_long_edge) {
+            let msg = match exec.capture(&scope, clamp_long_edge(spec.max_long_edge)) {
                 Ok(img) => Message::Observation {
                     obs_id: format!("obs-{call_id}"),
                     cause: Some(call_id.to_string()),
@@ -258,7 +264,7 @@ fn dispatch_action(
             let cast = ScreencastSpec {
                 stream_id: call_id.to_string(),
                 fps,
-                max_long_edge: spec.max_long_edge,
+                max_long_edge: clamp_long_edge(spec.max_long_edge),
                 scope,
             };
             (ack(call_id, true, None), StreamCtl::Start(cast))
@@ -347,6 +353,13 @@ mod tests {
         for s in ["bogus", "window:", "window:xyz", "window:0x", "", "Screen"] {
             assert!(!valid_scope(s), "{s} should be invalid");
         }
+    }
+
+    #[test]
+    fn clamp_long_edge_caps_at_negotiated_max() {
+        assert_eq!(clamp_long_edge(Some(99999)), Some(protocol::MAX_LONG_EDGE));
+        assert_eq!(clamp_long_edge(Some(100)), Some(100)); // under the cap, unchanged
+        assert_eq!(clamp_long_edge(None), None);
     }
 
     #[test]

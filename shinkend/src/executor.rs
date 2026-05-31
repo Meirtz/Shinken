@@ -124,6 +124,15 @@ fn parse_scope(scope: &str) -> Scope {
     }
 }
 
+/// Map a normalized `point_norm` (x, y) to pixel coords, rejecting anything outside
+/// `[0, 1]` — out-of-range would map off-screen, violating the ACI contract (#141).
+fn norm_to_px(x: f64, y: f64, w: u16, h: u16) -> Result<(i16, i16)> {
+    if !(0.0..=1.0).contains(&x) || !(0.0..=1.0).contains(&y) {
+        bail!("point_norm out of range: ({x}, {y}) — must be within [0, 1]");
+    }
+    Ok(((x * w as f64) as i16, (y * h as f64) as i16))
+}
+
 /// Downscale an RGB8 buffer with nearest-neighbour sampling so its longer edge is at
 /// most `max_long_edge` px. Returns the buffer unchanged if it already fits (or the
 /// cap is 0). Cheap and dependency-free — good enough for a bandwidth preview.
@@ -368,10 +377,7 @@ impl X11Executor {
     fn resolve(&self, target: Option<&Target>) -> Result<(i16, i16)> {
         match target.context("action requires a target")? {
             Target::PointPx { x, y } => Ok((*x as i16, *y as i16)),
-            Target::PointNorm { x, y } => Ok((
-                (x * self.width as f64) as i16,
-                (y * self.height as f64) as i16,
-            )),
+            Target::PointNorm { x, y } => norm_to_px(*x, *y, self.width, self.height),
             Target::ElementRef { .. } => {
                 bail!("element_ref resolution needs the observation engine (M1b, #4)")
             }
@@ -621,6 +627,15 @@ mod tests {
 
     fn spec(json: &str) -> ActionSpec {
         serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn norm_to_px_maps_in_range_and_rejects_out_of_range() {
+        assert_eq!(norm_to_px(0.0, 0.0, 800, 600).unwrap(), (0, 0));
+        assert_eq!(norm_to_px(1.0, 1.0, 800, 600).unwrap(), (800, 600));
+        assert_eq!(norm_to_px(0.5, 0.5, 800, 600).unwrap(), (400, 300));
+        assert!(norm_to_px(1.5, 0.5, 800, 600).is_err()); // x > 1
+        assert!(norm_to_px(0.5, -0.1, 800, 600).is_err()); // y < 0
     }
 
     #[test]
