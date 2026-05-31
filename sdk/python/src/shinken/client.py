@@ -105,7 +105,7 @@ class AsyncSandbox:
         sandbox_capabilities: dict | None = None,
         redact_media: bool = False,
         redact_text: bool = False,
-        enforce_capabilities: bool = False,
+        enforce_capabilities: bool | None = None,
         artifact_root: str | None = None,
         on_ask: Callable[[str, str | None, str], bool] | None = None,
     ) -> None:
@@ -122,7 +122,12 @@ class AsyncSandbox:
         # The session capability envelope (what the Sandbox may do) — reference
         # semantics, recorded into .skn; distinct from the ACI `capabilities` above.
         self.sandbox_capabilities = {**DEFAULT_CAPABILITIES, **(sandbox_capabilities or {})}
-        self._enforce = enforce_capabilities  # Action Gateway shim (#84)
+        # Action Gateway shim (#84/#161). Enforcement is a *client-side reference*
+        # boundary, not a security guarantee (a direct WebSocket client bypasses it;
+        # true enforcement is the server-side Action Gateway, D6). Default (None) =
+        # enforce when recording, so recorded sessions honour their declared envelope
+        # (deny/ask actually fire) instead of being audit-only. Pass True/False to force.
+        self._enforce = record if enforce_capabilities is None else enforce_capabilities
         # Approval handler for risky ("ask") capabilities (#7): (verb, cap, reason) -> bool.
         # None means risky steps are denied by default (conservative, still recorded).
         self._on_ask = on_ask
@@ -623,7 +628,7 @@ async def aconnect(
     sandbox_capabilities: dict | None = None,
     redact_media: bool = False,
     redact_text: bool = False,
-    enforce_capabilities: bool = False,
+    enforce_capabilities: bool | None = None,
     artifact_root: str | None = None,
     on_ask: Callable[[str, str | None, str], bool] | None = None,
 ) -> AsyncSandbox:
@@ -955,7 +960,7 @@ def connect(
     sandbox_capabilities: dict | None = None,
     redact_media: bool = False,
     redact_text: bool = False,
-    enforce_capabilities: bool = False,
+    enforce_capabilities: bool | None = None,
     artifact_root: str | None = None,
     on_ask: Callable[[str, str | None, str], bool] | None = None,
 ) -> Sandbox:
@@ -964,9 +969,14 @@ def connect(
     ``sandbox_capabilities`` overrides the session's v0 capability envelope (recorded
     into the `.skn` replay as reference semantics). For sensitive runs, ``redact_media``
     drops captured screenshot bytes and ``redact_text`` strips typed text from the
-    recording (#88). With ``enforce_capabilities``, the local Action Gateway shim (#84)
-    denies actions whose capability the envelope does not grant, before dispatch; a
-    capability valued ``"ask"`` is *risky* and pauses for approval via ``on_ask`` (#7)."""
+    recording (#88). ``enforce_capabilities`` controls the local Action Gateway shim
+    (#84/#161): when on, an action whose capability the envelope does not grant is denied
+    before dispatch (so it never reaches shinkend), and a capability valued ``"ask"`` is
+    *risky* and pauses for approval via ``on_ask`` (#7). Default (``None``) enforces when
+    ``record=True``, so recorded sessions honour their declared envelope rather than being
+    audit-only; pass ``True``/``False`` to force. This shim is a *client-side reference*
+    boundary, not a security guarantee — a direct WebSocket client bypasses it; true
+    enforcement is the server-side Action Gateway (D6)."""
     loop = _BackgroundLoop()
     try:
         inner = loop.run(

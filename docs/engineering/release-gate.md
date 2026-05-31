@@ -30,7 +30,7 @@ Core semantics that must be demonstrable (most are covered by the jobs above):
 - [ ] **ACI v0**: handshake + honest capability negotiation; typed actions; unknown verbs/fields rejected.
 - [ ] **Act + observe (Linux/X11)**: pointer/keyboard; screenshot; real-time screencast (idle-suppression + downscale); focused-window/`window:<id>` capture.
 - [ ] **`.skn` replay**: atomic + schema-validated writes; action↔observation pairing; `replay --step`/`--validate`; capability envelope + permission events; privacy redaction.
-- [ ] **Policy seam**: local Action-Gateway capability check denies ungranted actions before dispatch and records the decision.
+- [ ] **Policy seam**: local Action-Gateway capability check denies ungranted actions before dispatch and records the decision. This SDK gateway is a **client-side reference shim** (#84/#161) — advisory, and bypassable by a direct WebSocket client; true enforcement is the server-side Action Gateway (D6), post-v0.0.1. It is **enforced by default when `record=True`** so recorded sessions honour their declared envelope rather than being audit-only (override with `enforce_capabilities=`).
 - [ ] **Eval**: tiny harness with verifier receipts + N-run summary; OSWorld-compatible interface + first-party smoke.
 - [ ] **Adapters/agents**: at least one provider-neutral smoke-agent path (skips cleanly without credentials).
 - [ ] **Docs honest**: README/roadmap reconciled with `status.md`; designed-only features not claimed as built.
