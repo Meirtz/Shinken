@@ -19,6 +19,7 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, Semaphore};
 use tokio::task::JoinHandle;
+use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
 use connection::{ScreencastSpec, Session, StreamCtl};
@@ -30,9 +31,22 @@ const AUTH_IDLE_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const MAX_CONNECTION_LIFETIME: Duration = Duration::from_secs(4 * 60 * 60);
 const MAX_CONNECTIONS: usize = 64;
 const MAX_SCREENCASTS: usize = 8;
+/// Cap inbound WS message/frame size (#136). 16 MiB fits 4K screenshots / large a11y
+/// trees while bounding a peer from forcing unbounded buffering (tungstenite's default
+/// max_message_size is 64 MiB); matches the SDK's client-side cap.
+const MAX_WS_MESSAGE: usize = 16 * 1024 * 1024;
 /// Outbound writer-channel depth. Bounds buffered frames+replies so a slow client
 /// cannot grow memory without bound; screencast frames beyond this are dropped.
 const OUTBOUND_CAP: usize = 32;
+
+/// Server WebSocket config with bounded inbound message/frame size (#136).
+fn ws_config() -> WebSocketConfig {
+    WebSocketConfig {
+        max_message_size: Some(MAX_WS_MESSAGE),
+        max_frame_size: Some(MAX_WS_MESSAGE),
+        ..WebSocketConfig::default()
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -102,7 +116,7 @@ async fn serve(
     token: Option<String>,
     screencasts: Arc<Semaphore>,
 ) -> Result<()> {
-    let ws = tokio_tungstenite::accept_async(stream).await?;
+    let ws = tokio_tungstenite::accept_async_with_config(stream, Some(ws_config())).await?;
     let (mut tx, mut rx) = ws.split();
 
     // Single writer behind a BOUNDED channel: replies are sent reliably (awaited),
@@ -302,6 +316,14 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ws_config_bounds_inbound_size() {
+        let c = ws_config();
+        // bounded, and tighter than tungstenite's 64 MiB default
+        assert_eq!(c.max_message_size, Some(MAX_WS_MESSAGE));
+        assert_eq!(c.max_frame_size, Some(MAX_WS_MESSAGE));
+    }
 
     #[test]
     fn loopback_detection() {
