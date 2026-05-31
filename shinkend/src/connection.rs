@@ -52,6 +52,9 @@ pub struct Step {
     pub reply: Option<String>,
     pub close: bool,
     pub stream: StreamCtl,
+    /// Bounded async delay (ms) the serve loop sleeps before sending this reply — the
+    /// `wait` verb's semantics, honored without blocking the runtime (#140).
+    pub delay_ms: u64,
 }
 
 impl Step {
@@ -60,6 +63,7 @@ impl Step {
             reply: Some(encode(msg)),
             close: false,
             stream: StreamCtl::None,
+            delay_ms: 0,
         }
     }
     fn text(text: String) -> Self {
@@ -67,6 +71,7 @@ impl Step {
             reply: Some(text),
             close: false,
             stream: StreamCtl::None,
+            delay_ms: 0,
         }
     }
     fn silent() -> Self {
@@ -74,6 +79,7 @@ impl Step {
             reply: None,
             close: false,
             stream: StreamCtl::None,
+            delay_ms: 0,
         }
     }
     fn close(text: String) -> Self {
@@ -81,6 +87,7 @@ impl Step {
             reply: Some(text),
             close: true,
             stream: StreamCtl::None,
+            delay_ms: 0,
         }
     }
 }
@@ -159,11 +166,13 @@ impl Session {
                 Step::text(protocol::error_result_text("?", "already authenticated"))
             }
             Message::Action { call_id, action } => {
-                let (reply, stream) = dispatch_action(&call_id, action, self.exec.as_ref());
+                let (reply, stream, delay_ms) =
+                    dispatch_action(&call_id, action, self.exec.as_ref());
                 Step {
                     reply: Some(encode(&reply)),
                     close: false,
                     stream,
+                    delay_ms,
                 }
             }
             // screen_size must report the real executor geometry, not a stub (#138)
@@ -212,20 +221,25 @@ fn clamp_long_edge(m: Option<u32>) -> Option<u32> {
     m.map(|v| v.min(protocol::MAX_LONG_EDGE))
 }
 
+/// Maximum a `wait` action will sleep (ms) — bounds a client from parking a connection.
+const MAX_WAIT_MS: u64 = 10_000;
+
 /// Run one `action`. `screenshot` → one-shot `observation`; `start_screencast`/
-/// `stop_screencast` → `ack` plus a [`StreamCtl`] for the serve loop; every other
-/// verb → `ack`.
+/// `stop_screencast` → `ack` plus a [`StreamCtl`]; `wait` → `ack` plus a bounded delay
+/// (ms) the serve loop sleeps before replying; every other verb → `ack`. The third tuple
+/// element is that delay (0 for everything but `wait`).
 fn dispatch_action(
     call_id: &str,
     action: serde_json::Value,
     exec: &dyn Executor,
-) -> (Message, StreamCtl) {
+) -> (Message, StreamCtl, u64) {
     let spec = match serde_json::from_value::<ActionSpec>(action) {
         Ok(s) => s,
         Err(e) => {
             return (
                 ack(call_id, false, Some(format!("bad action: {e}"))),
                 StreamCtl::None,
+                0,
             )
         }
     };
@@ -243,6 +257,7 @@ fn dispatch_action(
                 Some(format!("invalid capture scope: {scope}")),
             ),
             StreamCtl::None,
+            0,
         );
     }
     match spec.verb.as_str() {
@@ -262,7 +277,7 @@ fn dispatch_action(
                 },
                 Err(e) => ack(call_id, false, Some(e.to_string())),
             };
-            (msg, StreamCtl::None)
+            (msg, StreamCtl::None, 0)
         }
         "start_screencast" => {
             let fps = spec.fps.unwrap_or(FPS_DEFAULT).clamp(FPS_MIN, FPS_MAX);
@@ -272,12 +287,19 @@ fn dispatch_action(
                 max_long_edge: clamp_long_edge(spec.max_long_edge),
                 scope,
             };
-            (ack(call_id, true, None), StreamCtl::Start(cast))
+            (ack(call_id, true, None), StreamCtl::Start(cast), 0)
         }
-        "stop_screencast" => (ack(call_id, true, None), StreamCtl::Stop),
+        "stop_screencast" => (ack(call_id, true, None), StreamCtl::Stop, 0),
+        // wait: ack, but have the serve loop sleep first (bounded) so the ack lands after
+        // the delay — real wait.ms semantics, async so it never blocks the runtime (#140)
+        "wait" => (
+            ack(call_id, true, None),
+            StreamCtl::None,
+            spec.ms.unwrap_or(0).min(MAX_WAIT_MS),
+        ),
         _ => match exec.execute(&spec) {
-            Ok(_) => (ack(call_id, true, None), StreamCtl::None),
-            Err(e) => (ack(call_id, false, Some(e.to_string())), StreamCtl::None),
+            Ok(_) => (ack(call_id, true, None), StreamCtl::None, 0),
+            Err(e) => (ack(call_id, false, Some(e.to_string())), StreamCtl::None, 0),
         },
     }
 }
@@ -402,6 +424,20 @@ mod tests {
         );
         let reply = step.reply.unwrap();
         assert!(reply.contains("\"ok\":false") && reply.contains("invalid capture scope"));
+    }
+
+    #[test]
+    fn wait_action_acks_with_a_bounded_delay() {
+        let mut s = session(None);
+        s.on_text(HELLO);
+        let step =
+            s.on_text(r#"{"type":"action","call_id":"c1","action":{"verb":"wait","ms":500}}"#);
+        assert_eq!(step.delay_ms, 500); // serve loop sleeps this before the ack (#140)
+        assert!(step.reply.unwrap().contains("\"ok\":true"));
+        // an absurd wait is clamped to MAX_WAIT_MS, not honored verbatim
+        let big =
+            s.on_text(r#"{"type":"action","call_id":"c2","action":{"verb":"wait","ms":99999999}}"#);
+        assert_eq!(big.delay_ms, MAX_WAIT_MS);
     }
 
     #[test]

@@ -203,6 +203,11 @@ async fn serve(
         match frame {
             WsMessage::Text(text) => {
                 let step = session.on_text(&text);
+                // wait.ms (#140): sleep (async, bounded by MAX_WAIT_MS) so the ack lands
+                // after the delay; yields to other connections, never blocks the runtime.
+                if step.delay_ms > 0 {
+                    tokio::time::sleep(Duration::from_millis(step.delay_ms)).await;
+                }
                 match step.stream {
                     StreamCtl::Start(spec) => {
                         if let Some(h) = screencast.take() {
