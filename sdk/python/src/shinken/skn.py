@@ -185,6 +185,31 @@ class Recorder:
     def marker(self, name: str) -> dict:
         return self._emit("marker", name, {})
 
+    @property
+    def current_seq(self) -> int:
+        """The seq the next emitted event will get — the replay offset a checkpoint binds to."""
+        return self._seq
+
+    def snapshot_ref(
+        self,
+        checkpoint_id: str,
+        *,
+        name: str | None = None,
+        agent_state_ref: str | None = None,
+    ) -> dict:
+        """Anchor a runtime checkpoint at the current replay offset (#206): records a
+        ``snapshot_ref`` event whose ``snapshot_ref`` field carries the checkpoint id, so
+        replay and runtime-state link up — the event's own ``seq`` is the offset the
+        checkpoint was taken at. The substrate snapshot id stays the provider's concern."""
+        payload: dict[str, Any] = {}
+        if name is not None:
+            payload["name"] = name
+        if agent_state_ref is not None:
+            payload["agent_state_ref"] = agent_state_ref
+        ev = self._emit("snapshot_ref", "checkpoint", payload)
+        ev["snapshot_ref"] = checkpoint_id
+        return ev
+
     def verifier_receipt(self, receipt: dict) -> dict:
         """Record an eval verifier verdict as a first-class ``verifier_receipt`` event
         (#149) — so a `.skn` is self-contained eval evidence (pass/fail + checks), not

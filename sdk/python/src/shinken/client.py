@@ -123,6 +123,11 @@ class AsyncSandbox:
         # put_file/get_file move bytes through the real Sandbox FS, not the reference
         # store (#154). None → fall back to the co-located LocalArtifactStore.
         self._guest_transport: Any = None
+        # The managing provider + handle, attached by provider.connect() so checkpoint()
+        # can snapshot substrate state and bind it to the replay offset (#206). None for a
+        # plain connect() with no provider behind it.
+        self._provider: Any = None
+        self._handle: Any = None
         # The session capability envelope (what the Sandbox may do) — reference
         # semantics, recorded into .skn; distinct from the ACI `capabilities` above.
         self.sandbox_capabilities = {**DEFAULT_CAPABILITIES, **(sandbox_capabilities or {})}
@@ -572,6 +577,35 @@ class AsyncSandbox:
         #154) so put_file/get_file move bytes through the real Sandbox filesystem."""
         self._guest_transport = transport
 
+    def _set_provider_context(self, provider: Any, handle: Any) -> None:
+        """Attach the managing provider + handle (set by provider.connect()) so
+        :meth:`checkpoint` can snapshot substrate state and bind it to the replay (#206)."""
+        self._provider = provider
+        self._handle = handle
+
+    async def checkpoint(
+        self, name: str | None = None, *, agent_state_ref: str | None = None
+    ) -> str:
+        """Create a runtime checkpoint of this sandbox bound to the current replay offset
+        (#206): the provider snapshots substrate state, and a ``snapshot_ref`` event is
+        recorded so replay and runtime state link up. Returns the provider's checkpoint id.
+
+        Requires a provider-managed session (use a provider's ``connect()``)."""
+        if self._provider is None or self._handle is None:
+            raise RuntimeError(
+                "checkpoint() needs a provider-managed session; open it via a provider's connect()"
+            )
+        event_seq = self._recorder.current_seq if self._recorder is not None else None
+        checkpoint_id = await asyncio.to_thread(
+            self._provider.checkpoint,
+            self._handle,
+            event_seq=event_seq,
+            agent_state_ref=agent_state_ref,
+        )
+        if self._recorder is not None:
+            self._recorder.snapshot_ref(checkpoint_id, name=name, agent_state_ref=agent_state_ref)
+        return checkpoint_id
+
     def _transfer(self) -> Any:
         """The active file-transfer backend: a provider-attached guest transport (#154)
         if present, else the co-located reference store (#85). Both share put/get."""
@@ -948,6 +982,16 @@ class Sandbox:
     def _set_guest_transport(self, transport: Any) -> None:
         """Attach a guest-boundary transfer backend (provider-supplied, #154)."""
         self._inner._set_guest_transport(transport)
+
+    def _set_provider_context(self, provider: Any, handle: Any) -> None:
+        """Attach the managing provider + handle (provider.connect(), #206)."""
+        self._inner._set_provider_context(provider, handle)
+
+    def checkpoint(self, name: str | None = None, *, agent_state_ref: str | None = None) -> str:
+        """Create a runtime checkpoint bound to the current replay offset (#206): snapshots
+        substrate state via the provider and records a `snapshot_ref` event linking replay
+        to runtime state. Returns the checkpoint id. Requires a provider's connect()."""
+        return self._loop.run(self._inner.checkpoint(name, agent_state_ref=agent_state_ref))
 
     def put_file(self, local_path: str, sandbox_path: str, *, archive: bool = False) -> dict:
         """Upload a host file into the sandbox; return its content-addressed ref (#85)."""

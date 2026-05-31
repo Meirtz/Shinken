@@ -53,7 +53,7 @@
         "src": { "type": "string", "description": "per-kind subtype, e.g. action:click, observation:a11y_diff, permission:ask" },
         "action_id": { "type": "string", "description": "pairs an action with its resulting observation" },
         "batch_id": { "type": "string", "description": "groups actions dispatched as one ordered batch (#73)" },
-        "snapshot_ref": { "type": "string", "description": "reserved (#42): id of the runtime checkpoint a kind=snapshot_ref event points to. Runtime checkpoint/restore/fork is NOT implemented, so save_replay() never emits this — a .skn is a replay bundle, not a runtime checkpoint. The rigorous parent-pointer checkpoint DAG (substrate snapshot refs + event offset + agent state) is defined in docs/design/glossary.md (Checkpoint) and lands with the runtime checkpoint primitive." },
+        "snapshot_ref": { "type": "string", "description": "id of the runtime checkpoint a kind=snapshot_ref event anchors at its replay offset (#206). Emitted by sandbox.checkpoint() to link replay to runtime state — the event's own seq is the offset the checkpoint was taken at. A .skn is still a replay bundle, not a runtime checkpoint: this is a pointer to a provider-held checkpoint, not the substrate state. The rigorous parent-pointer checkpoint DAG (substrate snapshot refs + event offset + agent state) is defined in docs/design/glossary.md (Checkpoint)." },
         "payload": { "type": "object" }
       },
       "allOf": [

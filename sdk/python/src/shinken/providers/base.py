@@ -109,7 +109,11 @@ class SandboxProvider:
         raise NotImplementedError
 
     def connect(self, handle: SandboxHandle, *, record: bool = False) -> Sandbox:
-        return connect(handle.addr, record=record, token=handle.token)
+        env = connect(handle.addr, record=record, token=handle.token)
+        # Attach the provider context so sandbox.checkpoint() can snapshot substrate state
+        # and bind it to the replay offset (#206).
+        env._set_provider_context(self, handle)
+        return env
 
     def health(self, handle: SandboxHandle) -> SandboxHealth:
         try:
