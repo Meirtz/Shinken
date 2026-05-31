@@ -48,6 +48,13 @@ fn ws_config() -> WebSocketConfig {
     }
 }
 
+/// Whether a connection has blown the pre-auth handshake deadline (#134). Checked every
+/// loop iteration so raw WS pings (handled outside the `Session`) can't keep an
+/// unauthenticated connection alive past `HANDSHAKE_TIMEOUT` and squat a connection slot.
+fn handshake_expired(authenticated: bool, elapsed: Duration) -> bool {
+    !authenticated && elapsed >= HANDSHAKE_TIMEOUT
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let addr = std::env::var("SHINKEND_ADDR").unwrap_or_else(|_| DEFAULT_ADDR.to_string());
@@ -146,6 +153,17 @@ async fn serve(
                 .await;
             break Ok(());
         }
+        // Hard pre-auth deadline (#134): close an unauthenticated connection past
+        // HANDSHAKE_TIMEOUT regardless of any pings it sent (pings don't reset it).
+        if handshake_expired(session.is_authenticated(), started.elapsed()) {
+            let _ = out
+                .send(WsMessage::Text(protocol::error_result_text(
+                    "?",
+                    "handshake timeout",
+                )))
+                .await;
+            break Ok(());
+        }
         // Bound the time a client may stay unauthenticated.
         let next = if session.is_authenticated() {
             match tokio::time::timeout(AUTH_IDLE_TIMEOUT, rx.next()).await {
@@ -161,7 +179,10 @@ async fn serve(
                 }
             }
         } else {
-            match tokio::time::timeout(HANDSHAKE_TIMEOUT, rx.next()).await {
+            // wait only until the handshake deadline (not a fresh window per frame), so a
+            // ping flood can't extend the pre-auth phase (#134)
+            let remaining = HANDSHAKE_TIMEOUT.saturating_sub(started.elapsed());
+            match tokio::time::timeout(remaining, rx.next()).await {
                 Ok(frame) => frame,
                 Err(_) => {
                     let _ = out
@@ -323,6 +344,17 @@ mod tests {
         // bounded, and tighter than tungstenite's 64 MiB default
         assert_eq!(c.max_message_size, Some(MAX_WS_MESSAGE));
         assert_eq!(c.max_frame_size, Some(MAX_WS_MESSAGE));
+    }
+
+    #[test]
+    fn handshake_deadline_fires_regardless_of_pings() {
+        assert!(handshake_expired(false, HANDSHAKE_TIMEOUT)); // at the deadline → expired
+        assert!(handshake_expired(
+            false,
+            HANDSHAKE_TIMEOUT + Duration::from_secs(1)
+        ));
+        assert!(!handshake_expired(false, Duration::from_secs(1))); // still within the window
+        assert!(!handshake_expired(true, Duration::from_secs(100_000))); // authed never expires here
     }
 
     #[test]
