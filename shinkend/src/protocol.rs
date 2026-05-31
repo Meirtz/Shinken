@@ -230,6 +230,52 @@ pub fn respond(msg: Message) -> Option<Message> {
 mod tests {
     use super::*;
 
+    /// Read $defs.<name>.enum from the source-of-truth ACI schema as a sorted Vec.
+    fn schema_enum(name: &str) -> Vec<String> {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../schema/aci.schema.json");
+        let raw = std::fs::read_to_string(path).expect("read schema/aci.schema.json");
+        let schema: serde_json::Value = serde_json::from_str(&raw).expect("parse aci schema");
+        let mut v: Vec<String> = schema["$defs"][name]["enum"]
+            .as_array()
+            .unwrap_or_else(|| panic!("$defs.{name}.enum missing"))
+            .iter()
+            .map(|x| x.as_str().unwrap().to_string())
+            .collect();
+        v.sort();
+        v
+    }
+
+    // Contract test (#156): the runtime's advertised capabilities must not drift from the
+    // source-of-truth schema/aci.schema.json (the Python side is gated by #89).
+    #[test]
+    fn advertised_verbs_match_schema() {
+        let mut adv = capabilities().verbs;
+        adv.sort();
+        assert_eq!(
+            adv,
+            schema_enum("Verb"),
+            "advertised verbs must equal the schema Verb enum"
+        );
+    }
+
+    #[test]
+    fn advertised_targets_and_observations_are_in_schema() {
+        let target_kinds = schema_enum("TargetKind");
+        for t in capabilities().targets {
+            assert!(
+                target_kinds.contains(&t),
+                "advertised target {t} not in schema TargetKind"
+            );
+        }
+        let obs = schema_enum("ObservationType");
+        for o in capabilities().observation_types {
+            assert!(
+                obs.contains(&o),
+                "advertised observation {o} not in schema ObservationType"
+            );
+        }
+    }
+
     #[test]
     fn hello_yields_welcome() {
         let hello = r#"{"type":"hello","v":0,"client":{"name":"shinken-py","version":"0.0.0"}}"#;
