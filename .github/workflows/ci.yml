@@ -245,6 +245,9 @@ jobs:
           done
           [ "$shk_ready" = 1 ] || { echo "::error::shinkend never became reachable"; docker logs shk || true; exit 1; }
           SHK_TOKEN="$TOKEN" python scripts/docker_smoke.py || { docker logs shk; exit 1; }
+          if [ -f scripts/docker_file_smoke.py ]; then
+            SHK_TOKEN="$TOKEN" SHK_CONTAINER=shk python scripts/docker_file_smoke.py || { docker logs shk; exit 1; }
+          fi
           docker rm -f shk
       - if: steps.present.outputs.go == 'true'
         name: provider lifecycle smoke (DockerLocalProvider)

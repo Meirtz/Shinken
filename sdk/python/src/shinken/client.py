@@ -119,6 +119,10 @@ class AsyncSandbox:
         self._artifact_root = artifact_root
         self._artifacts: LocalArtifactStore | None = None
         self._artifact_tmp: Any = None
+        # A guest-boundary transfer backend (e.g. Docker `cp`) a provider may attach so
+        # put_file/get_file move bytes through the real Sandbox FS, not the reference
+        # store (#154). None → fall back to the co-located LocalArtifactStore.
+        self._guest_transport: Any = None
         # The session capability envelope (what the Sandbox may do) — reference
         # semantics, recorded into .skn; distinct from the ACI `capabilities` above.
         self.sandbox_capabilities = {**DEFAULT_CAPABILITIES, **(sandbox_capabilities or {})}
@@ -563,6 +567,16 @@ class AsyncSandbox:
             self._artifacts = LocalArtifactStore(root)
         return self._artifacts
 
+    def _set_guest_transport(self, transport: Any) -> None:
+        """Attach a guest-boundary transfer backend (provider-supplied, e.g. Docker `cp`,
+        #154) so put_file/get_file move bytes through the real Sandbox filesystem."""
+        self._guest_transport = transport
+
+    def _transfer(self) -> Any:
+        """The active file-transfer backend: a provider-attached guest transport (#154)
+        if present, else the co-located reference store (#85). Both share put/get."""
+        return self._guest_transport or self._artifact_store()
+
     def _gate_file(self, direction: str, sandbox_path: str) -> str:
         """Capability gate for file transfer (#85). When enforcing, deny if ``fs_scope``
         is not granted (recording the decision); returns the effective scope string."""
@@ -584,9 +598,12 @@ class AsyncSandbox:
         ``archive=True`` the bytes are content-addressed into the `.skn` media store so a
         replay can reproduce the file; by default only the ref is recorded."""
         scope = self._gate_file("put_file", sandbox_path)
-        ref = self._artifact_store().put(local_path, sandbox_path, scope=scope)
+        ref = self._transfer().put(local_path, sandbox_path, scope=scope)
         if self._recorder is not None:
-            data = self._artifact_store().read_bytes(sandbox_path) if archive else None
+            data = None
+            if archive:
+                with open(local_path, "rb") as fh:  # transport-agnostic: archive the source bytes
+                    data = fh.read()
             self._recorder.file_transfer(ref.to_event(), data=data)
         return ref.to_event()
 
@@ -598,7 +615,7 @@ class AsyncSandbox:
         Raises :class:`~shinken.artifacts.HashMismatch` if ``expect_sha256`` is given and
         the fetched content does not match. Records the transfer when recording."""
         scope = self._gate_file("get_file", sandbox_path)
-        ref = self._artifact_store().get(
+        ref = self._transfer().get(
             sandbox_path, local_path, expect_sha256=expect_sha256, scope=scope
         )
         if self._recorder is not None:
@@ -927,6 +944,10 @@ class Sandbox:
         """Write the recorded session to a `.skn` **replay** bundle (replay-only, not a
         runtime checkpoint; see :meth:`AsyncSandbox.save_replay` and #42)."""
         return self._inner.save_replay(path)
+
+    def _set_guest_transport(self, transport: Any) -> None:
+        """Attach a guest-boundary transfer backend (provider-supplied, #154)."""
+        self._inner._set_guest_transport(transport)
 
     def put_file(self, local_path: str, sandbox_path: str, *, archive: bool = False) -> dict:
         """Upload a host file into the sandbox; return its content-addressed ref (#85)."""

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
+import os
 import re
 import secrets
 import socket
@@ -14,6 +16,7 @@ import zlib
 from dataclasses import replace
 from typing import Any
 
+from ..artifacts import ArtifactRef, FileScopeError, HashMismatch, sha256_file
 from .base import (
     ProviderCapabilities,
     ProviderError,
@@ -97,6 +100,16 @@ class DockerLocalProvider(SandboxProvider):
                 f"unsupported network_mode {network_mode!r} (expected 'bridge' or 'none')"
             )
         self.network_mode = network_mode
+
+    def connect(self, handle: SandboxHandle, *, record: bool = False):
+        """Connect, then wire file transfer through the **actual guest** filesystem via
+        `docker cp` (#154) instead of the host-local reference store, so `put_file`/
+        `get_file` move bytes across the real Sandbox boundary."""
+        env = super().connect(handle, record=record)
+        container_id = handle.metadata.get("container_id") or handle.sandbox_id
+        if container_id:
+            env._set_guest_transport(DockerGuestTransport(str(container_id), self.docker_bin))
+        return env
 
     def create(self, spec: SandboxSpec | None = None) -> SandboxHandle:
         spec = replace(spec, image=spec.image or self.image) if spec is not None else SandboxSpec(
@@ -388,3 +401,53 @@ def _paeth(left: int, up: int, upper_left: int) -> int:
     if pb <= pc:
         return up
     return upper_left
+
+
+def _validate_guest_path(guest_path: str) -> str:
+    """Guest paths are absolute paths inside the container; reject relative paths and any
+    ``..`` traversal so a transfer can't walk outside the intended location (#154). The
+    capability-level `fs.scope` decision is enforced separately by the SDK gateway."""
+    if not guest_path.startswith("/"):
+        raise FileScopeError(f"guest path must be absolute: {guest_path!r}")
+    if ".." in guest_path.split("/"):
+        raise FileScopeError(f"guest path may not contain '..': {guest_path!r}")
+    return guest_path
+
+
+class DockerGuestTransport:
+    """Move files across the real guest boundary with ``docker cp`` (#154).
+
+    Same ``put``/``get`` contract as :class:`~shinken.artifacts.LocalArtifactStore`, so the
+    Sandbox uses it transparently when a Docker provider attaches it — but bytes land in
+    (and come from) the actual container filesystem, and the returned
+    :class:`~shinken.artifacts.ArtifactRef` is content-hashed for the `.skn` record."""
+
+    def __init__(self, container_id: str, docker_bin: str = "docker"):
+        self.container_id = container_id
+        self.docker_bin = docker_bin
+
+    def put(
+        self, local_path: str | os.PathLike, guest_path: str, scope: str = "session"
+    ) -> ArtifactRef:
+        _validate_guest_path(guest_path)
+        sha = sha256_file(local_path)
+        size = os.path.getsize(local_path)
+        _run([self.docker_bin, "cp", os.fspath(local_path), f"{self.container_id}:{guest_path}"])
+        return ArtifactRef(guest_path, sha, size, scope, "put")
+
+    def get(
+        self,
+        guest_path: str,
+        local_path: str | os.PathLike,
+        *,
+        expect_sha256: str | None = None,
+        scope: str = "session",
+    ) -> ArtifactRef:
+        _validate_guest_path(guest_path)
+        _run([self.docker_bin, "cp", f"{self.container_id}:{guest_path}", os.fspath(local_path)])
+        digest = sha256_file(local_path)
+        if expect_sha256 is not None and digest != expect_sha256:
+            with contextlib.suppress(OSError):
+                os.remove(local_path)
+            raise HashMismatch(f"{guest_path}: expected {expect_sha256[:12]}…, got {digest[:12]}…")
+        return ArtifactRef(guest_path, digest, os.path.getsize(local_path), scope, "get")
