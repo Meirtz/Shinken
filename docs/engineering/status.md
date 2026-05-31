@@ -53,7 +53,7 @@ These appear in the vision/PRD/architecture/README in present-ish tense, but **n
 - **Cross-platform**: macOS and Windows tiers (today: Linux only). Even on Linux, capture/input is **X11 only** — **Wayland** (the modern Linux default) is unaddressed and would break XTEST/GetImage.
 - **Structured / accessibility observation (ADR D3)** — a11y tree + element-ref resolution + diffing. This is the core differentiator and **does not exist**.
 - **Permission / capability panel + enforcement gate** — described as a headline feature; currently docs only.
-- **Runtime checkpoint / restore / fork** (and CoW-fork density) — heavily referenced as snapshots; **not implemented**. (See #42 for separating replay from checkpoint semantics.)
+- **Runtime snapshot / checkpoint / fork / resume** — the provider **interface** now exists (typed routing descriptors + `checkpoint()`/`resume()` methods, #207), but no provider **implements** it yet (all advertise `False`). This is the **headline differentiator** (D1/D5) and the **active v0.0.1 priority** (#206): a Docker reference tier — `docker commit` snapshot → restore → fork → CRIU checkpoint — comes next. `.skn` replay is the **evidence ledger** these checkpoints reference (a checkpoint binds a substrate snapshot to a replay event offset, #42), not the speed story. Sub-second CoW-fork density stays a Phase-1 spike.
 - **Control plane + ultra-high-concurrency / multi-tenant orchestration** — a single local `shinkend` is all that exists.
 - **Dual-channel WebRTC media plane + GPU/NVENC encode** — today streaming is **base64 PNG over the control WebSocket**, fine for an MVP but not the low-latency/bandwidth story at scale.
 - **High-throughput file-transfer path** (#49/#50) — design only.

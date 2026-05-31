@@ -30,6 +30,13 @@ manager.
 > checkpoint/fork, the control plane, and WebRTC/GPU streaming are **designed but not yet built**,
 > and the load-bearing a11y-coverage assumption is **not yet validated**. See
 > **[`docs/engineering/status.md`](docs/engineering/status.md)** for the precise built-vs-designed map.
+>
+> **Next priority — runtime-state time-travel.** Shinken's headline differentiator is *instant
+> snapshot / checkpoint / fork / resume* of live sandboxes (**D1/D5**) — for high-concurrency eval,
+> best-of-N exploration, and counterfactual reruns. `.skn` **replay is the evidence ledger** those
+> checkpoints reference (a checkpoint binds a substrate snapshot to a replay event offset), not the
+> speed story. A reference implementation of these primitives on the Docker tier is the active
+> v0.0.1 work — see [#206](https://github.com/Meirtz/Shinken/issues/206).
 
 ## Why "Shinken"?
 
