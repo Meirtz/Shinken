@@ -25,7 +25,6 @@ from websockets.asyncio.client import connect as _ws_connect
 
 from .artifacts import LocalArtifactStore
 from .gateway import CapabilityDenied, check_file_transfer, decide_action
-from .skn import DEFAULT_CAPABILITIES, Recorder, Redaction, redaction_flags
 
 __all__ = ["connect", "aconnect", "Sandbox", "AsyncSandbox", "Capabilities"]
 
@@ -39,6 +38,19 @@ _MAX_WS_MESSAGE = 16 * 1024 * 1024
 
 # Sentinel pushed onto the frame queue when the stream/connection ends.
 _STREAM_END = object()
+
+# v0 session capability envelope — reference semantics for the local gateway shim,
+# not a production policy engine.
+DEFAULT_SANDBOX_CAPABILITIES: dict[str, Any] = {
+    "input_automation": True,
+    "screenshot": True,
+    "a11y": True,
+    "fs_scope": "session",
+    "egress": False,
+    "credentials": False,
+    "clipboard": False,
+    "privileged_install": False,
+}
 
 
 @dataclass
@@ -101,11 +113,7 @@ class AsyncSandbox:
         ws: Any,
         capabilities: Capabilities,
         platform: str,
-        record: bool = False,
         sandbox_capabilities: dict | None = None,
-        redact_media: bool | None = None,
-        redact_text: bool | None = None,
-        redaction: Redaction | str | None = None,
         enforce_capabilities: bool | None = None,
         artifact_root: str | None = None,
         on_ask: Callable[[str, str | None, str], bool] | None = None,
@@ -114,6 +122,10 @@ class AsyncSandbox:
         self.capabilities = capabilities
         self.platform_name = platform
         self._seq = 0
+        # Count of successfully-acked ACI actions this session. Read as a delta around a
+        # task's run() to give the eval harness a real step count (#86/#87) without
+        # coupling to any backend — every dispatched action flows through act().
+        self._action_count = 0
         # File/artifact transfer (#85). The M0 transport is a co-located reference store
         # (a directory standing in for the sandbox filesystem); a per-session temp dir is
         # created lazily when no explicit root is given. Over-the-wire transfer is later.
@@ -125,43 +137,22 @@ class AsyncSandbox:
         # store (#154). None → fall back to the co-located LocalArtifactStore.
         self._guest_transport: Any = None
         # The managing provider + handle, attached by provider.connect() so checkpoint()
-        # can snapshot substrate state and bind it to the replay offset (#206). None for a
-        # plain connect() with no provider behind it.
+        # can snapshot substrate state. None for a plain connect() with no provider behind it.
         self._provider: Any = None
         self._handle: Any = None
-        # The session capability envelope (what the Sandbox may do) — reference
-        # semantics, recorded into .skn; distinct from the ACI `capabilities` above.
-        self.sandbox_capabilities = {**DEFAULT_CAPABILITIES, **(sandbox_capabilities or {})}
+        # The session capability envelope (what the Sandbox may do) — reference semantics
+        # for the local gateway shim, distinct from the ACI `capabilities` above.
+        self.sandbox_capabilities = {
+            **DEFAULT_SANDBOX_CAPABILITIES,
+            **(sandbox_capabilities or {}),
+        }
         # Action Gateway shim (#84/#161). Enforcement is a *client-side reference*
         # boundary, not a security guarantee (a direct WebSocket client bypasses it;
-        # true enforcement is the server-side Action Gateway, D6). Default (None) =
-        # enforce when recording, so recorded sessions honour their declared envelope
-        # (deny/ask actually fire) instead of being audit-only. Pass True/False to force.
-        self._enforce = record if enforce_capabilities is None else enforce_capabilities
+        # true enforcement is the server-side Action Gateway, D6).
+        self._enforce = bool(enforce_capabilities)
         # Approval handler for risky ("ask") capabilities (#7): (verb, cap, reason) -> bool.
-        # None means risky steps are denied by default (conservative, still recorded).
+        # None means risky steps are denied by default.
         self._on_ask = on_ask
-        # Resolve the redaction posture (#206). `redaction` (enum/str: none/text/media/full)
-        # sets both flags; otherwise the `redact_media`/`redact_text` flags apply (default
-        # off). The privacy-safe-by-default flip is deferred — it needs eval/verifier
-        # fidelity handling (a verifier reads recorded content), tracked in #206.
-        if redaction is not None:
-            eff_media, eff_text = redaction_flags(redaction)
-        else:
-            eff_media = bool(redact_media)
-            eff_text = bool(redact_text)
-        self._recorder = (
-            Recorder(
-                platform=platform,
-                capabilities=self.sandbox_capabilities,
-                redact_media=eff_media,
-                redact_text=eff_text,
-            )
-            if record
-            else None
-        )
-        if self._recorder is not None:
-            self._recorder.capability_envelope()  # declare the envelope at session start
         # Demux state. A single background reader task consumes every inbound frame
         # and routes it: RPC replies to their pending future (by call_id, or `cause`
         # for a one-shot observation), `pong` to the next ping waiter, and unsolicited
@@ -276,6 +267,11 @@ class AsyncSandbox:
     async def screen_size(self) -> dict:
         return await self.query("screen_size")
 
+    @property
+    def actions_dispatched(self) -> int:
+        """Number of ACI actions successfully dispatched (and acked) this session."""
+        return self._action_count
+
     def _gate(self, verb: str) -> None:
         """Action Gateway check (#84/#7): when enforcing, decide allow / deny / **ask**
         before dispatch — so a denied or unapproved verb never reaches shinkend — and
@@ -290,23 +286,9 @@ class AsyncSandbox:
             return
         if decision == "ask":
             granted = bool(self._on_ask(verb, cap, reason)) if self._on_ask else False
-            if self._recorder is not None:
-                self._recorder.permission(
-                    {
-                        "decision": "ask",
-                        "capability": cap,
-                        "verb": verb,
-                        "reason": reason,
-                        "resolution": "grant" if granted else "deny",
-                    }
-                )
             if not granted:
                 raise CapabilityDenied(f"{verb}: approval denied ({cap})")
             return
-        if self._recorder is not None:  # decision == "deny"
-            self._recorder.permission(
-                {"decision": "deny", "capability": cap, "verb": verb, "reason": reason}
-            )
         raise CapabilityDenied(f"{verb}: {reason}")
 
     def gate_capability(self, cap_name: str, label: str) -> None:
@@ -320,52 +302,13 @@ class AsyncSandbox:
             granted = (
                 bool(self._on_ask(label, cap_name, "requires approval")) if self._on_ask else False
             )
-            if self._recorder is not None:
-                self._recorder.permission(
-                    {
-                        "decision": "ask",
-                        "capability": cap_name,
-                        "verb": label,
-                        "reason": f"capability '{cap_name}' requires approval",
-                        "resolution": "grant" if granted else "deny",
-                    }
-                )
             if not granted:
                 raise CapabilityDenied(f"{label}: approval denied ({cap_name})")
             return
         if val:
             return
         reason = f"capability '{cap_name}' not granted"
-        if self._recorder is not None:
-            self._recorder.permission(
-                {"decision": "deny", "capability": cap_name, "verb": label, "reason": reason}
-            )
         raise CapabilityDenied(f"{label}: {reason}")
-
-    def record_structured(self, obs: dict, *, diff: bool = False) -> None:
-        """Record a structured (a11y/CDP) observation into the `.skn` when recording (#144).
-
-        The structured path is co-located (it doesn't traverse shinkend), so it is
-        recorded here. ``diff=True`` records an ``observe_diff`` payload; otherwise the
-        full element list. No-op when not recording or the capture was unavailable."""
-        if self._recorder is None or not obs.get("available"):
-            return
-        if diff:
-            payload = {
-                "tree": "diff",
-                "added": obs.get("added", []),
-                "removed": obs.get("removed", []),
-                "changed": obs.get("changed", []),
-                "unchanged": obs.get("unchanged", 0),
-                "size": obs.get("size"),
-            }
-        else:
-            payload = {
-                "tree": obs.get("tree", "full"),
-                "elements": obs.get("elements", []),
-                "node_count": obs.get("node_count", 0),
-            }
-        self._recorder.observation(payload)
 
     async def act(
         self, verb: str, target: dict | None = None, *, _batch_id: str | None = None, **kwargs: Any
@@ -381,8 +324,7 @@ class AsyncSandbox:
         reply = await self._rpc({"type": "action", "call_id": call_id, "action": action})
         if not reply.get("ok"):
             raise RuntimeError(reply.get("error", f"action {verb!r} failed"))
-        if self._recorder is not None:
-            self._recorder.action(verb, action, call_id, batch_id=_batch_id)
+        self._action_count += 1
         return reply
 
     async def act_batch(
@@ -390,8 +332,8 @@ class AsyncSandbox:
     ) -> dict:
         """Execute an ordered batch of ACI actions serially (#73).
 
-        Each action is dispatched in order and recorded as its own ``.skn`` event sharing
-        ``batch_id`` (per-action ``action_id`` is preserved for observation pairing).
+        Each action is dispatched in order. The returned result preserves per-action
+        acknowledgements and the batch id for callers that need traceability.
         With ``stop_on_error`` (default) the batch halts at the first failing action and
         returns explicit partial state; otherwise it runs them all. Returns
         ``{batch_id, completed, stopped_at?, results:[{index, verb, ok, action_id/ack/error}]}``."""
@@ -457,14 +399,6 @@ class AsyncSandbox:
             raise RuntimeError(reply.get("error", "screenshot failed"))
         img = reply.get("image") or {}
         png = base64.b64decode(img.get("ref", ""))
-        if self._recorder is not None:
-            # record the screenshot as an action + pair the observation to it (#160)
-            self._recorder.action("screenshot", {"verb": "screenshot", "scope": scope}, call_id)
-            self._recorder.observation(
-                {"image": {"w": img.get("w"), "h": img.get("h"), "scope": scope}},
-                png=png,
-                action_id=call_id,
-            )
         return {"png": png, "w": img.get("w"), "h": img.get("h")}
 
     async def type_text(self, text: str):
@@ -525,13 +459,6 @@ class AsyncSandbox:
             return None
         img = item.get("image") or {}
         png = base64.b64decode(img.get("ref", ""))
-        if self._recorder is not None:
-            # Record the frame's true capture region (#143): prefer the scope the
-            # runtime tagged the frame with, falling back to the requested scope.
-            scope = img.get("scope") or self._stream_scope
-            self._recorder.observation(
-                {"image": {"w": img.get("w"), "h": img.get("h"), "scope": scope}}, png=png
-            )
         return {
             "png": png,
             "w": img.get("w"),
@@ -539,39 +466,6 @@ class AsyncSandbox:
             "seq": item.get("seq"),
             "stream": item.get("stream"),
         }
-
-    def record_permission(
-        self, decision: str, capability: str | None = None, **fields: Any
-    ) -> None:
-        """Record a boundary decision (grant / deny / narrow) as a `.skn` permission
-        event. Reference semantics for replay/audit; requires record=True."""
-        if self._recorder is None:
-            raise RuntimeError("session is not recording; reconnect with record=True")
-        payload = {"decision": decision}
-        if capability is not None:
-            payload["capability"] = capability
-        payload.update(fields)
-        self._recorder.permission(payload)
-
-    def record_verifier_receipt(self, receipt: dict) -> bool:
-        """Record an eval verifier receipt as a first-class `.skn` event (#149). Returns
-        True if it was recorded, False when the session isn't recording (no-op)."""
-        if self._recorder is None:
-            return False
-        self._recorder.verifier_receipt(receipt)
-        return True
-
-    def save_replay(self, path: str) -> str:
-        """Write the recorded session to a `.skn` **replay** bundle (atomically).
-
-        This is a replay/trajectory bundle (actions, observations, media refs) — *not*
-        a runtime checkpoint. It cannot restore live environment or agent state;
-        runtime checkpoint/restore/fork are separate, not-yet-implemented primitives
-        (see the glossary, "Checkpoint", and #42). Requires ``record=True``.
-        """
-        if self._recorder is None:
-            raise RuntimeError("session is not recording; reconnect with record=True")
-        return self._recorder.save(path)
 
     def _artifact_store(self) -> LocalArtifactStore:
         if self._artifacts is None:
@@ -588,33 +482,41 @@ class AsyncSandbox:
         self._guest_transport = transport
 
     def _set_provider_context(self, provider: Any, handle: Any) -> None:
-        """Attach the managing provider + handle (set by provider.connect()) so
-        :meth:`checkpoint` can snapshot substrate state and bind it to the replay (#206)."""
+        """Attach the managing provider + handle (set by provider.connect())."""
         self._provider = provider
         self._handle = handle
 
     async def checkpoint(
         self, name: str | None = None, *, agent_state_ref: str | None = None
     ) -> str:
-        """Create a runtime checkpoint of this sandbox bound to the current replay offset
-        (#206): the provider snapshots substrate state, and a ``snapshot_ref`` event is
-        recorded so replay and runtime state link up. Returns the provider's checkpoint id.
+        """Create a runtime checkpoint of this sandbox (#206).
+
+        The provider snapshots substrate state and returns the checkpoint id.
 
         Requires a provider-managed session (use a provider's ``connect()``)."""
         if self._provider is None or self._handle is None:
             raise RuntimeError(
                 "checkpoint() needs a provider-managed session; open it via a provider's connect()"
             )
-        event_seq = self._recorder.current_seq if self._recorder is not None else None
         checkpoint_id = await asyncio.to_thread(
             self._provider.checkpoint,
             self._handle,
-            event_seq=event_seq,
+            event_seq=None,
             agent_state_ref=agent_state_ref,
         )
-        if self._recorder is not None:
-            self._recorder.snapshot_ref(checkpoint_id, name=name, agent_state_ref=agent_state_ref)
         return checkpoint_id
+
+    async def fork(self) -> Any:
+        """Fork the current provider-managed sandbox and return the new provider handle."""
+        if self._provider is None or self._handle is None:
+            raise RuntimeError("fork() needs a provider-managed session")
+        return await asyncio.to_thread(self._provider.fork, self._handle)
+
+    async def resume(self, handle_or_checkpoint: Any) -> Any:
+        """Resume a provider handle or checkpoint id and return a live provider handle."""
+        if self._provider is None:
+            raise RuntimeError("resume() needs a provider-managed session")
+        return await asyncio.to_thread(self._provider.resume, handle_or_checkpoint)
 
     def _transfer(self) -> Any:
         """The active file-transfer backend: a provider-attached guest transport (#154)
@@ -628,27 +530,15 @@ class AsyncSandbox:
         if self._enforce:
             allowed, cap, reason = check_file_transfer(direction, self.sandbox_capabilities)
             if not allowed:
-                if self._recorder is not None:
-                    self._recorder.permission(
-                        {"decision": "deny", "capability": cap, "verb": direction, "reason": reason}
-                    )
                 raise CapabilityDenied(f"{direction}: {reason}")
         return str(scope)
 
-    def put_file(self, local_path: str, sandbox_path: str, *, archive: bool = False) -> dict:
+    def put_file(self, local_path: str, sandbox_path: str) -> dict:
         """Copy a host file into the sandbox, hash it, and record the transfer (#85).
 
-        Returns the artifact ref (path / sha256 / size / scope / direction). With
-        ``archive=True`` the bytes are content-addressed into the `.skn` media store so a
-        replay can reproduce the file; by default only the ref is recorded."""
+        Returns the artifact ref (path / sha256 / size / scope / direction)."""
         scope = self._gate_file("put_file", sandbox_path)
         ref = self._transfer().put(local_path, sandbox_path, scope=scope)
-        if self._recorder is not None:
-            data = None
-            if archive:
-                with open(local_path, "rb") as fh:  # transport-agnostic: archive the source bytes
-                    data = fh.read()
-            self._recorder.file_transfer(ref.to_event(), data=data)
         return ref.to_event()
 
     def get_file(
@@ -662,8 +552,6 @@ class AsyncSandbox:
         ref = self._transfer().get(
             sandbox_path, local_path, expect_sha256=expect_sha256, scope=scope
         )
-        if self._recorder is not None:
-            self._recorder.file_transfer(ref.to_event())
         return ref.to_event()
 
     async def close(self) -> None:
@@ -684,12 +572,8 @@ class AsyncSandbox:
 
 async def aconnect(
     addr: str = DEFAULT_ADDR,
-    record: bool = False,
     token: str | None = None,
     sandbox_capabilities: dict | None = None,
-    redact_media: bool | None = None,
-    redact_text: bool | None = None,
-    redaction: Redaction | str | None = None,
     enforce_capabilities: bool | None = None,
     artifact_root: str | None = None,
     on_ask: Callable[[str, str | None, str], bool] | None = None,
@@ -710,11 +594,7 @@ async def aconnect(
         ws,
         capabilities,
         platform,
-        record=record,
         sandbox_capabilities=sandbox_capabilities,
-        redact_media=redact_media,
-        redact_text=redact_text,
-        redaction=redaction,
         enforce_capabilities=enforce_capabilities,
         artifact_root=artifact_root,
         on_ask=on_ask,
@@ -828,19 +708,8 @@ class Sandbox:
     @property
     def sandbox_capabilities(self) -> dict:
         """The session capability envelope (what this Sandbox is permitted to do —
-        reference semantics, recorded into `.skn`)."""
+        reference semantics for the local gateway shim)."""
         return self._inner.sandbox_capabilities
-
-    def record_permission(
-        self, decision: str, capability: str | None = None, **fields: Any
-    ) -> None:
-        """Record a boundary decision (grant / deny / narrow) into the `.skn` replay."""
-        self._inner.record_permission(decision, capability, **fields)
-
-    def record_verifier_receipt(self, receipt: dict) -> bool:
-        """Record an eval verifier receipt as a first-class `.skn` event (#149); returns
-        True if recorded (no-op + False when not recording)."""
-        return self._inner.record_verifier_receipt(receipt)
 
     def ping(self) -> float:
         return self._loop.run(self._inner.ping())
@@ -848,14 +717,23 @@ class Sandbox:
     def screen_size(self) -> dict:
         return self._loop.run(self._inner.screen_size())
 
+    def query(self, q: str) -> Any:
+        """Ask the runtime for a property (e.g. ``platform``, ``screen_size``). Used by
+        eval verifiers to read observed environment state."""
+        return self._loop.run(self._inner.query(q))
+
+    @property
+    def actions_dispatched(self) -> int:
+        """Number of ACI actions successfully dispatched this session (eval step count)."""
+        return self._inner.actions_dispatched
+
     def act(self, verb: str, target: dict | None = None, **kwargs: Any) -> dict:
         return self._loop.run(self._inner.act(verb, target, **kwargs))
 
     def act_batch(
         self, actions: list[dict], *, stop_on_error: bool = True, batch_id: str | None = None
     ) -> dict:
-        """Execute an ordered batch of ACI actions serially with per-action replay
-        events (#73). Pairs naturally with the CU adapters, which emit ordered batches."""
+        """Execute an ordered batch of ACI actions serially (#73)."""
         return self._loop.run(
             self._inner.act_batch(actions, stop_on_error=stop_on_error, batch_id=batch_id)
         )
@@ -888,7 +766,6 @@ class Sandbox:
         capture (AT-SPI on this host); the over-the-wire shinkend path is a follow-up."""
         if structured:
             obs = self._capture_structured(source)
-            self._inner.record_structured(obs, diff=False)  # write the full tree to .skn (#144)
             return obs
         shot = self.screenshot()
         return {
@@ -900,8 +777,7 @@ class Sandbox:
 
     def _capture_structured(self, source: Any = None) -> dict:
         """Gate the ``a11y`` capability (#145), capture a structured observation, and
-        retain its ``ref → Element`` map (#78). Recording is done by the caller so a full
-        capture and a diff capture each record the right shape (no double-recording)."""
+        retain its ``ref → Element`` map (#78)."""
         from .a11y import AtspiSource, observe_structured
 
         self._inner.gate_capability("a11y", "observe_structured")
@@ -935,7 +811,6 @@ class Sandbox:
         diff["size"] = diff_size(diff, curr)
         diff["available"] = True
         self._last_structured = curr
-        self._inner.record_structured(diff, diff=True)  # write the diff to .skn (#144)
         return diff
 
     def resolve(self, ref: str) -> dict:
@@ -986,11 +861,6 @@ class Sandbox:
         """
         return _Screencast(self, fps, timeout, limit, max_long_edge, scope)
 
-    def save_replay(self, path: str) -> str:
-        """Write the recorded session to a `.skn` **replay** bundle (replay-only, not a
-        runtime checkpoint; see :meth:`AsyncSandbox.save_replay` and #42)."""
-        return self._inner.save_replay(path)
-
     def _set_guest_transport(self, transport: Any) -> None:
         """Attach a guest-boundary transfer backend (provider-supplied, #154)."""
         self._inner._set_guest_transport(transport)
@@ -1000,14 +870,22 @@ class Sandbox:
         self._inner._set_provider_context(provider, handle)
 
     def checkpoint(self, name: str | None = None, *, agent_state_ref: str | None = None) -> str:
-        """Create a runtime checkpoint bound to the current replay offset (#206): snapshots
-        substrate state via the provider and records a `snapshot_ref` event linking replay
-        to runtime state. Returns the checkpoint id. Requires a provider's connect()."""
+        """Create a runtime checkpoint and return its checkpoint id.
+
+        Requires a provider's connect()."""
         return self._loop.run(self._inner.checkpoint(name, agent_state_ref=agent_state_ref))
 
-    def put_file(self, local_path: str, sandbox_path: str, *, archive: bool = False) -> dict:
+    def fork(self) -> Any:
+        """Fork the current provider-managed sandbox and return the new provider handle."""
+        return self._loop.run(self._inner.fork())
+
+    def resume(self, handle_or_checkpoint: Any) -> Any:
+        """Resume a provider handle or checkpoint id and return a live provider handle."""
+        return self._loop.run(self._inner.resume(handle_or_checkpoint))
+
+    def put_file(self, local_path: str, sandbox_path: str) -> dict:
         """Upload a host file into the sandbox; return its content-addressed ref (#85)."""
-        return self._inner.put_file(local_path, sandbox_path, archive=archive)
+        return self._inner.put_file(local_path, sandbox_path)
 
     def get_file(
         self, sandbox_path: str, local_path: str, *, expect_sha256: str | None = None
@@ -1032,42 +910,28 @@ class Sandbox:
 
 def connect(
     addr: str = DEFAULT_ADDR,
-    record: bool = False,
     token: str | None = None,
     sandbox_capabilities: dict | None = None,
-    redact_media: bool | None = None,
-    redact_text: bool | None = None,
-    redaction: Redaction | str | None = None,
     enforce_capabilities: bool | None = None,
     artifact_root: str | None = None,
     on_ask: Callable[[str, str | None, str], bool] | None = None,
 ) -> Sandbox:
     """Connect to a running ``shinkend`` and complete the ACI handshake (blocking).
 
-    ``sandbox_capabilities`` overrides the session's v0 capability envelope (recorded
-    into the `.skn` replay as reference semantics). ``redaction`` sets the replay redaction
-    posture (#206): ``"none"`` (default — full text + media bytes), ``"text"`` (strip typed
-    text), ``"media"`` (**metadata-only media** — keep ``w``/``h``/``scope``/``sha256`` but
-    not the PNG bytes), or ``"full"`` (both). The ``redact_media``/``redact_text`` flags are
-    the equivalent low-level knobs. ``enforce_capabilities`` controls the local Action Gateway shim
-    (#84/#161): when on, an action whose capability the envelope does not grant is denied
-    before dispatch (so it never reaches shinkend), and a capability valued ``"ask"`` is
-    *risky* and pauses for approval via ``on_ask`` (#7). Default (``None``) enforces when
-    ``record=True``, so recorded sessions honour their declared envelope rather than being
-    audit-only; pass ``True``/``False`` to force. This shim is a *client-side reference*
-    boundary, not a security guarantee — a direct WebSocket client bypasses it; true
-    enforcement is the server-side Action Gateway (D6)."""
+    ``sandbox_capabilities`` overrides the session's v0 capability envelope.
+    ``enforce_capabilities`` controls the local Action Gateway shim (#84/#161): when on,
+    an action whose capability the envelope does not grant is denied before dispatch (so
+    it never reaches shinkend), and a capability valued ``"ask"`` pauses for approval via
+    ``on_ask`` (#7). This shim is a *client-side reference* boundary, not a security
+    guarantee — a direct WebSocket client bypasses it; true enforcement is the server-side
+    Action Gateway (D6)."""
     loop = _BackgroundLoop()
     try:
         inner = loop.run(
             aconnect(
                 addr,
-                record=record,
                 token=token,
                 sandbox_capabilities=sandbox_capabilities,
-                redact_media=redact_media,
-                redact_text=redact_text,
-                redaction=redaction,
                 enforce_capabilities=enforce_capabilities,
                 artifact_root=artifact_root,
                 on_ask=on_ask,

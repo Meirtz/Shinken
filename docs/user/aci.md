@@ -12,7 +12,7 @@ ACI is the typed contract between an agent/operator and a Shinken Sandbox. It se
 - Agent-facing dialects and provider grammars.
 - Canonical Shinken actions.
 - Runtime execution backends.
-- Replay and capability events.
+- Capability checks and runtime-state operations.
 
 Agents should not send arbitrary Python or `pyautogui` strings as the primary control path. Adapter
 code parses model output, validates it, normalizes coordinates, checks capabilities, and emits ACI
@@ -52,15 +52,15 @@ v0.0.1 should include conformance fixtures for:
 - OpenAI Computer Use.
 - A Shinken-native action dialect.
 
-Adapters should record provider/tool version, coordinate transforms, and image resize assumptions in
-the replay metadata.
+Adapters should expose provider/tool version, coordinate transforms, and image resize assumptions so
+callers can preserve that context where needed.
 
 ## Batch Actions
 
 Some providers emit ordered action batches. Shinken should model ordered batches even if v0.0.1
-executes them serially. Each action still gets its own replay event and id.
+executes them serially. Each action still gets an explicit result in the batch response.
 
 ## Code Execution
 
 CLI/code execution is a separate capability surface. It belongs behind capability policy, filesystem
-scope, egress policy, timeout controls, and replay redaction. It is not a GUI action backend.
+scope, egress policy, timeout controls, and future capture redaction. It is not a GUI action backend.

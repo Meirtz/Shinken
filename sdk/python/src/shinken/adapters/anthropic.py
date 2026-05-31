@@ -74,7 +74,7 @@ class AnthropicComputerUseAdapter:
         """A Shinken screenshot observation → Anthropic ``tool_result`` content.
 
         Preserves coordinate space + image size as ``metadata`` so model pixels map back
-        to the display (recorded into ``.skn`` via :meth:`run_metadata`)."""
+        to the display."""
         png = observation.get("png")
         if not png:
             raise AdapterError("screenshot", "observation has no PNG bytes")
@@ -89,7 +89,7 @@ class AnthropicComputerUseAdapter:
         }
 
     def run_metadata(self) -> dict:
-        """Adapter identity for recording into ``.skn`` run metadata (a ``meta`` event)."""
+        """Adapter identity metadata for callers that need run context."""
         return {
             "adapter": self.name,
             "tool_version": self.tool_version,

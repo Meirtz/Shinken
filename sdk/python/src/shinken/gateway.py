@@ -1,7 +1,7 @@
 """Local Action Gateway shim (#84) — the policy seam, client-side for v0.
 
 The full Control-Plane Action Gateway comes later; v0.0.1 lands the *seam* locally so
-clients never learn to bypass the policy/replay boundary. Each ACI verb maps to a
+clients have a policy boundary to call before dispatch. Each ACI verb maps to a
 capability in the session envelope (#83); an action whose capability is not granted is
 **denied before dispatch** (it never reaches ``shinkend``) and the decision is recorded.
 

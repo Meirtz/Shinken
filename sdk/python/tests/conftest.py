@@ -53,8 +53,26 @@ async def _push_frames(
             await asyncio.sleep(period)
 
 
+def _record(state: dict, action: dict) -> None:
+    """Apply an inbound action to the mock's in-memory state, so a verifier can read back
+    the *observed* effect (a click landed, text was typed, keys were pressed) instead of
+    trusting the task's own inputs. This is what makes the eval fixtures non-vacuous."""
+    verb = action.get("verb")
+    if verb in ("click", "double_click", "right_click", "move"):
+        tgt = action.get("target") or {}
+        entry = {"verb": verb, "kind": tgt.get("kind"), "x": tgt.get("x"), "y": tgt.get("y")}
+        (state["moves"] if verb == "move" else state["clicks"]).append(entry)
+    elif verb == "type_text":
+        state["typed"] += action.get("text", "")
+    elif verb == "key":
+        state["keys"].append(action.get("keys", ""))
+    elif verb == "scroll":
+        state["scrolls"].append({"dx": action.get("dx"), "dy": action.get("dy")})
+
+
 async def _handler(ws) -> None:
     cast: asyncio.Task | None = None
+    state = {"typed": "", "keys": [], "clicks": [], "moves": [], "scrolls": []}
     async for raw in ws:
         msg = json.loads(raw)
         kind = msg.get("type")
@@ -86,12 +104,20 @@ async def _handler(ws) -> None:
         elif kind == "ping":
             await ws.send(json.dumps({"type": "pong", "t": msg.get("t")}))
         elif kind == "query":
-            value = "linux" if msg.get("q") == "platform" else {"w": 1280, "h": 800}
+            q = msg.get("q")
+            if q == "platform":
+                value: object = "linux"
+            elif q == "state":
+                value = state  # observed effects, for eval verifiers
+            else:
+                value = {"w": 1280, "h": 800}
             reply = {"type": "result", "call_id": msg.get("call_id"), "ok": True, "value": value}
             await ws.send(json.dumps(reply))
         elif kind == "action":
-            verb = (msg.get("action") or {}).get("verb")
+            action = msg.get("action") or {}
+            verb = action.get("verb")
             cid = msg.get("call_id")
+            _record(state, action)
             if verb == "screenshot":
                 await ws.send(
                     json.dumps(

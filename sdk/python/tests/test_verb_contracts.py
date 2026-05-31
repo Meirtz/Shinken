@@ -11,7 +11,6 @@ import pytest
 
 import shinken
 from shinken import protocol
-from shinken.skn import Replay
 
 PT = {"kind": "point_px", "x": 1, "y": 2}
 
@@ -68,13 +67,10 @@ def test_unknown_verb_is_rejected():
     _invalid({"verb": "exec_shell", "text": "rm -rf /"})  # not in the Verb enum
 
 
-def test_result_shapes_per_verb(mock_shinkend, tmp_path):
-    # contract on results: screenshot → observation, action verbs → a recorded action event
-    with shinken.connect(mock_shinkend, record=True) as env:
+def test_result_shapes_per_verb(mock_shinkend):
+    # contract on results: screenshot → observation, action verbs → ack-shaped result
+    with shinken.connect(mock_shinkend) as env:
         obs = env.observe()
         assert obs["type"] == "observation" and obs["png"][:8] == b"\x89PNG\r\n\x1a\n"
-        env.click(x=1, y=2)
-        path = env.save_replay(str(tmp_path / "r.skn"))
-    rp = Replay.load(path)
-    assert any(e["kind"] == "action" and e["src"] == "click" for e in rp.events)
-    assert any(e["kind"] == "observation" for e in rp.events)
+        ack = env.click(x=1, y=2)
+        assert ack["type"] == "ack" and ack["ok"] is True

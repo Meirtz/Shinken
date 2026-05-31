@@ -1,16 +1,15 @@
-"""File / artifact transfer with content hashes and replay refs (#85).
+"""File / artifact transfer with content hashes (#85).
 
 File transfer is a core v0.0.1 semantic surface: an agent puts a file into the sandbox,
-gets a result file back, and the run's ``.skn`` bundle must record *what* moved — by
-content hash, path, and scope — without inlining large payloads into the JSON event log.
+gets a result file back, and the API returns *what* moved — by content hash, path, and
+scope — without inlining large payloads into control messages.
 
 This module provides the durable contract: content-addressed hashing
 (:func:`sha256_file`), a typed :class:`ArtifactRef` (path + sha256 + size + scope +
 direction), and a :class:`LocalArtifactStore` — the M0 **co-located / reference**
 transport, a directory standing in for the sandbox-accessible filesystem. Every transfer
 is checksummed and every path is contained within the store root (no ``..`` escape, no
-absolute paths). Over-the-wire transfer through ``shinkend`` is the Phase-1 follow-up;
-the API, checksums, and replay refs land now.
+absolute paths). Over-the-wire transfer through ``shinkend`` is the Phase-1 follow-up.
 """
 
 from __future__ import annotations
@@ -47,10 +46,9 @@ def sha256_file(path: str | os.PathLike) -> str:
 
 @dataclass(frozen=True)
 class ArtifactRef:
-    """A content-addressed reference to one transferred file — the ``.skn`` payload shape.
+    """A content-addressed reference to one transferred file.
 
-    Carries the hash/path/scope (never the bytes), so a replay records *what* moved
-    without embedding large payloads in JSON."""
+    Carries the hash/path/scope (never the bytes) so callers can audit what moved."""
 
     path: str  # sandbox-relative path
     sha256: str

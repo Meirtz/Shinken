@@ -5,8 +5,7 @@ calls are the debug/control path): **observe → decide → act → repeat**, un
 reports the task done. It is provider-agnostic — any object with
 ``decide(observation) -> Decision`` works, including an off-the-shelf model wrapped by a
 CU adapter (#75/#76), whose tool-calls translate to ACI actions. Each turn's actions are
-dispatched as an ordered batch (#73), and the whole run is recorded into the session's
-`.skn` bundle, so an agentic run is exactly one replay.
+dispatched as an ordered batch (#73).
 
 A model-backed agent is a thin wrapper, e.g.::
 
@@ -70,8 +69,7 @@ def drive(
     structured: bool = False,
     observe: Callable[[Any], dict] | None = None,
 ) -> DriveResult:
-    """Run the Operator loop against ``env`` (connect with ``record=True`` to capture the
-    whole run as one `.skn`).
+    """Run the Operator loop against ``env``.
 
     Each turn observes (a screenshot by default, or a structured a11y capture with
     ``structured=True``, or a custom ``observe(env)``), asks ``agent`` for a
@@ -127,8 +125,7 @@ def agent_task(
 ):
     """Wrap an agent + verifier into an eval :class:`~shinken.eval.Task`, so the Operator
     loop composes with ``run_eval`` (N replicas → pass-rate). ``agent_factory`` is called
-    per replica so each run gets a fresh (possibly stateful) agent; ``verify`` judges the
-    run from its `.skn` replay."""
+    per replica so each run gets a fresh (possibly stateful) agent."""
     from .eval import Task
 
     def run(env: Any) -> None:

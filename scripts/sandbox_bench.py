@@ -65,7 +65,7 @@ def _one_run(args: argparse.Namespace, run_id: int) -> dict[str, Any]:
             return result
 
         t0 = time.perf_counter()
-        env = provider.connect(handle, record=args.record)
+        env = provider.connect(handle)
         result["connect_ms"] = _ms(t0)
         try:
             result["ping_ms"] = round(env.ping() * 1000.0, 3)
@@ -91,11 +91,6 @@ def _one_run(args: argparse.Namespace, run_id: int) -> dict[str, Any]:
             result["screencast_first_frame_ms"] = _ms(t0)
             result["screencast_frames"] = len(frames)
             result["screencast_bytes"] = sum(len(frame["png"]) for frame in frames)
-
-            if args.record:
-                replay_path = Path(args.output_dir) / f"sandbox-bench-{run_id}.skn"
-                env.save_replay(str(replay_path))
-                result["replay_bytes"] = replay_path.stat().st_size
         finally:
             env.close()
 
@@ -132,7 +127,6 @@ def _summary(results: list[dict[str, Any]]) -> dict[str, Any]:
         "screencast_first_frame_ms",
         "screenshot_bytes",
         "screencast_bytes",
-        "replay_bytes",
         "destroy_ms",
     ]:
         values = [row[key] for row in ok if isinstance(row.get(key), int | float)]
@@ -183,7 +177,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--pids-limit", type=int)
     parser.add_argument("--shm-size")
     parser.add_argument("--screen-geometry", default="1280x800x24")
-    parser.add_argument("--record", action="store_true")
     parser.add_argument(
         "--cleanup-orphans",
         action="store_true",

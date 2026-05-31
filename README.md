@@ -8,36 +8,34 @@
 </p>
 
 > The open infrastructure stack for computer-use agents: real computers, one typed interface,
-> scoped capabilities, checkpoint/fork/resume of live runtime state, replayable trajectories for
-> audit, and eval on the same substrate.
+> scoped capabilities, checkpoint/fork/resume of live runtime state, and eval on the same substrate.
 
 Shinken is an AI-native, cross-platform **runtime + control plane + control panel** for
 computer-use agents. It is meant to be the full CUA infrastructure layer: boot real desktops and
 browsers, drive them through one Agent-Computer Interface (ACI), grant the sandbox capabilities
 they need, stream and supervise sessions live, checkpoint/fork/resume that live runtime state,
-record every run as a replay/training ledger, and run evals on the same substrate.
+and run evals on the same substrate.
 
 The ambition is deliberately broad. Shinken is not just a benchmark harness, a cloud browser, a
 VNC desktop, or a model adapter. It is the foundation those pieces plug into: production agent
-runtime, eval environment, trajectory recorder, permission boundary, and future cross-OS fleet
+runtime, eval environment, runtime-state manager, permission boundary, and future cross-OS fleet
 manager.
 
 > **Status (2026-05-31) — early, honest.** The product scope is the full CUA stack above. What
 > runs **today** is the first tested Linux/X11 slice:
 > typed pointer/keyboard actions, pixel observation (screenshot + **real-time screencast** with
-> idle-suppression + resolution downscale), **focused-window capture**, `.skn` recording, and a
+> idle-suppression + resolution downscale), **focused-window capture**, and a
 > Python SDK — all under live CI. The rest of this README describes the **target design**:
-> cross-platform, accessibility-tree observation, the capability/permission panel, replay playback,
+> cross-platform, accessibility-tree observation, the capability/permission panel,
 > checkpoint/fork, the control plane, and WebRTC/GPU streaming are **designed but not yet built**,
 > and the load-bearing a11y-coverage assumption is **not yet validated**. See
 > **[`docs/engineering/status.md`](docs/engineering/status.md)** for the precise built-vs-designed map.
 >
 > **Next priority — runtime-state time-travel.** Shinken's headline differentiator is *instant
 > snapshot / checkpoint / fork / resume* of live sandboxes (**D1/D5**) — for high-concurrency eval,
-> best-of-N exploration, and counterfactual reruns. `.skn` **replay is the evidence ledger** those
-> checkpoints reference (a checkpoint binds a substrate snapshot to a replay event offset), not the
-> speed story. A reference implementation of these primitives on the Docker tier is the active
-> v0.0.1 work — see [#206](https://github.com/Meirtz/Shinken/issues/206).
+> best-of-N exploration, counterfactual reruns, and cheap reset from golden states. A reference
+> implementation of these primitives on the Docker tier is the active v0.0.1 work — see
+> [#206](https://github.com/Meirtz/Shinken/issues/206).
 
 ## Why "Shinken"?
 
@@ -47,21 +45,21 @@ capabilities, real audit, or real scale.
 
 **Shinken (真剣)** means a real sword. The point is not recklessness; it is discipline. A real
 agent runtime must be sharp enough to do production work, and safe enough that every boundary
-capability is scoped, recorded, replayable, and under operator control.
+capability is scoped, auditable, and under operator control.
 
 <p align="center">
   <img src="docs/assets/shinken-vs-mogito.png" alt="Mogito training sword versus Shinken real sword" width="900">
 </p>
 
-That is Shinken's stance: **real desktops, real actions, real capabilities, real checkpoint/fork/resume,
-and real replay to audit it all.**
+That is Shinken's stance: **real desktops, real actions, real capabilities, and real
+checkpoint/fork/resume.**
 
 <p align="center">
   <img src="docs/assets/shinken-agent-sandbox-overview.png" alt="Shinken agent sandbox: sharp by default, safe by design" width="900">
 </p>
 
 The product shape follows from that stance: keep the practice-friendly ergonomics, then add the
-real-runtime edge that a complete CUA stack needs: sandbox entitlements, replayable runs,
+real-runtime edge that a complete CUA stack needs: sandbox entitlements, runtime state,
 auditable boundary crossings, eval artifacts, and eventually fleet-scale execution.
 
 ```mermaid
@@ -72,11 +70,9 @@ flowchart LR
   SK --> Desktop["Sandbox Desktop<br/>Linux now · Win/macOS later"]
   SK --> Obs["a11y tree + pixels on demand"]
   SK --> State["Runtime state<br/>checkpoint · fork · resume"]
-  State --> Replay[".skn ledger<br/>events.jsonl + media + snapshot refs"]
   Human["Human reviewer"] --> Panel["Control Panel<br/>watch / configure / take over"]
   Panel --> GW
   State --> Eval["Eval + training data"]
-  Replay --> Eval
 ```
 
 ## What It Lets You Do
@@ -93,19 +89,13 @@ flowchart LR
   credentials, GPU, persistence, privileged installs, clipboard, screenshots, or OS automation
   entitlements.
 - **Move files and artifacts as first-class data.** Task fixtures, generated artifacts, logs,
-  media, and replay resources need a Sandbox↔client transfer path with checksums, backpressure,
-  and replay references.
+  media, and task outputs need a Sandbox↔client transfer path with checksums and backpressure.
 - **Checkpoint, restore, fork, and resume runtime state.** Name a runnable checkpoint of a live
   sandbox, fork it into N replicas from one golden state, reset instantly, or resume a suspended
   session. This is the primitive behind instant reset, N-run eval replicas, best-of-N /
   counterfactual branches, and long-running or idle-suspended tasks.
-- **Keep a replay ledger of every run.** The event stream is the audit log that runtime state
-  references: actions, observations, permission decisions, verifier receipts, artifacts, and media
-  references become a `.skn` bundle for debugging, eval evidence, and training data. A checkpoint
-  binds a substrate snapshot to a replay event offset, so the ledger says *what happened* while the
-  checkpoint says *where this can continue from*.
 - **Run evals on the runtime, not beside it.** OSWorld-style tasks, browser tasks, mobile tasks,
-  and custom enterprise tasks should all become verifier-backed runs over the same ACI and replay
+  and custom enterprise tasks should all become verifier-backed runs over the same ACI and runtime
   substrate.
 - **Scale beyond one laptop.** The reference runtime grows into a control plane with warm pools,
   fork-from-snapshot reset, policy enforcement, WebRTC media, multi-tenant budgets, and cross-OS
@@ -122,7 +112,7 @@ screenshot -> model -> pixel click -> sleep -> screenshot -> throw trace away
 Shinken is designed around a different loop:
 
 ```text
-screenshot observation -> typed action -> sandbox capability -> verified result -> checkpointable state (referenced by replay ledger)
+screenshot observation -> typed action -> sandbox capability -> verified result -> checkpointable state
 ```
 
 That difference is the product. v0.0.1 should implement these semantics at local/reference scale;
@@ -135,13 +125,13 @@ later milestones make the same semantics faster, denser, multi-tenant, and cross
 - **Auditable authority:** sandbox capabilities such as network egress, credentials, GPU,
   persistence, host mounts, and OS automation are explicit, scoped, revocable, and recorded.
 - **Fast artifacts:** file transfer is a profiled data path, not JSON/base64 bolted onto control RPC.
-- **Forkable trajectories:** the same run can be scrubbed, audited, branched, and exported.
+- **Forkable runtime state:** the same starting point can branch into many live sandboxes.
 
 ## Client / Server Shape
 
 The current implementation starts simple: the Python client talks directly to the Rust Guest
 Runtime for the local/reference slice. The target architecture inserts the Control Plane as the
-mandatory server-side boundary, without changing the ACI or replay semantics.
+mandatory server-side boundary, without changing the ACI or runtime-state semantics.
 
 ```mermaid
 flowchart TB
@@ -154,7 +144,7 @@ flowchart TB
   subgraph Control["Control Server / Control Plane"]
     AG["Action Gateway<br/>auth -> rate-limit -> budget -> policy -> dispatch"]
     POL["Policy + capability handles"]
-    RS["Replay Store<br/>.skn bundles"]
+    SS["State Store<br/>checkpoints · forks · resumes"]
     FM["Fleet Manager<br/>provision / reset / fork"]
     EV["Eval Service"]
   end
@@ -174,14 +164,13 @@ flowchart TB
   AG --> SK
   SK --> APP
   SK --> A11Y
-  SK --> RS
+  FM --> SS
   FM --> Guest
-  RS --> EV
+  SS --> EV
 ```
 
-The rule of thumb: **clients request, the Control Plane authorizes and records, `shinkend` executes,
-the guest OS changes, the Fleet Manager checkpoints/forks/resumes that state, and the `.skn` ledger
-preserves the timeline it references.**
+The rule of thumb: **clients request, the Control Plane authorizes, `shinkend` executes,
+the guest OS changes, and the Fleet Manager checkpoints/forks/resumes that state.**
 
 ## How Agent-Native It Should Feel
 
@@ -196,7 +185,7 @@ from shinken.adapters import ShinkenXMLAdapter
 
 adapter = ShinkenXMLAdapter()
 
-with shinken.connect(record=True) as env:
+with shinken.connect() as env:
     shot = env.screenshot()                     # universal GUI observation
 
     # The model returns a restricted action dialect, not arbitrary Python.
@@ -210,8 +199,6 @@ with shinken.connect(record=True) as env:
 
     for action in adapter.parse(model_output, observation=shot):
         env.act(action.verb, action.target, **action.args)
-
-    env.save_replay("search-demo.skn")          # replay/debug/train later
 ```
 
 The same adapter boundary can host XML-like tags, JSON/function-call outputs, Anthropic/OpenAI
@@ -219,26 +206,22 @@ computer-use grammars, UI-TARS normalized coordinates, or OSWorld `computer_13`.
 the same: **model dialect in, validated ACI typed actions out**.
 
 Low-level calls such as `env.click(x=...)`, `env.type_text(...)`, and `env.key(...)` remain useful
-for smoke tests, scripting, and replay debugging; they are not the primary agent interface.
+for smoke tests and scripting; they are not the primary agent interface.
 
 Boundary-crossing capabilities should be just as explicit:
 
 ```python
 with shinken.connect() as env:
-    env.unlock("net.egress", scope="github.com")  # provisioned capability, recorded in replay
+    env.unlock("net.egress", scope="github.com")  # provisioned capability
     env.run_task("open the project repo and file a bug")
 ```
 
-And runtime state should be first-class — name a checkpoint, fork it, or resume it — with replay as
-the ledger those operations reference:
+And runtime state should be first-class — name a checkpoint, fork it, or resume it:
 
 ```bash
 shinken checkpoint search-demo --name golden     # name a runnable checkpoint of live state
 shinken fork golden --replicas 5                  # fork N live replicas from one golden state
 shinken resume golden                             # resume a suspended session
-
-shinken replay search-demo.skn                    # scrub the audit ledger by action/observation seq
-shinken branch search-demo.skn --at 42            # rerun a counterfactual from step 42
 ```
 
 Those examples are the product target. v0.0.1 should make the semantics real locally/reference
@@ -248,11 +231,10 @@ plane. See [docs/engineering/v0.0.1-plan.md](docs/engineering/v0.0.1-plan.md).
 ## What Works Today
 
 **v0.0.1 is underway:** schema scaffold, Rust `shinkend`, Python SDK/CLI, a Linux Docker image
-skeleton, pointer/keyboard actions, screenshots, screencast/focused capture, an OSWorld shim, and a
-minimal `.skn` recorder exist. The v0.0.1 backlog fills in the rest of the semantic surface:
+skeleton, pointer/keyboard actions, screenshots, screencast/focused capture, an OSWorld shim, and
+Docker disk-tier checkpoint/fork/resume exist. The v0.0.1 backlog fills in the rest of the semantic surface:
 agent-native dialect/adapters, a11y/CDP/element-ref reference paths, capability envelope and
-permission events, artifact transfer, replay scrub/validation, deterministic task fixtures, and a
-tiny verifier harness.
+permission events, artifact transfer, deterministic task fixtures, and a tiny verifier harness.
 
 ```bash
 # 1) run the Guest Runtime
@@ -275,9 +257,9 @@ env.close()
 ```
 
 Expected today: connect, print platform/RTT/screen/capabilities, run basic pointer/keyboard actions,
-capture screenshots/focused windows/screencasts, and save a minimal `.skn` replay. Not expected yet:
-provider adapters, a11y trees, element refs, file/artifact transfer, capability enforcement, eval,
-real checkpoint/restore, or cloud fork.
+capture screenshots/focused windows/screencasts, move files through the local/Docker provider, and
+exercise Docker disk-tier checkpoint/fork/resume. Not expected yet: provider adapters, a11y trees,
+element refs, production capability enforcement, eval, or cloud fork.
 
 ## Roadmap
 
@@ -298,7 +280,7 @@ later releases make them fast, scalable, multi-tenant, and production-hardened.
 
 ```text
 shinken/
-├─ schema/        ACI and .skn JSON Schemas
+├─ schema/        ACI JSON Schema
 ├─ shinkend/      Rust Guest Runtime inside the Sandbox
 ├─ sdk/python/    Python SDK and CLI
 ├─ images/linux/  Local Linux Sandbox image

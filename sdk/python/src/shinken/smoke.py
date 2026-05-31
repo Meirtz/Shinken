@@ -1,11 +1,11 @@
 """First-party smoke-agent harness validation (#91) — provider-neutral, env-driven.
 
 A minimal one-task smoke that exercises the whole loop — observe (screenshot) → agent
-→ typed action → record → score — and writes a `.skn` replay. It uses only
-Shinken-owned code, public deps, and environment configuration, and **skips cleanly**
-when optional prerequisites are absent. The built-in :class:`HttpModelAgent` speaks an
-OpenAI-compatible chat API (base URL + key + model from env) so any compatible provider
-works; tests inject a deterministic stub agent, so no network or secret is needed in CI.
+→ typed action → score. It uses only Shinken-owned code, public deps, and environment
+configuration, and **skips cleanly** when optional prerequisites are absent. The built-in
+:class:`HttpModelAgent` speaks an OpenAI-compatible chat API (base URL + key + model from
+env) so any compatible provider works; tests inject a deterministic stub agent, so no
+network or secret is needed in CI.
 
 Config (by role — set real values only in ignored local env, never in the repo):
   ``SHK_SMOKE_MODEL_BASE_URL``  model endpoint base URL
@@ -20,7 +20,6 @@ from __future__ import annotations
 import contextlib
 import json
 import os
-import tempfile
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -63,7 +62,6 @@ class SmokeResult:
     status: str  # "pass" | "fail" | "skipped" | "error"
     reason: str = ""
     steps: int = 0
-    bundle: str | None = None
     proxy: dict = field(default_factory=dict)
 
     @property
@@ -75,7 +73,6 @@ class SmokeResult:
             "status": self.status,
             "reason": self.reason,
             "steps": self.steps,
-            "bundle": self.bundle,
             "proxy": self.proxy,
         }
 
@@ -97,7 +94,7 @@ class HttpModelAgent:
         self._round += 1
         if self._round == 1:
             self._chat(instruction)  # raises on connectivity/auth failure
-            return dict(BENIGN_ACTION)  # canonical ACI action (#163), benign + recordable
+            return dict(BENIGN_ACTION)  # canonical ACI action (#163), benign and bounded
         return "DONE"
 
     def _chat(self, instruction: str) -> str:
@@ -151,7 +148,7 @@ def run_smoke_agent(
     connect_factory: Callable[[], Any] | None = None,
     out_path: str | None = None,
 ) -> SmokeResult:
-    """Run one smoke episode: observe→agent→act→record→score. Returns a SmokeResult.
+    """Run one smoke episode: observe→agent→act→score. Returns a SmokeResult.
 
     Skips cleanly (``status="skipped"``) when no agent is given and the model env is
     absent. Pass an ``agent`` (e.g. a deterministic stub) to run without a model."""
@@ -165,9 +162,8 @@ def run_smoke_agent(
             )
         agent = HttpModelAgent(config, proxy_cfg)
 
-    factory = connect_factory or (
-        lambda: connect(config.address, record=True, token=config.token)
-    )
+    _ = out_path  # reserved for future smoke artifacts
+    factory = connect_factory or (lambda: connect(config.address, token=config.token))
     env = factory()
     steps = 0
     try:
@@ -178,10 +174,7 @@ def run_smoke_agent(
             if action is None or action in ("DONE", "FAIL"):
                 break
             _apply(env, action)
-        bundle = env.save_replay(
-            out_path or os.path.join(tempfile.mkdtemp(prefix="shinken-smoke-"), "smoke.skn")
-        )
-        return SmokeResult(status="pass", steps=steps, bundle=bundle, proxy=proxy)
+        return SmokeResult(status="pass", steps=steps, proxy=proxy)
     except Exception as exc:
         return SmokeResult(status="error", reason=str(exc), steps=steps, proxy=proxy)
     finally:

@@ -2,7 +2,7 @@
 // Protocol `Accessibility.getFullAXTree` response (optionally enriched with box bounds
 // from `DOMSnapshot.captureSnapshot`) into the same flat ACI `Element[]` the other
 // observation backends produce — mirroring the Python `shinken.cdp` reference path, so
-// browser structure lands in `.skn`/replay with one normalized vocabulary.
+// browser structure shares one normalized vocabulary.
 
 import type { Element } from "./types.js";
 

@@ -1,7 +1,7 @@
 {
   "name": "@shinken/sdk",
   "version": "0.0.0",
-  "description": "TypeScript control-surface SDK for Shinken ACI and .skn replay models",
+  "description": "TypeScript control-surface SDK for Shinken ACI models",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.js",

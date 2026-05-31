@@ -1,6 +1,6 @@
-// Web replay viewer + control panel shell (#100). A pure, dependency-free renderer that
+// Web control panel shell (#100). A pure, dependency-free renderer that
 // turns the shared control-surface state (#102) into an HTML fragment: a session
-// dashboard, a replay timeline backed by `.skn` event models, and a selected-event
+// dashboard, an event timeline, and a selected-event
 // detail pane. Rendering is kept entirely separate from state/protocol logic — this
 // module imports only the shared model + selectors and returns a string, so it is fully
 // unit-testable in CI and can be mounted into any page (`el.innerHTML = renderPanel(...)`)
@@ -54,7 +54,7 @@ function timeline(state: ControlSurfaceState): string {
     })
     .join("");
   const body = rows === "" ? '<tr class="empty"><td colspan="4">no events</td></tr>' : rows;
-  return `<section class="timeline"><h2>Replay timeline (${events.length})</h2><table><thead><tr><th>seq</th><th>kind</th><th>src</th><th>t</th></tr></thead><tbody>${body}</tbody></table></section>`;
+  return `<section class="timeline"><h2>Event timeline (${events.length})</h2><table><thead><tr><th>seq</th><th>kind</th><th>src</th><th>t</th></tr></thead><tbody>${body}</tbody></table></section>`;
 }
 
 function detailPane(state: ControlSurfaceState): string {

@@ -12,11 +12,11 @@ Eval is thin orchestration on the same runtime. A task run should produce:
 - A setup state.
 - A goal/instruction.
 - A run through ACI.
-- A `.skn` replay bundle.
 - A programmatic verifier result.
-- A summary with pass/fail, steps, wall-clock, and replay path.
+- A summary with pass/fail, steps, and wall-clock time.
 
-The same replay used for debugging should be usable as eval evidence and training trajectory data.
+Future capture/export features can add richer evidence and training-data artifacts after the runtime
+semantics are solid.
 
 ## v0.0.1 Scope
 
@@ -25,7 +25,6 @@ v0.0.1 should include:
 - 3-5 deterministic local GUI task fixtures.
 - Programmatic verifiers.
 - N-run sequential execution.
-- Verifier receipts linked to `.skn`.
 - A summary report.
 
 This is enough to prove semantics without a cloud eval service.
@@ -40,6 +39,11 @@ Later versions add:
 - `pass@k`, `pass^k`, confidence intervals.
 - Hosted eval service and dashboards.
 
+For the OSWorld bring-up path, see the engineering plan:
+[`../engineering/osworld-eval.md`](../engineering/osworld-eval.md). The first milestone is one real
+OSWorld task in the official image with Shinken injected as the action/observation layer; the second
+is the upstream small manifest.
+
 ## Metrics To Prefer
 
 Do not report only success rate. Include:
@@ -48,7 +52,6 @@ Do not report only success rate. Include:
 - Step count.
 - Wall-clock time.
 - Cost or sandbox time.
-- Replay size.
 - Observation mode used.
 - Capability events.
 

@@ -28,7 +28,6 @@ v0.0.1 should implement the capability semantics locally:
 - A session capability envelope.
 - A local Action Gateway shim.
 - Grant / deny / narrow decisions.
-- Permission events in `.skn`.
 - Basic file/artifact scope checks where applicable.
 
 This is not yet the full production enforcement stack.
@@ -43,11 +42,6 @@ Later releases add:
 - Out-of-VM egress proxy.
 - Secret broker integration.
 - Control Panel capability cards.
-
-## Replay
-
-Capability decisions are part of replay. A `.skn` should show what powers the sandbox had, which
-boundary requests were granted or denied, and when they changed.
 
 ## Security Rule Of Thumb
 

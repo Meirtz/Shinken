@@ -46,21 +46,11 @@ Resume continues a paused or suspended Sandbox/Session. It is not the same as re
 Sandbox has live OS state. A replayed `.skn` shows what happened and may feed a fork/restore
 operation, but by itself it does not make the old desktop live again.
 
-## How `.skn` Fits
+## Future Timeline Link
 
-`.skn` stores the timeline:
-
-- actions,
-- observations,
-- permission decisions,
-- media refs,
-- artifact refs,
-- verifier receipts,
-- `snapshot_ref` events (reserved event kind) — emitted by `sandbox.checkpoint()` to bind a
-  checkpoint id to its `.skn` event offset (wiring in progress, #206).
-
-`.skn` references checkpoint ids at meaningful boundaries: task start, step boundaries, capability
-grants, side-effecting operations, verifier milestones, and manual markers.
+A future timeline/audit format may reference checkpoint ids at meaningful boundaries: task start,
+step boundaries, capability grants, side-effecting operations, verifier milestones, and manual
+markers. That format is deliberately deferred; the runtime-state API should stand on its own first.
 
 ## Provider Honesty
 
@@ -77,11 +67,10 @@ is still `recreate` (a fresh container), distinct from `fork()` (a new branch of
 ## Current Status
 
 The **Docker disk tier is implemented** (#209): `provider.snapshot()` (`docker commit`) /
-`restore()` / `resume()` / `fork()` (snapshot + restore, disk copy-on-write) / `checkpoint()` (a
-disk snapshot bound to a `.skn` event offset + agent-state ref). `.skn` recording and the provider
-runtime-state interface (#207) ship too.
+`restore()` / `resume()` / `fork()` (snapshot + restore, disk copy-on-write) / `checkpoint()`.
+The SDK exposes provider-managed `sandbox.checkpoint()`, `sandbox.fork()`, and `sandbox.resume()`.
 
-**Not yet built:** the SDK `sandbox.checkpoint()` + `snapshot_ref` replay-event wiring (#206), the
-**CRIU memory** checkpoint tier (`snapshot_kind="process"`), and the **sub-second CoW fork-from-snapshot
-fast tier** (Firecracker/QEMU, Phase-1, gated on a first-party latency spike). See
+**Not yet built:** the **CRIU memory** checkpoint tier (`snapshot_kind="process"`) and the
+**sub-second CoW fork-from-snapshot fast tier** (Firecracker/QEMU, Phase-1, gated on a first-party
+latency spike). See
 [`../engineering/status.md`](../engineering/status.md).

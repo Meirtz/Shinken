@@ -8,7 +8,7 @@ structured source, while AT-SPI remains the cross-toolkit default for native app
 This module reduces a CDP ``Accessibility.getFullAXTree`` response (optionally enriched
 with box bounds from ``DOMSnapshot.captureSnapshot``) into the same normalized
 :class:`~shinken.a11y.A11yNode` tree the AT-SPI path produces, so element_ref resolution
-(#78), coverage metrics (#80), and ``.skn`` replay all work unchanged. The pure
+(#78) and coverage metrics (#80) share one vocabulary. The pure
 normalization (:func:`parse_ax_tree`) is unit-tested against CDP fixtures offline;
 :class:`CdpSource` attaches to a live Chromium over a debugger websocket and is exercised
 by ``scripts/cdp_smoke.py``. Backend AX/DOM node ids are carried as Element

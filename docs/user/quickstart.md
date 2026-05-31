@@ -15,7 +15,7 @@ Current implementation: Linux/X11 reference slice.
 - ACI v0 handshake and capability negotiation.
 - Pointer actions, keyboard actions, screenshots.
 - Screencast and focused-window/region capture.
-- Minimal `.skn` recording.
+- Docker disk-tier checkpoint/fork/resume through the provider API.
 - Docker Linux sandbox image smoke test.
 
 Not implemented yet: provider adapters, a11y trees, `element_ref`, file/artifact transfer,
@@ -66,18 +66,11 @@ Pointer and keyboard actions work when `shinkend` can reach an X11 display.
 ```python
 import shinken
 
-with shinken.connect(record=True) as env:
+with shinken.connect() as env:
     env.move(x=300, y=200)
     env.click(x=300, y=200)
     env.type_text("hello from Shinken")
     shot = env.screenshot()
-    env.save_replay("demo.skn")
-```
-
-Inspect the replay:
-
-```bash
-shinken replay demo.skn
 ```
 
 ## Use The Docker Sandbox Image

@@ -111,11 +111,11 @@ class DockerLocalProvider(SandboxProvider):
         # In-memory for the local reference tier; a real Control Plane persists the DAG.
         self._checkpoints: dict[str, dict[str, Any]] = {}
 
-    def connect(self, handle: SandboxHandle, *, record: bool = False):
+    def connect(self, handle: SandboxHandle):
         """Connect, then wire file transfer through the **actual guest** filesystem via
         `docker cp` (#154) instead of the host-local reference store, so `put_file`/
         `get_file` move bytes across the real Sandbox boundary."""
-        env = super().connect(handle, record=record)
+        env = super().connect(handle)
         container_id = handle.metadata.get("container_id") or handle.sandbox_id
         if container_id:
             env._set_guest_transport(DockerGuestTransport(str(container_id), self.docker_bin))
@@ -322,8 +322,8 @@ class DockerLocalProvider(SandboxProvider):
         event_seq: int | None = None,
         agent_state_ref: str | None = None,
     ) -> str:
-        """Named restore point binding a disk snapshot to a `.skn` event offset + optional
-        agent state — a node in the checkpoint DAG (D5). `resume(ckpt_id)` restores it."""
+        """Named restore point binding a disk snapshot to optional agent state — a node
+        in the checkpoint DAG (D5). `resume(ckpt_id)` restores it."""
         snapshot_id = self.snapshot(handle)
         ckpt_id = f"ckpt-{uuid.uuid4().hex[:12]}"
         self._checkpoints[ckpt_id] = {
@@ -486,7 +486,7 @@ class DockerGuestTransport:
     Same ``put``/``get`` contract as :class:`~shinken.artifacts.LocalArtifactStore`, so the
     Sandbox uses it transparently when a Docker provider attaches it — but bytes land in
     (and come from) the actual container filesystem, and the returned
-    :class:`~shinken.artifacts.ArtifactRef` is content-hashed for the `.skn` record."""
+    :class:`~shinken.artifacts.ArtifactRef` is content-hashed for auditability."""
 
     def __init__(self, container_id: str, docker_bin: str = "docker"):
         self.container_id = container_id

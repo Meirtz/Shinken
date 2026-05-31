@@ -74,10 +74,10 @@ def test_run_eval_records_connect_failure_per_replica(mock_shinkend, tmp_path):
         calls[0] += 1
         if calls[0] == 2:
             raise ConnectionError("sandbox unavailable")
-        return shinken.connect(mock_shinkend, record=True)
+        return shinken.connect(mock_shinkend)
 
     summary = run_eval(click_then_type_task(10, 20, "hi"), factory, n=3, out_dir=str(tmp_path))
     assert summary.n == 3 and summary.setup_errors == 1  # the failed connect is one error
     errs = [r for r in summary.results if r.error]
-    assert len(errs) == 1 and "sandbox unavailable" in errs[0].error and errs[0].bundle is None
+    assert len(errs) == 1 and "sandbox unavailable" in errs[0].error
     assert summary.passed == 2  # the other two replicas still ran + verified

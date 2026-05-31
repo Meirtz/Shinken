@@ -13,20 +13,20 @@ This is how Shinken subsumes OSWorld's runtime + message-passing (docs/03, docs/
     env.close()
 
 Observation parity: ``screenshot`` is live; the ``a11y_tree`` channel is wired but
-returns ``None`` until the AT-SPI observation engine lands (M1b). reward/done are
-left to the eval layer (M4) — ``DONE``/``FAIL`` sentinels set ``done``.
+returns ``None`` until the AT-SPI observation engine lands (M1b). reward/done are left to
+the eval layer (M4): the ``DONE``/``FAIL`` sentinels set ``done``, and ``evaluate(checker)``
+scores the episode — a bare ``DONE`` is the agent's *claim* of success, never a pass on its
+own. This shim has no built-in metric/getter pipeline; real task scoring is the official
+OSWorld evaluator (see ``scripts/osworld_single.py``).
 """
 
 from __future__ import annotations
 
-import os
 import re
-import tempfile
 import time
 from typing import Any
 
 from .client import connect
-from .skn import Replay
 
 _PYAUTOGUI_PATTERNS = [
     (re.compile(r"(?:pyautogui\.)?moveTo\(\s*(\d+)\s*,\s*(\d+)"), "move"),
@@ -44,19 +44,17 @@ class DesktopEnv:
         address: str = "127.0.0.1:8765",
         observation_type: str = "screenshot",
         action_space: str = "pyautogui",
-        record: bool = False,
     ):
         self.address = address
         self.observation_type = observation_type
         self.action_space = action_space
-        self.record = record
         self._env: Any = None
         self._instruction = ""
         self._terminal: str | None = None  # "DONE" / "FAIL" once the agent terminates
 
     def reset(self, task_config: dict | None = None) -> dict:
         if self._env is None:
-            self._env = connect(self.address, record=self.record)
+            self._env = connect(self.address)
         self._instruction = (task_config or {}).get("instruction", "")
         self._terminal = None
         return self._observation()
@@ -68,17 +66,28 @@ class DesktopEnv:
         return self._observation(), 0.0, done, {"terminal": self._terminal}
 
     def evaluate(self, checker: Any = None) -> dict:
-        """Return the terminal evaluator result for the episode. ``passed`` requires a
-        ``DONE`` terminal and, if a ``checker(env) -> bool`` is given, that it holds —
-        e.g. a verifier over the recorded `.skn` trace. Mirrors OSWorld's final score."""
-        ok = self._terminal == "DONE"
-        if ok and checker is not None:
-            ok = bool(checker(self))
-        return {"terminal": self._terminal, "passed": ok, "score": 1.0 if ok else 0.0}
+        """Score the episode. Unlike OSWorld's metric/getter pipeline (which this shim does
+        not implement), a real verdict REQUIRES a ``checker(env) -> bool`` — the task's
+        evaluator. Semantics, matching OSWorld rather than inverting it:
 
-    def save_replay(self, path: str) -> str:
-        """Write the session's `.skn` replay (requires ``record=True``)."""
-        return self._env.save_replay(path)
+        * a ``FAIL`` terminal always scores 0;
+        * with no ``checker`` the episode is **unverified** (``evaluated=False``, not a
+          pass) — a bare ``DONE`` is the agent's claim, never a pass on its own;
+        * with a ``checker``, ``passed`` is ``DONE and checker(self)``.
+
+        For genuine OSWorld task scoring use the official evaluator
+        (``scripts/osworld_single.py``)."""
+        if self._terminal == "FAIL":
+            return {"terminal": "FAIL", "passed": False, "score": 0.0, "evaluated": True}
+        if checker is None:
+            return {"terminal": self._terminal, "passed": False, "score": 0.0, "evaluated": False}
+        ok = self._terminal == "DONE" and bool(checker(self))
+        return {
+            "terminal": self._terminal,
+            "passed": ok,
+            "score": 1.0 if ok else 0.0,
+            "evaluated": True,
+        }
 
     def close(self) -> None:
         if self._env is not None:
@@ -132,10 +141,24 @@ class DesktopEnv:
         elif t == "PRESS":
             self._env.key(str(a.get("key", "")))
         elif t == "SCROLL":
-            self._env.scroll(dy=a.get("dy", 0))
+            self._scroll(dx=a.get("dx", 0), dy=a.get("dy", 0), x=a.get("x"), y=a.get("y"))
         else:
             raise ValueError(f"unsupported computer_13 action_type: {t!r}")
         return False
+
+    def _scroll(self, *, dx: int = 0, dy: int = 0, x: int | None = None, y: int | None = None):
+        """OSWorld/pyautogui scroll → ACI scroll. OSWorld's wheel uses ``+y = up`` /
+        ``+x = right`` (it feeds ``pyautogui.vscroll(dy)`` / ``hscroll(dx)``); the ACI and
+        shinkend convention is ``+dy = down`` / ``+dx = right`` (see the Anthropic/OpenAI
+        adapters and ``executor.rs``). So the vertical axis is **negated** and the
+        horizontal axis passes through — this is the bug the two action spaces previously
+        disagreed on. ``dx`` is forwarded for wire fidelity even though the current X11
+        backend actuates only ``dy``; a position target is forwarded when present."""
+        target = {"kind": "point_px", "x": x, "y": y} if x is not None and y is not None else None
+        kwargs: dict[str, Any] = {"dy": -dy}
+        if dx:
+            kwargs["dx"] = dx
+        self._env.act("scroll", target, **kwargs)
 
     def _click(self, a: dict, *, double: bool = False, button: str = "left") -> None:
         x, y = a.get("x"), a.get("y")
@@ -177,47 +200,71 @@ class DesktopEnv:
                     self._env.key("+".join(keys))
                     executed = True
                     continue
+                if re.search(r"(?:pyautogui\.)?dragTo\(", line):
+                    raise ValueError("pyautogui.dragTo is unsupported by ACI v0 (no drag verb)")
+                m = re.search(r"(?:pyautogui\.)?hscroll\(\s*(-?\d+)", line)
+                if m:  # horizontal wheel — check before scroll() (which substring-matches)
+                    self._scroll(dx=int(m.group(1)))
+                    executed = True
+                    continue
+                m = re.search(r"(?:pyautogui\.)?vscroll\(\s*(-?\d+)", line)
+                if m:
+                    self._scroll(dy=int(m.group(1)))
+                    executed = True
+                    continue
                 m = re.search(r"(?:pyautogui\.)?scroll\(\s*(-?\d+)", line)
                 if m:
-                    self._env.scroll(dy=-int(m.group(1)))
+                    self._scroll(dy=int(m.group(1)))
                     executed = True
         if not executed:
             raise ValueError(f"no supported pyautogui call found in: {code!r}")
         return False
 
 
-def _smoke_checker(bundle: str):
-    """Verify the first-party smoke trajectory from its `.skn`: a click, the typed
-    text, and an Enter keypress all present in the recorded action stream."""
-
-    def check(_env: Any) -> bool:
-        rp = Replay.load(bundle)
-        actions = [e for e in rp.events if e["kind"] == "action"]
-        clicked = any(a["src"] == "click" for a in actions)
-        typed = any(
-            a["src"] == "type_text" and "hello shinken" in (a["payload"].get("text") or "")
-            for a in actions
-        )
-        pressed = any(a["src"] == "key" and a["payload"].get("keys") == "enter" for a in actions)
-        return clicked and typed and pressed
-
-    return check
+#: OSWorld's terminal control tokens (agent signals, not pyautogui).
+_TERMINAL_TOKENS = ("WAIT", "DONE", "FAIL")
 
 
-def osworld_smoke(address: str = "127.0.0.1:8765", record: bool = True) -> dict:
-    """First-party minimal **public-OSWorld-style** smoke (no private assets / harness).
+def parse_model_actions(text: str) -> list[str]:
+    """Extract OSWorld-format actions from a **chat model's** raw response — the format
+    OSWorld's own ``PromptAgent`` prompts for, and the one a hosted agentic model
+    (e.g. Kimi **K2.6**) emits when driving OSWorld: fenced ```python ...``` pyautogui code
+    blocks (pixel coordinates) plus the bare ``WAIT``/``DONE``/``FAIL`` control tokens.
+
+    Mirrors OSWorld's ``mm_agents.agent.parse_code_from_string`` so the *same* model output
+    drives Shinken unchanged; each returned string is directly consumable by
+    :meth:`DesktopEnv.step` (which routes pyautogui code through the typed ACI). Returns an
+    empty list if nothing parseable is found (a stuck/garbled turn)."""
+    text = "\n".join(s.strip() for s in text.split(";") if s.strip())
+    if text.strip() in _TERMINAL_TOKENS:
+        return [text.strip()]
+    actions: list[str] = []
+    for block in re.findall(r"```(?:\w+\s+)?(.*?)```", text, re.DOTALL):
+        block = block.strip()
+        if block in _TERMINAL_TOKENS:
+            actions.append(block)
+        elif block.split("\n")[-1] in _TERMINAL_TOKENS:  # trailing DONE after code
+            lines = block.split("\n")
+            if len(lines) > 1:
+                actions.append("\n".join(lines[:-1]))
+            actions.append(lines[-1])
+        elif block:
+            actions.append(block)
+    return actions
+
+
+def osworld_smoke(address: str = "127.0.0.1:8765") -> dict:
+    """First-party minimal **public-OSWorld-style** plumbing smoke (no private assets /
+    harness).
 
     Drives a short trajectory mixing the two public action spaces — a ``computer_13``
-    CLICK, a ``pyautogui`` typewrite, a ``PRESS`` — through :class:`DesktopEnv`,
-    terminates with ``DONE``, and evaluates from the recorded `.skn` trace. Returns the
-    evaluator result (``terminal``/``passed``/``score``) plus the step count and replay
-    bundle path. Run it locally or in CI to prove the OSWorld compatibility path; pass
-    means every expected typed action reached the runtime and was recorded.
+    CLICK, a ``pyautogui`` typewrite, a ``PRESS`` — through :class:`DesktopEnv` and
+    terminates with ``DONE``. It proves the *action plumbing* (both spaces dispatch and the
+    terminal is reached), not task success: it returns ``{"terminal", "steps"}`` and
+    deliberately does **not** fabricate a pass/score, since no task evaluator is wired here.
+    Real scoring is the official OSWorld evaluator (``scripts/osworld_single.py``).
     """
-    env = DesktopEnv(
-        address=address, observation_type="screenshot", action_space="pyautogui", record=record
-    )
-    bundle: str | None = None
+    env = DesktopEnv(address=address, observation_type="screenshot", action_space="pyautogui")
     steps = 0
     try:
         env.reset({"instruction": "click a target, type text, then finish"})
@@ -231,12 +278,6 @@ def osworld_smoke(address: str = "127.0.0.1:8765", record: bool = True) -> dict:
             steps += 1
             if done:
                 break
-        if record:
-            bundle = env.save_replay(
-                os.path.join(tempfile.mkdtemp(prefix="osworld-smoke-"), "osworld-smoke.skn")
-            )
-        result = env.evaluate(checker=_smoke_checker(bundle) if bundle else None)
-        result.update(steps=steps, bundle=bundle)
-        return result
+        return {"terminal": env._terminal, "steps": steps}
     finally:
         env.close()

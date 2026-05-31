@@ -185,8 +185,7 @@ jobs:
         name: packaged SDK schemas match source of truth
         run: |
           diff -q schema/aci.schema.json sdk/python/src/shinken/schemas/aci.schema.json
-          diff -q schema/skn.schema.json sdk/python/src/shinken/schemas/skn.schema.json
-          echo "packaged schemas in sync with schema/"
+          echo "packaged ACI schema in sync with schema/"
       - if: steps.present.outputs.go == 'true'
         uses: actions/setup-python@v6
         with:

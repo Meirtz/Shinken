@@ -1,8 +1,7 @@
 """Tiny local eval harness (#87) + deterministic task fixtures (#86).
 
-Proves v0 eval *semantics* — setup → run → verify → replay association → N repeated
-runs → metrics — **without a model or a live GUI**: fixtures verify from the recorded
-`.skn` trace, so they are deterministic and offline. The full eval service comes later.
+Proves v0 eval orchestration — setup → run → verify → N repeated runs → metrics —
+without a model or a cloud service. Full trace capture is intentionally deferred.
 """
 
 from __future__ import annotations
@@ -14,8 +13,6 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
-
-from .skn import Replay
 
 
 class SetupError(RuntimeError):
@@ -69,11 +66,11 @@ class VerifierReceipt:
 @dataclass
 class Task:
     """A deterministic eval task: ``run`` drives the session, ``verify`` judges it from
-    the recorded replay, ``setup`` (optional) prepares/readiness-checks the env."""
+    the live session or external task state, ``setup`` prepares/readiness-checks the env."""
 
     name: str
     run: Callable[[Any], None]
-    verify: Callable[[Replay], VerifierReceipt]
+    verify: Callable[[Any], VerifierReceipt]
     setup: Callable[[Any], None] | None = None
 
 
@@ -83,7 +80,6 @@ class RunResult:
     passed: bool
     steps: int
     wall_s: float
-    bundle: str | None
     receipt: VerifierReceipt
     error: str | None = None  # setup/readiness or harness error — NOT a task failure
 
@@ -93,7 +89,6 @@ class RunResult:
             "passed": self.passed,
             "steps": self.steps,
             "wall_s": round(self.wall_s, 6),
-            "bundle": self.bundle,
             "receipt": self.receipt.to_dict(),
             "error": self.error,
         }
@@ -129,11 +124,9 @@ def run_eval(
     n: int = 5,
     out_dir: str | None = None,
 ) -> EvalSummary:
-    """Run ``task`` ``n`` times, each in a fresh recording session from
-    ``connect_factory`` (e.g. ``lambda: shinken.connect(addr, record=True)``), verify
-    each from its `.skn` replay, and summarize. A failed run keeps its replay bundle
-    path as evidence; setup/readiness failures are reported via ``RunResult.error``,
-    distinct from verifier (task) failures."""
+    """Run ``task`` ``n`` times, each in a fresh session from ``connect_factory``, verify
+    each run, and summarize. ``out_dir`` is reserved for future artifacts; setup/readiness
+    failures are reported via ``RunResult.error``, distinct from verifier failures."""
     out_dir = out_dir or tempfile.mkdtemp(prefix="shinken-eval-")
     os.makedirs(out_dir, exist_ok=True)
     results: list[RunResult] = []
@@ -142,7 +135,6 @@ def run_eval(
         err: str | None = None
         passed = False
         steps = 0
-        bundle: str | None = None
         receipt = VerifierReceipt(False, [])
         t0 = time.perf_counter()
         wall = 0.0
@@ -150,21 +142,12 @@ def run_eval(
             env = connect_factory()
             if task.setup is not None:
                 task.setup(env)
+            actions_before = getattr(env, "actions_dispatched", 0)
             task.run(env)
+            steps = max(0, getattr(env, "actions_dispatched", 0) - actions_before)
             wall = time.perf_counter() - t0
-            bundle = env.save_replay(os.path.join(out_dir, f"{task.name}-{i}.skn"))
-            rp = Replay.load(bundle)
-            # count agent task actions as steps; screenshots are observations recorded as
-            # actions for pairing (#160), not task steps
-            steps = sum(
-                1 for e in rp.events if e["kind"] == "action" and e["src"] != "screenshot"
-            )
-            receipt = task.verify(rp)
+            receipt = task.verify(env)
             passed = receipt.passed
-            # persist the verdict into the bundle as a first-class event (#149), then
-            # re-save so the .skn is self-contained eval evidence
-            if env.record_verifier_receipt(receipt.to_dict()):
-                bundle = env.save_replay(os.path.join(out_dir, f"{task.name}-{i}.skn"))
         except SetupError as exc:
             wall = time.perf_counter() - t0
             err = f"setup: {exc}"
@@ -175,7 +158,7 @@ def run_eval(
             if env is not None:
                 with contextlib.suppress(Exception):
                     env.close()
-        results.append(RunResult(i, passed, steps, wall, bundle, receipt, err))
+        results.append(RunResult(i, passed, steps, wall, receipt, err))
 
     n_passed = sum(1 for r in results if r.passed)
     setup_errors = sum(1 for r in results if r.error is not None)
@@ -194,25 +177,32 @@ def run_eval(
     )
 
 
-# --- deterministic task fixtures (#86) — verified from the recorded trace ----------
+# --- deterministic task fixtures (#86) ------------------------------------------------
 
 
 def click_then_type_task(x: int, y: int, text: str) -> Task:
-    """Fixture: click a target point, then type ``text``. The verifier confirms both
-    from the `.skn` trace — no model or live screen state required."""
+    """Fixture: click a target point, then type ``text``.
+
+    The verifier reads the environment's **observed** state (``env.query("state")``) and
+    checks that a click actually landed at ``(x, y)`` and that the typed text actually
+    appeared — so a broken ``run`` (wrong coordinate, wrong/no text) fails the check. It is
+    not a tautology: the assertions compare observed effects, not the task's own inputs.
+    (Verification rides the reference/stateful environment; real-GUI OS/file-state scoring
+    is the OSWorld evaluator path — see ``scripts/osworld_single.py``.)"""
 
     def run(env: Any) -> None:
         env.click(x=x, y=y)
         env.type_text(text)
 
-    def verify(rp: Replay) -> VerifierReceipt:
-        actions = [e for e in rp.events if e["kind"] == "action"]
-        clicked = any(a["src"] == "click" for a in actions)
-        typed = any(a["src"] == "type_text" and a["payload"].get("text") == text for a in actions)
+    def verify(env: Any) -> VerifierReceipt:
+        state = env.query("state")
+        clicks = state.get("clicks", [])
+        typed = state.get("typed", "")
+        clicked = any(c.get("x") == x and c.get("y") == y for c in clicks)
         return VerifierReceipt.from_checks(
             [
-                check("clicked target", clicked, {"x": x, "y": y}),
-                check("typed expected text", typed, {"text": text}),
+                check("clicked target", clicked, {"x": x, "y": y, "observed_clicks": clicks}),
+                check("typed expected text", typed == text, {"expected": text, "observed": typed}),
             ]
         )
 
@@ -220,20 +210,22 @@ def click_then_type_task(x: int, y: int, text: str) -> Task:
 
 
 def key_sequence_task(keys: list[str]) -> Task:
-    """Fixture: press a sequence of keys; verifier confirms the exact order from trace."""
+    """Fixture: press a sequence of keys; the verifier confirms the exact order from the
+    environment's **observed** key log (``env.query("state")``), not from the task's own
+    input — a wrong/missing keypress fails the check."""
 
     def run(env: Any) -> None:
         for k in keys:
             env.key(k)
 
-    def verify(rp: Replay) -> VerifierReceipt:
-        pressed = [
-            e["payload"].get("keys")
-            for e in rp.events
-            if e["kind"] == "action" and e["src"] == "key"
-        ]
+    def verify(env: Any) -> VerifierReceipt:
+        pressed = env.query("state").get("keys", [])
         return VerifierReceipt.from_checks(
-            [check("key sequence matches", pressed == keys, {"expected": keys, "actual": pressed})]
+            [
+                check(
+                    "key sequence matches", pressed == keys, {"expected": keys, "observed": pressed}
+                )
+            ]
         )
 
     return Task(name="key_sequence", run=run, verify=verify)

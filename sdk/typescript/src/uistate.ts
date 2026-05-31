@@ -3,7 +3,7 @@
 // so the two control surfaces cannot diverge. Rendering stays out of here entirely; this
 // module holds no protocol/runtime/backend logic (no sockets, no I/O) — only state.
 
-import type { SknEvent, SknEventKind } from "./types.js";
+import type { ControlEvent, EventKind } from "./types.js";
 
 export type SessionStatus = "starting" | "ready" | "busy" | "ended" | "error";
 export type EvalStatus = "none" | "running" | "pass" | "fail";
@@ -16,7 +16,7 @@ export interface SessionView {
   /** Observed events/sec, if the surface tracks it. */
   eventRate?: number;
   /** Metadata of the latest observation (no pixel bytes — refs/dims only). */
-  latestObservation?: { kind: SknEventKind; dt: number; ref?: string };
+  latestObservation?: { kind: EventKind; dt: number; ref?: string };
   artifacts: string[];
   evalStatus: EvalStatus;
 }
@@ -29,16 +29,16 @@ export interface Diagnostic {
 
 export interface TimelineFilter {
   /** Keep only these event kinds (empty/undefined = all). */
-  kinds?: SknEventKind[];
+  kinds?: EventKind[];
 }
 
 export interface ControlSurfaceState {
   sessions: SessionView[];
   selectedSessionId?: string | undefined;
   /** Bounded ring of recent events (oldest dropped past `maxEvents`). */
-  events: SknEvent[];
+  events: ControlEvent[];
   maxEvents: number;
-  /** Replay cursor as an index into `events` (-1 = no selection). */
+  /** Cursor as an index into `events` (-1 = no selection). */
   cursor: number;
   playing: boolean;
   filter: TimelineFilter;
@@ -49,7 +49,7 @@ export interface ControlSurfaceState {
 export type ControlSurfaceAction =
   | { type: "setSessions"; sessions: SessionView[] }
   | { type: "selectSession"; id: string | undefined }
-  | { type: "appendEvents"; events: SknEvent[] }
+  | { type: "appendEvents"; events: ControlEvent[] }
   | { type: "setCursor"; cursor: number }
   | { type: "step"; delta: number }
   | { type: "play" }
@@ -141,14 +141,14 @@ export function selectedSession(state: ControlSurfaceState): SessionView | undef
   return state.sessions.find((s) => s.id === state.selectedSessionId);
 }
 
-export function visibleEvents(state: ControlSurfaceState): SknEvent[] {
+export function visibleEvents(state: ControlSurfaceState): ControlEvent[] {
   const kinds = state.filter.kinds;
   if (kinds === undefined || kinds.length === 0) return state.events;
   const allow = new Set(kinds);
   return state.events.filter((e) => allow.has(e.kind));
 }
 
-export function currentEvent(state: ControlSurfaceState): SknEvent | undefined {
+export function currentEvent(state: ControlSurfaceState): ControlEvent | undefined {
   return state.cursor >= 0 ? state.events[state.cursor] : undefined;
 }
 

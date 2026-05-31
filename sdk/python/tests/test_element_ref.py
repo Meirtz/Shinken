@@ -6,7 +6,6 @@ import pytest
 
 import shinken
 from shinken.a11y import A11yNode
-from shinken.skn import Replay
 
 
 class _Src:
@@ -42,12 +41,8 @@ def test_resolve_element_ref_to_bbox_centre(mock_shinkend):
             env.resolve("e2")  # bbox-less panel
 
 
-def test_act_on_routes_element_ref_to_typed_point(mock_shinkend, tmp_path):
-    with shinken.connect(mock_shinkend, record=True) as env:
+def test_act_on_routes_element_ref_to_typed_point(mock_shinkend):
+    with shinken.connect(mock_shinkend) as env:
         env.observe(structured=True, source=_Src(_tree()))
-        env.act_on("e1", "click")
-        path = env.save_replay(str(tmp_path / "r.skn"))
-    rp = Replay.load(path)
-    click = next(e for e in rp.events if e["kind"] == "action" and e["src"] == "click")
-    # element_ref was resolved to a typed pixel target before dispatch
-    assert click["payload"]["target"] == {"kind": "point_px", "x": 50, "y": 25}
+        ack = env.act_on("e1", "click")
+    assert ack["type"] == "ack" and ack["ok"] is True

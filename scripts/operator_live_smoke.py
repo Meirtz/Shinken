@@ -2,9 +2,7 @@
 
 Connects to a running ``shinkend`` sandbox, and on each turn sends the live screenshot to
 a vision model, asks for ONE next ACI action as JSON, executes it through the SDK, and
-repeats until the model says done or ``max_steps``. The whole run is recorded as one
-``.skn`` bundle — i.e. an unmodified off-the-shelf model driving Shinken purely through
-the ACI.
+repeats until the model says done or ``max_steps``.
 
 Provider-neutral + secret-safe: model creds come from ``SHK_SMOKE_MODEL_*`` env (never
 printed; map them from your ignored local config at runtime). The model is treated as a
@@ -15,7 +13,7 @@ rather than a vendor computer-use tool format (for vendor formats, use the
 Env:
   SHK_ADDR (default 127.0.0.1:8765), SHK_TOKEN (bearer token for the sandbox)
   SHK_SMOKE_MODEL_BASE_URL / SHK_SMOKE_MODEL_API_KEY / SHK_SMOKE_MODEL_NAME
-  SHK_MAX_STEPS (default 6), SHK_SKN (output bundle path), SHK_GOAL (task text)
+  SHK_MAX_STEPS (default 6), SHK_GOAL (task text)
 
 Usage: PYTHONPATH=sdk/python/src python3 scripts/operator_live_smoke.py ["task goal"]
 """
@@ -142,13 +140,12 @@ def main() -> None:
     if not (TOKEN and BASE and KEY and MODEL):
         print(json.dumps({"status": "skipped", "reason": "missing SHK_ADDR/SHK_TOKEN or SHK_SMOKE_MODEL_* config"}))
         return
-    env = shinken.connect(ADDR, token=TOKEN, record=True)
+    env = shinken.connect(ADDR, token=TOKEN)
     try:
         res = drive(env, VisionAgent(), max_steps=int(os.environ.get("SHK_MAX_STEPS", "6")))
-        path = env.save_replay(os.environ.get("SHK_SKN", "/tmp/operator_live.skn"))
     finally:
         env.close()
-    print(json.dumps({"status": "ran", "goal": GOAL, "drive": res.to_dict(), "bundle": path}))
+    print(json.dumps({"status": "ran", "goal": GOAL, "drive": res.to_dict()}))
 
 
 if __name__ == "__main__":

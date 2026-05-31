@@ -13,9 +13,9 @@ env.close()
 ```
 
 > **Status:** the SDK has moved beyond the original M0 handshake. It supports connect/query/ping,
-> typed actions, screenshot/focused capture, screencast consumption, and minimal `.skn` recording.
-> v0.0.1 fills in agent-native dialects/adapters, structured observation, capabilities, artifacts,
-> and tiny eval. See [`docs/user/quickstart.md`](../../docs/user/quickstart.md),
+> typed actions, screenshot/focused capture, screencast consumption, provider-backed file transfer,
+> and Docker disk-tier checkpoint/fork/resume helpers. v0.0.1 fills in agent-native dialects/adapters,
+> structured observation, server-side capabilities, and tiny eval. See [`docs/user/quickstart.md`](../../docs/user/quickstart.md),
 > [`docs/engineering/v0.0.1-plan.md`](../../docs/engineering/v0.0.1-plan.md), and
 > [`docs/design/aci-spec.md`](../../docs/design/aci-spec.md).
 

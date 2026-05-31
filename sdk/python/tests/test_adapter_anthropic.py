@@ -10,7 +10,6 @@ import pytest
 import shinken
 from shinken import protocol
 from shinken.adapters import AdapterError, AnthropicComputerUseAdapter
-from shinken.skn import Recorder, Replay
 
 A = AnthropicComputerUseAdapter()
 
@@ -107,25 +106,18 @@ def test_to_tool_result_without_png_raises():
         A.to_tool_result({"type": "observation", "image": {"w": 1, "h": 1}})
 
 
-def test_adapter_version_recorded_in_skn(tmp_path):
-    rec = Recorder()
-    rec.meta("adapter", A.run_metadata())  # adapter identity → .skn run metadata
-    rp = Replay.load(rec.save(str(tmp_path / "r.skn")))
-    meta = next(e for e in rp.events if e["kind"] == "meta" and e["src"] == "adapter")
-    assert meta["payload"] == {
+def test_adapter_version_metadata():
+    assert A.run_metadata() == {
         "adapter": "anthropic-computer-use",
         "tool_version": A.tool_version,
         "coordinate_space": "point_px",
     }
 
 
-def test_tool_use_to_aci_to_replay_event(mock_shinkend, tmp_path):
-    # the agent-native path: Anthropic tool_use -> canonical ACI action -> ack/replay event
-    with shinken.connect(mock_shinkend, record=True) as env:
+def test_tool_use_to_aci_action_executes(mock_shinkend):
+    # the agent-native path: Anthropic tool_use -> canonical ACI action -> ack.
+    with shinken.connect(mock_shinkend) as env:
         action = A.to_aci_action({"action": "left_click", "coordinate": [42, 24]})
         rest = {k: v for k, v in action.items() if k not in ("verb", "target")}
-        env.act(action["verb"], target=action.get("target"), **rest)
-        path = env.save_replay(str(tmp_path / "r.skn"))
-    rp = Replay.load(path)
-    click = next(e for e in rp.events if e["kind"] == "action" and e["src"] == "click")
-    assert click["payload"]["target"] == {"kind": "point_px", "x": 42, "y": 24}
+        ack = env.act(action["verb"], target=action.get("target"), **rest)
+    assert ack["type"] == "ack" and ack["ok"] is True

@@ -122,31 +122,13 @@ export type AciMessage =
   | { type: "ack"; call_id: string; ok: boolean; error?: string }
   | ({ type: "observation" } & Observation);
 
-export type SknEventKind = "action" | "observation" | "decision" | "permission" | "marker" | "meta";
+export type EventKind = "action" | "observation" | "decision" | "permission" | "marker" | "meta";
 
-export interface SknEvent<TPayload = unknown> {
+export interface ControlEvent<TPayload = unknown> {
   seq: number;
   dt: number;
-  kind: SknEventKind;
+  kind: EventKind;
   src: string;
   payload: TPayload;
   action_id?: string;
-}
-
-export interface SknManifest {
-  skn_version: number;
-  session_id: string;
-  run_id: string;
-  t0_wall?: string;
-  t0_mono?: number;
-  platform?: Platform;
-  aci_version?: number;
-  channels?: SknEventKind[];
-}
-
-export interface ReplayTimeline {
-  manifest?: SknManifest;
-  events: SknEvent[];
-  bySeq: Map<number, SknEvent>;
-  byActionId: Map<string, SknEvent[]>;
 }

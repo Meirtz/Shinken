@@ -23,19 +23,11 @@ carry:
 
 The event stream is the replay ledger.
 
-## What Works Today
+## Current Status
 
-Current code can record a minimal ZIP bundle with:
-
-- `manifest.json`
-- `events.jsonl`
-- content-addressed screenshot media
-
-The CLI can print a timeline summary:
-
-```bash
-shinken replay demo.skn
-```
+Replay is a **future feature**. The runtime and SDK do not currently ship `.skn` recording,
+playback, or a `shinken replay` CLI. This page is retained as design context so the future
+implementation can stay aligned with the runtime-state model.
 
 ## v0.0.1 Requirements
 

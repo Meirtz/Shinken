@@ -125,7 +125,7 @@ class OpenAIComputerUseAdapter:
         return out
 
     def run_metadata(self) -> dict:
-        """Provider / model / tool version for recording into ``.skn`` run metadata."""
+        """Provider / model / tool version metadata for callers that need run context."""
         return {
             "adapter": self.name,
             "provider": "openai",

@@ -206,7 +206,7 @@ export class AciClient {
     this.clearFrames();
   }
 
-  /** The capture region of the active screencast (for replay metadata, mirrors #143). */
+  /** The capture region of the active screencast. */
   get screencastScope(): string {
     return this.streamScope;
   }

@@ -1,6 +1,5 @@
 """Guest-boundary file transfer (#154): move files through the actual guest filesystem
-via `docker cp`, not just the host-local reference store — gated by fs.scope and recorded
-in `.skn`."""
+via `docker cp`, not just the host-local reference store — gated by fs.scope."""
 
 from __future__ import annotations
 
@@ -64,7 +63,7 @@ def test_docker_guest_transport_get_fetches_and_verifies_hash(monkeypatch, tmp_p
 
 def test_sandbox_routes_file_transfer_through_attached_guest_transport(mock_shinkend, tmp_path):
     # A provider-attached guest transport is used instead of the host-local store, and the
-    # transfer is still fs.scope-gated and recorded to .skn (#154).
+    # transfer is still fs.scope-gated (#154).
     moved: list[tuple] = []
 
     class FakeTransport:
@@ -83,18 +82,13 @@ def test_sandbox_routes_file_transfer_through_attached_guest_transport(mock_shin
 
     src = tmp_path / "in.txt"
     src.write_bytes(b"abc")
-    path = tmp_path / "rec.skn"
-    with shinken.connect(mock_shinkend, record=True) as env:
+    with shinken.connect(mock_shinkend) as env:
         env._set_guest_transport(FakeTransport())
         ev = env.put_file(str(src), "/work/in.txt")
         assert ev["path"] == "/work/in.txt" and ev["direction"] == "put"
         env.get_file("/work/in.txt", str(tmp_path / "out.txt"))
-        env.save_replay(str(path))
 
     assert moved == [("put", "/work/in.txt"), ("get", "/work/in.txt")]
-    rp = shinken.skn.Replay.load(str(path))
-    kinds = [e["src"] for e in rp.events if e["kind"] == "file_transfer"]
-    assert "put" in kinds and "get" in kinds
 
 
 def test_docker_provider_connect_attaches_guest_transport(mock_shinkend):

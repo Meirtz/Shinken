@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import shinken
 from shinken.egress import proxy_status, redact_proxy_url, resolve_task_egress_proxy
-from shinken.skn import Replay
 from shinken.smoke import SmokeConfig, run_smoke_agent
 
 
@@ -20,7 +17,7 @@ class _StubAgent:
         assert "screenshot" in observation
         self.calls += 1
         if self.calls == 1:
-            return {"verb": "click", "x": 5, "y": 7}
+            return {"verb": "click", "target": {"kind": "point_px", "x": 5, "y": 7}}
         if self.calls == 2:
             return {"verb": "type_text", "text": "smoke"}
         return "DONE"
@@ -36,14 +33,11 @@ def test_skips_cleanly_without_model_config():
 def test_stub_agent_one_task_flow(mock_shinkend, tmp_path):
     res = run_smoke_agent(
         agent=_StubAgent(),
-        connect_factory=lambda: shinken.connect(mock_shinkend, record=True),
-        out_path=str(tmp_path / "smoke.skn"),
+        connect_factory=lambda: shinken.connect(mock_shinkend),
+        out_path=str(tmp_path / "reserved-artifact"),
     )
     assert res.ok and res.status == "pass"
     assert res.steps == 3  # click, type_text, DONE
-    assert res.bundle and Path(res.bundle).exists()
-    srcs = [e["src"] for e in Replay.load(res.bundle).events if e["kind"] == "action"]
-    assert "click" in srcs and "type_text" in srcs
 
 
 def test_egress_proxy_status_hides_secrets():

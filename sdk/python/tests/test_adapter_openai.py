@@ -10,7 +10,6 @@ import pytest
 import shinken
 from shinken import protocol
 from shinken.adapters import AdapterError, OpenAIComputerUseAdapter
-from shinken.skn import Recorder, Replay
 
 OAI = OpenAIComputerUseAdapter()
 
@@ -79,7 +78,7 @@ def test_malformed_or_unsupported_raise_adapter_error(bad_call):
         OAI.to_aci_actions(bad_call)
 
 
-def test_safety_checks_map_to_permission_events(tmp_path):
+def test_safety_checks_map_to_permission_events():
     call = {
         "action": {"type": "click", "x": 1, "y": 1},
         "pending_safety_checks": [
@@ -88,13 +87,7 @@ def test_safety_checks_map_to_permission_events(tmp_path):
     }
     events = OAI.safety_check_events(call)
     assert events[0]["decision"] == "ask" and events[0]["capability"] == "safety_check"
-    # recordable as Shinken permission events
-    rec = Recorder()
-    for e in events:
-        rec.permission(e)
-    rp = Replay.load(rec.save(str(tmp_path / "r.skn")))
-    perms = [e for e in rp.events if e["kind"] == "permission"]
-    assert perms and perms[0]["payload"]["code"] == "malicious_instructions"
+    assert events[0]["code"] == "malicious_instructions"
 
 
 def test_screenshot_to_computer_call_output():
@@ -111,24 +104,17 @@ def test_screenshot_to_computer_call_output():
     assert out["acknowledged_safety_checks"] == [{"id": "sc_1"}]
 
 
-def test_run_metadata_records_provider_model_tool(tmp_path):
-    rec = Recorder()
-    rec.meta("adapter", OpenAIComputerUseAdapter(model="computer-use-preview").run_metadata())
-    rp = Replay.load(rec.save(str(tmp_path / "r.skn")))
-    meta = next(e for e in rp.events if e["kind"] == "meta" and e["src"] == "adapter")
-    assert meta["payload"]["provider"] == "openai"
-    assert meta["payload"]["tool"] == "computer_use_preview"
-    assert meta["payload"]["model"] == "computer-use-preview"
+def test_run_metadata_records_provider_model_tool():
+    meta = OpenAIComputerUseAdapter(model="computer-use-preview").run_metadata()
+    assert meta["provider"] == "openai"
+    assert meta["tool"] == "computer_use_preview"
+    assert meta["model"] == "computer-use-preview"
 
 
-def test_batch_to_aci_to_replay_events(mock_shinkend, tmp_path):
-    # OpenAI batched actions -> canonical ACI batch -> ordered replay events
+def test_batch_to_aci_to_action_batch(mock_shinkend):
+    # OpenAI batched actions -> canonical ACI batch -> ordered execution results.
     call = {"actions": [{"type": "move", "x": 7, "y": 8}, {"type": "click", "x": 7, "y": 8}]}
-    with shinken.connect(mock_shinkend, record=True) as env:
-        for action in OAI.to_aci_actions(call):
-            rest = {k: v for k, v in action.items() if k not in ("verb", "target")}
-            env.act(action["verb"], target=action.get("target"), **rest)
-        path = env.save_replay(str(tmp_path / "r.skn"))
-    rp = Replay.load(path)
-    verbs = [e["src"] for e in rp.events if e["kind"] == "action"]
-    assert verbs == ["move", "click"]
+    with shinken.connect(mock_shinkend) as env:
+        res = env.act_batch(OAI.to_aci_actions(call))
+    assert [r["verb"] for r in res["results"]] == ["move", "click"]
+    assert all(r["ok"] for r in res["results"])

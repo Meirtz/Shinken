@@ -63,20 +63,18 @@ and the control plane are designed.
 
 ## `.skn`
 
-`.skn` is the replay/data bundle: the audit and training/eval ledger that records what happened. It
-stores the event timeline, media refs, artifacts, capability events, and verifier receipts. A
-checkpoint *references* a `.skn` event offset (snapshot + event seq + agent state) — runtime state
-points at replay, not the reverse. `.skn` recording is built and on by default; it can reference
-checkpoints, but `.skn` is not itself a VM snapshot.
+`.skn` is a future replay/data bundle concept. It is not implemented in the current runtime or SDK.
+When it returns, it should remain separate from runtime state: a timeline artifact can describe what
+happened, but it is not itself a VM snapshot and cannot make an old desktop live again.
 
 ## Capabilities
 
 Capabilities are sandbox powers such as network egress, filesystem scope, credentials, clipboard,
-GPU, persistence, privileged install, and OS automation. v0.0.1 records the capability envelope and
-permission events. Later versions add full Cedar + ocap + OS enforcement.
+GPU, persistence, privileged install, and OS automation. v0.0.1 has a local gateway shim and
+capability envelope; later versions add full Cedar + ocap + OS enforcement.
 
 ## Eval
 
-Eval is not a separate world. Shinken evals run on the same runtime and produce `.skn` evidence.
-v0.0.1 includes a tiny local verifier harness; later versions add conformance suites, forked
-replicas, pass@k/pass^k, and hosted eval services.
+Eval is not a separate world. Shinken evals run on the same runtime. v0.0.1 includes a tiny local
+verifier harness; later versions add conformance suites, forked replicas, pass@k/pass^k, and hosted
+eval services.

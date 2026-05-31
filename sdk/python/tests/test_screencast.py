@@ -1,10 +1,9 @@
-"""Screencast: the SDK starts a server-pushed stream, demuxes frames from RPC
-replies, and records them — exercised against the in-process mock shinkend."""
+"""Screencast: the SDK starts a server-pushed stream and demuxes frames from RPC
+replies, exercised against the in-process mock shinkend."""
 
 from __future__ import annotations
 
 import shinken
-from shinken.skn import Replay
 
 _PNG_SIG = b"\x89PNG\r\n\x1a\n"
 
@@ -46,38 +45,6 @@ def test_screencast_sends_max_long_edge(mock_shinkend):
             frames = list(stream)
         assert len(frames) == 3
         assert all(f["w"] == 640 for f in frames)
-
-
-def test_screencast_records_frames(mock_shinkend, tmp_path):
-    path = tmp_path / "cast.skn"
-    with shinken.connect(mock_shinkend, record=True) as env:
-        with env.screencast(fps=100, timeout=5, limit=4) as stream:
-            for _ in stream:
-                pass
-        env.save_replay(str(path))
-
-    replay = Replay.load(str(path))
-    obs = [e for e in replay.events if e["kind"] == "observation"]
-    assert len(obs) == 4
-    # each recorded frame's media is a real PNG, content-addressed
-    sha = obs[0]["payload"]["image"]["ref"]
-    assert replay.media(sha)[:8] == _PNG_SIG
-
-
-def test_screencast_records_scoped_capture_region(mock_shinkend, tmp_path):
-    """A scoped screencast must record its true capture region in the .skn, not a
-    hardcoded ``screen`` — replay metadata otherwise overstates captured pixels (#143)."""
-    path = tmp_path / "scoped.skn"
-    with shinken.connect(mock_shinkend, record=True) as env:
-        with env.screencast(fps=100, timeout=5, limit=3, scope="active_window") as stream:
-            for _ in stream:
-                pass
-        env.save_replay(str(path))
-
-    replay = Replay.load(str(path))
-    obs = [e for e in replay.events if e["kind"] == "observation"]
-    assert len(obs) == 3
-    assert all(e["payload"]["image"]["scope"] == "active_window" for e in obs)
 
 
 def test_screencast_stop_makes_next_frame_end(mock_shinkend):

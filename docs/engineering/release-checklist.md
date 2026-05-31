@@ -14,14 +14,11 @@ need production-scale performance, multi-tenant control plane, fork density, or 
 - [ ] Pointer, keyboard, screenshot, focused/region capture, and screencast work locally.
 - [ ] AT-SPI/CDP structured observation reference paths exist.
 - [ ] `element_ref` resolution exists with stale/missing-ref errors.
-- [ ] `.skn` records paired actions and observations.
-- [ ] `.skn` writes are atomic and validator-tested.
-- [ ] Capability envelope is recorded in every run.
-- [ ] Permission events can be recorded and replayed.
-- [ ] File/artifact transfer exists with checksums and replay refs.
+- [ ] Capability envelope exists and is enforceable by the local gateway shim when enabled.
+- [ ] File/artifact transfer exists with checksums.
 - [ ] Deterministic GUI task fixtures exist.
 - [ ] Tiny eval harness emits verifier receipts and N-run summaries.
-- [ ] Replay privacy/redaction controls exist at least at configuration/metadata level.
+- [ ] Runtime-state checkpoint/fork/resume behavior is documented and smoke-tested on the Docker disk tier.
 
 ## Required Docs
 

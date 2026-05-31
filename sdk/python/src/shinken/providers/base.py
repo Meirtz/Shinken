@@ -108,10 +108,10 @@ class SandboxProvider:
     def create(self, spec: SandboxSpec | None = None) -> SandboxHandle:
         raise NotImplementedError
 
-    def connect(self, handle: SandboxHandle, *, record: bool = False) -> Sandbox:
-        env = connect(handle.addr, record=record, token=handle.token)
-        # Attach the provider context so sandbox.checkpoint() can snapshot substrate state
-        # and bind it to the replay offset (#206).
+    def connect(self, handle: SandboxHandle) -> Sandbox:
+        env = connect(handle.addr, token=handle.token)
+        # Attach the provider context so sandbox.checkpoint()/fork()/resume() can use
+        # the substrate lifecycle operations (#206).
         env._set_provider_context(self, handle)
         return env
 
@@ -157,9 +157,9 @@ class SandboxProvider:
         event_seq: int | None = None,
         agent_state_ref: str | None = None,
     ) -> str:
-        """Create a named Shinken restore point binding a substrate snapshot to a `.skn`
-        event offset (`event_seq`) + optional agent state — the node in the checkpoint DAG
-        (D5). Returns a checkpoint id. Unsupported by default."""
+        """Create a named Shinken restore point binding a substrate snapshot to optional
+        agent state — the node in the checkpoint DAG (D5). Returns a checkpoint id.
+        Unsupported by default."""
         raise UnsupportedProviderOperation(f"{self.capabilities.name} does not support checkpoint")
 
     def resume(self, handle_or_checkpoint: SandboxHandle | str) -> SandboxHandle:

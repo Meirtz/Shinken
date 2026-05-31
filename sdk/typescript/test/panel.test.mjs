@@ -33,9 +33,9 @@ test("renderPanel shows the session dashboard with active-session detail", () =>
   assert.match(html, /aria-selected="true"[^>]*data-session="sess-1"|data-session="sess-1"/);
 });
 
-test("renderPanel renders the replay timeline and marks the cursor row", () => {
+test("renderPanel renders the event timeline and marks the cursor row", () => {
   const html = renderPanel(stateWithData());
-  assert.match(html, /Replay timeline \(3\)/);
+  assert.match(html, /Event timeline \(3\)/);
   assert.match(html, /screenshot/);
   // the cursor is at seq 1 (observation) -> a row marked aria-current
   assert.match(html, /class="cursor" aria-current="true"/);

@@ -15,7 +15,7 @@ behavior first, then link to design docs for target architecture.
 - ACI surface and SDK target: [`../design/aci-spec.md`](../design/aci-spec.md)
 - ACI user guide: [`aci.md`](aci.md)
 - Runtime state (checkpoint/fork/resume): [`runtime-state.md`](runtime-state.md)
-- Replay and `.skn` (audit/data ledger): [`replay.md`](replay.md)
+- Replay and `.skn` (future design): [`replay.md`](replay.md)
 - Capabilities: [`capabilities.md`](capabilities.md)
 - Eval: [`eval.md`](eval.md)
 - v0.0.1 implementation plan: [`../engineering/v0.0.1-plan.md`](../engineering/v0.0.1-plan.md)
