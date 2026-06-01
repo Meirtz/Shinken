@@ -36,6 +36,20 @@ def point_px(coordinate: object) -> dict:
     return {"kind": "point_px", "x": int(x), "y": int(y)}
 
 
+def point_norm(x: object, y: object) -> dict:
+    """Normalized ``[0, 1]`` coordinates → an ACI ``point_norm`` target (origin top-left).
+    Used by adapters whose model emits resolution-independent fractions (e.g. Kimi-VL /
+    Aguvis). Raises :class:`AdapterError` on non-numeric or out-of-range values — notably
+    catching a model that emits ``[0, 1000]`` integers (UI-TARS/Qwen-VL style) instead of
+    ``[0, 1]`` floats, which would otherwise silently land every click in the top-left."""
+    for v in (x, y):
+        if isinstance(v, bool) or not isinstance(v, int | float):
+            raise AdapterError("coordinate", f"non-numeric coordinate {(x, y)!r}")
+        if not (0.0 <= float(v) <= 1.0):
+            raise AdapterError("coordinate", f"normalized coordinate out of [0, 1]: {(x, y)!r}")
+    return {"kind": "point_norm", "x": float(x), "y": float(y)}
+
+
 def screenshot_image_block(png: bytes) -> dict:
     """PNG bytes → a base64 image content block — the shape both Anthropic and OpenAI
     use to carry a screenshot back to the model."""

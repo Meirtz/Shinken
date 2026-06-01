@@ -234,7 +234,10 @@ def parse_model_actions(text: str) -> list[str]:
     Mirrors OSWorld's ``mm_agents.agent.parse_code_from_string`` so the *same* model output
     drives Shinken unchanged; each returned string is directly consumable by
     :meth:`DesktopEnv.step` (which routes pyautogui code through the typed ACI). Returns an
-    empty list if nothing parseable is found (a stuck/garbled turn)."""
+    empty list if nothing parseable is found (a stuck/garbled turn, or a non-string/None
+    model response)."""
+    if not isinstance(text, str):
+        return []
     text = "\n".join(s.strip() for s in text.split(";") if s.strip())
     if text.strip() in _TERMINAL_TOKENS:
         return [text.strip()]
