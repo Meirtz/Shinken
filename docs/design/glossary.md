@@ -130,7 +130,7 @@ Eval metrics for the *Control Plane* eval layer (**D7**). **pass@k** — the pro
 
 ### Capability Manager
 
-The human/operator UI inside the *Control Panel* for provisioning Sandbox powers (**D6**). It grants, narrows, revokes, and audits boundary capabilities such as network egress, credentials, GPU, persistence, host filesystem scopes, clipboard, and OS automation entitlements. Capability changes are first-class *replay* events. This is one of Shinken's headline features: agents can use a real computer, but the boundary is explicit and observable.
+The human/operator UI inside the *Control Panel* for provisioning Sandbox powers (**D6**). It grants, narrows, revokes, and audits boundary capabilities such as network egress, credentials, GPU, persistence, host filesystem scopes, clipboard, and OS automation entitlements. Capability changes are designed to surface as first-class events in the `.skn` evidence ledger. The explicit, observable boundary is one of Shinken's headline goals: agents can use a real computer, but the boundary is explicit and observable. (Design; the enforcement gate is currently a client-side reference shim — see [status](../engineering/status.md).)
 
 ### Provider — see *Substrate / Provider*
 
@@ -163,7 +163,7 @@ cross-platform **sandbox runtime + control plane + control panel** and a product
 streaming-first successor to OSWorld. North star: **one** full CUA substrate serving production
 agent deployment, evaluation, and trajectory-data capture. It boots *Sandboxes*, drives them
 through one typed *ACI*, streams live, names runnable *checkpoints* it can *fork* and *resume*,
-records an event-sourced *replay* for evidence, moves
+is designed to record an event-sourced *replay* ledger for evidence, moves
 artifacts, verifies tasks, and provisions sandbox capabilities through a *Capability Manager*.
 Shinken is a public, vendor-neutral open-source project; NVIDIA GPUs are a supported acceleration
 *option*, not a dependency.

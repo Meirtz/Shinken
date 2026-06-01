@@ -27,7 +27,8 @@ manager.
 > idle-suppression + resolution downscale), **focused-window capture**, and a
 > Python SDK — all under live CI. The rest of this README describes the **target design**:
 > cross-platform, accessibility-tree observation, the capability/permission panel,
-> checkpoint/fork, the control plane, and WebRTC/GPU streaming are **designed but not yet built**,
+> checkpoint/fork, `.skn` replay/recording, the control plane, and WebRTC/GPU streaming are
+> **designed but not yet built**,
 > and the load-bearing a11y-coverage assumption is **not yet validated**. See
 > **[`docs/engineering/status.md`](docs/engineering/status.md)** for the precise built-vs-designed map.
 >

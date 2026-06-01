@@ -32,6 +32,7 @@ sandbox image), not just by design.
 | **Focused-window / region capture** (`scope`: `screen` / `active_window` / `window:<id>`) | done | #55 — live `xclock` `window:<id>` → 200×200 |
 | Python SDK: sync facade + async core, reader/demux (RPC vs server-push) | done | #51 |
 | OSWorld `DesktopEnv` compatibility shim | done | #32 |
+| CU provider adapters (Anthropic, OpenAI, **Kimi-VL**) → canonical ACI | done | fixture-tested, no live API; #75/#76 + Kimi-VL |
 | Wheel packaging (schemas bundled), idempotent close | done | #40 |
 | Docker Linux sandbox image | done | #45 — build + token handshake + screenshot in CI |
 | CI: 7 jobs (guard, schema, Rust, SDK, wheel, live Xvfb integration, Docker) | done | every PR |
@@ -50,14 +51,14 @@ sandbox image), not just by design.
 These appear in the vision/PRD/architecture/README in present-ish tense, but **no working code exists yet**:
 
 - **Cross-platform**: macOS and Windows tiers (today: Linux only). Even on Linux, capture/input is **X11 only** — **Wayland** (the modern Linux default) is unaddressed and would break XTEST/GetImage.
-- **Structured / accessibility observation (ADR D3)** — a11y tree + element-ref resolution + diffing. This is the core differentiator and **does not exist**.
+- **Structured / accessibility observation (ADR D3)** — a **guest-runtime** a11y/CDP observation engine + element-ref resolution **does not exist** in `shinkend` (element_ref resolution still bails). SDK-local AT-SPI/CDP helpers (`a11y.py`, `cdp.py`) ship as the #2 coverage-spike harness, but they run in the SDK process — not the runtime — so this remains the core *un-shipped* differentiator.
 - **Permission / capability panel + enforcement gate** — described as a headline feature; currently docs only.
 - **Runtime-state memory + fast tier** — the Docker **disk** tier is implemented (see Partial, above); the **CRIU memory checkpoint** (`snapshot_kind="process"`) and the **sub-second CoW fork-from-snapshot fast tier** (Firecracker/QEMU) are **not built** and stay Phase-1, gated on a first-party latency spike. Runtime-state time-travel is the **headline differentiator** (D1/D5, #206).
 - **Replay / `.skn` recording and playback** — deferred to later design work; no runtime or SDK implementation is shipped now.
 - **Control plane + ultra-high-concurrency / multi-tenant orchestration** — a single local `shinkend` is all that exists.
 - **Dual-channel WebRTC media plane + GPU/NVENC encode** — today streaming is **base64 PNG over the control WebSocket**, fine for an MVP but not the low-latency/bandwidth story at scale.
 - **High-throughput file-transfer path** (#49/#50) — design only.
-- **Eval layer + OSWorld-Verified conformance** — the shim exists; the eval loop does not.
+- **Eval layer + OSWorld-Verified conformance** — the OSWorld `DesktopEnv` shim and a tiny local eval harness (`eval.py`, now with **non-vacuous verifiers** that read observed state + a real step count) ship; a single official-OSWorld-task runner that boots the official image, drives a hosted agentic model (**Kimi K2.6**) in OSWorld's native **pixel-pyautogui code-block** format (`parse_model_actions` mirrors OSWorld's `parse_code_from_string`; the shim actuates over Shinken), and scores with the **official OSWorld evaluator** is scaffolded (`scripts/osworld_single.py`, dry-run proven). The open-weight Kimi-VL/Aguvis path is a separate adapter (`adapters/kimi.py`). Full OSWorld-Verified conformance (Small/full set) and the golden→fork-N→score loop are **not yet run**.
 
 ## 🔬 Unvalidated load-bearing assumptions (spikes NOT run)
 

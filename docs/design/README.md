@@ -12,6 +12,7 @@ eval, substrates, streaming, and future cross-OS/GPU tiers.
 - Vision and positioning: [`vision.md`](vision.md)
 - Product requirements: [`prd.md`](prd.md)
 - System architecture: [`architecture.md`](architecture.md)
+- Agent runtime (narrow waist + Workload/Provider): [`agent-runtime.md`](agent-runtime.md)
 - OSWorld teardown: [`osworld-analysis.md`](osworld-analysis.md)
 - Competitive landscape: [`landscape.md`](landscape.md)
 - ADRs / technical decisions: [`tech-decisions.md`](tech-decisions.md)
