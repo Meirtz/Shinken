@@ -44,17 +44,21 @@ class DesktopEnv:
         address: str = "127.0.0.1:8765",
         observation_type: str = "screenshot",
         action_space: str = "pyautogui",
+        token: str | None = None,
     ):
         self.address = address
         self.observation_type = observation_type
         self.action_space = action_space
+        # Bearer token for a non-loopback bind (e.g. a runtime-injected shinkend reachable
+        # on 0.0.0.0 via a published port — see shinken.inject); None for a loopback session.
+        self.token = token
         self._env: Any = None
         self._instruction = ""
         self._terminal: str | None = None  # "DONE" / "FAIL" once the agent terminates
 
     def reset(self, task_config: dict | None = None) -> dict:
         if self._env is None:
-            self._env = connect(self.address)
+            self._env = connect(self.address, token=self.token)
         self._instruction = (task_config or {}).get("instruction", "")
         self._terminal = None
         return self._observation()

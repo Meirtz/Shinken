@@ -24,10 +24,36 @@ from shinken.osworld_eval import (
     FakeOSWorldEnv,
     RecordingActuator,
     ScriptedAgent,
+    inject_and_actuate,
     make_osworld_env,
     make_shinken_actuator,
 )
 from shinken.runtime import Runtime, workloads
+
+
+def _build_shinken_actuator(args: argparse.Namespace) -> object:
+    """Build the Shinken actuator for ``--backend shinken``.
+
+    With ``--inject-method`` the runner injects shinkend into the OSWorld sandbox at runtime
+    via the user-chosen transport (``docker``/``ssh``/``osworld-exec``) — the user supplies the
+    target (container / ssh host / controller URL); injection errors loudly if it can't reach the
+    sandbox (no silent fallback). Without it, we connect to an already-running shinkend at
+    ``--shk-addr`` / ``$SHK_ADDR`` (e.g. a pre-baked image)."""
+    if args.inject_method:
+        from shinken.inject import InjectionTarget
+
+        target = InjectionTarget(
+            port=args.inject_port,
+            reachable_addr=args.inject_reachable_addr,
+            container=args.inject_container,
+            ssh_host=args.inject_ssh_host,
+            ssh_user=args.inject_ssh_user,
+            ssh_port=args.inject_ssh_port,
+            ssh_key=args.inject_ssh_key,
+            controller_url=args.inject_controller_url,
+        )
+        return inject_and_actuate(target, args.shinkend_binary, method=args.inject_method)
+    return make_shinken_actuator(args.shk_addr)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -43,7 +69,25 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--max-steps", type=int, default=15)
     ap.add_argument("--pause", type=float, default=2.0)
     ap.add_argument("--dry-run", action="store_true", help="exercise the loop with no VM/model/GPU")
+    # --- Shinken actuation: connect to a running shinkend, or inject one at runtime ---
+    ap.add_argument("--shk-addr", default=os.environ.get("SHK_ADDR", "127.0.0.1:8765"))
+    ap.add_argument(
+        "--inject-method",
+        choices=["docker", "ssh", "osworld-exec"],
+        help="inject shinkend into the OSWorld sandbox via this transport before actuating",
+    )
+    ap.add_argument("--shinkend-binary", help="path to the (target-arch) shinkend to inject")
+    ap.add_argument("--inject-port", type=int, default=8765)
+    ap.add_argument("--inject-reachable-addr", help="host:port the SDK connects to (if remapped)")
+    ap.add_argument("--inject-container", help="docker: container name/id")
+    ap.add_argument("--inject-ssh-host", help="ssh: host")
+    ap.add_argument("--inject-ssh-user", help="ssh: user")
+    ap.add_argument("--inject-ssh-port", type=int, default=22)
+    ap.add_argument("--inject-ssh-key", help="ssh: identity file")
+    ap.add_argument("--inject-controller-url", help="osworld-exec: controller base URL")
     args = ap.parse_args(argv)
+    if args.inject_method and not args.shinkend_binary:
+        ap.error("--inject-method requires --shinkend-binary")
 
     workload = workloads.get("osworld-eval")
 
@@ -77,7 +121,7 @@ def main(argv: list[str] | None = None) -> int:
     env = make_osworld_env(args.provider, args.width, args.height, args.observation)
     env.reset(task_config)
     agent = ChatModelAgent.from_env()
-    actuator = make_shinken_actuator() if args.backend == "shinken" else env
+    actuator = _build_shinken_actuator(args) if args.backend == "shinken" else env
     try:
         result = workload.run(
             Runtime(),

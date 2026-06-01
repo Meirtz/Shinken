@@ -126,15 +126,32 @@ class RecordingActuator:
         pass
 
 
-def make_shinken_actuator(addr: str | None = None) -> Any:
-    """Alpha path: the Shinken DesktopEnv shim → a shinkend in the VM (pixel pyautogui → ACI)."""
+def make_shinken_actuator(addr: str | None = None, token: str | None = None) -> Any:
+    """Alpha path: the Shinken DesktopEnv shim → a shinkend in the VM (pixel pyautogui → ACI).
+
+    ``token`` gates a non-loopback bind — set it when actuating a runtime-injected shinkend
+    reachable on a published port (see :func:`inject_and_actuate`)."""
     from shinken.osworld import DesktopEnv as ShinkenDesktopEnv
 
     env = ShinkenDesktopEnv(
-        addr or os.environ.get("SHK_ADDR", "127.0.0.1:8765"), action_space="pyautogui"
+        addr or os.environ.get("SHK_ADDR", "127.0.0.1:8765"),
+        action_space="pyautogui",
+        token=token,
     )
     env.reset()
     return env
+
+
+def inject_and_actuate(target: Any, binary: str, *, method: str) -> Any:
+    """Inject ``shinkend`` into a running sandbox via the user-chosen ``method`` (no silent
+    fallback — :class:`shinken.inject.InjectionError` if it can't reach the sandbox), then
+    return a Shinken actuator bound to it. This is how ``--backend shinken`` actuates a real
+    OSWorld VM: the runner supplies the injection ``target`` (a container/ssh host/controller
+    URL) and method; we place + start shinkend and connect over the returned (addr, token)."""
+    from shinken.inject import inject_shinkend
+
+    res = inject_shinkend(target, binary, method=method)
+    return make_shinken_actuator(res.addr, res.token)
 
 
 def make_osworld_env(

@@ -4,8 +4,11 @@ no VM/model/GPU (fake env + scripted agent)."""
 
 from __future__ import annotations
 
+import argparse
 import importlib.util
 from pathlib import Path
+
+import pytest
 
 from shinken import osworld_eval as oe
 from shinken.runtime import workloads
@@ -64,3 +67,68 @@ def test_workload_fails_without_required_actions():
         None, env=env, agent=agent, actuator=rec, instruction="t", max_steps=10
     )
     assert result["passed"] is False and result["score"] == 0.0
+
+
+# --- runtime injection wiring for `--backend shinken` (mocked: no real docker/ssh/VM) ---
+
+
+def test_inject_and_actuate_threads_addr_and_token(monkeypatch):
+    # inject_shinkend returns (addr, token); the actuator must be built from exactly those.
+    from shinken import inject as inj
+    from shinken.inject import InjectionResult, InjectionTarget
+
+    monkeypatch.setattr(
+        inj, "inject_shinkend", lambda target, binary, *, method: InjectionResult("h:9000", "tok-x")
+    )
+    seen: dict = {}
+    monkeypatch.setattr(
+        oe, "make_shinken_actuator", lambda addr=None, token=None: seen.update(a=addr, t=token)
+    )
+    oe.inject_and_actuate(InjectionTarget(container="c"), "/bin/shinkend", method="docker")
+    assert seen == {"a": "h:9000", "t": "tok-x"}
+
+
+def test_cli_connects_to_running_shinkend_without_injection(monkeypatch):
+    seen: dict = {}
+    monkeypatch.setattr(
+        osw, "make_shinken_actuator", lambda addr=None: seen.setdefault("addr", addr)
+    )
+    args = argparse.Namespace(inject_method=None, shk_addr="10.0.0.1:8765")
+    osw._build_shinken_actuator(args)
+    assert seen["addr"] == "10.0.0.1:8765"  # no injection -> connect to the configured addr
+
+
+def test_cli_injects_via_user_chosen_method(monkeypatch):
+    seen: dict = {}
+
+    def fake(target, binary, *, method):
+        seen.update(container=target.container, port=target.port, binary=binary, method=method)
+        return "ACTUATOR"
+
+    monkeypatch.setattr(osw, "inject_and_actuate", fake)
+    args = argparse.Namespace(
+        inject_method="docker",
+        shinkend_binary="/b/shinkend",
+        inject_port=8765,
+        inject_reachable_addr="127.0.0.1:19000",
+        inject_container="osw-vm",
+        inject_ssh_host=None,
+        inject_ssh_user=None,
+        inject_ssh_port=22,
+        inject_ssh_key=None,
+        inject_controller_url=None,
+        shk_addr="x",
+    )
+    assert osw._build_shinken_actuator(args) == "ACTUATOR"
+    assert seen == {
+        "container": "osw-vm",
+        "port": 8765,
+        "binary": "/b/shinkend",
+        "method": "docker",
+    }
+
+
+def test_cli_inject_method_requires_binary():
+    # No silent default: choosing a method without a binary is a usage error, not a guess.
+    with pytest.raises(SystemExit):
+        osw.main(["--inject-method", "docker"])
