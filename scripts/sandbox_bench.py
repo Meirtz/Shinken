@@ -11,7 +11,8 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from shinken.providers import DockerLocalProvider, ExternalProvider, SandboxProvider, SandboxSpec
+from shinken import providers
+from shinken.providers import SandboxProvider, SandboxSpec
 
 
 def _ms(start: float) -> float:
@@ -19,14 +20,19 @@ def _ms(start: float) -> float:
 
 
 def _provider(args: argparse.Namespace) -> SandboxProvider:
+    # Resolve by name through the registry so any registered provider — official or an
+    # out-of-tree plugin (via $SHINKEN_PROVIDER_PLUGINS) — works without a code change here.
     if args.provider == "docker":
-        return DockerLocalProvider(
+        return providers.get(
+            "docker",
             image=args.image,
             docker_bin=args.docker_bin,
             name_prefix=args.name_prefix,
             startup_timeout=args.startup_timeout,
         )
-    return ExternalProvider(addr=args.addr, token=args.token)
+    if args.provider == "external":
+        return providers.get("external", addr=args.addr, token=args.token)
+    return providers.get(args.provider)  # plugin provider: its own defaults / env-config
 
 
 def _spec(args: argparse.Namespace) -> SandboxSpec:
@@ -160,7 +166,11 @@ def _markdown(report: dict[str, Any]) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--provider", choices=["docker", "external"], default="external")
+    parser.add_argument(
+        "--provider",
+        default="external",
+        help="provider name: 'docker', 'external', or a registered out-of-tree plugin",
+    )
     parser.add_argument("--addr", default="127.0.0.1:8765")
     parser.add_argument("--token")
     parser.add_argument("--image", default="shinken/sandbox-linux")
