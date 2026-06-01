@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import collections
+
 import jsonschema
 import pytest
 
@@ -63,6 +65,57 @@ def test_click_then_type_verifier_is_not_a_tautology(mock_shinkend, tmp_path):
     assert s.passed == 0 and s.pass_rate == 0.0
     failed = [c["name"] for c in s.results[0].receipt.checks if not c["ok"]]
     assert "typed expected text" in failed and "clicked target" not in failed
+
+
+class _ForkFakeProvider:
+    """Records lifecycle calls; connect() hands back a fresh Sandbox to the mock server, so
+    run_eval_forked's golden→checkpoint→fork-N orchestration is exercised without a real VM."""
+
+    def __init__(self, connect_factory):
+        self._cf = connect_factory
+        self.calls: collections.Counter = collections.Counter()
+
+    def create(self, spec=None):
+        self.calls["create"] += 1
+        return "base"
+
+    def connect(self, handle):
+        self.calls["connect"] += 1
+        return self._cf()
+
+    def checkpoint(self, handle):
+        self.calls["checkpoint"] += 1
+        return "ckpt-1"
+
+    def fork(self, handle):
+        self.calls["fork"] += 1
+        return f"fork-{self.calls['fork']}"
+
+    def destroy(self, handle):
+        self.calls["destroy"] += 1
+
+
+def test_run_eval_forked_checkpoints_once_and_forks_n(mock_shinkend, tmp_path):
+    prov = _ForkFakeProvider(_factory(mock_shinkend))
+    s = ev.run_eval_forked(ev.click_then_type_task(10, 20, "hi"), prov, n=3, out_dir=str(tmp_path))
+    assert s.n == 3 and s.passed == 3 and s.pass_rate == 1.0
+    assert prov.calls["checkpoint"] == 1  # one golden checkpoint
+    assert prov.calls["fork"] == 3  # one fork per replica
+    assert prov.calls["destroy"] == 4  # 3 forks + the base
+    assert s.mean_steps == 2.0  # click + type_text per fork
+
+
+def test_run_eval_forked_golden_setup_error_skips_forks(mock_shinkend, tmp_path):
+    def setup(_env):
+        raise ev.SetupError("display not ready")
+
+    task = ev.Task(
+        "t", run=lambda e: None, verify=lambda e: ev.VerifierReceipt(True, []), setup=setup
+    )
+    prov = _ForkFakeProvider(_factory(mock_shinkend))
+    s = ev.run_eval_forked(task, prov, n=2, out_dir=str(tmp_path))
+    assert s.setup_errors == 2 and s.passed == 0
+    assert prov.calls["fork"] == 0 and prov.calls["checkpoint"] == 0  # no golden -> no forks
 
 
 def test_verifier_receipt_schema():

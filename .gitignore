@@ -38,3 +38,4 @@ scratch/
 # Internal-only design references (non-confidential internal architecture notes used as
 # design input; NEVER published — public docs/ + notes/ must stay vendor-neutral).
 internal/
+shinkend-linux-*

@@ -160,13 +160,18 @@ def run_eval(
                     env.close()
         results.append(RunResult(i, passed, steps, wall, receipt, err))
 
+    return _summarize(task.name, n, results)
+
+
+def _summarize(task_name: str, n: int, results: list[RunResult]) -> EvalSummary:
+    """Aggregate per-replica results into an EvalSummary (pass-rate, mean steps/wall)."""
     n_passed = sum(1 for r in results if r.passed)
     setup_errors = sum(1 for r in results if r.error is not None)
     completed = [r for r in results if r.error is None]
     mean_steps = sum(r.steps for r in completed) / len(completed) if completed else 0.0
     mean_wall = sum(r.wall_s for r in results) / len(results) if results else 0.0
     return EvalSummary(
-        task=task.name,
+        task=task_name,
         n=n,
         passed=n_passed,
         setup_errors=setup_errors,
@@ -175,6 +180,93 @@ def run_eval(
         mean_wall_s=mean_wall,
         results=results,
     )
+
+
+def _score_replica(i: int, env: Any, task: Task) -> RunResult:
+    """Run + verify ``task`` on an already-provisioned ``env`` (no setup); never raises."""
+    err: str | None = None
+    passed = False
+    steps = 0
+    receipt = VerifierReceipt(False, [])
+    t0 = time.perf_counter()
+    wall = 0.0
+    try:
+        before = getattr(env, "actions_dispatched", 0)
+        task.run(env)
+        steps = max(0, getattr(env, "actions_dispatched", 0) - before)
+        wall = time.perf_counter() - t0
+        receipt = task.verify(env)
+        passed = receipt.passed
+    except SetupError as exc:
+        wall = time.perf_counter() - t0
+        err = f"setup: {exc}"
+    except Exception as exc:
+        wall = time.perf_counter() - t0
+        err = f"error: {exc}"
+    return RunResult(i, passed, steps, wall, receipt, err)
+
+
+def run_eval_forked(
+    task: Task,
+    provider: Any,
+    *,
+    n: int = 5,
+    spec: Any = None,
+    out_dir: str | None = None,
+) -> EvalSummary:
+    """Score ``task`` over ``n`` replicas **forked from a single golden checkpoint** — the
+    runtime-state eval loop (D5/D1). Create a base sandbox, run ``task.setup`` once to reach the
+    golden state, ``checkpoint`` it, then for each replica ``fork`` a fresh sandbox from the base,
+    run + verify, and destroy it. Requires a provider that supports checkpoint + fork (e.g. the
+    Docker disk tier); a flaky golden setup/checkpoint yields a clean all-error summary.
+
+    This is what makes high-N eval cheap and is the seam training reuses (best-of-N / tree-search):
+    one golden state, many cheap forks, each scored independently."""
+    out_dir = out_dir or tempfile.mkdtemp(prefix="shinken-fork-eval-")
+    os.makedirs(out_dir, exist_ok=True)
+    base = provider.create(spec)
+    try:
+        # --- reach the golden state once, then checkpoint it ---
+        try:
+            env0 = provider.connect(base)
+            try:
+                if task.setup is not None:
+                    task.setup(env0)
+                provider.checkpoint(base)
+            finally:
+                with contextlib.suppress(Exception):
+                    env0.close()
+        except Exception as exc:  # golden setup/checkpoint failed -> no replicas run
+            label = "setup" if isinstance(exc, SetupError) else "error"
+            res = [
+                RunResult(i, False, 0, 0.0, VerifierReceipt(False, []), f"{label}: {exc}")
+                for i in range(n)
+            ]
+            return _summarize(task.name, n, res)
+        # --- N forked replicas from the golden checkpoint ---
+        results: list[RunResult] = []
+        for i in range(n):
+            env = None
+            handle = None
+            try:
+                handle = provider.fork(base)
+                env = provider.connect(handle)
+                results.append(_score_replica(i, env, task))
+            except Exception as exc:  # fork/connect failure for this replica
+                results.append(
+                    RunResult(i, False, 0, 0.0, VerifierReceipt(False, []), f"error: {exc}")
+                )
+            finally:
+                if env is not None:
+                    with contextlib.suppress(Exception):
+                        env.close()
+                if handle is not None:
+                    with contextlib.suppress(Exception):
+                        provider.destroy(handle)
+        return _summarize(task.name, n, results)
+    finally:
+        with contextlib.suppress(Exception):
+            provider.destroy(base)
 
 
 # --- deterministic task fixtures (#86) ------------------------------------------------
