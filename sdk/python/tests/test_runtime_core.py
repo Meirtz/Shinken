@@ -36,8 +36,10 @@ def test_rollout_records_trajectory_and_terminal(mock_shinkend):
 
 
 def test_rollout_stuck_when_agent_emits_no_actions(mock_shinkend):
+    # First turn is empty and NOT the last, so ScriptedAgent reports done=False -> stuck.
+    plan = [[], [{"verb": "type_text", "text": "x"}]]
     with shinken.connect(mock_shinkend) as session:
-        traj = rollout(session, ScriptedAgent([[]]), max_steps=5)  # empty turn, not done
+        traj = rollout(session, ScriptedAgent(plan), max_steps=5)
     assert traj.terminal == "stuck" and traj.num_actions == 0
 
 

@@ -18,7 +18,7 @@ from collections.abc import Callable
 from typing import Any, Protocol, runtime_checkable
 
 _PLUGIN_ENV = "SHINKEN_WORKLOAD_PLUGINS"
-_REGISTRY: dict[str, Callable[..., "Workload"]] = {}
+_REGISTRY: dict[str, Callable[..., Workload]] = {}
 _PLUGINS_LOADED = False
 
 
