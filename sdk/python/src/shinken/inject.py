@@ -42,6 +42,9 @@ class InjectionTarget:
     token: str | None = None
     host: str = "127.0.0.1"
     reachable_addr: str | None = None
+    # where to place the binary in the guest; must be writable+executable by the injecting
+    # user (an OSWorld controller runs non-root → use e.g. /tmp/shinkend, not /usr/local/bin)
+    remote_bin: str = REMOTE_BIN
     # docker
     container: str | None = None
     docker_bin: str = "docker"
@@ -97,24 +100,40 @@ def _controller_exec(url: str, command: str, *, timeout: float = 60.0) -> str:
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (operator-supplied URL)
-            return resp.read().decode("utf-8", "replace")
+            raw = resp.read().decode("utf-8", "replace")
     except OSError as exc:
         raise InjectionError(f"controller /execute failed at {url}: {exc}") from exc
+    # The controller answers 200 even when the command itself fails; surface a non-zero exit
+    # so a permission/path error isn't silently swallowed (no silent failures).
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return raw
+    if isinstance(data, dict) and data.get("returncode") not in (0, None):
+        detail = (data.get("error") or data.get("output") or "").strip()[:200]
+        raise InjectionError(
+            f"controller command failed (rc={data.get('returncode')}): {command[:80]} :: {detail}"
+        )
+    return raw
 
 
 def _gen_token() -> str:
     return "shk_" + os.urandom(16).hex()
 
 
-def _start_command(
-    target: InjectionTarget, args: list[str] | None, *, binary: str = REMOTE_BIN
-) -> str:
+def _start_command(target: InjectionTarget, args: list[str] | None) -> str:
     """Shell snippet that starts shinkend bound for reachability (0.0.0.0 + token when set)."""
     host = "0.0.0.0" if target.token else "127.0.0.1"
     env = f"SHINKEND_ADDR={shlex.quote(f'{host}:{target.port}')}"
     if target.token:
         env += f" SHINKEND_TOKEN={shlex.quote(target.token)}"
-    return f"{env} {shlex.quote(binary)} {' '.join(args or [])}".rstrip()
+    return f"{env} {shlex.quote(target.remote_bin)} {' '.join(args or [])}".rstrip()
+
+
+def _nohup_bg(start_cmd: str) -> str:
+    """Background a start command robustly. ``nohup VAR=val binary`` fails (nohup treats the
+    assignment as the program name), so run it through a shell that parses the env."""
+    return f"nohup sh -c {shlex.quote(start_cmd)} >/tmp/shinkend.log 2>&1 &"
 
 
 def _addr(target: InjectionTarget) -> str:
@@ -129,9 +148,9 @@ class DockerExecInjector:
     def inject(self, target: InjectionTarget, binary: str, *, args: list[str] | None = None) -> str:
         if not target.container:
             raise InjectionError("docker injection requires target.container")
-        db = target.docker_bin
-        _run([db, "cp", binary, f"{target.container}:{REMOTE_BIN}"])
-        _run([db, "exec", target.container, "chmod", "+x", REMOTE_BIN])
+        db, rb = target.docker_bin, target.remote_bin
+        _run([db, "cp", binary, f"{target.container}:{rb}"])
+        _run([db, "exec", target.container, "chmod", "+x", rb])
         _run([db, "exec", "-d", target.container, "bash", "-lc", _start_command(target, args)])
         return _addr(target)
 
@@ -146,11 +165,9 @@ class SshInjector:
             raise InjectionError("ssh injection requires target.ssh_host")
         ident = ["-i", target.ssh_key] if target.ssh_key else []
         dest = f"{target.ssh_user + '@' if target.ssh_user else ''}{target.ssh_host}"
-        _run(["scp", "-P", str(target.ssh_port), *ident, binary, f"{dest}:{REMOTE_BIN}"])
-        start = (
-            f"chmod +x {REMOTE_BIN} && "
-            f"nohup {_start_command(target, args)} >/tmp/shinkend.log 2>&1 &"
-        )
+        rb = target.remote_bin
+        _run(["scp", "-P", str(target.ssh_port), *ident, binary, f"{dest}:{rb}"])
+        start = f"chmod +x {shlex.quote(rb)} && {_nohup_bg(_start_command(target, args))}"
         _run(["ssh", "-p", str(target.ssh_port), *ident, dest, start])
         return target.reachable_addr or f"{target.ssh_host}:{target.port}"
 
@@ -161,6 +178,11 @@ class OSWorldExecInjector:
 
     name = "osworld-exec"
 
+    #: Base64 chars per ``/execute`` call. A multi-MB binary's base64 sent as a single
+    #: command overruns ARG_MAX / the controller's request limit (HTTP 500), so we append
+    #: fixed-size pieces to a remote file, then decode it once.
+    CHUNK = 100_000
+
     def inject(self, target: InjectionTarget, binary: str, *, args: list[str] | None = None) -> str:
         if not target.controller_url:
             raise InjectionError("osworld-exec injection requires target.controller_url")
@@ -168,13 +190,16 @@ class OSWorldExecInjector:
 
         with open(binary, "rb") as fh:
             b64 = base64.b64encode(fh.read()).decode("ascii")
-        _controller_exec(
-            target.controller_url, f"printf %s {shlex.quote(b64)} | base64 -d > {REMOTE_BIN}"
-        )
-        _controller_exec(target.controller_url, f"chmod +x {REMOTE_BIN}")
-        _controller_exec(
-            target.controller_url, f"nohup {_start_command(target, args)} >/tmp/shinkend.log 2>&1 &"
-        )
+        url, rb = target.controller_url, target.remote_bin
+        remote_b64 = rb + ".b64"
+        _controller_exec(url, f": > {shlex.quote(remote_b64)}")  # truncate any stale upload
+        for i in range(0, len(b64), self.CHUNK):
+            chunk = shlex.quote(b64[i : i + self.CHUNK])
+            _controller_exec(url, f"printf %s {chunk} >> {shlex.quote(remote_b64)}")
+        q_b64, q_rb = shlex.quote(remote_b64), shlex.quote(rb)
+        _controller_exec(url, f"base64 -d {q_b64} > {q_rb} && rm -f {q_b64}")
+        _controller_exec(url, f"chmod +x {q_rb}")
+        _controller_exec(url, _nohup_bg(_start_command(target, args)))
         return _addr(target)
 
 

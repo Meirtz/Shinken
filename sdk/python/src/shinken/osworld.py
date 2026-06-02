@@ -28,11 +28,12 @@ from typing import Any
 
 from .client import connect
 
+_NUM = r"(\d+(?:\.\d+)?)"  # int pixels OR a float (normalized [0,1] coords get scaled)
 _PYAUTOGUI_PATTERNS = [
-    (re.compile(r"(?:pyautogui\.)?moveTo\(\s*(\d+)\s*,\s*(\d+)"), "move"),
-    (re.compile(r"(?:pyautogui\.)?doubleClick\(\s*(\d+)\s*,\s*(\d+)"), "double_click"),
-    (re.compile(r"(?:pyautogui\.)?rightClick\(\s*(\d+)\s*,\s*(\d+)"), "right_click"),
-    (re.compile(r"(?:pyautogui\.)?click\(\s*(\d+)\s*,\s*(\d+)"), "click"),
+    (re.compile(rf"(?:pyautogui\.)?moveTo\(\s*{_NUM}\s*,\s*{_NUM}"), "move"),
+    (re.compile(rf"(?:pyautogui\.)?doubleClick\(\s*{_NUM}\s*,\s*{_NUM}"), "double_click"),
+    (re.compile(rf"(?:pyautogui\.)?rightClick\(\s*{_NUM}\s*,\s*{_NUM}"), "right_click"),
+    (re.compile(rf"(?:pyautogui\.)?click\(\s*{_NUM}\s*,\s*{_NUM}"), "click"),
 ]
 
 
@@ -55,6 +56,7 @@ class DesktopEnv:
         self._env: Any = None
         self._instruction = ""
         self._terminal: str | None = None  # "DONE" / "FAIL" once the agent terminates
+        self._screen_wh: tuple[int, int] | None = None  # cached for normalized-coord scaling
 
     def reset(self, task_config: dict | None = None) -> dict:
         if self._env is None:
@@ -164,6 +166,22 @@ class DesktopEnv:
             kwargs["dx"] = dx
         self._env.act("scroll", target, **kwargs)
 
+    def _screen(self) -> tuple[int, int]:
+        """Guest screen size (cached), for scaling normalized coordinates to pixels."""
+        if self._screen_wh is None:
+            shot = self._env.screenshot()
+            self._screen_wh = (int(shot.get("w") or 1280), int(shot.get("h") or 800))
+        return self._screen_wh
+
+    def _to_px(self, gx: str, gy: str) -> tuple[int, int]:
+        """Map a matched (x, y) to pixels. Integer args are pixels; float args in [0,1] are
+        normalized coordinates (a habit of some models) and get scaled by the screen size."""
+        fx, fy = float(gx), float(gy)
+        if ("." in gx or "." in gy) and fx <= 1.0 and fy <= 1.0:
+            w, h = self._screen()
+            return round(fx * w), round(fy * h)
+        return round(fx), round(fy)
+
     def _click(self, a: dict, *, double: bool = False, button: str = "left") -> None:
         x, y = a.get("x"), a.get("y")
         if x is None or y is None:
@@ -177,14 +195,29 @@ class DesktopEnv:
 
     def _pyautogui(self, code: str) -> bool:
         executed = False
+        pending_down: list[str] = []
         for raw in code.splitlines():
             line = raw.strip()
             if not line or line.startswith(("#", "import")):
                 continue
+            # pyautogui's manual chord idiom — keyDown('ctrl'); keyDown('alt'); keyDown('t');
+            # keyUp(...)×N. Collect the held keys; emit ONE ACI chord on the first keyUp
+            # (modifiers + final key, e.g. "ctrl+alt+t"); the remaining keyUps are no-ops.
+            m = re.search(r"(?:pyautogui\.)?keyDown\(\s*['\"](.*?)['\"]", line)
+            if m:
+                pending_down.append(m.group(1))
+                continue
+            if re.search(r"(?:pyautogui\.)?keyUp\(", line):
+                if pending_down:
+                    self._env.key("+".join(pending_down))
+                    pending_down = []
+                    executed = True
+                continue
             for pat, verb in _PYAUTOGUI_PATTERNS:
                 m = pat.search(line)
                 if m:
-                    getattr(self._env, verb)(x=int(m.group(1)), y=int(m.group(2)))
+                    x, y = self._to_px(m.group(1), m.group(2))
+                    getattr(self._env, verb)(x=x, y=y)
                     executed = True
                     break
             else:
@@ -220,6 +253,9 @@ class DesktopEnv:
                 if m:
                     self._scroll(dy=int(m.group(1)))
                     executed = True
+        if pending_down:  # a keyDown run with no matching keyUp — still emit the chord
+            self._env.key("+".join(pending_down))
+            executed = True
         if not executed:
             raise ValueError(f"no supported pyautogui call found in: {code!r}")
         return False

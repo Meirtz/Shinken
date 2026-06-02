@@ -42,7 +42,7 @@ def _build_shinken_actuator(args: argparse.Namespace) -> object:
     if args.inject_method:
         from shinken.inject import InjectionTarget
 
-        target = InjectionTarget(
+        kw = dict(
             port=args.inject_port,
             reachable_addr=args.inject_reachable_addr,
             container=args.inject_container,
@@ -52,6 +52,9 @@ def _build_shinken_actuator(args: argparse.Namespace) -> object:
             ssh_key=args.inject_ssh_key,
             controller_url=args.inject_controller_url,
         )
+        if args.inject_remote_bin:  # non-root controllers (OSWorld) can't write /usr/local/bin
+            kw["remote_bin"] = args.inject_remote_bin
+        target = InjectionTarget(**kw)
         return inject_and_actuate(target, args.shinkend_binary, method=args.inject_method)
     return make_shinken_actuator(args.shk_addr)
 
@@ -85,6 +88,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--inject-ssh-port", type=int, default=22)
     ap.add_argument("--inject-ssh-key", help="ssh: identity file")
     ap.add_argument("--inject-controller-url", help="osworld-exec: controller base URL")
+    ap.add_argument(
+        "--inject-remote-bin",
+        help="guest path to place shinkend (default /usr/local/bin/shinkend; use e.g. "
+        "/tmp/shinkend when the inject transport runs non-root, like an OSWorld controller)",
+    )
     args = ap.parse_args(argv)
     if args.inject_method and not args.shinkend_binary:
         ap.error("--inject-method requires --shinkend-binary")

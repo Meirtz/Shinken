@@ -156,3 +156,32 @@ def test_pyautogui_dragto_is_explicitly_unsupported(mock_shinkend):
             env.step("pyautogui.dragTo(10, 20)")
     finally:
         env.close()
+
+
+def test_pyautogui_keydown_keyup_becomes_one_chord(mock_shinkend):
+    # pyautogui's manual chord idiom (keyDown ×N then keyUp) → one ACI key chord.
+    env = DesktopEnv(address=mock_shinkend, action_space="pyautogui")
+    try:
+        env.reset()
+        env.step(
+            "pyautogui.keyDown('ctrl')\npyautogui.keyDown('alt')\npyautogui.keyDown('t')\n"
+            "pyautogui.keyUp('t')\npyautogui.keyUp('alt')\npyautogui.keyUp('ctrl')"
+        )
+        assert env._env.query("state")["keys"][-1] == "ctrl+alt+t"
+    finally:
+        env.close()
+
+
+def test_pyautogui_normalized_coords_scale_to_pixels(mock_shinkend):
+    # Float coords in [0,1] are normalized → scaled by the screen; integer coords are pixels.
+    env = DesktopEnv(address=mock_shinkend, action_space="pyautogui")
+    try:
+        env.reset()
+        env._screen_wh = (1280, 800)  # deterministic screen for the test
+        env.step("pyautogui.click(0.1, 0.1)")  # normalized → (128, 80)
+        env.step("pyautogui.click(300, 400)")  # pixels pass through
+        clicks = env._env.query("state")["clicks"]
+        assert (clicks[-2]["x"], clicks[-2]["y"]) == (128, 80)
+        assert (clicks[-1]["x"], clicks[-1]["y"]) == (300, 400)
+    finally:
+        env.close()

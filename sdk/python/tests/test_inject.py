@@ -101,3 +101,41 @@ def test_loopback_bind_when_no_token(fake_binary, captured_run):
 def test_run_wraps_subprocess_failure_as_injection_error():
     with pytest.raises(InjectionError):
         inject._run(["false"])  # real subprocess: non-zero exit -> InjectionError
+
+
+def test_osworld_exec_chunks_large_binary_and_honors_remote_bin(tmp_path, monkeypatch):
+    # A multi-MB binary must upload in chunks (one command would overrun ARG_MAX) and land at
+    # the chosen remote_bin (a non-root controller can't write /usr/local/bin).
+    big = tmp_path / "shinkend"
+    big.write_bytes(b"\x7fELF" + b"A" * 200_000)  # base64 > one CHUNK → multiple appends
+    calls: list[str] = []
+    monkeypatch.setattr(inject, "_controller_exec", lambda url, cmd, **k: calls.append(cmd))
+    t = InjectionTarget(
+        controller_url="http://sbx:5000", host="sbx", port=8765, remote_bin="/tmp/shinkend"
+    )
+    inject_shinkend(t, str(big), method="osworld-exec")
+    assert len([c for c in calls if ">> /tmp/shinkend.b64" in c]) >= 2  # chunked
+    assert any("base64 -d /tmp/shinkend.b64 > /tmp/shinkend" in c for c in calls)  # → remote_bin
+    assert any(
+        c.startswith("nohup sh -c ") and "SHINKEND_ADDR" in c for c in calls
+    )  # shell-wrapped
+
+
+def test_controller_exec_raises_on_nonzero_returncode(monkeypatch):
+    # The controller answers 200 even when the command fails; a non-zero exit must surface.
+    import json
+    import urllib.request
+
+    class _Resp:
+        def read(self):
+            return json.dumps({"returncode": 1, "error": "permission denied"}).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=60: _Resp())
+    with pytest.raises(InjectionError, match="permission denied"):
+        inject._controller_exec("http://sbx:5000", "touch /usr/local/bin/x")

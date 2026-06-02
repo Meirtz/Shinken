@@ -93,11 +93,33 @@ class ChatModelAgent:
                 "Content-Type": "application/json",
             },
         )
-        with urllib.request.urlopen(req, timeout=self._timeout) as resp:
-            msg = json.loads(resp.read())["choices"][0]["message"]
+        msg = self._post_with_retry(req)
         # Thinking models (e.g. K2.6) may return content=null with the action in
         # reasoning_content; fall back so the parser always gets a string.
         return msg.get("content") or msg.get("reasoning_content") or ""
+
+    #: Transient gateway/throttle statuses worth retrying (hosted endpoints hiccup).
+    _RETRY_STATUS = frozenset({429, 500, 502, 503, 504})
+
+    def _post_with_retry(self, req, *, attempts: int = 5) -> dict:
+        """POST the chat request, retrying transient gateway/throttle errors with backoff so a
+        single 502/503 from a hosted model gateway doesn't abort a whole eval episode."""
+        import time as _time
+        import urllib.error
+
+        last: Exception | None = None
+        for i in range(attempts):
+            try:
+                with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+                    return json.loads(resp.read())["choices"][0]["message"]
+            except urllib.error.HTTPError as exc:
+                last = exc
+                if exc.code not in self._RETRY_STATUS:
+                    raise
+            except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+                last = exc
+            _time.sleep(min(2**i, 15))  # 1,2,4,8,15s backoff
+        raise RuntimeError(f"model endpoint failed after {attempts} attempts: {last}")
 
 
 class ScriptedAgent:
@@ -235,7 +257,13 @@ def run_episode(
                 terminal = action
                 break
             history.append(action.replace("\n", " ")[:120])
-            actuator.step(action, pause=pause)
+            # An eval must not crash on a single unactuatable model output (e.g. a raw shell
+            # block, or a verb the actuator doesn't support) — record it and keep going so the
+            # agent can re-observe and the episode still reaches a scored terminal state.
+            try:
+                actuator.step(action, pause=pause)
+            except Exception as exc:
+                history.append(f"[action skipped: {str(exc)[:100]}]")
         if terminal is not None:
             break
     score = float(env.evaluate())

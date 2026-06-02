@@ -102,7 +102,13 @@ def test_cli_injects_via_user_chosen_method(monkeypatch):
     seen: dict = {}
 
     def fake(target, binary, *, method):
-        seen.update(container=target.container, port=target.port, binary=binary, method=method)
+        seen.update(
+            container=target.container,
+            port=target.port,
+            binary=binary,
+            method=method,
+            remote_bin=target.remote_bin,
+        )
         return "ACTUATOR"
 
     monkeypatch.setattr(osw, "inject_and_actuate", fake)
@@ -117,6 +123,7 @@ def test_cli_injects_via_user_chosen_method(monkeypatch):
         inject_ssh_port=22,
         inject_ssh_key=None,
         inject_controller_url=None,
+        inject_remote_bin="/tmp/shinkend",
         shk_addr="x",
     )
     assert osw._build_shinken_actuator(args) == "ACTUATOR"
@@ -125,6 +132,7 @@ def test_cli_injects_via_user_chosen_method(monkeypatch):
         "port": 8765,
         "binary": "/b/shinkend",
         "method": "docker",
+        "remote_bin": "/tmp/shinkend",
     }
 
 
@@ -132,3 +140,55 @@ def test_cli_inject_method_requires_binary():
     # No silent default: choosing a method without a binary is a usage error, not a guess.
     with pytest.raises(SystemExit):
         osw.main(["--inject-method", "docker"])
+
+
+def test_chat_agent_retries_transient_gateway_errors(monkeypatch):
+    # A 502/503 from a hosted model gateway must be retried, not abort the episode.
+    import urllib.error
+    import urllib.request
+
+    agent = oe.ChatModelAgent("http://m/v1", "k", "model")
+    n = {"calls": 0}
+
+    class _Resp:
+        def read(self):
+            return b'{"choices":[{"message":{"content":"act"}}]}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_urlopen(req, timeout=0):
+        n["calls"] += 1
+        if n["calls"] < 3:
+            raise urllib.error.HTTPError(req.full_url, 502, "Bad Gateway", {}, None)
+        return _Resp()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr("time.sleep", lambda *_a: None)
+    assert agent.act(None, None, "task", []) == "act"
+    assert n["calls"] == 3  # two transient failures, then success
+
+
+def test_run_episode_tolerates_unactuatable_action_without_crashing():
+    # A single unactuatable model output (e.g. raw shell) is skipped; the episode still reaches
+    # a scored terminal state instead of crashing.
+    class _Boom:
+        def step(self, action, pause=0.0):
+            raise ValueError("no supported pyautogui call found")
+
+        def close(self):
+            pass
+
+    class _Env:
+        def _get_obs(self):
+            return {"screenshot": None, "accessibility_tree": None}
+
+        def evaluate(self):
+            return 0.0
+
+    agent = oe.ScriptedAgent(["```python\npyautogui.click(1, 2)\n```", "```DONE```"])
+    res = oe.run_episode(_Env(), agent, _Boom(), "t", max_steps=5)
+    assert res["terminal"] == "DONE" and res["steps"] >= 1  # survived the bad action
