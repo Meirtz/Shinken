@@ -63,8 +63,9 @@ and the control plane are designed.
 
 ## `.skn`
 
-`.skn` is a future replay/data bundle concept. It is not implemented in the current runtime or SDK.
-When it returns, it should remain separate from runtime state: a timeline artifact can describe what
+`.skn` is a replay/data-bundle concept that was **intentionally deferred** from v0.0.1 (the runtime
+replay surface was removed in #216); it is not implemented in the current runtime or SDK. When it
+returns, it should remain separate from runtime state: a timeline artifact can describe what
 happened, but it is not itself a VM snapshot and cannot make an old desktop live again.
 
 ## Capabilities

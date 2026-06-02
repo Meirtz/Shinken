@@ -1,6 +1,6 @@
 # Shinken — Implementation Status (reality check)
 
-> Date: 2026-05-31 · Scope: what is **actually built and proven** vs **designed-only** vs
+> Date: 2026-06-02 · Scope: what is **actually built and proven** vs **designed-only** vs
 > **unvalidated**. The design corpus (vision/PRD/architecture/ADRs/roadmap) intentionally describes
 > the full CUA infrastructure stack; the *implementation* is the first well-tested local slice of
 > that stack. This page is the honest map between target scope and current code. When in doubt, this
@@ -33,6 +33,11 @@ sandbox image), not just by design.
 | Python SDK: sync facade + async core, reader/demux (RPC vs server-push) | done | #51 |
 | OSWorld `DesktopEnv` compatibility shim | done | #32 |
 | CU provider adapters (Anthropic, OpenAI, **Kimi-VL**) → canonical ACI | done | fixture-tested, no live API; #75/#76 + Kimi-VL |
+| **Agent-runtime narrow waist** (`shinken.runtime`: Session/rollout/Trajectory, zero scorer/reward) + **Workload registry** | done | #220/#221/#227 · [agent-runtime.md](../design/agent-runtime.md) |
+| **Provider registry** + `DockerLocalProvider` + out-of-tree plugin loaders | done | #219/#226 |
+| **Pluggable `shinkend` injector** (`shinken.inject`: `docker`/`ssh`/`osworld-exec`) | done | #230/#233 — chunked upload, shell-wrapped start, configurable remote path, surfaced errors |
+| **OSWorld as a Workload** (`osworld-eval`) + `scripts/osworld_single.py` runner | done | #222/#229 — Kimi K2.6 in OSWorld pixel-pyautogui form, scored by the official OSWorld evaluator |
+| Tiny eval harness + **`run_eval_forked`** (golden-checkpoint → fork-N → score) | done | #86/#87/#206/#231 — non-vacuous verifiers, unit-tested |
 | Wheel packaging (schemas bundled), idempotent close | done | #40 |
 | Docker Linux sandbox image | done | #45 — build + token handshake + screenshot in CI |
 | CI: 7 jobs (guard, schema, Rust, SDK, wheel, live Xvfb integration, Docker) | done | every PR |
@@ -44,7 +49,7 @@ sandbox image), not just by design.
 | `element_ref` action targets | Present in the wire contract, but resolution **bails** — needs the a11y/observation engine (below) |
 | Wire schema vs implementation | The runtime/SDK emit verbs/fields (`start_screencast`, `screencast`, `scope`, `fps`, `max_long_edge`, `stream`/`seq`) that **`schema/aci.schema.json` does not yet validate** — tracked in #56 |
 | Hardening | A 22-finding adversarial review (incl. an unbounded-frame-queue OOM vector) is open as #56 |
-| **Runtime state** (snapshot/restore/resume/fork/checkpoint) | **Implemented on the Docker disk tier** (#209, via `docker commit` + container launch) behind the provider interface (#207); Docker advertises `supports_snapshot/fork/checkpoint/resume`, `snapshot_kind="disk"`. SDK `sandbox.checkpoint()`, `sandbox.fork()`, and `sandbox.resume()` expose the provider operations. Still missing: the CRIU memory tier and the sub-ms CoW fast tier (#206) |
+| **Runtime state** (snapshot/restore/resume/fork/checkpoint) | **Implemented on the Docker disk tier** (#209, via `docker commit` + container launch) behind the provider interface (#207); Docker advertises `supports_snapshot/fork/checkpoint/resume`, `snapshot_kind="disk"`. SDK `sandbox.checkpoint()`, `sandbox.fork()`, and `sandbox.resume()` expose the provider operations, and `eval.run_eval_forked` runs the golden→fork-N→score loop over them (#231). Still missing: the CRIU memory tier and the sub-ms CoW fast tier (#206) |
 
 ## 🔵 Designed-only — documented, **not implemented**
 
@@ -58,7 +63,7 @@ These appear in the vision/PRD/architecture/README in present-ish tense, but **n
 - **Control plane + ultra-high-concurrency / multi-tenant orchestration** — a single local `shinkend` is all that exists.
 - **Dual-channel WebRTC media plane + GPU/NVENC encode** — today streaming is **base64 PNG over the control WebSocket**, fine for an MVP but not the low-latency/bandwidth story at scale.
 - **High-throughput file-transfer path** (#49/#50) — design only.
-- **Eval layer + OSWorld-Verified conformance** — the OSWorld `DesktopEnv` shim and a tiny local eval harness (`eval.py`, now with **non-vacuous verifiers** that read observed state + a real step count) ship; a single official-OSWorld-task runner that boots the official image, drives a hosted agentic model (**Kimi K2.6**) in OSWorld's native **pixel-pyautogui code-block** format (`parse_model_actions` mirrors OSWorld's `parse_code_from_string`; the shim actuates over Shinken), and scores with the **official OSWorld evaluator** is scaffolded (`scripts/osworld_single.py`, dry-run proven). The open-weight Kimi-VL/Aguvis path is a separate adapter (`adapters/kimi.py`). Full OSWorld-Verified conformance (Small/full set) and the golden→fork-N→score loop are **not yet run**.
+- **Full OSWorld-Verified conformance at scale** — the building blocks all **ship** (see the ✅ table: OSWorld-as-a-Workload, the `scripts/osworld_single.py` runner driving **Kimi K2.6** in OSWorld's native **pixel-pyautogui code-block** form — `parse_model_actions` mirrors OSWorld's `parse_code_from_string` — scored by the **official OSWorld evaluator**, the `shinkend` injector for `--backend shinken` actuation, and `run_eval_forked` for the golden→fork-N→score loop). The open-weight Kimi-VL/Aguvis path is a separate adapter (`adapters/kimi.py`). What is **not** done here: a full OSWorld-Verified conformance sweep (Small/full set) with published numbers, and large-N forked scoring at scale.
 
 ## 🔬 Unvalidated load-bearing assumptions (spikes NOT run)
 

@@ -17,7 +17,7 @@
 > staged across the roadmap; *Provisional* = the right call on today's evidence, gated on a
 > first-party measurement spike. **Every speed / density / cost number sourced from a vendor
 > blog or spec sheet is marked "(vendor-published, unverified)"; a first-party measurement
-> plan is required before any of them anchor an SLA.** Today's date: **2026-05-30**.
+> plan is required before any of them anchor an SLA.** Today's date: **2026-06-02**.
 >
 > Companion documents: [`02-architecture.md`](architecture.md),
 > [`04-landscape.md`](landscape.md), [`08-threat-model.md`](threat-model.md),

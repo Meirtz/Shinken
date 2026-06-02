@@ -1,6 +1,6 @@
 # Shinken — Roadmap
 
-> Status: drafting · Date: 2026-05-31
+> Status: drafting · Date: 2026-06-02
 > Audience: maintainers and implementers · Role: phase sequencing and milestone strategy. Current
 > implementation status lives in [`STATUS.md`](status.md); detailed v0.0.1 implementation scope lives
 > in [`10-phase0-plan.md`](v0.0.1-plan.md).
@@ -15,13 +15,14 @@
 Shinken's roadmap is deliberately **semantic-complete first, then optimize as we scale**. The
 scope is the full CUA infrastructure stack, not a narrow local demo. The first release,
 **v0.0.1**, must implement the core product semantics at local/reference scale: ACI, agent-native
-dialects/adapters, GUI act/observe, layered observation, `.skn`, capabilities, artifact movement,
-and tiny eval evidence. Later phases make those same semantics fast, forkable, multi-tenant,
+dialects/adapters, GUI act/observe, layered observation, runtime state (checkpoint/fork/resume),
+capabilities, artifact movement, and tiny eval evidence. (Runtime **replay** / `.skn` was
+intentionally deferred — see #216 — and is not a v0.0.1 semantic.) Later phases make those same semantics fast, forkable, multi-tenant,
 cross-substrate, and production-hardened. The completeness review behind the broader design is
 still blunt: the scale/cost assumptions — that a normalized accessibility (a11y) tree covers enough
 real applications to become the structured fast path, that copy-on-write (CoW) fork density is
 economically real, and that the dual-channel WebRTC latency budget actually closes — are **all
-vendor-quoted and unverified** as of 2026-05-30. So v0.0.1 proves the semantics; the spikes gate
+vendor-quoted and unverified** as of 2026-06-02. So v0.0.1 proves the semantics; the spikes gate
 performance and cloud-scale commitments.
 
 Every phase reconciles to the twelve authoritative decisions **D1–D12** in [`05-tech-decisions.md`](../design/tech-decisions.md), and the plan reuses generally-available building blocks — the OSS `kubernetes-sigs/agent-sandbox` CRD, [HashiCorp Vault](https://www.hashicorp.com/en/blog/vault-enterprise-1-21-spiffe-auth-with-spire-cross-namespace-secret-import), and (for the optional pixel channel) [NICE DCV](https://docs.aws.amazon.com/dcv/latest/adminguide/what-is-dcv.html) or a custom WebRTC + hardware-encode pipeline — rather than rebuilding undifferentiated infrastructure. **Every speed/density/cost figure below is tagged (vendor-published, unverified)** unless a spike has produced a first-party number; see [`09-economics-and-build-vs-buy.md`](../design/economics-and-build-vs-buy.md) for the measurement plan that retires those tags.

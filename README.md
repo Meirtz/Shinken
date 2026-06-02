@@ -21,16 +21,19 @@ VNC desktop, or a model adapter. It is the foundation those pieces plug into: pr
 runtime, eval environment, runtime-state manager, permission boundary, and future cross-OS fleet
 manager.
 
-> **Status (2026-05-31) — early, honest.** The product scope is the full CUA stack above. What
-> runs **today** is the first tested Linux/X11 slice:
+> **Status (2026-06-02) — early, honest.** The product scope is the full CUA stack above. What
+> runs **today** is a tested Linux/X11 slice plus the runtime + eval scaffolding:
 > typed pointer/keyboard actions, pixel observation (screenshot + **real-time screencast** with
-> idle-suppression + resolution downscale), **focused-window capture**, and a
-> Python SDK — all under live CI. The rest of this README describes the **target design**:
-> cross-platform, accessibility-tree observation, the capability/permission panel,
-> checkpoint/fork, `.skn` replay/recording, the control plane, and WebRTC/GPU streaming are
-> **designed but not yet built**,
-> and the load-bearing a11y-coverage assumption is **not yet validated**. See
-> **[`docs/engineering/status.md`](docs/engineering/status.md)** for the precise built-vs-designed map.
+> idle-suppression + resolution downscale), **focused-window capture**, a Python SDK, model
+> adapters (Anthropic/OpenAI/Kimi-VL), a **provider registry** with **Docker disk-tier
+> checkpoint/fork/resume**, the agent-runtime **narrow waist** (Workload × Runtime × Provider), a
+> runtime **`shinkend` injector**, and a tiny eval harness incl. **OSWorld-as-a-Workload** and a
+> golden→fork-N→score loop — all under live CI. The rest of this README describes the **target
+> design**: cross-platform, accessibility-tree observation, the capability/permission panel, the
+> CRIU **memory** + sub-ms **CoW** fork tiers, the control plane, and WebRTC/GPU streaming are
+> **designed but not yet built**; runtime **replay** / `.skn` playback was intentionally deferred
+> (not on the v0.0.1 path); and the load-bearing a11y-coverage assumption is **not yet validated**.
+> See **[`docs/engineering/status.md`](docs/engineering/status.md)** for the precise built-vs-designed map.
 >
 > **Next priority — runtime-state time-travel.** Shinken's headline differentiator is *instant
 > snapshot / checkpoint / fork / resume* of live sandboxes (**D1/D5**) — for high-concurrency eval,
@@ -231,11 +234,14 @@ plane. See [docs/engineering/v0.0.1-plan.md](docs/engineering/v0.0.1-plan.md).
 
 ## What Works Today
 
-**v0.0.1 is underway:** schema scaffold, Rust `shinkend`, Python SDK/CLI, a Linux Docker image
-skeleton, pointer/keyboard actions, screenshots, screencast/focused capture, an OSWorld shim, and
-Docker disk-tier checkpoint/fork/resume exist. The v0.0.1 backlog fills in the rest of the semantic surface:
-agent-native dialect/adapters, a11y/CDP/element-ref reference paths, capability envelope and
-permission events, artifact transfer, deterministic task fixtures, and a tiny verifier harness.
+**v0.0.1 is underway:** schema scaffold, Rust `shinkend`, Python SDK/CLI, a Linux Docker image,
+pointer/keyboard actions, screenshots, screencast/focused capture, model adapters
+(Anthropic/OpenAI/Kimi-VL), a provider registry with Docker disk-tier checkpoint/fork/resume, the
+agent-runtime narrow waist (Workload × Runtime × Provider registries + out-of-tree plugins), a
+runtime `shinkend` injector, an OSWorld `DesktopEnv` shim + OSWorld-as-a-Workload, and a tiny eval
+harness with a golden→fork-N→score loop all exist. The v0.0.1 backlog fills in the rest of the
+semantic surface: a11y/CDP/element-ref reference paths, the capability envelope +
+permission-enforcement gate, high-throughput artifact transfer, and broader OSWorld conformance.
 
 ```bash
 # 1) run the Guest Runtime
@@ -258,9 +264,11 @@ env.close()
 ```
 
 Expected today: connect, print platform/RTT/screen/capabilities, run basic pointer/keyboard actions,
-capture screenshots/focused windows/screencasts, move files through the local/Docker provider, and
-exercise Docker disk-tier checkpoint/fork/resume. Not expected yet: provider adapters, a11y trees,
-element refs, production capability enforcement, eval, or cloud fork.
+capture screenshots/focused windows/screencasts, move files through the local/Docker provider,
+exercise Docker disk-tier checkpoint/fork/resume, and run the tiny eval harness (incl.
+OSWorld-as-a-Workload + the golden→fork-N→score loop). Not expected yet: cloud/macOS/Windows
+provider tiers, a11y trees, element refs, production capability enforcement, the CRIU memory / CoW
+fast fork tiers, or cloud fork.
 
 ## Roadmap
 

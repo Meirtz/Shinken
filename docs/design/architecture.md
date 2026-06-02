@@ -1,6 +1,6 @@
 # Shinken — System Architecture
 
-> Status: drafting · Last updated 2026-05-30
+> Status: drafting · Last updated 2026-06-02
 > Audience: architecture/design maintainers · Role: full target system specification · Source of
 > truth: component boundaries, planes, substrate model, and data flow. Current implementation status
 > lives in [`STATUS.md`](../engineering/status.md).
@@ -23,10 +23,14 @@ All speed / density / cost figures are marked **(vendor-published, unverified)**
 The design borrows the clean `Image → Runtime → Transport → Interfaces → Sandbox` layering pioneered by the closest cross-platform competitor (trycua/cua) and out-engineers its three weak axes: **streaming** (it polls a screenshot per step), **permissions** (binary container-key auth, no policy engine), and **replay** (a screenshot dump plus a side VNC recorder). See [04 Landscape](landscape.md) for the full competitive read.
 
 **Release shape.** v0.0.1 implements the architecture's core semantics at local/reference scale:
-ACI, action/observation, `.skn`, capability events, artifact refs, adapters, and tiny eval evidence.
+ACI, action/observation, the **agent-runtime narrow waist** (Workload × Runtime × Provider — see
+[agent-runtime](agent-runtime.md)), a provider registry with **Docker disk-tier
+checkpoint/fork/resume**, capability events, artifact refs, model adapters, and a tiny eval harness
+(incl. OSWorld-as-a-Workload + a golden→fork-N→score loop). Runtime **replay** / `.skn` was
+intentionally deferred (#216) and is **not** a v0.0.1 semantic.
 The later phases do not introduce the meaning of Shinken; they optimize and harden the same
-semantics for fork density, WebRTC/SFU/NVENC media, multi-tenant control-plane operation,
-cross-substrate scheduling, and cross-OS production tiers.
+semantics for fork density (CRIU memory + CoW fast tiers), WebRTC/SFU/NVENC media, multi-tenant
+control-plane operation, cross-substrate scheduling, and cross-OS production tiers.
 
 ---
 

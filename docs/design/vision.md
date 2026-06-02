@@ -1,6 +1,6 @@
 # 00 — Vision & Positioning
 
-> Status: drafted · Last updated 2026-05-30
+> Status: drafted · Last updated 2026-06-02
 >
 > Audience: design readers and maintainers · Role: product vision / positioning · Source of truth:
 > scope and narrative, not current implementation status. Current status lives in
@@ -192,7 +192,7 @@ This inverts the OSWorld world, where the benchmark *was* the platform and produ
 
 ## 9. Explicit non-goals
 
-Being opinionated means saying no. As of 2026-05-30:
+Being opinionated means saying no. As of 2026-06-02:
 
 - **Not a new foundation model.** Shinken is provider-agnostic infrastructure (D2); the agent loop lives behind the Operator contract. We ship adapters, not a model — we serve model teams, not compete with them.
 - **Not browser-only, and not Android-in-v1.** Full *desktop* cross-platform is the point (D10); Android is explicitly roadmap, not v1.
