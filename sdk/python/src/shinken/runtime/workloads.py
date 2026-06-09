@@ -47,9 +47,11 @@ def load_plugins(env_var: str = _PLUGIN_ENV) -> None:
     global _PLUGINS_LOADED
     if _PLUGINS_LOADED:
         return
-    _PLUGINS_LOADED = True
     for mod in filter(None, (m.strip() for m in os.environ.get(env_var, "").split(":"))):
         importlib.import_module(mod)
+    # Mark loaded only after all imports succeed, so a failed import is retryable on the
+    # next call rather than permanently disabled by an early flag flip.
+    _PLUGINS_LOADED = True
 
 
 def get(name: str, **kwargs: Any) -> Workload:

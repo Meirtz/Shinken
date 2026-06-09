@@ -144,6 +144,32 @@ embedded in-tree) + a `Scorer` (its official metric/getter `evaluate()`), both c
 workload, reusing the existing `osworld.py` shim + `parse_model_actions`. Adding a second benchmark =
 a new `TaskSource`+`Scorer` and one `register()` line.
 
+### Reference consumers and interop targets (2026-06)
+
+The consumer model is externally validated; three shipped stacks are the named interop targets, in
+priority order. None of this touches the waist — all are consumers/compositions.
+
+1. **train (#223) — verl/uni-agent is the reference consumer, not a model to rebuild.** Shinken
+   `Trajectory` must be losslessly convertible to verl's `AgentLoopOutput` (`prompt_ids`,
+   `response_ids`, `response_mask` with 1=model/0=tool tokens, `response_logprobs`, `reward_score`,
+   `num_turns`, `extra_fields{traj_masked, traj_exit_reason}`). **Token fidelity is an adapter
+   requirement:** when collecting against a token-level inference server, adapters must pass through
+   token ids/masks/logprobs — messages-only records are lossy for RL (retokenization mismatch). The
+   train Workload exposes an HTTP gym facade (`/reset`, `/step`, `/evaluate`) because that is the
+   shape verl/TRL-style trainers consume. Cheapest interop deliverable: a swerex-protocol shim — run
+   `swerex.server` inside `images/linux` so uni-agent's attach deployment drives a Shinken sandbox
+   unmodified, or contribute a ~300-line deployment backend whose `start()` forks from a golden
+   checkpoint instead of cold-booting. <https://github.com/verl-project/uni-agent>
+2. **eval — CUA-Gym bundles as a second task source.** Exported bundles are OSWorld-shape
+   `config.json` (download + execute setup) plus an in-guest python evaluator printing `REWARD: X.X`;
+   support = one task-source + scorer pair and one `register()` line, unlocking 32k oracle-validated
+   RLVR tasks. <https://github.com/xlang-ai/CUA-Gym>
+3. **orchestrators — be provider-shaped.** Keep the SDK session surface compatible with the provider
+   protocols layer-above orchestrators define (create/delete/get + async session context manager +
+   lazy client — the shape of Agentix's `SandboxProvider`), so out-of-tree integrations are trivial
+   and the closest conceptual neighbors become distribution channels for the waist.
+   <https://github.com/Agentix-Project/Agentix>
+
 ## 6. Desensitization — structural, not disciplinary
 
 Private substrate/workloads (an internal cloud-sandbox provider; a private training pipeline) live **only**
@@ -165,6 +191,19 @@ Guarantees that hold by construction:
 4. **External assets**: benchmark task configs load from `OSWORLD_PATH`/env, never embedded; trajectory
    metadata carries no secrets.
 
+**Three-tier dependency split (host / base / runtime).** A Workload or Provider plugin declares its dependencies in three buckets: a shared **base** set, a **host**-only set (orchestrator-side: heavy evaluators, dataset tooling — e.g. an OSWorld evaluator's large dependency stack belongs here), and a **runtime**-only set (installed inside the sandbox guest image, never on the host). The host orchestrator and the sandbox image install disjoint sets, so a Workload carrying a 50-package evaluator never bloats the guest image, and the guest never pulls host-only tooling. This mapping onto the host/guest boundary is a packaging requirement for any non-trivial Workload, not an afterthought.
+
+**Registry evolution (post-v0.0.1).** Graduate the plugin mechanism from env-var module lists to
+`importlib.metadata` entry-point groups (`shinken.providers`, `shinken.workloads`) as the primary
+out-of-tree path for *installed public* plugins, keeping `SHINKEN_*_PLUGINS` env vars as the fallback
+and as the only mechanism for non-installed private trees (the registry guarantees above are
+unchanged: entry points only ever name installed packages; nothing private appears in-tree). Adopt
+the registry semantics proven by Agentix's provider plugin system
+(https://github.com/Agentix-Project/Agentix): duplicate names raise a conflict error — never silent
+last-wins; a broken plugin's import error is captured per-entry without poisoning other plugins; a
+`shinken plugins list` command reports distribution provenance; in-process `register()` overrides
+entry points for tests.
+
 ## 7. Migration (incremental, each PR keeps guard + CI green)
 
 1. **Provider registry** (Layer 0). `register/get/available/load_plugins`; seed `docker`/`external`; port
@@ -185,5 +224,11 @@ comes for free.
 - Trajectory capture policy: pixels vs. structured vs. hashed refs — per-consumer config; what is the default?
 - Do we want a second plugin axis (`SHINKEN_WORKLOAD_PLUGINS`) now, or in-tree-only workloads until a private
   workload genuinely needs out-of-tree loading like providers do?
+- For the `interactive` workload (#224): adopt chat-mode semantics from uni-agent — the SAME loop with
+  "no tool call ⇒ turn done" instead of a format error, plus per-conversation transcript persistence —
+  rather than a separate interactive loop (https://github.com/verl-project/uni-agent). For multi-party
+  sessions, the session-identity model to study is caller-declared session ids + idle-TTL eviction +
+  per-session visual cursors (trycua/cua's cua-driver — https://github.com/trycua/cua); the permission
+  panel (D6) needs session identity anyway — design them together.
 - A "Shinken-as-OSWorld-provider" path (serve OSWorld's controller HTTP contract) would let the official
   suite run unmodified on a Shinken substrate — separate spike.

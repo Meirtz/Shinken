@@ -83,25 +83,32 @@ class _ForkFakeProvider:
         self.calls["connect"] += 1
         return self._cf()
 
-    def checkpoint(self, handle):
+    def checkpoint(self, handle, *, name=None, event_seq=None, agent_state_ref=None):
         self.calls["checkpoint"] += 1
         return "ckpt-1"
 
-    def fork(self, handle):
-        self.calls["fork"] += 1
-        return f"fork-{self.calls['fork']}"
+    def resume(self, ckpt):
+        # Every replica resumes the SAME golden checkpoint id — proves the corrected
+        # contract (all N materialize from one golden state, not N live forks).
+        self.calls["resume"] += 1
+        assert ckpt == "ckpt-1"
+        return f"replica-{self.calls['resume']}"
 
     def destroy(self, handle):
         self.calls["destroy"] += 1
 
+    def delete_snapshot(self, ckpt):
+        self.calls["delete_snapshot"] += 1
 
-def test_run_eval_forked_checkpoints_once_and_forks_n(mock_shinkend, tmp_path):
+
+def test_run_eval_forked_checkpoints_once_and_resumes_golden_n(mock_shinkend, tmp_path):
     prov = _ForkFakeProvider(_factory(mock_shinkend))
     s = ev.run_eval_forked(ev.click_then_type_task(10, 20, "hi"), prov, n=3, out_dir=str(tmp_path))
     assert s.n == 3 and s.passed == 3 and s.pass_rate == 1.0
     assert prov.calls["checkpoint"] == 1  # one golden checkpoint
-    assert prov.calls["fork"] == 3  # one fork per replica
-    assert prov.calls["destroy"] == 4  # 3 forks + the base
+    assert prov.calls["resume"] == 3  # every replica resumes the one golden checkpoint
+    assert prov.calls["destroy"] == 4  # 3 replicas + the base
+    assert prov.calls["delete_snapshot"] == 1  # golden snapshot reclaimed
     assert s.mean_steps == 2.0  # click + type_text per fork
 
 

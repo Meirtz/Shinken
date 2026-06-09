@@ -30,7 +30,7 @@ env.scroll(x=900, y=500, dy=-300)
 shot = env.screenshot()
 ```
 
-These methods are useful, but v0.0.1 also needs agent-native dialects and provider adapters so
+These methods are useful, and Shinken also ships agent-native dialects and provider adapters so
 off-the-shelf agents can drive Shinken unchanged.
 
 ## Canonical Target Kinds
@@ -46,13 +46,14 @@ agent saw and acted on.
 
 ## Provider Adapters
 
-v0.0.1 should include conformance fixtures for:
+Shinken ships fixture-tested adapters (no live API yet) for:
 
 - Anthropic Computer Use.
 - OpenAI Computer Use.
+- Kimi-VL.
 - A Shinken-native action dialect.
 
-Adapters should expose provider/tool version, coordinate transforms, and image resize assumptions so
+Adapters expose provider/tool version, coordinate transforms, and image resize assumptions so
 callers can preserve that context where needed.
 
 ## Batch Actions

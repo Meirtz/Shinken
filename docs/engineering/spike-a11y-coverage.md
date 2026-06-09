@@ -56,8 +56,16 @@ metric set (`named/pct_named`, `actionable/pct_actionable`, `addressable/pct_add
 `max_depth`, …) for any tree.
 
 **Reading the result:** a GTK toolkit dialog exposes a dense, fully-roled tree with usable geometry
-on ~88% of nodes — i.e. the structured fast path is real for native toolkit UI, which is the
-evidence D3 needed. This is **one app**; the multi-app sweep below is scoped, not yet fully run.
+on ~88% of nodes — so the structured path is real *for one native GTK surface*. This is a single app
+and is NOT yet 'the evidence D3 needs': the load-bearing numbers — `pct_addressable` across the full
+surface set, the token/byte size of a tree-diff vs a screenshot, walk latency, and the
+pixel-escalation fraction on browser/Electron/canvas/game surfaces — remain unmeasured. D3's
+structured-default upgrade stays Provisional and spike #2 stays ungated until the multi-app sweep
+below produces those numbers (see [tech-decisions.md](../design/tech-decisions.md) D3,
+[status.md](status.md)).
+
+Note: the zenity row reports roled/bbox coverage but not `pct_addressable` (the metric the report
+itself calls load-bearing); record `pct_addressable` for zenity and every swept app.
 
 ## Per-surface coverage map
 
@@ -90,6 +98,15 @@ Coverage is uneven by design, so the structured path is a *fast path*, not the o
 `capture_ms` (in `observe_structured`) and the serialized element-list size are the measurement
 vehicles for capture latency and bandwidth; a per-app size/latency/token table across the five
 classes is the remaining sweep (it needs a browser + Electron + canvas app present in the image).
+
+**Field priors to fold into the sweep (2026-06, public CUA stacks):** (a) production computer-use
+drivers ship an a11y-first per-window ACI but fall back to pixel clicks on custom-rendered surfaces
+(Blender/games/Electron) via a small-tree heuristic — i.e. the shipped answer is hybrid-per-window,
+not structured-default; (b) a large public verifiable-task dataset (xlang-ai/CUA-Gym,
+https://github.com/xlang-ai/CUA-Gym) ships an a11y passthrough that is never used — its verification
+runs on structured file/app state, not UI trees. Therefore measure a **guest-state probe** (bytes +
+determinism of in-guest file/app-state reads) as a separate structured rung for *verification*,
+distinct from a11y-for-*acting*.
 
 **Caveat (per the spike's success criteria):** public docs must **not** anchor token/bandwidth claims
 to vendor-published numbers without a first-party caveat. The first-party anchor we currently have is

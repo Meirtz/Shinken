@@ -23,14 +23,22 @@ def _valid_aci_action(action: dict) -> dict:
 @pytest.mark.parametrize(
     "tool_input,expected",
     [
-        ({"action": "left_click", "coordinate": [10, 20]},
-         {"verb": "click", "target": {"kind": "point_px", "x": 10, "y": 20}}),
-        ({"action": "right_click", "coordinate": [1, 2]},
-         {"verb": "right_click", "target": {"kind": "point_px", "x": 1, "y": 2}}),
-        ({"action": "double_click", "coordinate": [3, 4]},
-         {"verb": "double_click", "target": {"kind": "point_px", "x": 3, "y": 4}}),
-        ({"action": "mouse_move", "coordinate": [5, 6]},
-         {"verb": "move", "target": {"kind": "point_px", "x": 5, "y": 6}}),
+        (
+            {"action": "left_click", "coordinate": [10, 20]},
+            {"verb": "click", "target": {"kind": "point_px", "x": 10, "y": 20}},
+        ),
+        (
+            {"action": "right_click", "coordinate": [1, 2]},
+            {"verb": "right_click", "target": {"kind": "point_px", "x": 1, "y": 2}},
+        ),
+        (
+            {"action": "double_click", "coordinate": [3, 4]},
+            {"verb": "double_click", "target": {"kind": "point_px", "x": 3, "y": 4}},
+        ),
+        (
+            {"action": "mouse_move", "coordinate": [5, 6]},
+            {"verb": "move", "target": {"kind": "point_px", "x": 5, "y": 6}},
+        ),
         ({"action": "type", "text": "hello"}, {"verb": "type_text", "text": "hello"}),
         ({"action": "key", "text": "ctrl+s"}, {"verb": "key", "keys": "ctrl+s"}),
         ({"action": "screenshot"}, {"verb": "screenshot"}),
@@ -44,8 +52,9 @@ def test_supported_actions_map_to_aci(tool_input, expected):
 
 
 @pytest.mark.parametrize(
+    # scroll_amount is wheel clicks; the ACI wire contract is pixels (×100 per click).
     "direction,key,val",
-    [("down", "dy", 3), ("up", "dy", -3), ("right", "dx", 3), ("left", "dx", -3)],
+    [("down", "dy", 300), ("up", "dy", -300), ("right", "dx", 300), ("left", "dx", -300)],
 )
 def test_scroll_directions(direction, key, val):
     action = A.to_aci_action(
@@ -59,6 +68,35 @@ def test_scroll_directions(direction, key, val):
     assert action["verb"] == "scroll" and action[key] == val
     assert action["target"] == {"kind": "point_px", "x": 0, "y": 0}
     _valid_aci_action(action)
+
+
+def test_scroll_with_held_key_is_unsupported():
+    # a `text` modifier (held key combo) on scroll has no ACI hold semantics — must be a
+    # structured AdapterError, not a silently-dropped modifier.
+    import pytest as _pytest
+
+    from shinken.adapters.base import AdapterError
+
+    with _pytest.raises(AdapterError):
+        A.to_aci_action(
+            {
+                "action": "scroll",
+                "coordinate": [0, 0],
+                "scroll_direction": "down",
+                "scroll_amount": 1,
+                "text": "ctrl",
+            }
+        )
+
+
+def test_modifier_click_is_unsupported():
+    # ctrl+click etc. must not silently degrade to a plain click.
+    import pytest as _pytest
+
+    from shinken.adapters.base import AdapterError
+
+    with _pytest.raises(AdapterError):
+        A.to_aci_action({"action": "left_click", "coordinate": [1, 2], "text": "ctrl"})
 
 
 @pytest.mark.parametrize(

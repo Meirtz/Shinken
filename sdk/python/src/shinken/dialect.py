@@ -61,6 +61,10 @@ _BUTTONS = {"left", "right", "middle"}
 _TAG_RE = re.compile(r"<\s*([a-z_]+)((?:\s+[a-z_]+\s*=\s*(?:\"[^\"]*\"|'[^']*'))*)\s*/?\s*>")
 _ATTR_RE = re.compile(r"([a-z_]+)\s*=\s*(?:\"([^\"]*)\"|'([^']*)')")
 _ACTIONS_RE = re.compile(r"<\s*actions\s*>(.*?)<\s*/\s*actions\s*>", re.DOTALL)
+# An opening-tag candidate (NOT a closing `</tag>`): used to catch a malformed tag (e.g.
+# unquoted `y=420` or uppercase attr) that _TAG_RE skips — which would otherwise drop the
+# action silently and execute a partial plan.
+_TAG_OPEN_RE = re.compile(r"<\s*[A-Za-z_]")
 
 
 def _num(verb: str, attr: str, raw: str) -> float | int:
@@ -107,22 +111,36 @@ def _one(verb: str, attrs: dict[str, str]) -> dict:
 
     if verb in ("done", "stop"):
         return dict(DONE)
-    if "button" in attrs and attrs["button"] not in _BUTTONS:
+    button = attrs.get("button")
+    if button is not None and button not in _BUTTONS:
         raise DialectError(f"<{verb}>: button must be one of {sorted(_BUTTONS)}")
 
     if verb in _POINTING:
         target = _target(verb, attrs)
-        action: dict = {"verb": verb}
-        if target is not None:
-            action["target"] = target
-        return action
+        # The ACI schema + X11 executor require a target for pointing verbs; a targetless
+        # <click/> would validate here but fail at the wire. Require coordinates.
+        if target is None:
+            raise DialectError(f"<{verb}>: a coordinate (x/y or nx/ny) is required")
+        # `button` is honored, never silently dropped: 'left' is the default, 'right' on a
+        # <click> maps to the right_click verb, and anything contradictory ('middle', or a
+        # non-left button on a verb that can't express it) is a teaching error.
+        resolved = verb
+        if button is not None:
+            if button == "right" and verb == "click":
+                resolved = "right_click"
+            elif button != ("right" if verb == "right_click" else "left"):
+                raise DialectError(
+                    f"<{verb}>: button={button!r} is unsupported "
+                    f"(use <right_click> for the right button; 'middle' has no ACI wire verb)"
+                )
+        return {"verb": resolved, "target": target}
     if verb == "scroll":
         action = {"verb": "scroll", "dy": _num(verb, "dy", attrs["dy"])}
         if "dx" in attrs:
             action["dx"] = _num(verb, "dx", attrs["dx"])
-        target = _target(verb, attrs)
-        if target is not None:
-            action["target"] = target
+        # Scroll also requires a target on the wire; default to the screen centre when the
+        # model gives none (matching the adapter behavior) so it doesn't fail at runtime.
+        action["target"] = _target(verb, attrs) or {"kind": "point_norm", "x": 0.5, "y": 0.5}
         return action
     if verb == "type_text":
         return {"verb": "type_text", "text": attrs["text"]}
@@ -152,7 +170,9 @@ def parse_actions(text: str) -> list[dict]:
     block = _ACTIONS_RE.search(text)
     body = block.group(1) if block else text
     actions: list[dict] = []
+    matched_starts: set[int] = set()
     for m in _TAG_RE.finditer(body):
+        matched_starts.add(m.start())
         verb = m.group(1)
         if verb == "actions":
             continue
@@ -160,6 +180,13 @@ def parse_actions(text: str) -> list[dict]:
         for a in _ATTR_RE.finditer(m.group(2) or ""):
             attrs[a.group(1)] = a.group(2) if a.group(2) is not None else (a.group(3) or "")
         actions.append(_one(verb, attrs))
+    # A tag-opener that _TAG_RE did not consume is a malformed tag (unquoted value,
+    # uppercase name/attr, …). Raise a teaching error instead of silently dropping it,
+    # which would execute only the well-formed siblings of a partial plan.
+    for om in _TAG_OPEN_RE.finditer(body):
+        if om.start() not in matched_starts:
+            snippet = body[om.start() : om.start() + 40].splitlines()[0]
+            raise DialectError(f"malformed tag near {snippet!r} (attributes must be quoted)")
     if not actions:
         raise DialectError("no actions found in dialect output")
     return actions

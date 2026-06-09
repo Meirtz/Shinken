@@ -35,9 +35,12 @@ def test_async_screencast_stream(mock_shinkend):
     async def go():
         sb = await aconnect(mock_shinkend)
         try:
-            await sb.astart_screencast(8.0, None, None)
-            frame = await sb.next_frame(2.0)
-            assert frame is None or (frame.get("stream") is not None)
+            stream_id = await sb.astart_screencast(8.0, None, None)
+            # A frame MUST arrive (the mock pushes at the requested fps); accepting a
+            # timeout here would let a broken stream pass. Assert the real shape.
+            frame = await sb.next_frame(5.0)
+            assert frame is not None, "no screencast frame arrived"
+            assert frame["seq"] == 0 and frame["stream"] == stream_id
             await sb.astop_screencast()
         finally:
             await sb.close()

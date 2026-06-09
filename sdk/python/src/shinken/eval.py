@@ -225,6 +225,7 @@ def run_eval_forked(
     out_dir = out_dir or tempfile.mkdtemp(prefix="shinken-fork-eval-")
     os.makedirs(out_dir, exist_ok=True)
     base = provider.create(spec)
+    ckpt: str | None = None
     try:
         # --- reach the golden state once, then checkpoint it ---
         try:
@@ -232,7 +233,7 @@ def run_eval_forked(
             try:
                 if task.setup is not None:
                     task.setup(env0)
-                provider.checkpoint(base)
+                ckpt = provider.checkpoint(base)
             finally:
                 with contextlib.suppress(Exception):
                     env0.close()
@@ -243,16 +244,19 @@ def run_eval_forked(
                 for i in range(n)
             ]
             return _summarize(task.name, n, res)
-        # --- N forked replicas from the golden checkpoint ---
+        # --- N replicas materialized from the SINGLE golden checkpoint ---
+        # resume(ckpt) launches each replica from the exact committed image, so all N
+        # start from the identical golden state. (Previously this forked the live base,
+        # taking N separate commits at different moments — replicas could drift apart.)
         results: list[RunResult] = []
         for i in range(n):
             env = None
             handle = None
             try:
-                handle = provider.fork(base)
+                handle = provider.resume(ckpt)
                 env = provider.connect(handle)
                 results.append(_score_replica(i, env, task))
-            except Exception as exc:  # fork/connect failure for this replica
+            except Exception as exc:  # resume/connect failure for this replica
                 results.append(
                     RunResult(i, False, 0, 0.0, VerifierReceipt(False, []), f"error: {exc}")
                 )
@@ -267,6 +271,11 @@ def run_eval_forked(
     finally:
         with contextlib.suppress(Exception):
             provider.destroy(base)
+        # Reclaim the golden snapshot image so repeated eval runs don't accumulate
+        # committed images until the Docker disk fills (#... image leak).
+        if ckpt is not None and hasattr(provider, "delete_snapshot"):
+            with contextlib.suppress(Exception):
+                provider.delete_snapshot(ckpt)
 
 
 # --- deterministic task fixtures (#86) ------------------------------------------------

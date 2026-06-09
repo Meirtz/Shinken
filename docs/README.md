@@ -11,8 +11,9 @@ engineering plans do not fight each other.
 | [`design/`](design/README.md) | Maintainers, architecture reviewers | Full CUA infrastructure scope, decisions, tradeoffs, target architecture |
 | [`engineering/`](engineering/README.md) | Implementers | v0.0.1 plan, current status, release gates, active milestone alignment |
 
-Until the files are physically moved, most canonical docs remain in this directory. Use the table
-below to understand their role.
+The numbered `0X-*.md` files (`00-vision.md` … `11-aci-spec.md` plus `STATUS.md`) are now thin
+compatibility stubs that preserve old external links; the canonical copies live in `design/` and
+`engineering/` per the table below.
 
 ## Canonical Files
 

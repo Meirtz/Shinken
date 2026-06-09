@@ -12,6 +12,25 @@ import threading
 import pytest
 from websockets.asyncio.server import serve
 
+from shinken import protocol
+
+# Verbs this mock advertises and will accept — kept in sync with the real runtime's
+# advertised set so the mock rejects a verb the runtime would not implement (instead of
+# acking any unknown verb ok=True, which would let emitted-verb drift pass silently).
+_MOCK_VERBS = {
+    "click",
+    "double_click",
+    "right_click",
+    "move",
+    "scroll",
+    "type_text",
+    "key",
+    "screenshot",
+    "start_screencast",
+    "stop_screencast",
+    "wait",
+}
+
 # A valid 1x1 PNG (signature + IHDR/IDAT/IEND), base64-encoded.
 _PNG_1X1 = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAen63NgAAAAASUVORK5CYII="
@@ -75,7 +94,42 @@ async def _handler(ws) -> None:
     state = {"typed": "", "keys": [], "clicks": [], "moves": [], "scrolls": []}
     async for raw in ws:
         msg = json.loads(raw)
+        # Validate every inbound frame against the ACI schema, so SDK-emitted wire drift
+        # (an out-of-contract field, a fps over the schema max, a malformed target) fails a
+        # test instead of being silently acked ok=True. The lone exemption is the test-only
+        # `query q="state"` channel the eval verifiers use to read the mock's recorded
+        # effects — it is not part of the real ACI query enum.
+        is_state_query = msg.get("type") == "query" and msg.get("q") == "state"
+        try:
+            if not is_state_query:
+                protocol.validate(msg)
+        except Exception as exc:  # noqa: BLE001 — surface any schema violation to the client
+            await ws.send(
+                json.dumps(
+                    {
+                        "type": "ack",
+                        "call_id": msg.get("call_id", "?"),
+                        "ok": False,
+                        "error": f"schema violation: {exc}",
+                    }
+                )
+            )
+            continue
         kind = msg.get("type")
+        if kind == "action":
+            verb = (msg.get("action") or {}).get("verb")
+            if verb not in _MOCK_VERBS:
+                await ws.send(
+                    json.dumps(
+                        {
+                            "type": "ack",
+                            "call_id": msg.get("call_id", "?"),
+                            "ok": False,
+                            "error": f"unsupported verb: {verb}",
+                        }
+                    )
+                )
+                continue
         if kind == "hello":
             await ws.send(
                 json.dumps(
@@ -85,15 +139,7 @@ async def _handler(ws) -> None:
                         "server": {"name": "mock-shinkend", "version": "0", "platform": "linux"},
                         "capabilities": {
                             "schema_version": 0,
-                            "verbs": [
-                                "click",
-                                "type_text",
-                                "key",
-                                "screenshot",
-                                "start_screencast",
-                                "stop_screencast",
-                                "wait",
-                            ],
+                            "verbs": sorted(_MOCK_VERBS),
                             "targets": ["point_px", "element_ref"],
                             "observation_types": ["a11y", "screenshot", "screencast"],
                             "max_long_edge": 2576,

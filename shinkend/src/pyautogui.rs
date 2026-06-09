@@ -28,7 +28,14 @@ elif verb == "double_click":
 elif verb == "right_click":
     pyautogui.click(float(args[0]), float(args[1]), button="right")
 elif verb == "scroll":
-    pyautogui.scroll(int(float(args[0])))
+    # args: vertical wheel clicks, horizontal wheel clicks (already sign-corrected
+    # for pyautogui by the Rust side, so this backend matches the X11 backend).
+    v = int(args[0])
+    if v:
+        pyautogui.scroll(v)
+    h = int(args[1]) if len(args) > 1 else 0
+    if h and hasattr(pyautogui, "hscroll"):
+        pyautogui.hscroll(h)
 elif verb == "type_text":
     pyautogui.typewrite(args[0])
 elif verb == "key":
@@ -63,6 +70,20 @@ impl PyAutoGuiExecutor {
     }
 }
 
+/// Pixel delta → signed, bounded wheel-click count (matches the X11 backend's
+/// ~100 px/click step and 1..=20 clamp; 0 px → 0 clicks, i.e. no scroll on that axis).
+fn scroll_clicks(px: f64) -> i32 {
+    if px == 0.0 {
+        return 0;
+    }
+    let steps = ((px.abs() / 100.0).ceil() as i32).clamp(1, 20);
+    if px > 0.0 {
+        steps
+    } else {
+        -steps
+    }
+}
+
 fn point_px(action: &ActionSpec) -> Result<(f64, f64)> {
     match &action.target {
         Some(Target::PointPx { x, y }) => Ok((*x, *y)),
@@ -90,8 +111,16 @@ pub fn build_argv(python: &str, action: &ActionSpec) -> Result<Vec<String>> {
             argv.push(y.to_string());
         }
         "scroll" => {
-            let dy = action.dy.context("scroll requires dy")?;
-            argv.push(dy.to_string());
+            let dx = action.dx.unwrap_or(0.0);
+            let dy = action.dy.unwrap_or(0.0);
+            if dx == 0.0 && dy == 0.0 {
+                bail!("scroll requires a nonzero dx or dy");
+            }
+            // Wire dx/dy are pixels with +dy = down (ACI convention). pyautogui.scroll's
+            // positive direction is UP, so negate the vertical clicks; hscroll's positive
+            // is right, matching +dx. Magnitude tracks the X11 backend (~100 px / click).
+            argv.push((-scroll_clicks(dy)).to_string());
+            argv.push(scroll_clicks(dx).to_string());
         }
         "type_text" => {
             argv.push(action.text.clone().context("type_text requires text")?);
@@ -166,8 +195,19 @@ mod tests {
         let k = build_argv("py", &spec(json!({"verb": "key", "keys": "ctrl+s"}))).unwrap();
         assert_eq!(&k[3..], &["key".to_string(), "ctrl+s".to_string()]);
 
-        let s = build_argv("py", &spec(json!({"verb": "scroll", "dy": -3}))).unwrap();
-        assert_eq!(&s[3..], &["scroll".to_string(), "-3".to_string()]);
+        // dy=-300 (up, 3 clicks). pyautogui.scroll is +=up, so the vertical arg is +3;
+        // horizontal arg is 0. This matches the X11 backend's direction + magnitude.
+        let s = build_argv("py", &spec(json!({"verb": "scroll", "dy": -300}))).unwrap();
+        assert_eq!(
+            &s[3..],
+            &["scroll".to_string(), "3".to_string(), "0".to_string()]
+        );
+        // +dy = down → negative pyautogui clicks; +dx = right → positive horizontal arg.
+        let sd = build_argv("py", &spec(json!({"verb": "scroll", "dy": 100, "dx": 200}))).unwrap();
+        assert_eq!(
+            &sd[3..],
+            &["scroll".to_string(), "-1".to_string(), "2".to_string()]
+        );
 
         let w = build_argv("py", &spec(json!({"verb": "wait", "ms": 500}))).unwrap();
         assert_eq!(&w[3..], &["wait".to_string(), "0.5".to_string()]);

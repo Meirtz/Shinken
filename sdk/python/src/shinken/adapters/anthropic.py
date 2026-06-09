@@ -9,7 +9,13 @@ https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/computer-use-tool
 
 from __future__ import annotations
 
-from .base import AdapterError, image_size, point_px, screenshot_image_block
+from .base import (
+    SCROLL_PX_PER_CLICK,
+    AdapterError,
+    image_size,
+    point_px,
+    screenshot_image_block,
+)
 
 #: Anthropic computer-use tool version this adapter targets (public, versioned contract).
 TOOL_VERSION = "computer_20250124"
@@ -54,6 +60,12 @@ class AnthropicComputerUseAdapter:
             if text is None:
                 raise AdapterError("type", "missing 'text'")
             return {"verb": "type_text", "text": str(text)}
+        # Anthropic permits a `text` modifier (a key combo held during the action) on
+        # clicks and scroll. ACI v0 has no hold semantics, so a modifier-click would
+        # silently degrade to a plain click — surface it as unsupported instead (matching
+        # the UNSUPPORTED policy) rather than changing the model's intent.
+        if text and action in ("left_click", "right_click", "double_click", "scroll"):
+            raise AdapterError(action, "modifier key held during click/scroll unsupported")
         if action == "mouse_move":
             return {"verb": "move", "target": point_px(coord)}
         if action == "left_click":
@@ -112,9 +124,11 @@ def _scroll(coord: object, tool_input: dict) -> dict:
         raise AdapterError("scroll", f"invalid scroll_direction {direction!r}")
     if isinstance(amount, bool) or not isinstance(amount, int | float) or amount < 0:
         raise AdapterError("scroll", f"invalid scroll_amount {amount!r}")
+    # scroll_amount is a count of wheel clicks; the ACI wire contract is pixels.
+    px = amount * SCROLL_PX_PER_CLICK
     act: dict = {"verb": "scroll", "target": point_px(coord)}
     if direction in ("left", "right"):
-        act["dx"] = -amount if direction == "left" else amount
+        act["dx"] = -px if direction == "left" else px
     else:
-        act["dy"] = -amount if direction == "up" else amount
+        act["dy"] = -px if direction == "up" else px
     return act

@@ -29,6 +29,9 @@ def _act(verb, **kw):
     "msg",
     [
         {"type": "hello", "v": 0, "client": {"name": "x", "version": "0"}},
+        # the authenticated handshake the Rust runtime requires and the client sends must
+        # validate against the schema (the schema previously forbade the `token` field)
+        {"type": "hello", "v": 0, "client": {"name": "x", "version": "0"}, "token": "shk_abc"},
         _act("start_screencast", fps=10, max_long_edge=640),
         _act("stop_screencast"),
         _act("screenshot", scope="active_window"),

@@ -63,17 +63,20 @@ manual markers. The replay lets a user find the point; checkpoint/fork/resume ma
 ## Privacy
 
 Replay bundles are sensitive. Screenshots, DOM/a11y values, artifacts, file paths, and permission
-events can contain private data. Recording supports a redaction posture via `connect(...,
-redaction=...)` (#206):
+events can contain private data. **No redaction API exists today** — the recording surface itself is
+deferred (see Current Status). These are design-future requirements for when recording returns; do
+not call any redaction parameter yet.
 
-- `"none"` (default) — full text + media bytes.
-- `"text"` — strip typed text, key chords, element name/value, permission reasons, and verifier
-  evidence (recorded as `[redacted]`); media bytes kept.
-- `"media"` — **metadata-only media**: keep each frame's `w`/`h`/`scope`/`sha256` (content
-  identity) but **not** the PNG bytes; text kept.
-- `"full"` — both (privacy-safe).
+When the recording surface returns, it should support a redaction posture chosen at connect time,
+covering at least:
 
-The redaction posture is recorded in the `.skn` manifest. (The lower-level `redact_media` /
-`redact_text` flags are equivalent.) Making `"full"` the **default when recording** is planned but
-deferred — it needs eval/verifier fidelity handling, since a verifier inspects recorded content
-(#206).
+- A **no-redaction** mode keeping full text + media bytes.
+- A **text-redaction** mode that strips typed text, key chords, element name/value, permission
+  reasons, and verifier evidence while keeping media bytes.
+- A **media-redaction** mode that keeps each frame's content identity (dimensions / scope / hash)
+  but not the raw pixel bytes.
+- A **fully-redacted** mode combining both.
+
+The chosen posture should be recorded in the `.skn` manifest. Whether full redaction becomes the
+default when recording is an open question — it needs eval/verifier fidelity handling, since a
+verifier inspects recorded content.

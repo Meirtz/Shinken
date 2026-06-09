@@ -130,6 +130,12 @@ Full-suite requirements:
   - per-app pass rate where task metadata allows grouping.
 - Support concurrency only after sequential correctness is stable.
 
+## Parity discipline
+
+Eval scores are only defensible if they are comparable to the official OSWorld harness, so the bring-up keeps a parity ledger and emits parity warnings:
+- Whenever a knob deviates from the upstream OSWorld defaults (e.g. setup-settle wait, max-steps, sleep-after-action, max-tokens, screenshot history depth), log an explicit one-line **OSWorld parity warning** at run start naming the deviation — silent divergence from upstream defaults is the fastest way to produce an unreproducible number.
+- Maintain a behavior-alignment ledger in this doc recording every intentional divergence from upstream OSWorld behavior (e.g. WAIT semantics, DONE/FAIL screenshot timing) and the reference parameters/scores it was validated against. Vendor the official evaluator and run its getters/metrics unmodified so a score is defensible against the upstream harness (see [OSWorld](https://github.com/xlang-ai/OSWorld)).
+
 ## Implementation Work Items
 
 ### 1. Guest Injection

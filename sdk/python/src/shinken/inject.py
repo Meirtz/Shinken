@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import os
 import shlex
+import socket
 import subprocess
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
@@ -127,7 +129,10 @@ def _start_command(target: InjectionTarget, args: list[str] | None) -> str:
     env = f"SHINKEND_ADDR={shlex.quote(f'{host}:{target.port}')}"
     if target.token:
         env += f" SHINKEND_TOKEN={shlex.quote(target.token)}"
-    return f"{env} {shlex.quote(target.remote_bin)} {' '.join(args or [])}".rstrip()
+    # Quote each arg: these are argv entries, not a shell fragment — an unquoted value with
+    # a space/quote/`;`/`$()` would otherwise be re-interpreted by the bash/sh that runs it.
+    quoted_args = " ".join(shlex.quote(a) for a in (args or []))
+    return f"{env} {shlex.quote(target.remote_bin)} {quoted_args}".rstrip()
 
 
 def _nohup_bg(start_cmd: str) -> str:
@@ -151,7 +156,10 @@ class DockerExecInjector:
         db, rb = target.docker_bin, target.remote_bin
         _run([db, "cp", binary, f"{target.container}:{rb}"])
         _run([db, "exec", target.container, "chmod", "+x", rb])
-        _run([db, "exec", "-d", target.container, "bash", "-lc", _start_command(target, args)])
+        # Redirect to a log (parity with the ssh/osworld paths) so a startup failure
+        # (wrong-arch binary, missing libs, port in use) can be surfaced on a readiness miss.
+        start = f"{_start_command(target, args)} >/tmp/shinkend.log 2>&1"
+        _run([db, "exec", "-d", target.container, "bash", "-lc", start])
         return _addr(target)
 
 
@@ -163,12 +171,17 @@ class SshInjector:
     def inject(self, target: InjectionTarget, binary: str, *, args: list[str] | None = None) -> str:
         if not target.ssh_host:
             raise InjectionError("ssh injection requires target.ssh_host")
+        # Reject a host that could be parsed as an ssh/scp option (e.g. "-oProxyCommand=…");
+        # such a value would be argument-injection into the ssh client, not a hostname.
+        if target.ssh_host.startswith("-") or (target.ssh_user or "").startswith("-"):
+            raise InjectionError(f"invalid ssh_host/ssh_user (leading '-'): {target.ssh_host!r}")
         ident = ["-i", target.ssh_key] if target.ssh_key else []
         dest = f"{target.ssh_user + '@' if target.ssh_user else ''}{target.ssh_host}"
         rb = target.remote_bin
-        _run(["scp", "-P", str(target.ssh_port), *ident, binary, f"{dest}:{rb}"])
+        # `--` ends option parsing so the dest/operands can't be read as flags.
+        _run(["scp", "-P", str(target.ssh_port), *ident, "--", binary, f"{dest}:{rb}"])
         start = f"chmod +x {shlex.quote(rb)} && {_nohup_bg(_start_command(target, args))}"
-        _run(["ssh", "-p", str(target.ssh_port), *ident, dest, start])
+        _run(["ssh", "-p", str(target.ssh_port), *ident, "--", dest, start])
         return target.reachable_addr or f"{target.ssh_host}:{target.port}"
 
 
@@ -227,6 +240,22 @@ register("ssh", SshInjector)
 register("osworld-exec", OSWorldExecInjector)
 
 
+def _wait_reachable(addr: str, timeout: float) -> bool:
+    """Poll a ``host:port`` until a TCP connection succeeds (shinkend has bound its port) or
+    the deadline passes. A bare connect is enough to prove the process started — the SDK
+    does the auth handshake afterwards."""
+    host, _, port = addr.rpartition(":")
+    host = host or "127.0.0.1"
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection((host, int(port)), timeout=2.0):
+                return True
+        except OSError:
+            time.sleep(0.2)
+    return False
+
+
 def inject_shinkend(
     target: InjectionTarget,
     binary: str,
@@ -234,16 +263,26 @@ def inject_shinkend(
     method: str,
     args: list[str] | None = None,
     require_token: bool = True,
+    readiness_timeout: float = 10.0,
 ) -> InjectionResult:
     """Place ``binary`` into the sandbox ``target`` and start it on ``target.port`` via the
     chosen ``method`` (an injector name). The user MUST pick ``method``; an unknown method or a
     method that cannot reach the sandbox raises :class:`InjectionError` (no silent fallback).
 
     A token is generated (so a reachable ``0.0.0.0`` bind is allowed) unless ``require_token``
-    is False or ``target.token`` is preset. Returns the ``(addr, token)`` the SDK connects with."""
+    is False or ``target.token`` is preset. After starting (the injectors run detached), the
+    bound port is polled for up to ``readiness_timeout`` seconds — so a binary that died at
+    startup (wrong arch, missing libs, port in use) raises here instead of leaving the SDK to
+    fail on connect. Pass ``readiness_timeout=0`` to skip the check. Returns ``(addr, token)``."""
     if not os.path.exists(binary):
         raise InjectionError(f"shinkend binary not found: {binary}")
     if target.token is None and require_token:
         target.token = _gen_token()
     addr = get(method).inject(target, binary, args=args)
+    if readiness_timeout and not _wait_reachable(addr, readiness_timeout):
+        raise InjectionError(
+            f"shinkend did not become reachable at {addr} within {readiness_timeout}s "
+            f"(method={method!r}); check the guest log at /tmp/shinkend.log — the binary may "
+            f"have failed to start (wrong architecture, missing libraries, or port in use)."
+        )
     return InjectionResult(addr=addr, token=target.token)

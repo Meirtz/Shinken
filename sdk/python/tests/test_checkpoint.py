@@ -17,8 +17,8 @@ class _FakeProvider:
     def __init__(self) -> None:
         self.calls: list[tuple] = []
 
-    def checkpoint(self, handle, *, event_seq=None, agent_state_ref=None) -> str:
-        self.calls.append(("checkpoint", handle, event_seq, agent_state_ref))
+    def checkpoint(self, handle, *, name=None, event_seq=None, agent_state_ref=None) -> str:
+        self.calls.append(("checkpoint", handle, name, event_seq, agent_state_ref))
         return "ckpt-abc"
 
     def fork(self, handle):
@@ -38,7 +38,8 @@ def test_sandbox_checkpoint_calls_provider(mock_shinkend):
         ckpt = env.checkpoint("task-1", agent_state_ref="agent://s")
         assert ckpt == "ckpt-abc"
 
-    assert fake.calls == [("checkpoint", handle, None, "agent://s")]
+    # the checkpoint name is now threaded through to the provider (#... name was dropped)
+    assert fake.calls == [("checkpoint", handle, "task-1", None, "agent://s")]
 
 
 def test_sandbox_fork_and_resume_call_provider(mock_shinkend):

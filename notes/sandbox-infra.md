@@ -1,6 +1,6 @@
 # Sandbox Infrastructure — the substrate tier
 
-> **Status:** drafting · **Date:** 2026-05-30 · **Owner:** the maintainers
+> **Status:** drafting · **Date:** 2026-05-30 · **Owner:** sandbox-infra workstream
 > Working note feeding [`../docs/design/architecture.md`](../docs/design/architecture.md) and [`../docs/design/tech-decisions.md`](../docs/design/tech-decisions.md).
 > Reconciles to **D1** (tiered, substrate-pluggable isolation), **D9** (Fleet Manager / control plane), **D10** (cross-platform), **D11** (optional GPU tier).
 > Siblings: [streaming-bandwidth.md](streaming-bandwidth.md) · [replay.md](replay.md) · [permissions.md](permissions.md) · [ai-native-interface.md](ai-native-interface.md) · [sources.md](sources.md).

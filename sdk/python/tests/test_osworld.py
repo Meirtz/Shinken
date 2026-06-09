@@ -97,18 +97,19 @@ def test_evaluate_fail_terminal_scores_zero(mock_shinkend):
 
 
 def test_scroll_sign_and_dx_consistent_across_action_spaces(mock_shinkend):
-    # OSWorld/pyautogui use +y=up / +x=right; ACI uses +dy=down / +dx=right. So vertical is
-    # negated and horizontal passes through — and both action spaces must agree (the bug fix).
+    # OSWorld/pyautogui count wheel CLICKS with +y=up / +x=right; the ACI wire is PIXELS
+    # with +dy=down / +dx=right. So vertical is negated and both axes convert clicks→px
+    # (×100/click, matching the adapter boundary) — and both action spaces must agree.
     env = DesktopEnv(address=mock_shinkend)
     try:
         env.reset()
         env.step({"action_type": "SCROLL", "dy": 5, "dx": 2})  # computer_13
-        env.step("pyautogui.scroll(5)")  # vertical, +5 = up → ACI dy = -5
-        env.step("pyautogui.hscroll(3)")  # horizontal, +3 = right → ACI dx = +3
+        env.step("pyautogui.scroll(5)")  # vertical, +5 clicks up → ACI dy = -500 px
+        env.step("pyautogui.hscroll(3)")  # horizontal, +3 clicks right → ACI dx = +300 px
         scrolls = env._env.query("state")["scrolls"]
-        assert scrolls[0] == {"dx": 2, "dy": -5}  # computer_13: dy negated, dx forwarded
-        assert scrolls[1] == {"dx": None, "dy": -5}  # pyautogui scroll matches computer_13 sign
-        assert scrolls[2] == {"dx": 3, "dy": 0}  # hscroll → dx, not caught by scroll() regex
+        assert scrolls[0] == {"dx": 200, "dy": -500}  # computer_13: dy negated, clicks→px
+        assert scrolls[1] == {"dx": None, "dy": -500}  # pyautogui scroll matches the sign
+        assert scrolls[2] == {"dx": 300, "dy": 0}  # hscroll → dx, not caught by scroll() regex
     finally:
         env.close()
 

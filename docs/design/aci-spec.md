@@ -97,9 +97,12 @@ target = oneof{ point_px{x,y} | point_norm{x,y∈0..1} | element_ref{ref, source
 ```
 
 Every observation carries a `CoordinateSpace {origin, w, h, dpr}`; coordinate normalization lives in
-the protocol, once. v0 verbs: `click, double_click, right_click, move, scroll, type_text, key,
-screenshot, wait`. **Code-as-action** (`run`/bash/edit) is a separate, **off-by-default** capability
-class behind the policy boundary (D6) — expressive, but gated and auditable.
+the protocol, once. v0 verbs (11, matching the `Verb` enum in
+[`../../schema/aci.schema.json`](../../schema/aci.schema.json) and the runtime's advertised
+capabilities): `click, double_click, right_click, move, scroll, type_text, key, screenshot,
+start_screencast, stop_screencast, wait`. **Code-as-action** (`run`/bash/edit) is a separate,
+**off-by-default** capability class behind the policy boundary (D6) — expressive, but gated and
+auditable.
 
 ### 3.1 Action execution taxonomy
 
@@ -198,7 +201,8 @@ The P0 deep-dive splits evidence from runnable state:
 - **(A) `.skn` layered bundle** (cross-OS, the debug/audit/train artifact): append-only event log
   (the source of truth, = the live stream) + checkpoint/snapshot references + an **on-demand VIDEO
   sidecar**. Storage levers from day one: content-addressed `resources/<sha256>` dedup, full-snapshot
-  + typed-delta observations (`a11y_delta`/`png_diff`). Wire form in [`../../schema/skn.schema.json`](../../schema/skn.schema.json).
+  + typed-delta observations (`a11y_delta`/`png_diff`). The `.skn` recording surface was removed and
+  deferred (#216/#217); the `.skn` wire form will be defined when that surface returns (see D5).
 - **(B) Runtime state**: provider snapshots, Shinken checkpoints, restore/resume operations, and
   fork-from-checkpoint. This is what makes a desktop live again. `.skn` points at it; `.skn` does not
   replace it.

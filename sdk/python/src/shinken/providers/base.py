@@ -154,12 +154,14 @@ class SandboxProvider:
         self,
         handle: SandboxHandle,
         *,
+        name: str | None = None,
         event_seq: int | None = None,
         agent_state_ref: str | None = None,
     ) -> str:
         """Create a named Shinken restore point binding a substrate snapshot to optional
         agent state — the node in the checkpoint DAG (D5). Returns a checkpoint id.
-        Unsupported by default."""
+        ``name`` is an optional human label for the underlying snapshot. Unsupported by
+        default."""
         raise UnsupportedProviderOperation(f"{self.capabilities.name} does not support checkpoint")
 
     def resume(self, handle_or_checkpoint: SandboxHandle | str) -> SandboxHandle:

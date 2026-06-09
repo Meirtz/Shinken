@@ -31,6 +31,7 @@ sandbox image), not just by design.
 | **Bandwidth levers**: idle-frame suppression + resolution downscale (`max_long_edge`) | done | #48/#54 — live: 1280×800→640×400, ~3.4× smaller |
 | **Focused-window / region capture** (`scope`: `screen` / `active_window` / `window:<id>`) | done | #55 — live `xclock` `window:<id>` → 200×200 |
 | Python SDK: sync facade + async core, reader/demux (RPC vs server-push) | done | #51 |
+| TypeScript control-surface SDK (`sdk/typescript/`) | done | tracked + CI-tested (dedicated `SDK (TypeScript)` job) |
 | OSWorld `DesktopEnv` compatibility shim | done | #32 |
 | CU provider adapters (Anthropic, OpenAI, **Kimi-VL**) → canonical ACI | done | fixture-tested, no live API; #75/#76 + Kimi-VL |
 | **Agent-runtime narrow waist** (`shinken.runtime`: Session/rollout/Trajectory, zero scorer/reward) + **Workload registry** | done | #220/#221/#227 · [agent-runtime.md](../design/agent-runtime.md) |
@@ -40,16 +41,17 @@ sandbox image), not just by design.
 | Tiny eval harness + **`run_eval_forked`** (golden-checkpoint → fork-N → score) | done | #86/#87/#206/#231 — non-vacuous verifiers, unit-tested |
 | Wheel packaging (schemas bundled), idempotent close | done | #40 |
 | Docker Linux sandbox image | done | #45 — build + token handshake + screenshot in CI |
-| CI: 7 jobs (guard, schema, Rust, SDK, wheel, live Xvfb integration, Docker) | done | every PR |
+| CI: 9 jobs (guard, schema sanity, `shinkend` Rust, v0.0.1 contract gate, Python SDK, TypeScript SDK, wheel install, live Xvfb integration, Docker sandbox image) | done | every PR |
 
 ## 🟡 Partial / wired-but-stubbed
 
 | Item | Reality |
 |---|---|
 | `element_ref` action targets | Present in the wire contract, but resolution **bails** — needs the a11y/observation engine (below) |
-| Wire schema vs implementation | The runtime/SDK emit verbs/fields (`start_screencast`, `screencast`, `scope`, `fps`, `max_long_edge`, `stream`/`seq`) that **`schema/aci.schema.json` does not yet validate** — tracked in #56 |
-| Hardening | A 22-finding adversarial review (incl. an unbounded-frame-queue OOM vector) is open as #56 |
-| **Runtime state** (snapshot/restore/resume/fork/checkpoint) | **Implemented on the Docker disk tier** (#209, via `docker commit` + container launch) behind the provider interface (#207); Docker advertises `supports_snapshot/fork/checkpoint/resume`, `snapshot_kind="disk"`. SDK `sandbox.checkpoint()`, `sandbox.fork()`, and `sandbox.resume()` expose the provider operations, and `eval.run_eval_forked` runs the golden→fork-N→score loop over them (#231). Still missing: the CRIU memory tier and the sub-ms CoW fast tier (#206) |
+| Wire schema vs implementation | The screencast wire vocabulary (`start_screencast`/`stop_screencast`, `screencast`, `scope`, `fps`, `max_long_edge`, `stream`/`seq`) is now **validated by `schema/aci.schema.json` and exercised by the contract gate** (#187); the authenticated handshake (`hello.token`) is schema-valid and contract-tested. The remaining #56 gap is the **error taxonomy** (`sandbox_died`, typed per-action status, trajectory exit reason) and **screencast reconnect semantics** (`stream`/`seq` resume/ack) — specified in [v0.0.1-plan §6](v0.0.1-plan.md), not yet implemented |
+| Hardening | The 2026-06 review sweep landed the queue bounds (writer channel bounded + default frame-size cap), the pre-auth upgrade/write deadlines, and the vacuous-test fixes ([recalibration inventory](recalibration-2026-06.md) §3–§5); #56 stays open for the error-taxonomy + reconnect residue above |
+| **Runtime state** (snapshot/restore/resume/fork/checkpoint) | **Implemented on the Docker disk tier** (#209, via `docker commit` + container launch) behind the provider interface (#207); Docker advertises `supports_snapshot/fork/checkpoint/resume`, `snapshot_kind="disk"`. SDK `sandbox.checkpoint()`, `sandbox.fork()`, and `sandbox.resume()` expose the provider operations, and `eval.run_eval_forked` runs the golden→fork-N→score loop over them (#231). Still missing: the CRIU memory tier and the sub-ms CoW fast tier (#206). **Competitive time-box (2026-06):** trycua/cua now ships cloud-only snapshot + CoW fork ("instant on btrfs", 1–5 s typical — vendor-published, unverified) and Agentix roadmaps "checkpoint/partial rollout … then fork" — but **no one ships a harness-integrated golden-checkpoint → fork-N → score loop** (cua-bench recreates the sandbox per reset; uni-agent/CUA-Gym/Agentix cold-boot per rollout). `run_eval_forked` is the unshipped wedge; first-party fork-vs-cold-boot numbers should be published while the lead exists. See [landscape](../design/landscape.md) |
+| **Local capability gateway** (Action Gateway shim + capability envelope + ask-tier) | **Built** as an SDK-process shim (`sdk/python/src/shinken/gateway.py` + tests): records the session capability envelope and routes boundary requests through an allow/ask/deny decision. This is the v0.0.1 audit/policy seam, **not** the production enforcement gate (no Cedar/ocap/OS layer) — see Designed-only below |
 
 ## 🔵 Designed-only — documented, **not implemented**
 
@@ -57,7 +59,7 @@ These appear in the vision/PRD/architecture/README in present-ish tense, but **n
 
 - **Cross-platform**: macOS and Windows tiers (today: Linux only). Even on Linux, capture/input is **X11 only** — **Wayland** (the modern Linux default) is unaddressed and would break XTEST/GetImage.
 - **Structured / accessibility observation (ADR D3)** — a **guest-runtime** a11y/CDP observation engine + element-ref resolution **does not exist** in `shinkend` (element_ref resolution still bails). SDK-local AT-SPI/CDP helpers (`a11y.py`, `cdp.py`) ship as the #2 coverage-spike harness, but they run in the SDK process — not the runtime — so this remains the core *un-shipped* differentiator.
-- **Permission / capability panel + enforcement gate** — described as a headline feature; currently docs only.
+- **Capability Manager panel + production enforcement gate** — the headline 3-layer model (Cedar decision + object-capability caretaker + OS enforcement + egress proxy + secret broker). Only the **local Action Gateway shim** exists today (see Partial, above); the production enforcement gate is **not implemented**.
 - **Runtime-state memory + fast tier** — the Docker **disk** tier is implemented (see Partial, above); the **CRIU memory checkpoint** (`snapshot_kind="process"`) and the **sub-second CoW fork-from-snapshot fast tier** (Firecracker/QEMU) are **not built** and stay Phase-1, gated on a first-party latency spike. Runtime-state time-travel is the **headline differentiator** (D1/D5, #206).
 - **Replay / `.skn` recording and playback** — deferred to later design work; no runtime or SDK implementation is shipped now.
 - **Control plane + ultra-high-concurrency / multi-tenant orchestration** — a single local `shinkend` is all that exists.

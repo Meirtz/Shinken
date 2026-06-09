@@ -10,7 +10,10 @@ permissions:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Never cancel an in-progress run on main: with no branch protection (issue #52), a
+  # cancelled main run would leave a commit with no completed CI. Only PR/branch runs
+  # are superseded by newer pushes.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   guard:
@@ -26,12 +29,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Validate JSON schemas (if any)
+      - name: Validate JSON schemas (parse + JSON-Schema metaschema)
         run: |
           shopt -s globstar nullglob
           files=(schema/**/*.json schema/*.json)
-          if [ ${#files[@]} -eq 0 ]; then echo "no schemas yet — skipping"; exit 0; fi
-          python3 -c "import json,sys;[json.load(open(f)) for f in sys.argv[1:]];print('all schemas parse:', len(sys.argv)-1)" "${files[@]}"
+          # Fail closed: the contract schema must exist (it is load-bearing), and each file
+          # must be both valid JSON AND a structurally valid JSON Schema (not just parseable).
+          if [ ${#files[@]} -eq 0 ]; then echo "::error::no schema files found under schema/"; exit 1; fi
+          pip install -q jsonschema
+          python3 - "${files[@]}" <<'PY'
+          import json, sys
+          from jsonschema.validators import validator_for
+          for f in sys.argv[1:]:
+              schema = json.load(open(f))
+              validator_for(schema).check_schema(schema)  # raises on a malformed schema
+              print("valid JSON Schema:", f)
+          PY
 
   shinkend:
     name: shinkend (Rust)
@@ -49,10 +62,10 @@ jobs:
         working-directory: shinkend
         run: |
           cargo fmt --all -- --check
-          cargo clippy --all-targets -- -D warnings
-          cargo test --all
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked --all
       - if: steps.present.outputs.exists == 'false'
-        run: echo "shinkend/ not present yet — skipping"
+        run: echo "::error::shinkend/Cargo.toml missing — this gate must not be skipped"; exit 1
 
   contract:
     name: v0.0.1 contract gate
@@ -73,51 +86,44 @@ jobs:
           pip install -e ".[dev]"
           pytest tests/test_contract.py -q   # v0.0.1 contract: fails on schema/runtime drift
       - if: steps.present.outputs.go == 'false'
-        run: echo "contract tests not present yet — skipping"
+        run: echo "::error::sdk/python/tests/test_contract.py missing — the contract gate must not be skipped"; exit 1
 
   sdk-python:
     name: SDK (Python)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # pyproject declares requires-python >=3.10; exercise the floor and a recent ver.
+        python-version: ["3.10", "3.13"]
     steps:
       - uses: actions/checkout@v6
-      - id: present
-        run: |
-          if [ -d sdk/python ]; then echo "exists=true" >> "$GITHUB_OUTPUT"; else echo "exists=false" >> "$GITHUB_OUTPUT"; fi
-      - if: steps.present.outputs.exists == 'true'
-        uses: actions/setup-python@v6
+      - run: test -d sdk/python || { echo "::error::sdk/python missing — this gate must not be skipped"; exit 1; }
+      - uses: actions/setup-python@v6
         with:
-          python-version: "3.11"
-      - if: steps.present.outputs.exists == 'true'
-        working-directory: sdk/python
+          python-version: ${{ matrix.python-version }}
+      - working-directory: sdk/python
         run: |
           python -m pip install -U pip
           pip install -e ".[dev]"
           ruff check .
+          ruff format --check .   # the Makefile `fmt` target runs `ruff format`; keep CI in sync
           pytest -q
-      - if: steps.present.outputs.exists == 'false'
-        run: echo "sdk/python not present yet — skipping"
 
   sdk-typescript:
     name: SDK (TypeScript)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - id: present
-        run: |
-          if [ -f sdk/typescript/package.json ]; then echo "exists=true" >> "$GITHUB_OUTPUT"; else echo "exists=false" >> "$GITHUB_OUTPUT"; fi
-      - if: steps.present.outputs.exists == 'true'
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v6   # was @v6 elsewhere; aligned so checkout version doesn't drift
+      - run: test -f sdk/typescript/package.json || { echo "::error::sdk/typescript missing — this gate must not be skipped"; exit 1; }
+      - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
-      - if: steps.present.outputs.exists == 'true'
-        run: npm ci
-      - if: steps.present.outputs.exists == 'true'
-        run: |
+      - run: npm ci
+      - run: |
           npm run ts:check
           npm run ts:test
-      - if: steps.present.outputs.exists == 'false'
-        run: echo "sdk/typescript not present yet — skipping"
 
   integration-linux:
     name: Linux integration (Xvfb)
@@ -171,7 +177,7 @@ jobs:
             echo "✅ live focused-window capture verified (window:$WID)"
           fi
       - if: steps.present.outputs.go == 'false'
-        run: echo "shinkend or smoke script not present yet — skipping"
+        run: echo "::error::shinkend or a smoke script is missing — this gate must not be skipped"; exit 1
 
   sdk-wheel:
     name: SDK wheel install
@@ -203,7 +209,7 @@ jobs:
           /tmp/venv/bin/python -c "from shinken import protocol; protocol.validate({'type':'ping','t':1.0}); print('packaged schema validate OK')"
           /tmp/venv/bin/shinken --version
       - if: steps.present.outputs.go == 'false'
-        run: echo "sdk/python not present yet — skipping"
+        run: echo "::error::sdk/python/pyproject.toml missing — this gate must not be skipped"; exit 1
 
   docker:
     name: Docker sandbox image
@@ -259,5 +265,41 @@ jobs:
             --cleanup-orphans \
             --output /tmp/sandbox-bench.json \
             --markdown-output /tmp/sandbox-bench.md
+      - if: steps.present.outputs.go == 'true'
+        name: live runtime-state smoke (checkpoint → fork → screenshot the fork)
+        run: |
+          set -euo pipefail
+          # The headline differentiator (Docker disk-tier checkpoint/fork) had only mocked
+          # coverage; this exercises a real checkpoint→fork→connect→screenshot and asserts a
+          # full-resolution non-black frame off the fork — directly regression-testing the
+          # start.sh stale-X-lock fix (a fork would otherwise screenshot a dead display).
+          PYTHONPATH=sdk/python/src python - <<'PY'
+          from shinken.providers.docker import DockerLocalProvider
+          from shinken.providers.base import SandboxSpec
+
+          prov = DockerLocalProvider(image="shinken/sandbox-linux")
+          base = prov.create(SandboxSpec(screen_geometry="1280x800x24"))
+          ckpt = None
+          fork = None
+          try:
+              ckpt = prov.checkpoint(base)
+              fork = prov.resume(ckpt)              # materialize a replica from the golden checkpoint
+              env = prov.connect(fork)
+              try:
+                  shot = env.screenshot()
+              finally:
+                  env.close()
+              assert shot["png"][:8] == b"\x89PNG\r\n\x1a\n", "fork screenshot is not a PNG"
+              assert shot["w"] == 1280 and shot["h"] == 800, f"fork booted at wrong geometry: {shot['w']}x{shot['h']}"
+              print("✅ live checkpoint→fork→screenshot verified (clean 1280x800 desktop on the fork)")
+          finally:
+              for h in (fork, base):
+                  if h is not None:
+                      try:
+                          prov.destroy(h)
+                      except Exception:
+                          pass
+              prov.cleanup_snapshots()
+          PY
       - if: steps.present.outputs.go == 'false'
-        run: echo "Docker image or smoke script not present yet — skipping"
+        run: echo "::error::Docker image or a smoke script is missing — this gate must not be skipped"; exit 1

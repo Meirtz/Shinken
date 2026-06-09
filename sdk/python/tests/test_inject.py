@@ -46,7 +46,8 @@ def test_missing_binary_raises():
 
 def test_docker_injection_builds_cp_exec_and_reachable_addr(fake_binary, captured_run):
     target = InjectionTarget(container="abc123", port=8765, reachable_addr="127.0.0.1:9999")
-    res = inject_shinkend(target, fake_binary, method="docker")
+    # readiness_timeout=0 skips the TCP reachability poll (no real shinkend in this test).
+    res = inject_shinkend(target, fake_binary, method="docker", readiness_timeout=0)
     assert res.addr == "127.0.0.1:9999"
     assert res.token and res.token.startswith("shk_")
     joined = [" ".join(c) for c in captured_run]
@@ -63,7 +64,7 @@ def test_docker_missing_container_raises(fake_binary, captured_run):
 
 def test_ssh_injection_builds_scp_and_ssh(fake_binary, captured_run):
     target = InjectionTarget(ssh_host="vm.local", ssh_user="root", ssh_port=2222, port=8765)
-    res = inject_shinkend(target, fake_binary, method="ssh")
+    res = inject_shinkend(target, fake_binary, method="ssh", readiness_timeout=0)
     joined = [" ".join(c) for c in captured_run]
     assert any(
         j.startswith("scp ") and "root@vm.local:/usr/local/bin/shinkend" in j for j in joined
@@ -83,7 +84,7 @@ def test_osworld_exec_injection(fake_binary, monkeypatch):
         inject, "_controller_exec", lambda url, cmd, **k: (calls.append(cmd), "")[1]
     )
     target = InjectionTarget(controller_url="http://sbx:5000", host="sbx", port=8765)
-    res = inject_shinkend(target, fake_binary, method="osworld-exec")
+    res = inject_shinkend(target, fake_binary, method="osworld-exec", readiness_timeout=0)
     assert any("base64 -d" in c for c in calls)
     assert any("SHINKEND_ADDR" in c for c in calls)
     assert res.addr == "sbx:8765"
@@ -91,7 +92,11 @@ def test_osworld_exec_injection(fake_binary, monkeypatch):
 
 def test_loopback_bind_when_no_token(fake_binary, captured_run):
     res = inject_shinkend(
-        InjectionTarget(container="c"), fake_binary, method="docker", require_token=False
+        InjectionTarget(container="c"),
+        fake_binary,
+        method="docker",
+        require_token=False,
+        readiness_timeout=0,
     )
     assert res.token is None
     start = next(" ".join(c) for c in captured_run if "SHINKEND_ADDR" in " ".join(c))
@@ -113,7 +118,7 @@ def test_osworld_exec_chunks_large_binary_and_honors_remote_bin(tmp_path, monkey
     t = InjectionTarget(
         controller_url="http://sbx:5000", host="sbx", port=8765, remote_bin="/tmp/shinkend"
     )
-    inject_shinkend(t, str(big), method="osworld-exec")
+    inject_shinkend(t, str(big), method="osworld-exec", readiness_timeout=0)
     assert len([c for c in calls if ">> /tmp/shinkend.b64" in c]) >= 2  # chunked
     assert any("base64 -d /tmp/shinkend.b64 > /tmp/shinkend" in c for c in calls)  # → remote_bin
     assert any(
@@ -139,3 +144,22 @@ def test_controller_exec_raises_on_nonzero_returncode(monkeypatch):
     monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=60: _Resp())
     with pytest.raises(InjectionError, match="permission denied"):
         inject._controller_exec("http://sbx:5000", "touch /usr/local/bin/x")
+
+
+def test_readiness_poll_failure_raises_with_log_hint(fake_binary, captured_run, monkeypatch):
+    # The injectors run detached, so a binary that never binds its port must be caught by
+    # the readiness poll (not left for the SDK to fail on connect).
+    monkeypatch.setattr(inject, "_wait_reachable", lambda addr, timeout: False)
+    with pytest.raises(InjectionError, match="did not become reachable"):
+        inject_shinkend(InjectionTarget(container="c"), fake_binary, method="docker")
+
+
+def test_ssh_host_with_leading_dash_is_rejected(fake_binary, captured_run):
+    # an ssh_host that looks like an option is argument-injection into the ssh client
+    with pytest.raises(InjectionError, match="leading"):
+        inject_shinkend(
+            InjectionTarget(ssh_host="-oProxyCommand=evil"),
+            fake_binary,
+            method="ssh",
+            readiness_timeout=0,
+        )

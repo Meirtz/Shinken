@@ -135,12 +135,12 @@ The state of the art converges on a layered, NOT bit-deterministic, replay model
 - DIVERT counterfactual fork: branches share 34.8-58.4% exact token prefixes (vs ~0.5% independent rollouts) -> direct KV-cache reuse for cheap eval fan-out.
 
 **Sources**
-- [Shinken D5 replay note — .skn bundle, bisected snapshot+event-log model, branch…](file:///path/to/shinken/notes/replay.md)
-- [Shinken Technical Decisions — D1 isolation tiers, D5 replay, D7 eval golden-sna…](file:///path/to/shinken/docs/design/tech-decisions.md)
-- [Shinken streaming-bandwidth note — fMP4/CMAF IDR-aligned recording, keyframe ca…](file:///path/to/shinken/notes/streaming-bandwidth.md)
-- [Shinken sandbox-infra note — CoW disk (overlayfs/qcow2 backing chains/dm-thin/b…](file:///path/to/shinken/notes/sandbox-infra.md)
-- [OSWorld desktop_env — reset() -> _revert_to_snapshot('init_state') per task (de…](file:///path/to/shinken/references/OSWorld/desktop_env/desktop_env.py)
-- [OSWorld VMware provider — save_state/revert_to_snapshot via vmrun snapshot/reve…](file:///path/to/shinken/references/OSWorld/desktop_env/providers/vmware/provider.py)
+- [Shinken D5 replay note — .skn bundle, bisected snapshot+event-log model, branch…](replay.md)
+- [Shinken Technical Decisions — D1 isolation tiers, D5 replay, D7 eval golden-sna…](../docs/design/tech-decisions.md)
+- [Shinken streaming-bandwidth note — fMP4/CMAF IDR-aligned recording, keyframe ca…](streaming-bandwidth.md)
+- [Shinken sandbox-infra note — CoW disk (overlayfs/qcow2 backing chains/dm-thin/b…](sandbox-infra.md)
+- [OSWorld desktop_env — reset() -> _revert_to_snapshot('init_state') per task (de…](https://github.com/xlang-ai/OSWorld/blob/main/desktop_env/desktop_env.py)
+- [OSWorld VMware provider — save_state/revert_to_snapshot via vmrun snapshot/reve…](https://github.com/xlang-ai/OSWorld/blob/main/desktop_env/providers/vmware/provider.py)
 - [OSWorld server — in-guest recording via ffmpeg x11grab libx264 (server/main.py:…](https://github.com/xlang-ai/OSWorld/blob/main/desktop_env/server/main.py)
 - [OSWorld Docker manager — golden qcow2 images Ubuntu.qcow2 / Windows-10-x64.qcow…](https://github.com/xlang-ai/OSWorld/blob/main/desktop_env/providers/docker/manager.py)
 - [QEMU — Documentation/CreateSnapshot (savevm/loadvm, internal vs external, redir…](https://wiki.qemu.org/Documentation/CreateSnapshot)

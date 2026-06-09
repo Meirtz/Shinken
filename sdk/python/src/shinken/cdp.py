@@ -111,7 +111,13 @@ def parse_ax_tree(
     bounds = bounds or {}
     by_id = {str(n.get("nodeId")): n for n in ax_nodes if n.get("nodeId") is not None}
     child_ids = {str(c) for n in ax_nodes for c in (n.get("childIds") or [])}
-    roots = [str(n["nodeId"]) for n in ax_nodes if str(n.get("nodeId")) not in child_ids]
+    # Guard nodeId here too (mirror by_id): a node missing nodeId in a truncated/malformed
+    # CDP payload must degrade, not raise KeyError, in this pure normalizer.
+    roots = [
+        str(n["nodeId"])
+        for n in ax_nodes
+        if n.get("nodeId") is not None and str(n["nodeId"]) not in child_ids
+    ]
 
     def build(node_id: str, seen: set[str]) -> list[A11yNode]:
         if node_id in seen:  # cycle guard

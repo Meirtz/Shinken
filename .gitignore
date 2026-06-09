@@ -39,3 +39,7 @@ scratch/
 # design input; NEVER published — public docs/ + notes/ must stay vendor-neutral).
 internal/
 shinkend-linux-*
+
+# pytest coverage data
+.coverage
+sdk/python/.coverage

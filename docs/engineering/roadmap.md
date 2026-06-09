@@ -35,8 +35,8 @@ Three rules govern the sequence.
 
 1. **v0.0.1 is semantic-complete at reference scale.** All core surfaces must exist and be tested
    locally even if they are not fast or cloud-hardened yet: ACI, adapters, action execution,
-   screenshot/region/screencast/a11y/CDP observation, `.skn`, capabilities, artifact transfer, and
-   tiny eval.
+   screenshot/region/screencast/a11y/CDP observation, runtime state (checkpoint/fork/resume),
+   capabilities, artifact transfer, and tiny eval. (The `.skn` recording ledger was deferred, #216.)
 2. **Spikes de-risk the expensive optimizations.** A *spike* is a throwaway measurement built to
    confirm or kill an assumption, with a pass/fail metric attached. Three spikes recur as gates or
    de-riskers: **a11y-coverage** (decides where structured observation becomes the fast path,
@@ -87,7 +87,7 @@ gantt
 
 | Phase | Theme | Primary decisions exercised | External dependency | Gating spike(s) |
 |-------|-------|-----------------------------|---------------------|-----------------|
-| **0 / v0.0.1** | Feature-complete local/reference CUA runtime | D2, D3, D5, D6, D7, D8 | none (local Docker/QEMU) | runtime-state support (checkpoint/fork/resume) advertised + Docker disk-tier reference impl; `.skn` audit ledger round-trips; contract tests; a11y coverage measured, not a pixel-loop blocker |
+| **0 / v0.0.1** | Feature-complete local/reference CUA runtime | D2, D3, D6, D7, D8 | none (local Docker/QEMU) | runtime-state support (checkpoint/fork/resume) advertised + Docker disk-tier reference impl; contract tests; a11y coverage measured, not a pixel-loop blocker (`.skn` audit ledger deferred to Phase 1+, #216) |
 | **1** | Performance and productionization: Linux fast-fork + streaming + panel | D1, D3, D4, D6, D9 | `agent-sandbox` CRD, Vault, NICE DCV or WebRTC+NVENC | a11y-coverage, CoW-fork density, dual-channel latency |
 | **2** | Eval + OSWorld-Verified + first eval/training users | D5, D7, D8 | `agent-sandbox` CRD (parallel replicas) | reuses Phase 1 spikes |
 | **3** | Cross-OS (Windows + macOS) | D1, D10 | Apple hardware pool; Windows licensing | macOS-reset feasibility, Windows-licensing |
@@ -102,10 +102,11 @@ gantt
 not the whole production platform yet, but it is not a narrow demo either. v0.0.1 should make the
 full CUA contract concrete and tested: ACI, agent-native dialects/adapters, real GUI action and
 observation, screenshot/focused/region capture, screencast, a11y/CDP/element-ref reference paths,
-`.skn`, runtime-state descriptors, capability envelope and permission events, file/artifact
-transfer, deterministic task fixtures, and a tiny verifier harness. Later phases optimize
-performance, fork density, streaming
-quality, multi-tenancy, and cross-substrate scale.
+runtime-state descriptors (with the Docker disk-tier checkpoint/fork/resume reference impl),
+capability envelope and permission events, file/artifact transfer, deterministic task fixtures, and
+a tiny verifier harness. (The `.skn` recording ledger was deferred to Phase 1+, #216/#217.) Later
+phases optimize performance, fork density, streaming quality, multi-tenancy, and cross-substrate
+scale.
 
 Per [D1](../design/tech-decisions.md), dev/test starts **local, small concurrency**. The substrate is
 whatever boots on a laptop: a local **Docker** Linux desktop (the
@@ -126,16 +127,18 @@ No cluster substrate dependency yet. The limit is scale, not scope.
   full-frame/focused/region screenshots, screencast, AT-SPI and CDP normalized `Element` output,
   and `element_ref` resolution. Efficient diffs and SoM/OmniParser can improve later; the reference
   semantics must exist now.
-- **Runtime-state descriptors + `.skn` audit ledger** ([D5](../design/tech-decisions.md)): the headline
-  is the stateful, branchable runtime — provider-advertised `snapshot`, `checkpoint`, `fork`,
-  `restore`, and `resume` capabilities (so unsupported providers fail honestly) **plus a Docker
-  disk-tier reference implementation of them** (`docker commit` snapshot → restore/resume/fork +
-  event-offset-bound checkpoint, #206/#209). The **memory** (CRIU) and **sub-second CoW
-  fork-from-snapshot fast** substrate tiers remain later Phase-1 primitives. Underneath, the `.skn`
-  **audit/recording ledger** captures what happened: write `manifest.json` + append-only
-  `events.jsonl`, content-addressed media/artifact refs, action-observation pairing, capability and
-  permission events, verifier receipts, atomic bundle writes, and a CLI scrubber. Runtime state must
-  not be conflated with replay — a checkpoint *references* a replay event offset, not the reverse (#42).
+- **Runtime-state descriptors (the headline, built)** ([D1](../design/tech-decisions.md)): the
+  stateful, branchable runtime — provider-advertised `snapshot`, `checkpoint`, `fork`, `restore`,
+  and `resume` capabilities (so unsupported providers fail honestly) **plus a Docker disk-tier
+  reference implementation of them** (`docker commit` snapshot → restore/resume/fork + a
+  `checkpoint`, #206/#209), with `eval.run_eval_forked` driving golden→fork-N→score (#231). The
+  **memory** (CRIU) and **sub-second CoW fork-from-snapshot fast** substrate tiers remain later
+  Phase-1 primitives. The `.skn` **audit/recording ledger** ([D5](../design/tech-decisions.md)) —
+  `manifest.json` + append-only `events.jsonl`, content-addressed media/artifact refs,
+  action-observation pairing, capability/permission events, verifier receipts, and a CLI scrubber —
+  was **deferred (#216/#217)** and returns as a Phase-1+ supporting ledger. When it returns, runtime
+  state must not be conflated with replay — a checkpoint *references* a replay event offset, not the
+  reverse (#42).
 - **File/artifact transfer:** move fixtures into the Sandbox and artifacts out with checksums and
   replay refs. High throughput and resumability can improve later; the semantic API must exist in
   v0.0.1.
@@ -153,11 +156,12 @@ No cluster substrate dependency yet. The limit is scale, not scope.
 - ACI v0 schema, strict fixtures, Python SDK, and contract tests across schema/Rust/Python.
 - Agent-native parser plus Anthropic/OpenAI adapter fixtures.
 - Pixel, focused/region, screencast, AT-SPI/CDP, and `element_ref` reference observation paths.
-- `.skn` writer + validator + CLI scrubber with action/observation/capability/verifier timelines.
+- Runtime-state descriptors + the Docker disk-tier checkpoint/fork/resume reference impl + `run_eval_forked`.
 - Capability envelope + local gateway shim + permission events.
-- File/artifact transfer API with checksums and replay refs.
+- File/artifact transfer API with checksums and content-addressed refs.
 - Deterministic GUI task fixtures + tiny eval harness.
 - The **a11y-coverage harness** (below) and its first dataset.
+- *(Deferred, #216/#217:)* the `.skn` writer + validator + CLI scrubber returns as a Phase-1+ supporting ledger.
 
 ### 🔬 SPIKE — a11y-coverage *(the load-bearing assumption)*
 
@@ -172,12 +176,13 @@ canvas/WebGL surfaces, and games, which can yield empty or shallow trees.
 
 ### Success criteria
 
-- A screenshot-based agent completes 3–5 scripted Linux desktop tasks through ACI v0 and one provider/native adapter path, producing replayable `.skn` bundles.
-- The run records actions, observations, media refs, artifacts, capability envelope, permission events, and verifier receipts.
+- A screenshot-based agent completes 3–5 scripted Linux desktop tasks through ACI v0 and one provider/native adapter path.
+- The run surfaces actions, observations, media refs, artifacts, capability envelope, permission events, and verifier receipts through the runtime.
+- Runtime state works end-to-end on the Docker disk tier: checkpoint/fork/resume round-trips and `run_eval_forked` runs golden→fork-N→score ([D1](../design/tech-decisions.md)/[D7](../design/tech-decisions.md)).
 - AT-SPI/CDP/element-ref reference paths exist and are tested, even if measured coverage later scopes their default use.
 - First-party a11y-coverage numbers exist and the structured fast-path is explicitly **CONFIRMED** or scoped to the apps where it works (this output feeds [D3](../design/tech-decisions.md)).
-- Replay round-trips through a CLI scrubber: an event log re-renders action/observation/capability/verifier timelines (state-snapshot + event-log model, [D5](../design/tech-decisions.md) — *not* bit-deterministic).
-- v0.0.1 contract tests prevent schema/Rust/Python/adapter/replay drift.
+- v0.0.1 contract tests prevent schema/Rust/Python/adapter drift.
+- *(Deferred, #216/#217:)* the `.skn` CLI-scrubber round-trip returns with the Phase-1+ recording ledger ([D5](../design/tech-decisions.md)).
 
 ### Dependencies & exit gate
 
@@ -211,8 +216,8 @@ Control Panel human UI.
 
 ### 🔬 SPIKE — CoW-fork density
 
-- **Method:** on Firecracker and Cloud Hypervisor/QEMU, fork N children from one warm parent and measure **private-RSS-bound concurrent guests per host** (the real density metric, not total image size), fork P99, time-to-first-action, and correctness of the uniqueness reseed (RNG/MAC/clock/TLS). Compare against the published anchors: [Morph Infinibranch](https://cloud.morph.so/docs/documentation/instances/branch) fork P99 ~1.3 ms with ~93% shared pages; Firecracker VMM-side restore 5–30 ms; the OSS [forkd](https://github.com/deeplethe/forkd) reference ~1 ms/child and ~150 ms live branch — **all vendor-published, unverified**.
-- **Pass/fail:** PASS if first-party fork P99 and density land within ~2× of the published anchors *and* the uniqueness hook is correct (no cross-fork RNG/MAC collisions). FAIL → the Linux fork-tier economics (and the Phase 4 cost model in [`09-economics-and-build-vs-buy.md`](../design/economics-and-build-vs-buy.md)) need rework; fall back to snapshot-restore-only.
+- **Method:** on Firecracker and Cloud Hypervisor/QEMU, fork N children from one warm parent and measure **private-RSS-bound concurrent guests per host** (the real density metric, not total image size), fork P99, time-to-first-action, and correctness of the uniqueness reseed (RNG/MAC/clock/TLS). Compare against the published anchors: [Morph Infinibranch](https://cloud.morph.so/docs/documentation/instances/branch) fork P99 ~1.3 ms with ~93% shared pages; Firecracker VMM-side restore 5–30 ms; the OSS [forkd](https://github.com/deeplethe/forkd) reference ~1 ms/child and ~150 ms live branch — **all vendor-published, unverified**. Additionally measure **fork-N vs cold-boot-N amortization** on (i) an OSWorld-class desktop image and (ii) a SWE-bench-class task image — the wedge's economics number against named 2026 baselines: uni-agent's GRPO pays n_resp_per_prompt=8 independent cold boots per prompt (https://github.com/verl-project/uni-agent); CUA-Gym pays 2 fresh cloud VMs × ~10 min provisioning per generated task (https://github.com/xlang-ai/CUA-Gym); Agentix scores each instance in a second fresh sandbox (https://github.com/Agentix-Project/Agentix); cua publishes 1–5 s cloud fork (vendor-published, unverified) that its own bench does not use (https://github.com/trycua/cua).
+- **Pass/fail:** PASS if first-party fork P99 and density land within ~2× of the published anchors *and* the uniqueness hook is correct (no cross-fork RNG/MAC collisions). FAIL → the blast radius is cross-cutting, matching the canon's own cross-cutting section: (a) the Linux fork-tier economics and the Phase 4 cost model in [`09-economics-and-build-vs-buy.md`](../design/economics-and-build-vs-buy.md) need rework ([D1](../design/tech-decisions.md)); (b) **[D5](../design/tech-decisions.md) replay-branching latency** degrades — "branch from step N" stops being the same sub-ms primitive as instant-reset and falls back to slow snapshot-restore; (c) **[D7](../design/tech-decisions.md) N≥5 pass@k/pass^k eval replica cost** rises, since cheap forked replicas are what make statistical eval economical; (d) the **[D12](../design/tech-decisions.md) "can't get this elsewhere" adoption wedge** weakens, because cheap fork/resume is the concrete reason eval/training teams adopt over acquiring OSWorld-style datasets. **What survives in a snapshot-restore-only world:** deterministic reset, checkpoint/resume, and the layered ACI/observation/capability/eval stack still differentiate — Shinken stays a complete CUA infrastructure layer, but the headline narrows from *sub-ms branchable* runtime to *snapshot-restore* runtime, and the cost/eval-density claims must be re-derived from restore latency, not fork density.
 
 ### 🔬 SPIKE — dual-channel latency PoC
 
@@ -244,7 +249,8 @@ Control Panel human UI.
 - **Eval layer = thin orchestration on the runtime ([D7](../design/tech-decisions.md)):** a typed **verifier DAG** (not OSWorld's stringly-typed `getattr` evaluators — see the teardown in [03](../design/osworld-analysis.md)); **programmatic-primary verification + a constrained model-verifier fallback**; a **golden snapshot per task**; **N≥5 CoW-forked replicas → pass@k / pass^k with confidence intervals** (cheap *because* Phase 1's fork works); and **readiness probes, not sleeps** (verify-then-retry and explicit wait-for-actionability over fixed sleeps, the production-ops reliability pattern documented for [Playwright auto-wait](https://www.qabash.com/playwright-auto-waits-selenium-flake-killer/)).
 - **OSWorld-Verified conformance ([D7](../design/tech-decisions.md)):** ship it as a built-in suite with **task + grader + environment versioned together**, treating the grader as a *tested artifact* — explicitly heeding the 300+ grader/task bugs that [OSWorld-Verified](https://xlang.ai/blog/osworld-verified) fixed over 15 months. SOTA anchor for calibration: the leaderboard reports a top score of ~83% on OSWorld-Verified, above the ~72.4% human baseline (vendor/leaderboard, unverified). Add an independent-verification policy so Shinken does not republish unreproduced vendor scores.
 - **Replay-as-training-data ([D5](../design/tech-decisions.md)/[D7](../design/tech-decisions.md)/[D12](../design/tech-decisions.md)):** a `.skn` capture pipeline producing RL/SFT trajectories. The adoption wedge is the runtime fork tier — fork/resume economics give eval/model-training teams cheap N-run replicas and deterministic resets they cannot get elsewhere; the `.skn` ledger is the byproduct that then turns every eval run *and* every production session into versioned, branchable training data on the same substrate — the synchronized screen+input+a11y → state-action-CoT recording pattern proven by [OpenCUA](https://github.com/xlang-ai/OpenCUA). Together this is the concrete adoption argument for the first eval/model-training users, who otherwise pay to acquire OSWorld-style datasets and have no fork/resume at all.
-- **MCP facade ([D8](../design/tech-decisions.md)):** the optional MCP facade at two altitudes (granular `create_session/act/observe/snapshot/grant_permission`; agent-task `run_task`) for model-agnostic hosts, with OAuth 2.1 ([MCP authorization spec](https://modelcontextprotocol.io/specification/draft/basic/authorization)) — but **never** routing the high-frequency action/observation/video loop or media through MCP. This is what lets MCP-native agent hosts and toolkits drive Shinken without taking on the hot loop.
+- **Interop-first landing path (2026-06):** the trainer-side stacks Shinken lands on already exist — do not rebuild them. Deliverables: (i) a swerex-protocol shim (run `swerex.server` inside the Linux image so verl/uni-agent's attach deployment drives a Shinken sandbox unmodified, or a ~300-line ShinkenDeployment whose `start()` forks from a golden checkpoint — https://github.com/verl-project/uni-agent); (ii) an HTTP gym facade (`/reset`, `/step`, `/evaluate`) over the train Workload — the integration shape verl/TRL-class trainers actually consume; (iii) CUA-Gym bundle support in the eval Workload (OSWorld-shape `config.json` + in-guest python evaluator printing `REWARD: X.X`), unlocking 32k oracle-validated RLVR tasks with zero authoring (https://github.com/xlang-ai/CUA-Gym). Explicit non-goals: a Shinken trainer, a task-synthesis pipeline, agent-loop breadth.
+- **MCP facade ([D8](../design/tech-decisions.md)):** the optional MCP facade at two altitudes (granular `create_session/act/observe/snapshot/grant_permission`; agent-task `run_task`) for model-agnostic hosts, with OAuth 2.1 ([MCP authorization spec](https://modelcontextprotocol.io/specification/draft/basic/authorization)) — but **never** routing the high-frequency action/observation/video loop or media through MCP. This is what lets MCP-native agent hosts and toolkits drive Shinken without taking on the hot loop. Evidence check (2026-06): trycua/cua now exposes four MCP surfaces and its fastest-growing product (cua-driver) is MCP-native, including a compatibility shim that renames only the screenshot tool to match the tool name agent hosts key on (https://github.com/trycua/cua) — demand for the facade is confirmed, so a thin `shinken mcp` stdio wrapper over the Python SDK is a candidate to pull forward to the Phase-1 boundary (still never the hot loop, per [D8](../design/tech-decisions.md)); recorded as a re-sequencing candidate, not a commitment.
 
 ### Deliverables
 
@@ -354,14 +360,14 @@ These are **explicitly post-v1** (Android is roadmap, not v1; multi-player is an
 | Spike | What it kills/confirms | Phase | Pass metric (vs vendor anchor) | Reconciles to |
 |-------|------------------------|-------|--------------------------------|---------------|
 | **a11y-coverage** | Structured observation fast path (bandwidth/cost differentiator) | 0 (parallel de-risker; scale gate) | Net ~6× token reduction *after* screenshot/SoM fallback (~25k vs ~150k tok/task, unverified) | D3 |
-| **CoW-fork density** | Linux fork-tier economics + the cost model | 1 | Fork P99 and private-RSS density within ~2× of the Morph/Firecracker anchors; uniqueness reseed correct | D1, D9 |
+| **CoW-fork density** | Linux fork-tier economics + the cost model + replay-branching latency + eval-replica cost + the adoption wedge | 1 | Fork P99 and private-RSS density within ~2× of the Morph/Firecracker anchors; uniqueness reseed correct | D1, D5, D7, D9, D12 |
 | **dual-channel latency** | The WebRTC streaming budget + Control Panel UX | 1 | Same-region glass-to-glass ~50–120 ms (video); Tier 0 ~20 kbps | D4 |
 | macOS-reset feasibility | macOS tier shape (standing pool vs fork) | 3 | Acceptable warm-attach latency, or documented bare-metal-pool-only | D1, D10 |
 | Windows-licensing | Whether Windows is a hosted tier at all | 3 | Legal yes/no + per-core-vs-BYOL cost | D1, D10 |
 | NVENC-density | The cloud streaming cost model | 4 | Concurrent streams/L4-L40S making the ~$0.8M/mo AV1 anchor plausible | D11, D4 |
 | GPU-TEE-attestation | The trusted multi-tenant GPU tier | 4 | End-to-end NRAS + Confidential-Containers attestation gating a `gpu` unlock | D11, D6 |
 
-Every spike has a **kill condition**. If a11y-coverage fails, D3 flips to pixels-first before Phase 1 builds on it. If CoW-fork density fails, the Phase 4 cost model and the Linux-default-tier positioning (D1) are revised. This is the entire point of the phasing: the architecture's load-bearing bets are tested *before* the platform leans on them.
+Every spike has a **kill condition**. If a11y-coverage fails, D3 flips to pixels-first before Phase 1 builds on it. If CoW-fork density fails, the blast radius is cross-cutting — the Phase 4 cost model and Linux-default-tier positioning (D1), D5 replay-branching latency, D7 N≥5 eval-replica cost, and the D12 adoption wedge all revise to a snapshot-restore-only story (see the spike's kill condition above). This is the entire point of the phasing: the architecture's load-bearing bets are tested *before* the platform leans on them.
 
 ---
 

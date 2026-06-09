@@ -1,8 +1,9 @@
 # Sources — annotated bibliography
 
 > Working note. The external references that ground Shinken's design decisions (D1–D12) and
-> the four headline features (replay, the capability-unlock permission panel, bandwidth
-> optimization, real-time streaming). Entries are **deduplicated** and grouped by topic;
+> the five headline outcomes (stateful, branchable runtime — checkpoint/fork/resume — first;
+> then the replay ledger that supports it, the sandbox capability manager, bandwidth
+> optimization, and real-time streaming). Entries are **deduplicated** and grouped by topic;
 > each has a one-line annotation explaining *why it matters to Shinken*. Sibling design docs
 > are linked by relative path (e.g. [05-tech-decisions.md](../docs/design/tech-decisions.md)).
 >

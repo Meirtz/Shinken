@@ -79,13 +79,17 @@ def test_aguvis_action_pyautogui_line():
 
 
 @pytest.mark.parametrize(
+    # pyautogui scroll(n): n = wheel clicks, +amount = up; ACI: +dy = down (negate) and
+    # PIXELS (×100 per click). Kimi emits no coordinate, so scroll defaults to centre.
     "call,dy",
-    [("scroll(-5)", 5), ("scroll(5)", -5), ("scroll(200)", -200), ("vscroll(-3)", 3)],
+    [("scroll(-5)", 500), ("scroll(5)", -500), ("scroll(200)", -20000), ("vscroll(-3)", 300)],
 )
 def test_scroll_sign_negated(call, dy):
-    # pyautogui: +amount = up; ACI: +dy = down → negated. (No target: Kimi emits no scroll
-    # coordinate; a dispatcher supplies one if its backend requires it — #56.)
-    assert K.to_aci_action(call) == {"verb": "scroll", "dy": dy}
+    assert K.to_aci_action(call) == {
+        "verb": "scroll",
+        "dy": dy,
+        "target": {"kind": "point_norm", "x": 0.5, "y": 0.5},
+    }
 
 
 def test_terminate_and_answer_map_to_done_control_action():

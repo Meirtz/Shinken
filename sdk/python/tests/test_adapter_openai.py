@@ -42,16 +42,22 @@ def test_batched_actions_preserve_order():
 @pytest.mark.parametrize(
     "action,expected",
     [
-        ({"type": "click", "x": 3, "y": 4, "button": "right"},
-         {"verb": "right_click", "target": {"kind": "point_px", "x": 3, "y": 4}}),
-        ({"type": "double_click", "x": 5, "y": 6},
-         {"verb": "double_click", "target": {"kind": "point_px", "x": 5, "y": 6}}),
+        (
+            {"type": "click", "x": 3, "y": 4, "button": "right"},
+            {"verb": "right_click", "target": {"kind": "point_px", "x": 3, "y": 4}},
+        ),
+        (
+            {"type": "double_click", "x": 5, "y": 6},
+            {"verb": "double_click", "target": {"kind": "point_px", "x": 5, "y": 6}},
+        ),
         ({"type": "keypress", "keys": ["CTRL", "S"]}, {"verb": "key", "keys": "ctrl+s"}),
         ({"type": "type", "text": "abc"}, {"verb": "type_text", "text": "abc"}),
         ({"type": "screenshot"}, {"verb": "screenshot"}),
         ({"type": "wait", "ms": 500}, {"verb": "wait", "ms": 500}),
-        ({"type": "scroll", "x": 0, "y": 0, "scroll_x": 2, "scroll_y": -3},
-         {"verb": "scroll", "target": {"kind": "point_px", "x": 0, "y": 0}, "dx": 2, "dy": -3}),
+        (
+            {"type": "scroll", "x": 0, "y": 0, "scroll_x": 2, "scroll_y": -3},
+            {"verb": "scroll", "target": {"kind": "point_px", "x": 0, "y": 0}, "dx": 2, "dy": -3},
+        ),
     ],
 )
 def test_action_mappings(action, expected):

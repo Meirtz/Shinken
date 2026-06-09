@@ -209,19 +209,25 @@ pub fn error_result_text(call_id: &str, error: &str) -> String {
     })
 }
 
-/// Core M0 message handler: given an inbound message, produce the reply (if any).
+/// Reply to a post-handshake control message (queries, pings). `hello` is deliberately
+/// NOT handled here: authentication and the version/token check live in
+/// [`crate::connection::Session::on_handshake`], so `respond()` never grants a
+/// tokenless welcome even if a future caller wires it onto a connection path.
 pub fn respond(msg: Message) -> Option<Message> {
     match msg {
-        Message::Hello { .. } => Some(welcome()),
         Message::Ping { t } => Some(Message::Pong { t }),
         Message::Query { call_id, q } => Some(match q.as_str() {
             "platform" => ok_result(&call_id, serde_json::json!(platform())),
-            // Fallback only — the live session answers screen_size from real executor
-            // geometry (connection::on_authed → screen_size_result, #138).
-            "screen_size" => ok_result(&call_id, serde_json::json!({ "w": 1280, "h": 800 })),
+            // The live session answers screen_size from real executor geometry
+            // (connection::on_authed → screen_size_result, #138); refuse here rather
+            // than fabricate a 1280x800 stub that would diverge from the real display.
+            "screen_size" => err_result(
+                &call_id,
+                "screen_size is answered by the session from real executor geometry",
+            ),
             other => err_result(&call_id, &format!("unknown query: {other}")),
         }),
-        // `action` is handled by the Executor in main.rs, not here.
+        // `hello` → handshake (connection.rs); `action` → Executor (main.rs).
         _ => None,
     }
 }
@@ -277,11 +283,17 @@ mod tests {
     }
 
     #[test]
-    fn hello_yields_welcome() {
+    fn respond_does_not_welcome_hello() {
+        // hello must go through Session::on_handshake (auth + version check), never
+        // respond() — which would grant a tokenless, unchecked welcome.
         let hello = r#"{"type":"hello","v":0,"client":{"name":"shinken-py","version":"0.0.0"}}"#;
         let msg: Message = serde_json::from_str(hello).unwrap();
-        let reply = respond(msg).expect("hello must produce a reply");
-        match reply {
+        assert!(respond(msg).is_none(), "respond() must not answer hello");
+    }
+
+    #[test]
+    fn welcome_advertises_schema_and_verbs() {
+        match welcome() {
             Message::Welcome {
                 v, capabilities, ..
             } => {

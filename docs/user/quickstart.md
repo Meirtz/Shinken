@@ -19,7 +19,8 @@ Current implementation: Linux/X11 reference slice.
 - Docker Linux sandbox image smoke test.
 
 Not implemented yet: provider adapters, a11y trees, `element_ref`, file/artifact transfer,
-capability enforcement, tiny eval, checkpoint/fork, cloud control plane.
+production capability enforcement, `.skn` recording/replay, cloud control plane. (The Docker
+disk-tier checkpoint/fork/resume above is built; the memory/CoW fast tiers are not.)
 
 ## Run The Guest Runtime
 
@@ -97,7 +98,8 @@ The full CI also runs live Xvfb integration, wheel install, and Docker image smo
 
 - Concepts: [`concepts.md`](concepts.md)
 - ACI: [`aci.md`](aci.md)
-- Replay: [`replay.md`](replay.md)
+- Runtime state (checkpoint/fork/resume): [`runtime-state.md`](runtime-state.md)
+- Replay (future design): [`replay.md`](replay.md)
 - Capabilities: [`capabilities.md`](capabilities.md)
 - Eval: [`eval.md`](eval.md)
 - Implementation status: [`../engineering/status.md`](../engineering/status.md)

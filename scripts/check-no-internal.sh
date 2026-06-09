@@ -16,10 +16,12 @@ PATTERNS=(
   'CONFIDENTIAL'                     # confidentiality markers
   'DO NOT DISTRIBUTE'
   '[A-Za-z0-9._-]+\.atlassian\.net'  # internal wiki links
-  '_canon'                           # the private design-canon working file
+  '_canon\b'                         # the private design-canon working file (anchored so it does NOT match `_canonical`)
   '\]\([^)]*scratch/'                # markdown links into the git-ignored scratch/ area
   '\]\([^)]*internal/'               # markdown links into the git-ignored internal/ area
-  'file://[^)" ]*/(scratch|internal)/'  # file:// links into private working areas
+  'file://'                          # ANY file:// link — leaks a local username/path and is a dead link for readers
+  '/Users/[A-Za-z0-9._-]+/'          # a macOS home dir leaks the maintainer's local username
+  'Owner:[^@]*@'                     # an email address in an `Owner:` line — use a role-based owner instead
 )
 
 DENY_LOCAL="scripts/deny-list.local"
@@ -36,12 +38,27 @@ re="$(
 )"
 
 if [[ "${1:-}" == "--self-test" ]]; then
-  fixture=$'leaked CONFIDENTIAL marker\nsee ](../scratch/_canon.md) and [x](internal/x.md)'
-  if printf '%s\n' "$fixture" | grep -qE "$re"; then
-    echo "✅ self-test: guard fires on planted tokens"
+  # Each planted line must trip at least one pattern (CONFIDENTIAL, scratch/, internal/,
+  # file://, a macOS home dir, and an email in an Owner line).
+  fixtures=(
+    'leaked CONFIDENTIAL marker'
+    'see ](../scratch/_canon.md) and [x](internal/x.md)'
+    'a [link](file:///Users/somebody/secret.md)'
+    'a bare /Users/somebody/path leak'
+    'Owner: person@example.com'
+  )
+  fail=0
+  for f in "${fixtures[@]}"; do
+    printf '%s\n' "$f" | grep -qE "$re" || { echo "❌ self-test: guard MISSED: $f"; fail=1; }
+  done
+  # And the anchored _canon pattern must NOT trip on the legitimate identifier `_canonical`.
+  if printf '%s\n' 'name = _canonical_value' | grep -qE "$re"; then
+    echo "❌ self-test: guard false-positives on '_canonical'"; fail=1
+  fi
+  if [[ "$fail" == 0 ]]; then
+    echo "✅ self-test: guard fires on planted tokens and not on '_canonical'"
     exit 0
   fi
-  echo "❌ self-test FAILED: guard did not fire on planted tokens"
   exit 1
 fi
 

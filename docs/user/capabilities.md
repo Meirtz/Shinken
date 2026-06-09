@@ -23,12 +23,12 @@ changes should be explicit and recorded.
 
 ## v0.0.1 Scope
 
-v0.0.1 should implement the capability semantics locally:
+Shinken implements the capability semantics locally today:
 
 - A session capability envelope.
-- A local Action Gateway shim.
-- Grant / deny / narrow decisions.
-- Basic file/artifact scope checks where applicable.
+- A local Action Gateway shim (`shinken.gateway`).
+- `allow` / `deny` / `ask` decisions (an `ask` capability pauses risky verbs for approval).
+- Basic filesystem-scope checks (path containment, no `..`/absolute escape) where applicable.
 
 This is not yet the full production enforcement stack.
 

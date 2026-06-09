@@ -33,7 +33,16 @@ VALID = [
         '<click nx="0.5" ny="0.25"/>',
         {"verb": "click", "target": {"kind": "point_norm", "x": 0.5, "y": 0.25}},
     ),
-    ('<scroll dy="-480"/>', {"verb": "scroll", "dy": -480}),
+    # a targetless scroll defaults to the screen centre (the wire requires a target)
+    (
+        '<scroll dy="-480"/>',
+        {"verb": "scroll", "dy": -480, "target": {"kind": "point_norm", "x": 0.5, "y": 0.5}},
+    ),
+    # button='right' on a click maps to the right_click verb (never silently dropped)
+    (
+        '<click x="1" y="2" button="right"/>',
+        {"verb": "right_click", "target": {"kind": "point_px", "x": 1, "y": 2}},
+    ),
     (
         '<scroll x="900" y="600" dy="-480" dx="10"/>',
         {
@@ -98,7 +107,11 @@ INVALID = [
     "<click x='1' y='2' nx='0.5' ny='0.5'/>",  # px and norm both
     "<click nx='1.5' ny='0.5'/>",  # normalized out of [0,1]
     "<click x='1' y='2' button='diagonal'/>",  # bad button
+    "<click x='1' y='2' button='middle'/>",  # middle has no ACI wire verb
+    "<click/>",  # pointing verb with no coordinate
     "<scroll dy='nope'/>",  # non-numeric dy
+    "<click x=1 y=2/>",  # malformed: unquoted attribute values (silently dropped before)
+    "<Click x='1' y='2'/>",  # malformed: uppercase tag name
     "just prose, no tags at all",  # no actions
     "",  # empty
 ]

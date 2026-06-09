@@ -10,6 +10,7 @@ aligned with the GitHub milestone and issues.
 ## Current Engineering Sources
 
 - Implementation reality check: [`status.md`](status.md)
+- **2026-06 recalibration — change inventory (positioning / architecture / functionality / docs):** [`recalibration-2026-06.md`](recalibration-2026-06.md)
 - v0.0.1 implementation plan: [`v0.0.1-plan.md`](v0.0.1-plan.md)
 - Roadmap and milestone sequencing: [`roadmap.md`](roadmap.md)
 - ACI specification used by implementation: [`../design/aci-spec.md`](../design/aci-spec.md)

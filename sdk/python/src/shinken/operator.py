@@ -27,6 +27,9 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from .adapters.base import AdapterError
+from .dialect import DialectError
+
 
 @dataclass
 class Decision:
@@ -48,7 +51,7 @@ class Agent(Protocol):
 @dataclass
 class DriveResult:
     steps: int  # turns taken
-    actions: int  # total ACI actions dispatched
+    actions: int  # ACI actions successfully dispatched (acked ok), not merely requested
     done: bool  # the agent reported task completion
     stopped: str  # why the loop ended: "done" | "max_steps" | "stuck"
 
@@ -80,17 +83,35 @@ def drive(
     total = 0
     stopped = "max_steps"
     step = 0
+    # The previous turn's failure/parse error, merged into the next observation so the
+    # agent can correct — the documented "teaching error" loop (it was previously dropped).
+    feedback: dict | None = None
     while step < max_steps:
         step += 1
         obs = _observe(env)
-        decision = agent.decide(obs)
+        if feedback is not None:
+            obs = {**obs, **feedback}
+            feedback = None
+        try:
+            decision = agent.decide(obs)
+        except (AdapterError, DialectError) as exc:
+            # Malformed model output is a teaching signal, not a crash: feed it back and
+            # let the agent retry on the next turn (bounded by max_steps).
+            feedback = {"error": f"{type(exc).__name__}: {exc}"}
+            continue
         if decision.actions:
-            env.act_batch(decision.actions, batch_id=f"turn-{step}")
-            total += len(decision.actions)
+            result = env.act_batch(decision.actions, batch_id=f"turn-{step}")
+            results = result.get("results", []) if isinstance(result, dict) else []
+            # Count only actions the runtime actually acked ok — not every requested one.
+            total += sum(1 for r in results if r.get("ok"))
+            if isinstance(result, dict) and not result.get("completed", True):
+                failed = next((r for r in results if not r.get("ok")), {})
+                feedback = {"error": f"action {failed.get('verb')!r} failed: {failed.get('error')}"}
         if decision.done:
             stopped = "done"
             break
-        if not decision.actions:
+        # No actions and nothing to teach back → the agent is stuck.
+        if not decision.actions and feedback is None:
             stopped = "stuck"
             break
     return DriveResult(steps=step, actions=total, done=(stopped == "done"), stopped=stopped)

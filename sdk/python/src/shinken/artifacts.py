@@ -14,9 +14,11 @@ absolute paths). Over-the-wire transfer through ``shinkend`` is the Phase-1 foll
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import os
 import shutil
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -87,11 +89,25 @@ class LocalArtifactStore:
     def put(
         self, local_path: str | os.PathLike, sandbox_path: str, scope: str = "session"
     ) -> ArtifactRef:
-        """Copy a host file into the sandbox scope; return its content-addressed ref."""
+        """Copy a host file into the sandbox scope; return its content-addressed ref.
+
+        Atomic: bytes are written to a temp file in the destination directory and renamed
+        into place, so a crash or concurrent reader never observes a half-written file and
+        the returned hash always matches the delivered bytes."""
         dst = self._resolve(sandbox_path)
         dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(local_path, dst)
-        return ArtifactRef(sandbox_path, sha256_file(dst), dst.stat().st_size, scope, "put")
+        fd, tmp = tempfile.mkstemp(dir=dst.parent, prefix=".shinken-put-")
+        os.close(fd)
+        try:
+            shutil.copyfile(local_path, tmp)
+            digest = sha256_file(tmp)
+            size = os.path.getsize(tmp)
+            os.replace(tmp, dst)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.remove(tmp)
+            raise
+        return ArtifactRef(sandbox_path, digest, size, scope, "put")
 
     def get(
         self,
@@ -108,15 +124,27 @@ class LocalArtifactStore:
         src = self._resolve(sandbox_path)
         if not src.is_file():
             raise FileNotFoundError(f"no such artifact in sandbox scope: {sandbox_path}")
-        digest = sha256_file(src)
-        if expect_sha256 is not None and digest != expect_sha256:
-            raise HashMismatch(
-                f"{sandbox_path}: expected {expect_sha256[:12]}…, got {digest[:12]}…"
-            )
         out = Path(local_path)
         out.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(src, out)
-        return ArtifactRef(sandbox_path, digest, src.stat().st_size, scope, "get")
+        # Copy to a temp file, hash THAT copy, verify, then atomically rename into place —
+        # so the returned digest always matches the bytes actually delivered (no TOCTOU
+        # between hashing the source and copying it while the sandbox is still live).
+        fd, tmp = tempfile.mkstemp(dir=out.parent, prefix=".shinken-get-")
+        os.close(fd)
+        try:
+            shutil.copyfile(src, tmp)
+            digest = sha256_file(tmp)
+            if expect_sha256 is not None and digest != expect_sha256:
+                raise HashMismatch(
+                    f"{sandbox_path}: expected {expect_sha256[:12]}…, got {digest[:12]}…"
+                )
+            size = os.path.getsize(tmp)
+            os.replace(tmp, out)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.remove(tmp)
+            raise
+        return ArtifactRef(sandbox_path, digest, size, scope, "get")
 
     def read_bytes(self, sandbox_path: str) -> bytes:
         return self._resolve(sandbox_path).read_bytes()

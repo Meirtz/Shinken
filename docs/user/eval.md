@@ -2,8 +2,9 @@
 
 Audience: users who want to run tasks and understand Shinken's eval direction.
 
-The full design is D7 in [`../design/tech-decisions.md`](../design/tech-decisions.md). v0.0.1 starts with a
-tiny local harness.
+The full design is D7 in [`../design/tech-decisions.md`](../design/tech-decisions.md). Shinken ships a
+tiny local harness, including `run_eval_forked` (golden-checkpoint → fork-N → score over the Docker
+disk tier).
 
 ## Eval Philosophy
 
@@ -18,13 +19,13 @@ Eval is thin orchestration on the same runtime. A task run should produce:
 Future capture/export features can add richer evidence and training-data artifacts after the runtime
 semantics are solid.
 
-## v0.0.1 Scope
+## What The Harness Includes
 
-v0.0.1 should include:
+The tiny harness provides:
 
-- 3-5 deterministic local GUI task fixtures.
-- Programmatic verifiers.
-- N-run sequential execution.
+- Deterministic local GUI task fixtures.
+- Programmatic (non-vacuous) verifiers.
+- N-run execution, including golden→fork-N→score (`run_eval_forked`) over the Docker disk tier.
 - A summary report.
 
 This is enough to prove semantics without a cloud eval service.
@@ -33,9 +34,8 @@ This is enough to prove semantics without a cloud eval service.
 
 Later versions add:
 
-- OSWorld-Verified and other conformance suites.
-- Golden snapshots per task.
-- CoW-forked replicas.
+- OSWorld-Verified and other conformance suites at scale.
+- The CRIU memory + sub-ms CoW fork fast tiers under forked replicas.
 - `pass@k`, `pass^k`, confidence intervals.
 - Hosted eval service and dashboards.
 

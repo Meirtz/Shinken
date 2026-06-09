@@ -12,6 +12,12 @@ from __future__ import annotations
 
 import base64
 
+#: Pixels per wheel "click". The ACI wire contract is that scroll ``dx``/``dy`` are
+#: **pixels** (shinkend's X11 backend converts ~100 px → one wheel step). Providers that
+#: count scroll in discrete wheel clicks (Anthropic ``scroll_amount``, Kimi/Aguvis
+#: ``scroll(n)``) must convert at the adapter boundary; OpenAI is already pixel-denominated.
+SCROLL_PX_PER_CLICK = 100
+
 
 class AdapterError(ValueError):
     """A provider action the adapter cannot map onto ACI v0 (unsupported verb,

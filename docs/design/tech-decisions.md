@@ -32,7 +32,7 @@
 |-----|----------|--------|-----------------|
 | **D1** | Isolation = tiered, substrate-pluggable, routed by `(OS × needs-GPU × needs-fast-fork)` | Accepted (phased) | Firecracker for headless Linux fork; QEMU-microvm/crosvm for Linux desktop; CLH/QEMU+VFIO for GPU/Windows; Apple VZ for macOS |
 | **D2** | ACI action schema = one typed tagged-union with version-pinned adapters | Accepted | ~16 verbs, `target` oneof, code-as-action off by default behind the policy boundary |
-| **D3** | Observation = screenshot-first baseline, structured upgrade | Accepted | v0.0.1 proves screenshot GUI loop plus reference structure; a11y/DOM diff → Set-of-Marks → region pixels optimize tree-rich apps |
+| **D3** | Observation = screenshot-first baseline, structured upgrade | Accepted (screenshot baseline) / Provisional (structured-default upgrade, gated on spike #2) | v0.0.1 proves screenshot GUI loop plus reference structure; a11y/DOM diff → Set-of-Marks → region pixels optimize tree-rich apps |
 | **D4** | Streaming = single-PeerConnection WebRTC, dual-transport | Accepted | Reliable data channel = event stream (= the replay log); on-demand media track |
 | **D5** | Runtime state (checkpoint/fork/resume) is the headline; `.skn` replay is a supporting evidence ledger | Accepted | Immutable checkpoint DAG (snapshot/checkpoint/fork/resume) — implemented on the Docker disk tier (#209); the append-only `events.jsonl` / `.skn` replay surface is **removed/deferred per #216** (see [replay](../user/replay.md)). Reset and branch are one primitive |
 | **D6** | Sandbox capabilities = entitlement provisioning + boundary enforcement (Cedar + ocap + OS) | Accepted | Sandboxes can do real work inside the boundary; Cedar/ocap/OS control the capabilities and boundary crossings |
@@ -41,7 +41,7 @@
 | **D9** | Control plane = Fleet Manager + Action Gateway | Accepted | Warm pools + fork-on-demand; single auth→rate→budget→policy chokepoint; dual-timer sessions |
 | **D10** | Cross-platform = one control plane, one Guest Runtime contract, one ACI | Accepted (phased) | Linux first-class v1; Windows + macOS heavier v1 tiers; Android roadmap |
 | **D11** | GPU = optional acceleration tier | Provisional | Opt-in; encode **never on A100/H100**; vGPU (density) + MIG/CoCo (trusted); NICE DCV is the build-vs-buy fork |
-| **D12** | Business = open self-hostable core + optional hosted commercial layer | Accepted | No lock-in; replay-as-training-data wedge; optimized for NVIDIA where present |
+| **D12** | Business = open self-hostable core + optional hosted commercial layer | Accepted | No lock-in; runtime-state wedge; trajectory export as byproduct; optimized for NVIDIA where present |
 
 ---
 
@@ -148,6 +148,8 @@ Define **one canonical typed tagged-union** as the wire schema, and make **versi
 - **Adapters** translate, bidirectionally and *typed* (not stringly), to and from: Anthropic `computer_2024xxxx`/`2025xxxx` (+ `bash` + `text_editor`), OpenAI `computer_call`, UI-TARS DSL, OSWorld `computer_13`.
 - **Code-as-action** (`exec`/`bash`/`edit`) is a separate, **off-by-default capability class** that routes through the **`tool_runner` policy boundary** (D6) — never the open RCE primitive OSWorld ships.
 
+  **Open sub-decision** (recorded 2026-06, to be settled in the #56 schema reconciliation): when the capability is granted, should `exec`/file-transfer traffic use **typed wire verbs** (`exec`, `put_file`, `get_file`, app-launch) or be delegated to a sidecar protocol? Workload setup and scoring phases empirically require shell-exec, python-exec, file upload/download, and non-blocking app launch — xlang-ai/CUA-Gym's entire 32k-task pipeline drives exactly seven such OSWorld endpoints, tunneling python as base64-exec over unauthenticated HTTP (<https://github.com/xlang-ai/CUA-Gym>). Until decided, every Workload tunnels these untyped; the decision should be made explicitly, not by accident. The alpha gate is unaffected (OSWorld's own server covers it today).
+
 ### Alternatives (and why rejected)
 
 | Alternative | Why rejected |
@@ -176,7 +178,7 @@ Define **one canonical typed tagged-union** as the wire schema, and make **versi
 
 ## D3 — Observation: screenshot-first baseline, structured upgrade
 
-**Status:** Accepted.
+**Status:** Accepted (screenshot baseline) / Provisional (structured-default upgrade, gated on spike #2). The screenshot GUI loop is committed and proven in v0.0.1; the structured-default upgrade — and every density/cost claim that rides on it — is the right call on today's evidence but stays provisional until the first-party a11y-coverage spike (#2) measures real coverage and tree-diff bandwidth.
 
 ### Context
 
@@ -211,6 +213,8 @@ Agents can act on raw `x,y` in the screenshot baseline; they should act on eleme
 - **Positive:** a usable GUI-agent runtime immediately via screenshots, then ~6× token reduction, ~150× bandwidth reduction with D4, replay-stable element refs, and model-agnostic grounding where structure exists.
 - **Negative:** Shinken must build and maintain a cross-OS a11y normalizer (AT-SPI/UIA/AX/CDP → one schema) and a server-side SoM service.
 - **Risks:** the unverified assumption is that real target apps expose usable a11y trees cheaply enough for structured observation to become the common fast path. Mitigation: instrument a representative app set (browser, Electron, native Win/macOS, canvas/WebGL, a game) and measure the fraction with usable trees + bandwidth before committing density/cost claims.
+
+  Field priors from the 2026-06 reference teardowns sharpen spike #2's hypothesis and must be cited in its report: (a) trycua/cua's production Rust driver ships an a11y-first per-window ACI (indexed AX/UIA/AT-SPI trees) but embeds a small-tree heuristic that explicitly instructs the model "this app likely uses custom rendering (e.g. Blender, games, Electron) — use pixel clicks", plus a flag to force-enable Chromium/Electron AX trees — i.e. the shipped answer is **hybrid per-window with pixel fallback**, not structured-default (<https://github.com/trycua/cua>). (b) xlang-ai/CUA-Gym built a 32k-task verified dataset with an a11y passthrough available and **never called** — all verification runs on structured *file/app state* (openpyxl/python-docx reads, server-computed HTTP state_diffs) plus a budgeted vision judge (<https://github.com/xlang-ai/CUA-Gym>). Implication: the spike should evaluate a **guest state probe** (files/app state read in-guest) as a structured rung for *verification*, distinct from a11y-for-*acting*; the expected D3 outcome shifts from "structured-default where coverage is strong" toward "per-window hybrid for acting + guest-state for verifying".
 
 ### Evidence
 
@@ -253,7 +257,7 @@ A **single-PeerConnection, dual-transport** design:
 
 - **Positive:** the headline ~150× bandwidth win; one connection carries actions, observations, permissions, and (on demand) video; the data channel doubles as the durable replay log.
 - **Negative:** WebRTC AV1/HEVC payload negotiation is newer/less battle-tested than H.264; SFU, TURN, and signaling are separate builds; WebRTC defaults are camera-tuned and must be re-tuned for screen content.
-- **Risks:** glass-to-glass latency numbers are unverified pending a dual-channel PoC; jitter-buffer tuning is the make-or-break for "feels interactive."
+- **Risks:** glass-to-glass latency numbers are unverified pending a dual-channel PoC; jitter-buffer tuning is the make-or-break for "feels interactive." The headline ~150× bandwidth/cost advantage **depends on D3's structured-observation coverage**, which is itself provisional and gated on the a11y-coverage spike (#2): if structured coverage is poor and sessions fall back to Tier-2 pixels, the bandwidth win shrinks toward the video regimes (see D3 Risks and [`09-economics-and-build-vs-buy.md`](economics-and-build-vs-buy.md) §5).
 
 ### Evidence
 
@@ -289,10 +293,23 @@ Shinken separates the evidence ledger from runnable state while linking them tig
   is CoW memory/disk fork; on weaker tiers it may be unsupported or degrade to restore/recreate.
 - **Resume/restore** = make a paused/snapshotted Sandbox live again. It answers "can this run
   continue?", which is distinct from viewing a `.skn` replay.
+- **Checkpoint refs are first-class creation inputs.** `checkpoint()`/`snapshot()` returns a ref
+  consumable anywhere a base image is accepted — `fork` is "create from checkpoint ref", one
+  primitive rather than parallel checkpoint/restore APIs. Lifecycle guards are part of the contract:
+  destroying a sandbox that has live checkpoints warns; deleting a checkpoint with live forks is
+  refused or staged. (Prior art: trycua/cua's `snapshot()` returns the same `Image` type its
+  `Sandbox.ephemeral()` consumes, with destroy-warning and auto-suspend guards —
+  <https://github.com/trycua/cua>.)
+- **Verifier-validation mode.** `run_eval_forked` supports a dual-fork agreement gate before a task
+  enters an eval/training set: `score(fork(golden_checkpoint)) == 1.0` AND
+  `score(fork(initial_checkpoint)) == 0.0`. This makes the most expensive invariant of adversarial
+  task factories — two isolated environments per validation round (xlang-ai/CUA-Gym provisions
+  2 fresh cloud VMs per task for exactly this — <https://github.com/xlang-ai/CUA-Gym>) — two forks
+  of one boot.
 - The **decision channel uses OpenTelemetry-GenAI** semantic conventions.
 - **Not bit-deterministic** — a pragmatic **state-snapshot + event-log + observation-log** model.
-- The `.skn` bundle doubles as **RL/SFT training data** (the adoption wedge, D12), while checkpoints
-  and forks make counterfactual reruns live.
+- The `.skn` bundle doubles as **RL/SFT training data** (a supporting byproduct — D12), while
+  checkpoints and forks make counterfactual reruns live.
 
 ### Alternatives (and why rejected)
 
@@ -625,14 +642,18 @@ GPU is an **opt-in acceleration tier**, not the default path.
 
 ### Context
 
-The market punishes closed single-modality products (Scrapybara sunset). The open-source competitors (E2B, trycua/cua, OSWorld, HUD) thrive; the proprietary players (Anthropic Computer Use, OpenAI Operator, Browserbase) ship the model or the host but not an open, self-hostable, cross-platform runtime. First users are teams **building and evaluating** computer-use agents (model labs, researchers, RPA builders), and the `.skn` replay (D5) doubles as RL/SFT trajectory data — a concrete adoption wedge.
+The market punishes closed single-modality products (Scrapybara sunset). The open-source competitors (E2B, trycua/cua, OSWorld, HUD) thrive; the proprietary players (Anthropic Computer Use, OpenAI Operator, Browserbase) ship the model or the host but not an open, self-hostable, cross-platform runtime. First users are teams **building and evaluating** computer-use agents (model labs, researchers, RPA builders), and the `.skn` replay (D5) doubles as RL/SFT trajectory data — a supporting byproduct of the runtime-state wedge, never the headline.
 
 ### Decision
 
 - **Open, self-hostable core** + a reusable Operator + an open, provider-agnostic agent loop (no lock-in).
 - An **optional hosted commercial layer**: the Control Panel, observability, permission-audit, and eval as a service.
 - **North star:** ONE platform for production *and* eval, layered.
-- **First users:** CUA model/eval teams, with the **replay-as-training-data** wedge.
+- **First users:** CUA model/eval teams, with the **runtime-state wedge**: cheap golden-checkpoint →
+  fork-N replicas and deterministic reset that no shipped harness has — as of 2026-06, cua's CoW fork
+  is cloud-only and unused by its own bench, and uni-agent/Agentix/CUA-Gym all pay cold-boot or
+  fresh-VM costs per rollout (see [landscape](landscape.md), trainer-side capsules). Trajectory/`.skn`
+  export is the supporting byproduct that turns those runs into training data, never the headline.
 - **Vendor-neutral**: runs on any Kubernetes/cloud; **optimized for NVIDIA GPUs where present** (D11), never dependent on them.
 
 ### Alternatives (and why rejected)
@@ -646,7 +667,7 @@ The market punishes closed single-modality products (Scrapybara sunset). The ope
 
 ### Consequences
 
-- **Positive:** adoption with no lock-in; the replay-as-training-data wedge gives a concrete first-user hook; the hosted layer monetizes the category-defining panel; runs anywhere, faster on NVIDIA.
+- **Positive:** adoption with no lock-in; the runtime-state wedge gives a concrete first-user hook (with trajectory export as the supporting byproduct); the hosted layer monetizes the category-defining panel; runs anywhere, faster on NVIDIA.
 - **Negative:** open core means competitors can fork; the commercial layer must stay genuinely valuable (panel, audit, eval, observability) to fund development.
 - **Risks:** balancing open vs hosted feature lines; sustaining cross-OS + GPU engineering on an open-core model.
 

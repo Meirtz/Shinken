@@ -40,6 +40,10 @@ const MAX_WS_MESSAGE: usize = 16 * 1024 * 1024;
 /// Outbound writer-channel depth. Bounds buffered frames+replies so a slow client
 /// cannot grow memory without bound; screencast frames beyond this are dropped.
 const OUTBOUND_CAP: usize = 32;
+/// Per-message write deadline. A stalled peer (e.g. TCP zero-window) must not be able
+/// to park the writer task — and through it the read loop's awaited sends — forever,
+/// which would make MAX_CONNECTION_LIFETIME unenforceable.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Server WebSocket config with bounded inbound message/frame size (#136).
 fn ws_config() -> WebSocketConfig {
@@ -89,7 +93,17 @@ async fn main() -> Result<()> {
     );
 
     loop {
-        let (stream, peer) = listener.accept().await?;
+        // shinkend is the sole control path into the sandbox, so a transient accept()
+        // error (ECONNABORTED on a reset-during-accept, EMFILE/ENFILE fd pressure,
+        // ENOBUFS) must not tear down the whole session: log, back off briefly, retry.
+        let (stream, peer) = match listener.accept().await {
+            Ok(pair) => pair,
+            Err(e) => {
+                eprintln!("accept error ({e}); backing off 100ms and continuing");
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
+            }
+        };
         let Ok(conn_permit) = connections.clone().try_acquire_owned() else {
             eprintln!("connection {peer} rejected: max connections reached ({MAX_CONNECTIONS})");
             continue;
@@ -125,17 +139,28 @@ async fn serve(
     token: Option<String>,
     screencasts: Arc<Semaphore>,
 ) -> Result<()> {
-    let ws = tokio_tungstenite::accept_async_with_config(stream, Some(ws_config())).await?;
+    // Bound the WS HTTP upgrade itself by the pre-auth deadline. The connection permit
+    // is already held by the caller, so an upgrade that never completes would squat a
+    // slot forever — exactly the slot-exhaustion DoS #134's handshake deadline (which
+    // only starts AFTER the upgrade) cannot otherwise see.
+    let ws = tokio::time::timeout(
+        HANDSHAKE_TIMEOUT,
+        tokio_tungstenite::accept_async_with_config(stream, Some(ws_config())),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("websocket upgrade timed out"))??;
     let (mut tx, mut rx) = ws.split();
 
     // Single writer behind a BOUNDED channel: replies are sent reliably (awaited),
     // but screencast frames are dropped when the client falls behind (see
     // spawn_screencast) so a slow/stalled reader cannot grow memory without bound.
+    // Each send is bounded by WRITE_TIMEOUT so a stalled peer can't wedge the writer.
     let (out, mut out_rx) = mpsc::channel::<WsMessage>(OUTBOUND_CAP);
     let writer: JoinHandle<()> = tokio::spawn(async move {
         while let Some(msg) = out_rx.recv().await {
-            if tx.send(msg).await.is_err() {
-                break;
+            match tokio::time::timeout(WRITE_TIMEOUT, tx.send(msg)).await {
+                Ok(Ok(())) => {}
+                _ => break, // send error or peer stalled past WRITE_TIMEOUT
             }
         }
         let _ = tx.close().await;
@@ -204,7 +229,22 @@ async fn serve(
         };
         match frame {
             WsMessage::Text(text) => {
-                let step = session.on_text(&text);
+                // The executor work inside on_text (one-shot screenshot capture, pointer/
+                // keyboard synthesis, the pyautogui subprocess spawn) is blocking I/O; run
+                // the whole step on a blocking thread so it never stalls a runtime worker
+                // and starve other connections (#137 did this only for the screencast path).
+                let step = match tokio::task::spawn_blocking(move || {
+                    let step = session.on_text(&text);
+                    (session, step)
+                })
+                .await
+                {
+                    Ok((s, step)) => {
+                        session = s;
+                        step
+                    }
+                    Err(e) => break Err(anyhow::anyhow!("session task failed: {e}")),
+                };
                 // wait.ms (#140): sleep (async, bounded by MAX_WAIT_MS) so the ack lands
                 // after the delay; yields to other connections, never blocks the runtime.
                 if step.delay_ms > 0 {
@@ -226,12 +266,22 @@ async fn serve(
                                 }
                             }
                             Err(_) => {
-                                let _ = out
-                                    .send(WsMessage::Text(format!(
-                                        "{{\"type\":\"ack\",\"call_id\":\"{}\",\"ok\":false,\"error\":\"max concurrent screencasts reached ({MAX_SCREENCASTS})\"}}",
-                                        spec.stream_id
-                                    )))
-                                    .await;
+                                // Build via serde so a client-supplied call_id containing
+                                // a quote/backslash can't produce a malformed JSON frame.
+                                let nack = serde_json::to_string(&protocol::Message::Ack {
+                                    call_id: spec.stream_id.clone(),
+                                    ok: false,
+                                    error: Some(format!(
+                                        "max concurrent screencasts reached ({MAX_SCREENCASTS})"
+                                    )),
+                                })
+                                .unwrap_or_else(|_| {
+                                    protocol::error_result_text(
+                                        &spec.stream_id,
+                                        "max concurrent screencasts reached",
+                                    )
+                                });
+                                let _ = out.send(WsMessage::Text(nack)).await;
                             }
                         }
                     }
@@ -269,7 +319,15 @@ async fn serve(
         h.abort();
     }
     drop(out); // let the writer task drain and finish
-    let _ = writer.await;
+               // Bound the drain: a stalled peer must not let the writer (and thus the connection
+               // slot) outlive the connection — abort if it can't flush within WRITE_TIMEOUT.
+    let mut writer = writer;
+    if tokio::time::timeout(WRITE_TIMEOUT, &mut writer)
+        .await
+        .is_err()
+    {
+        writer.abort();
+    }
     outcome
 }
 
@@ -308,7 +366,6 @@ fn spawn_screencast(
             if last_hash == Some(hash) {
                 continue; // unchanged frame — skip
             }
-            last_hash = Some(hash);
             let frame = protocol::stream_frame(
                 &spec.stream_id,
                 seq,
@@ -319,14 +376,19 @@ fn spawn_screencast(
                     scope: spec.scope.clone(),
                 },
             );
-            seq += 1;
             let Ok(text) = serde_json::to_string(&frame) else {
                 break;
             };
             // Drop the frame if the client is behind (bounded memory); a live preview
             // wants recent frames, not a backlog. Only stop if the client is gone.
+            // Commit last_hash/seq ONLY on a successful send: a frame dropped on Full
+            // must be re-attempted next tick, else idle-suppression would treat the
+            // never-delivered change as "already sent" and leave the view stale forever.
             match out.try_send(WsMessage::Text(text)) {
-                Ok(()) => {}
+                Ok(()) => {
+                    last_hash = Some(hash);
+                    seq += 1;
+                }
                 Err(mpsc::error::TrySendError::Full(_)) => continue,
                 Err(mpsc::error::TrySendError::Closed(_)) => break,
             }

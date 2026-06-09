@@ -110,6 +110,10 @@ class DockerLocalProvider(SandboxProvider):
         # Checkpoint registry (#206): ckpt_id -> {snapshot_id, event_seq, agent_state_ref}.
         # In-memory for the local reference tier; a real Control Plane persists the DAG.
         self._checkpoints: dict[str, dict[str, Any]] = {}
+        # Snapshot registry: snapshot tag -> the SandboxSpec it was committed from, so
+        # restore()/fork() can rebuild geometry + resource limits instead of silently
+        # reverting to defaults. Also the reclamation set for cleanup_snapshots().
+        self._snapshots: dict[str, SandboxSpec] = {}
 
     def connect(self, handle: SandboxHandle):
         """Connect, then wire file transfer through the **actual guest** filesystem via
@@ -122,8 +126,10 @@ class DockerLocalProvider(SandboxProvider):
         return env
 
     def create(self, spec: SandboxSpec | None = None) -> SandboxHandle:
-        spec = replace(spec, image=spec.image or self.image) if spec is not None else SandboxSpec(
-            image=self.image
+        spec = (
+            replace(spec, image=spec.image or self.image)
+            if spec is not None
+            else SandboxSpec(image=self.image)
         )
         token = secrets.token_hex(16)
         port = _free_port(self.host)
@@ -251,9 +257,7 @@ class DockerLocalProvider(SandboxProvider):
             image=str(handle.metadata.get("image") or self.image),
             screen_geometry=str(handle.metadata.get("screen_geometry") or "1280x800x24"),
             metadata={
-                k: v
-                for k, v in handle.metadata.items()
-                if k not in {"container_id", "port"}
+                k: v for k, v in handle.metadata.items() if k not in {"container_id", "port"}
             },
         )
         resources: dict[str, Any] = dict(handle.metadata.get("resources") or {})
@@ -287,18 +291,63 @@ class DockerLocalProvider(SandboxProvider):
             raise ProviderError("sandbox handle has no container id to snapshot")
         return str(cid)
 
+    def _spec_from_handle(self, handle: SandboxHandle) -> SandboxSpec:
+        """Rebuild the originating SandboxSpec from a handle's metadata (geometry +
+        resource limits), so a snapshot restored later boots at the SAME resolution and
+        limits as the golden state instead of silently reverting to defaults."""
+        resources: dict[str, Any] = dict(handle.metadata.get("resources") or {})
+        return SandboxSpec(
+            image=str(handle.metadata.get("image") or self.image),
+            screen_geometry=str(handle.metadata.get("screen_geometry") or "1280x800x24"),
+            memory=resources.get("memory"),
+            cpus=resources.get("cpus"),
+            pids_limit=resources.get("pids_limit"),
+            shm_size=resources.get("shm_size"),
+            metadata={
+                k: v
+                for k, v in handle.metadata.items()
+                if k not in {"container_id", "port", "destroyed"}
+            },
+        )
+
     def snapshot(self, handle: SandboxHandle, name: str | None = None) -> str:
-        """Disk snapshot via `docker commit` → a tagged image id (snapshot_kind=disk)."""
+        """Disk snapshot via `docker commit` → a tagged image id (snapshot_kind=disk).
+        Records the originating spec so restore()/fork() preserve geometry + limits."""
         tag = f"shinken-snap:{name or uuid.uuid4().hex[:12]}"
         commit = [self.docker_bin, "commit", self._container_of(handle), tag]
         _run(commit, timeout=self.startup_timeout)
+        self._snapshots[tag] = self._spec_from_handle(handle)
         return tag
 
     def restore(self, snapshot_id: str) -> SandboxHandle:
         """Launch a fresh sandbox from a snapshot image (or a checkpoint id) — a new live
-        container off the committed filesystem layer."""
+        container off the committed filesystem layer, at the geometry/limits captured when
+        the snapshot was taken (not provider defaults)."""
         image = self._checkpoints.get(snapshot_id, {}).get("snapshot_id", snapshot_id)
-        return self.create(SandboxSpec(image=image))
+        spec = self._snapshots.get(image)
+        spec = replace(spec, image=image) if spec is not None else SandboxSpec(image=image)
+        return self.create(spec)
+
+    def delete_snapshot(self, snapshot_id: str) -> None:
+        """Reclaim a committed snapshot image (`docker rmi`). Resolves a checkpoint id to
+        its snapshot first. Idempotent and best-effort — a still-referenced image is left."""
+        image = self._checkpoints.get(snapshot_id, {}).get("snapshot_id", snapshot_id)
+        subprocess.run(
+            [self.docker_bin, "rmi", "-f", image],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=30,
+        )
+        self._snapshots.pop(image, None)
+
+    def cleanup_snapshots(self) -> int:
+        """Reclaim every snapshot image this provider committed (`docker rmi`). Returns the
+        count removed. Pairs with cleanup_orphans() (which only removes containers)."""
+        tags = list(self._snapshots)
+        for tag in tags:
+            self.delete_snapshot(tag)
+        return len(tags)
 
     def resume(self, handle_or_checkpoint: SandboxHandle | str) -> SandboxHandle:
         """Bring a snapshot/checkpoint back live. Docker containers are ephemeral (`--rm`),
@@ -319,12 +368,14 @@ class DockerLocalProvider(SandboxProvider):
         self,
         handle: SandboxHandle,
         *,
+        name: str | None = None,
         event_seq: int | None = None,
         agent_state_ref: str | None = None,
     ) -> str:
         """Named restore point binding a disk snapshot to optional agent state — a node
-        in the checkpoint DAG (D5). `resume(ckpt_id)` restores it."""
-        snapshot_id = self.snapshot(handle)
+        in the checkpoint DAG (D5). `resume(ckpt_id)` restores it. ``name`` labels the
+        underlying snapshot image."""
+        snapshot_id = self.snapshot(handle, name=name)
         ckpt_id = f"ckpt-{uuid.uuid4().hex[:12]}"
         self._checkpoints[ckpt_id] = {
             "snapshot_id": snapshot_id,

@@ -11,8 +11,9 @@ size). Fixture-tested; no live API calls.
 ``terminate``/``answer`` map to the Operator-loop ``done`` control action
 (``{"verb": "done"}``, mirroring :data:`shinken.dialect.DONE`) — a control signal, not an
 ACI wire verb — carrying ``status="fail"`` for a non-success terminate and an ``answer``
-string for QA tasks. ``scroll`` carries no coordinate (Kimi emits none); a dispatcher whose
-backend requires a scroll position supplies one (e.g. the current cursor / screen centre).
+string for QA tasks. Kimi emits no scroll coordinate, but the ACI schema and the X11
+executor require a scroll ``target``, so ``scroll`` defaults to the screen centre
+(``point_norm 0.5, 0.5``); its magnitude is converted from wheel clicks to ACI pixels.
 
 This adapter is for the **open-weight Kimi-VL / Aguvis-format** path (normalized coords, a
 ``Toolcall:`` line). The hosted **Kimi K2.6** agentic model is a *different* path: it drives
@@ -28,7 +29,7 @@ from __future__ import annotations
 
 import re
 
-from .base import AdapterError, point_norm
+from .base import SCROLL_PX_PER_CLICK, AdapterError, point_norm
 
 #: A signed int or float literal.
 _NUM = r"[-+]?(?:\d+\.\d*|\.\d+|\d+)"
@@ -123,8 +124,16 @@ class KimiVLAdapter:
         m = re.search(_NUM, arg)
         if not m:
             raise AdapterError("scroll", f"no scroll magnitude in {arg!r}")
-        # Aguvis/pyautogui: +amount = up; ACI/executor: +dy = down → negate.
-        return {"verb": "scroll", "dy": -int(round(float(m.group(0))))}
+        # Aguvis/pyautogui scroll(n): n = wheel clicks, +amount = up; the ACI wire contract
+        # is PIXELS with +dy = down → negate and convert clicks → px. Kimi emits no scroll
+        # coordinate, but the ACI schema + X11 executor require a target, so default to the
+        # screen centre rather than emit a targetless scroll that fails at runtime.
+        clicks = int(round(float(m.group(0))))
+        return {
+            "verb": "scroll",
+            "target": point_norm(0.5, 0.5),
+            "dy": -clicks * SCROLL_PX_PER_CLICK,
+        }
 
     def _wait(self, arg: str) -> dict:
         m = re.search(_NUM, arg)

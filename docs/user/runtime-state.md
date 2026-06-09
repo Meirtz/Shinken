@@ -46,6 +46,10 @@ Resume continues a paused or suspended Sandbox/Session. It is not the same as re
 Sandbox has live OS state. A replayed `.skn` shows what happened and may feed a fork/restore
 operation, but by itself it does not make the old desktop live again.
 
+### Prepare expensive setup once, in the golden checkpoint
+
+Per-episode environment hygiene that an unsnapshotted runner is forced to repeat every reset — remounting shared memory for heavy browsers, applying enterprise/update-popup policy, masking auto-update timers, settling the desktop, installing fixtures — is exactly the cost runtime state removes. Bake that setup into the sandbox **once**, take a golden checkpoint, then `fork` per episode: every replica inherits the prepared state instantly instead of re-running minutes of setup-and-settle on a cold boot. This is the concrete mechanism behind the fork-vs-cold-boot economics (see [tech-decisions.md](../design/tech-decisions.md) D1/D7).
+
 ## Future Timeline Link
 
 A future timeline/audit format may reference checkpoint ids at meaningful boundaries: task start,

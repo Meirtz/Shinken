@@ -11,6 +11,7 @@ import asyncio
 import base64
 import contextlib
 import json
+import logging
 import shutil
 import tempfile
 import threading
@@ -28,6 +29,8 @@ from .gateway import CapabilityDenied, check_file_transfer, decide_action
 
 __all__ = ["connect", "aconnect", "Sandbox", "AsyncSandbox", "Capabilities"]
 
+_log = logging.getLogger("shinken.client")
+
 DEFAULT_ADDR = "127.0.0.1:8765"
 _CLIENT = {"name": "shinken-py", "version": "0.0.0"}
 _FRAME_QUEUE_MAX = 32
@@ -35,9 +38,15 @@ _FRAME_QUEUE_MAX = 32
 # trees, but not unbounded — a malformed or hostile peer can't force unbounded buffering.
 # (websockets' 1 MiB default would also reject legitimate large screenshots.)
 _MAX_WS_MESSAGE = 16 * 1024 * 1024
+# Bound the handshake recv so aconnect() can't hang forever against a server that accepts
+# the socket but never sends `welcome`.
+_HANDSHAKE_TIMEOUT = 10.0
 
-# Sentinel pushed onto the frame queue when the stream/connection ends.
+# Sentinels pushed onto the frame queue. _STREAM_END = the stream stopped cleanly (server
+# stop or astop_screencast); _STREAM_LOST = the connection died mid-stream, so a consumer
+# can tell silent truncation from a normal end.
 _STREAM_END = object()
+_STREAM_LOST = object()
 
 # v0 session capability envelope — reference semantics for the local gateway shim,
 # not a production policy engine.
@@ -87,6 +96,12 @@ def _target(target: Any, x: float | None, y: float | None) -> dict | None:
 def _parse_welcome(welcome: dict) -> tuple[Capabilities, str]:
     """Validate a `welcome` payload and build (Capabilities, platform). Raises on mismatch."""
     if welcome.get("type") != "welcome":
+        # shinkend rejects a bad/missing token with a `result` (ok=false) then closes.
+        # Surface its actionable reason instead of a cryptic type mismatch.
+        if welcome.get("type") == "result" and welcome.get("ok") is False:
+            raise RuntimeError(
+                f"handshake rejected by server: {welcome.get('error', 'unknown error')}"
+            )
         raise RuntimeError(f"expected 'welcome', got {welcome.get('type')!r}")
     if welcome.get("v") != 0:
         raise RuntimeError(f"unsupported ACI version in welcome: {welcome.get('v')!r}")
@@ -177,12 +192,22 @@ class AsyncSandbox:
                 try:
                     self._dispatch(json.loads(raw))
                 except Exception:
-                    continue  # one malformed frame must not kill the reader
+                    # one malformed frame must not kill the reader — but make it visible
+                    _log.debug("dropping malformed/undispatchable frame", exc_info=True)
+                    continue
         except Exception:
-            pass
+            _log.debug("read loop terminated by connection error", exc_info=True)
         finally:
             self._fail_pending(ConnectionError("connection closed"))
-            self._push_frame(_STREAM_END)
+            # The connection ended: signal LOST so a mid-stream drop is distinguishable
+            # from a clean stop (which pushes _STREAM_END via astop_screencast).
+            self._push_frame(_STREAM_LOST)
+
+    def _discard_pong_waiter(self, fut: asyncio.Future) -> None:
+        """Remove a pong waiter from the deque (on timeout/send failure) so a stale future
+        can't later swallow a live ping's pong and misattribute RTT."""
+        with contextlib.suppress(ValueError):
+            self._pong_waiters.remove(fut)
 
     def _clear_frames(self) -> None:
         """Drop queued stream frames/sentinels before starting a new stream."""
@@ -217,6 +242,13 @@ class AsyncSandbox:
         fut = self._pending.pop(cid, None) if cid is not None else None
         if fut is not None and not fut.done():
             fut.set_result(msg)
+            return
+        # No pending future matched. shinkend emits protocol-error frames with call_id "?"
+        # (e.g. "bad message", "already authenticated"); surface those rather than swallow.
+        if kind == "result" and msg.get("ok") is False:
+            _log.warning("uncorrelated server error frame: %s", msg.get("error"))
+        else:
+            _log.debug("dropping uncorrelated frame (type=%s, call_id=%s)", kind, cid)
 
     def _fail_pending(self, exc: Exception) -> None:
         for fut in self._pending.values():
@@ -250,12 +282,20 @@ class AsyncSandbox:
             ) from None
 
     async def ping(self) -> float:
-        """Round-trip time to the runtime, in seconds."""
+        """Round-trip time to the runtime, in seconds. Bounded by the RPC timeout (#142),
+        so an async caller can't hang forever if the server never pongs."""
         fut: asyncio.Future = asyncio.get_running_loop().create_future()
         self._pong_waiters.append(fut)
         t0 = time.perf_counter()
-        await self._ws.send(json.dumps({"type": "ping", "t": t0}))
-        await fut
+        try:
+            await self._ws.send(json.dumps({"type": "ping", "t": t0}))
+            await asyncio.wait_for(fut, self._rpc_timeout)
+        except asyncio.TimeoutError:
+            self._discard_pong_waiter(fut)
+            raise TimeoutError(f"ping timed out after {self._rpc_timeout}s") from None
+        except Exception:
+            self._discard_pong_waiter(fut)
+            raise
         return time.perf_counter() - t0
 
     async def query(self, q: str) -> Any:
@@ -274,11 +314,10 @@ class AsyncSandbox:
 
     def _gate(self, verb: str) -> None:
         """Action Gateway check (#84/#7): when enforcing, decide allow / deny / **ask**
-        before dispatch — so a denied or unapproved verb never reaches shinkend — and
-        record the decision. A capability valued ``"ask"`` is *risky*: it pauses for
-        approval via the ``on_ask`` handler (default: deny), and the resolution is
-        recorded as a ``permission:ask`` event. GUI input passes when input_automation is
-        granted (the default)."""
+        before dispatch — so a denied or unapproved verb never reaches shinkend. A
+        capability valued ``"ask"`` is *risky*: it pauses for approval via the ``on_ask``
+        handler (default: deny). GUI input passes when input_automation is granted (the
+        default)."""
         if not self._enforce:
             return
         decision, cap, reason = decide_action(verb, self.sandbox_capabilities)
@@ -310,11 +349,8 @@ class AsyncSandbox:
         reason = f"capability '{cap_name}' not granted"
         raise CapabilityDenied(f"{label}: {reason}")
 
-    async def act(
-        self, verb: str, target: dict | None = None, *, _batch_id: str | None = None, **kwargs: Any
-    ) -> dict:
-        """Send one typed action and await its ack. Raises on failure. ``_batch_id`` tags
-        the recorded action event when dispatched as part of a batch (#73)."""
+    async def act(self, verb: str, target: dict | None = None, **kwargs: Any) -> dict:
+        """Send one typed action and await its reply. Raises on failure."""
         self._gate(verb)
         action: dict = {"verb": verb}
         if target is not None:
@@ -322,7 +358,11 @@ class AsyncSandbox:
         action.update({k: v for k, v in kwargs.items() if v is not None})
         call_id = self._next_id()
         reply = await self._rpc({"type": "action", "call_id": call_id, "action": action})
-        if not reply.get("ok"):
+        # A successful one-shot `screenshot` is answered with an `observation` (which has
+        # no `ok` field), not an `ack` — so an adapter-translated model screenshot
+        # tool-call routed through act()/act_batch() must not be treated as a failure.
+        ok = True if reply.get("type") == "observation" else reply.get("ok")
+        if not ok:
             raise RuntimeError(reply.get("error", f"action {verb!r} failed"))
         self._action_count += 1
         return reply
@@ -346,7 +386,7 @@ class AsyncSandbox:
             try:
                 if not verb:
                     raise ValueError("action has no 'verb'")
-                reply = await self.act(verb, target, _batch_id=bid, **rest)
+                reply = await self.act(verb, target, **rest)
                 results.append(
                     {
                         "index": i,
@@ -446,7 +486,9 @@ class AsyncSandbox:
 
     async def next_frame(self, timeout: float | None = None) -> dict | None:
         """Await the next screencast frame as {'png', 'w', 'h', 'seq', 'stream'},
-        or None if the stream ended or `timeout` seconds elapsed with no frame."""
+        or None if the stream ended cleanly or `timeout` seconds elapsed with no frame.
+        Raises :class:`ConnectionError` if the connection dropped mid-stream, so silent
+        truncation is distinguishable from a normal end."""
         try:
             item = (
                 await asyncio.wait_for(self._frames.get(), timeout)
@@ -457,6 +499,8 @@ class AsyncSandbox:
             return None
         if item is _STREAM_END:
             return None
+        if item is _STREAM_LOST:
+            raise ConnectionError("connection lost mid-screencast")
         img = item.get("image") or {}
         png = base64.b64decode(img.get("ref", ""))
         return {
@@ -501,6 +545,7 @@ class AsyncSandbox:
         checkpoint_id = await asyncio.to_thread(
             self._provider.checkpoint,
             self._handle,
+            name=name,
             event_seq=None,
             agent_state_ref=agent_state_ref,
         )
@@ -525,7 +570,7 @@ class AsyncSandbox:
 
     def _gate_file(self, direction: str, sandbox_path: str) -> str:
         """Capability gate for file transfer (#85). When enforcing, deny if ``fs_scope``
-        is not granted (recording the decision); returns the effective scope string."""
+        is not granted; returns the effective scope string."""
         scope = self.sandbox_capabilities.get("fs_scope", "session")
         if self._enforce:
             allowed, cap, reason = check_file_transfer(direction, self.sandbox_capabilities)
@@ -547,7 +592,7 @@ class AsyncSandbox:
         """Copy a file out of the sandbox to the host, verifying its content hash (#85).
 
         Raises :class:`~shinken.artifacts.HashMismatch` if ``expect_sha256`` is given and
-        the fetched content does not match. Records the transfer when recording."""
+        the fetched content does not match."""
         scope = self._gate_file("get_file", sandbox_path)
         ref = self._transfer().get(
             sandbox_path, local_path, expect_sha256=expect_sha256, scope=scope
@@ -583,12 +628,15 @@ async def aconnect(
     hello: dict = {"type": "hello", "v": 0, "client": _CLIENT}
     if token:
         hello["token"] = token
-    await ws.send(json.dumps(hello))
-    welcome = json.loads(await ws.recv())
     try:
+        await ws.send(json.dumps(hello))
+        # Bound the welcome read so a server that accepts the socket but never replies
+        # can't hang aconnect() forever.
+        welcome = json.loads(await asyncio.wait_for(ws.recv(), _HANDSHAKE_TIMEOUT))
         capabilities, platform = _parse_welcome(welcome)
     except Exception:
-        await ws.close()
+        with contextlib.suppress(Exception):
+            await ws.close()
         raise
     sandbox = AsyncSandbox(
         ws,
@@ -615,7 +663,11 @@ class _BackgroundLoop:
         asyncio.set_event_loop(self.loop)
         self.loop.run_forever()
 
-    def run(self, coro: Any, timeout: float | None = 30.0) -> Any:
+    def run(self, coro: Any, timeout: float | None = None) -> Any:
+        # No outer ceiling by default: liveness comes from the inner per-RPC timeout
+        # (#142) and connection-close fan-out (_fail_pending), so legitimately long
+        # operations (multi-`wait` batches, docker-commit checkpoint/fork/resume) are
+        # not severed mid-flight while the coroutine keeps running detached.
         return asyncio.run_coroutine_threadsafe(coro, self.loop).result(timeout)
 
     def stop(self) -> None:

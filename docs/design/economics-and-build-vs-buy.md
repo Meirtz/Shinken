@@ -1,6 +1,6 @@
 # 09 — Economics & Build-vs-Buy
 
-> Status: drafting · Last updated 2026-05-30 · Owner: the maintainers
+> Status: drafting · Last updated 2026-05-30 · Owner: economics workstream
 >
 > This doc puts dollars on the architecture. It models egress, host density, and per-sandbox cost
 > across the streaming and isolation tiers fixed in [`05-tech-decisions.md`](tech-decisions.md)
@@ -15,15 +15,17 @@
 
 **Summary.** Shinken's economic thesis fits in one sentence: *the steady-state cost of running an
 agent desktop is bandwidth and idle compute — not encode, not boot.* The architecture is engineered
-to attack exactly those two costs. The structured-default observation channel (**D3**/**D4**) is
-roughly **150× cheaper** than H.264 office video, and the copy-on-write fork model (**D1**) makes
+to attack exactly those two costs. The structured observation channel (**D3**/**D4**) — the *target*
+default, gated on the §5 measurement plan and the a11y-coverage spike, not yet a committed scale
+default — is modeled at roughly **150× cheaper** than H.264 office video, and the copy-on-write fork
+model (**D1**) makes
 host density a function of *private dirty RSS*, not snapshot size, so hundreds of idle agents can
 share a single warm parent. On build-vs-buy the call is to **buy the substrate, broker, and pixel
 codec as commodities** — they are well-served by mature open-source and public products — and **build
 only the layers nobody ships**: the typed ACI, the structured-default streaming protocol, the
 event-sourced forkable replay, the Sandbox Capability Manager, and the eval layer. Every
 speed, density, and cost number below that we did not generate ourselves is marked
-**(vendor-published, unverified)**. Section 6 is the plan to retire those labels.
+**(vendor-published, unverified)**. Section 5 is the plan to retire those labels.
 
 ---
 
@@ -31,7 +33,7 @@ speed, density, and cost number below that we did not generate ourselves is mark
 
 We model the dominant cost lines for a fleet of always-on agent desktops at three scales —
 **1k / 10k / 100k concurrent** — across the three streaming regimes the protocol supports (**D4**).
-The point of the tables is not their precision (they are wrong; that is what §6 fixes) but their
+The point of the tables is not their precision (they are wrong; that is what §5 fixes) but their
 *shape*: the ranking between regimes is robust even if every absolute number moves ±50%.
 
 ### 1.1 Egress: the line that dominates
@@ -59,6 +61,7 @@ schedule to the full fleet at each scale.
 | H.264 generic video (5 Mbps)     |     ~$84,900  |      ~$814,000 |       ~$8.1 M   |
 | **H.264 office (3 Mbps)**        |     ~$52,500  |  **~$490,000** |    **~$4.86 M** |
 | NVENC screen-tuned (1.5 Mbps)    |     ~$26,500  |      ~$250,000 |       ~$2.5 M   |
+| **per-step screenshot polling — incumbent (≈0.2–1 Mbps avg-equiv)** *(estimate)* | ~$5,500–28,000 | ~$45,000–250,000 | ~$330k–2.5 M |
 | **AV1-SCC busy (0.5 Mbps)**      |     ~$12,000  |       ~$85,000 |   **~$814,000** |
 | **AV1-SCC normal (0.1 Mbps)**    |      ~$2,800  |       ~$20,000 |       ~$166,000 |
 | structured active (0.05 Mbps)    |      ~$1,400  |       ~$12,000 |        ~$85,000 |
@@ -69,19 +72,27 @@ egress $/mo at 100k concurrent (log scale, vendor-published, unverified)
 
  H.264 video 5Mbps   ████████████████████████████████████  ~$8.1M
  H.264 office 3Mbps  ██████████████████████████            ~$4.86M
+ screenshot poll     ██████–██████████████   (est.)        ~$330k–2.5M  ← incumbent baseline
  AV1-SCC busy 0.5    ████████                              ~$814k
  AV1-SCC normal 0.1  ███                                   ~$166k
  structured active   █▌                                    ~$85k
- structured blend    ▌                                     ~$36k   ← Shinken default (D4)
+ structured blend    ▌                                     ~$36k   ← Shinken target default (gated, D3/D4)
 ```
 
-Two facts jump out. First, the **regime choice swamps everything else**: at 100k concurrent the gap
-between H.264 office video and a structured-blend default is **~$4.86M/mo vs ~$36k/mo — about
-$58M/yr** in egress alone, before any of the second-order WebRTC relay cost that video also incurs
-and that structured traffic largely avoids. Second, **AV1-SCC is the right *fallback* codec, not the
-steady state**: even at its cheap "normal screen" point it is ~5× the structured blend, and AV1-SCC
-gives ~40% bitrate savings vs H.264 at equal quality (vendor-published). The architecture therefore
-makes structured the default and pixels a metered, human-triggered escalation (**D3**/**D4**).
+Two facts jump out, and the win is best read against *two* baselines — the actual incumbent and the
+video strawman — not just one. **Versus the incumbent (per-step screenshot polling, the loop OSWorld
+and most CUA stacks run today):** at 100k concurrent a structured blend is **~$36k/mo vs an estimated
+~$330k–2.5M/mo — roughly a 10–60× egress reduction**, with the wide band reflecting that the
+incumbent's cost is itself an estimate (~0.2–1 Mbps avg-equiv at agent cadence, screenshot size ×
+step rate), not a measured number. **Versus the video strawman (24×7 H.264 office):** the gap is
+**~$4.86M/mo vs ~$36k/mo — about $58M/yr** in egress alone, before the second-order WebRTC relay cost
+that video also incurs and that structured traffic largely avoids; that ~150× figure measures
+structured against always-on video, *not* against the incumbent. Either way, the **regime choice
+swamps everything else**, and **AV1-SCC is the right *fallback* codec, not the steady state**: even at
+its cheap "normal screen" point it is ~5× the structured blend, and AV1-SCC gives ~40% bitrate savings
+vs H.264 at equal quality (vendor-published). The architecture therefore **targets structured as the
+default** — gated on the §5 measurement plan and the a11y-coverage spike before any scale/cost
+commitment — with pixels a metered, human-triggered escalation (**D3**/**D4**).
 
 This is *why* the dual-channel protocol exists. The reliable-ordered data channel carrying the
 structured event stream — the actions, accessibility-tree diffs, and Set-of-Marks element refs that
@@ -90,7 +101,7 @@ camera-tuned video. The on-demand NVENC media track lights up only when a human 
 when content is pixel-only (canvas/WebGL/video/non-instrumented apps). Pixel-seconds and pixel-bytes
 must be **first-class, per-session metered quantities** in the Control Panel so operators can see the
 cost of watching. The entire structured win evaporates if Tier-2 video is left on for every session;
-that behavioral assumption is the one the §6 plan must validate.
+that behavioral assumption is the one the §5 plan must validate.
 
 ### 1.2 The hidden egress cost: WebRTC relay, not the codec
 
@@ -116,7 +127,9 @@ pages** cost real host RAM. The published anchors *(vendor-published, unverified
 - CoW `mmap` itself ~4 µs; **end-to-end fork P99 ~1.3 ms** at 1000 concurrent forks — the cost is KVM
   VM-create (~99.5%), not the memory mapping ([Morph Infinibranch](https://www.morph.so/blog/infinibranch/)).
 - **~93% of pages stay shared.** Pre-execution private overhead ~265 KB/fork; a `print`-only workload
-  ~3.5 MB; a numpy-warm workload ~27 MB — so 100 numpy VMs share ~2.4 GB and add only ~1.75 MB each.
+  ~3.5 MB; a numpy-warm workload ~1.75 MB private/dirty per fork, while a heavier workload runs ~27 MB
+  — so 100 numpy forks share one read-only ~2.4 GB warm-parent RAM image and add only ~1.75 MB each
+  (~175 MB total of private pages).
 - The OSS reference implementation reports spawning 100 children in ~101 ms (~1 ms/child), live
   BRANCH ~150 ms, ~0.12 MiB CoW metadata/child, and **~50 idle-pooled agents per 8 GB host**
   ([forkd](https://github.com/deeplethe/forkd)).
@@ -125,7 +138,7 @@ pages** cost real host RAM. The published anchors *(vendor-published, unverified
 
 The scheduler must therefore **bin-pack on measured private RSS per fork, not on snapshot or image
 size**. The ~93% shared-page advantage erodes as a workload writes memory, so density projections
-that assume it are optimistic. We model three density bands and let §6 measure the truth:
+that assume it are optimistic. We model three density bands and let §5 measure the truth:
 
 | Density band (private RSS/fork) | Forks per 256 GB host (½ RAM for OS/cache/headroom) | Basis |
 |---------------------------------|---------------------------------------------------:|-------|
@@ -133,7 +146,7 @@ that assume it are optimistic. We model three density bands and let §6 measure 
 | **Plausible desktop (~128 MB)**  | **~1,000** | per-sandbox baseline *(unverified)*, no CoW credit |
 | Conservative (~256 MB, browser-heavy) | ~500 | safe planning floor |
 
-> **Planning rule (Shinken-set, not vendor):** until §6 measures it, **bin-pack and admission-control
+> **Planning rule (Shinken-set, not vendor):** until §5 measures it, **bin-pack and admission-control
 > on the conservative band (~500 desktop forks / 256 GB host)** and treat anything better as upside.
 
 The honest reading: the sub-millisecond-fork and single-digit-MB-per-fork numbers come from
@@ -197,7 +210,7 @@ pixels only on escalation, and let the checkpoint DAG dedup the snapshot bytes (
 dedup, so a branch costs only its divergent pages — the same CoW economics as the live fork).
 Retention *policy*, not capture rate, governs replay storage cost: a 30-day-hot / cold-archive tier
 on structured-only sessions is negligible; a keep-all-video policy is not, and must be a per-tenant
-budget knob. **All rates above are vendor-extrapolated and must be measured (§6).**
+budget knob. **All rates above are vendor-extrapolated and must be measured (§5).**
 
 ---
 

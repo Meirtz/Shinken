@@ -14,7 +14,7 @@ def test_screencast_streams_distinct_frames(mock_shinkend):
         assert "screencast" in env.capabilities.observation_types
 
         frames = []
-        with env.screencast(fps=100, timeout=5, limit=5) as stream:
+        with env.screencast(fps=30, timeout=5, limit=5) as stream:
             for frame in stream:
                 frames.append(frame)
 
@@ -27,7 +27,7 @@ def test_screencast_streams_distinct_frames(mock_shinkend):
 def test_rpc_still_works_after_screencast(mock_shinkend):
     """The reader/demux must keep RPC replies and stream frames separate."""
     with shinken.connect(mock_shinkend) as env:
-        with env.screencast(fps=100, timeout=5, limit=3) as stream:
+        with env.screencast(fps=30, timeout=5, limit=3) as stream:
             collected = list(stream)
         assert len(collected) == 3
         # RPC round-trips must still resolve correctly once the stream has stopped.
@@ -41,7 +41,7 @@ def test_screencast_sends_max_long_edge(mock_shinkend):
     """The bandwidth cap must travel over the wire to the runtime (the mock echoes
     it back as the frame width)."""
     with shinken.connect(mock_shinkend) as env:
-        with env.screencast(fps=100, timeout=5, limit=3, max_long_edge=640) as stream:
+        with env.screencast(fps=30, timeout=5, limit=3, max_long_edge=640) as stream:
             frames = list(stream)
         assert len(frames) == 3
         assert all(f["w"] == 640 for f in frames)
@@ -49,7 +49,7 @@ def test_screencast_sends_max_long_edge(mock_shinkend):
 
 def test_screencast_stop_makes_next_frame_end(mock_shinkend):
     with shinken.connect(mock_shinkend) as env:
-        with env.screencast(fps=100, timeout=5, limit=2) as stream:
+        with env.screencast(fps=30, timeout=5, limit=2) as stream:
             assert len(list(stream)) == 2
 
         # Stop pushes an explicit end sentinel so callers don't block forever after
@@ -59,11 +59,11 @@ def test_screencast_stop_makes_next_frame_end(mock_shinkend):
 
 def test_screencast_restart_clears_stale_frames(mock_shinkend):
     with shinken.connect(mock_shinkend) as env:
-        first_stream = env._loop.run(env._inner.astart_screencast(fps=100))
+        first_stream = env._loop.run(env._inner.astart_screencast(fps=30))
         first = env._loop.run(env._inner.next_frame(timeout=5))
         assert first is not None and first["stream"] == first_stream
 
-        second_stream = env._loop.run(env._inner.astart_screencast(fps=100))
+        second_stream = env._loop.run(env._inner.astart_screencast(fps=30))
         second = env._loop.run(env._inner.next_frame(timeout=5))
         assert second is not None
         assert second["stream"] == second_stream

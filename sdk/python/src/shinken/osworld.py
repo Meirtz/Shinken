@@ -22,11 +22,59 @@ OSWorld evaluator (see ``scripts/osworld_single.py``).
 
 from __future__ import annotations
 
+import ast
 import re
 import time
 from typing import Any
 
 from .client import connect
+
+
+def _first_str_arg(line: str, fn_pattern: str) -> str | None:
+    """Extract the first quoted string argument of a ``fn(...)`` call, quote-aware and
+    escape-aware (so ``write("don't")`` yields ``don't``, not ``don``). Returns None if no
+    such call/string is present."""
+    m = re.search(
+        rf"(?:pyautogui\.)?{fn_pattern}\(\s*(['\"])((?:\\.|(?!\1).)*)\1",
+        line,
+        re.DOTALL,
+    )
+    if not m:
+        return None
+    quote, body = m.group(1), m.group(2)
+    try:
+        return ast.literal_eval(f"{quote}{body}{quote}")
+    except (ValueError, SyntaxError):
+        return body
+
+
+def _split_top_level_semicolons(text: str) -> list[str]:
+    """Split on ``;`` only OUTSIDE string literals, so ``write("a;b")`` is not torn apart
+    (OSWorld splits compound statements, but must not corrupt semicolons in typed text)."""
+    parts: list[str] = []
+    buf: list[str] = []
+    quote: str | None = None
+    escaped = False
+    for ch in text:
+        if quote is not None:
+            buf.append(ch)
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == quote:
+                quote = None
+        elif ch in "'\"":
+            quote = ch
+            buf.append(ch)
+        elif ch == ";":
+            parts.append("".join(buf))
+            buf = []
+        else:
+            buf.append(ch)
+    parts.append("".join(buf))
+    return parts
+
 
 _NUM = r"(\d+(?:\.\d+)?)"  # int pixels OR a float (normalized [0,1] coords get scaled)
 _PYAUTOGUI_PATTERNS = [
@@ -153,17 +201,25 @@ class DesktopEnv:
         return False
 
     def _scroll(self, *, dx: int = 0, dy: int = 0, x: int | None = None, y: int | None = None):
-        """OSWorld/pyautogui scroll → ACI scroll. OSWorld's wheel uses ``+y = up`` /
-        ``+x = right`` (it feeds ``pyautogui.vscroll(dy)`` / ``hscroll(dx)``); the ACI and
-        shinkend convention is ``+dy = down`` / ``+dx = right`` (see the Anthropic/OpenAI
-        adapters and ``executor.rs``). So the vertical axis is **negated** and the
-        horizontal axis passes through — this is the bug the two action spaces previously
-        disagreed on. ``dx`` is forwarded for wire fidelity even though the current X11
-        backend actuates only ``dy``; a position target is forwarded when present."""
-        target = {"kind": "point_px", "x": x, "y": y} if x is not None and y is not None else None
-        kwargs: dict[str, Any] = {"dy": -dy}
+        """OSWorld/pyautogui scroll → ACI scroll. OSWorld's wheel counts **clicks** with
+        ``+y = up`` / ``+x = right`` (it feeds ``pyautogui.vscroll(dy)`` / ``hscroll(dx)``);
+        the ACI wire contract is **pixels** with ``+dy = down`` / ``+dx = right`` (see the
+        Anthropic/OpenAI adapters and ``executor.rs``). So the vertical axis is **negated**
+        and both axes are converted clicks → pixels at this boundary — same as every other
+        click-denominated producer. A position target is forwarded when present."""
+        from .adapters.base import SCROLL_PX_PER_CLICK
+
+        # The ACI schema + X11 executor require a scroll target; pyautogui-origin scrolls
+        # carry no coordinate, so default to the screen centre (matching the adapter/dialect
+        # behavior) instead of emitting a targetless scroll that fails at the wire.
+        target = (
+            {"kind": "point_px", "x": x, "y": y}
+            if x is not None and y is not None
+            else {"kind": "point_norm", "x": 0.5, "y": 0.5}
+        )
+        kwargs: dict[str, Any] = {"dy": -dy * SCROLL_PX_PER_CLICK}
         if dx:
-            kwargs["dx"] = dx
+            kwargs["dx"] = dx * SCROLL_PX_PER_CLICK
         self._env.act("scroll", target, **kwargs)
 
     def _screen(self) -> tuple[int, int]:
@@ -221,14 +277,14 @@ class DesktopEnv:
                     executed = True
                     break
             else:
-                m = re.search(r"(?:pyautogui\.)?(?:write|typewrite)\(\s*['\"](.*?)['\"]", line)
-                if m:
-                    self._env.type_text(m.group(1))
+                s = _first_str_arg(line, "(?:write|typewrite)")
+                if s is not None:
+                    self._env.type_text(s)
                     executed = True
                     continue
-                m = re.search(r"(?:pyautogui\.)?press\(\s*['\"](.*?)['\"]", line)
-                if m:
-                    self._env.key(m.group(1))
+                s = _first_str_arg(line, "press")
+                if s is not None:
+                    self._env.key(s)
                     executed = True
                     continue
                 m = re.search(r"(?:pyautogui\.)?hotkey\(([^)]*)\)", line)
@@ -278,7 +334,7 @@ def parse_model_actions(text: str) -> list[str]:
     model response)."""
     if not isinstance(text, str):
         return []
-    text = "\n".join(s.strip() for s in text.split(";") if s.strip())
+    text = "\n".join(s.strip() for s in _split_top_level_semicolons(text) if s.strip())
     if text.strip() in _TERMINAL_TOKENS:
         return [text.strip()]
     actions: list[str] = []

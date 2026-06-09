@@ -135,7 +135,9 @@ fn norm_to_px(x: f64, y: f64, w: u16, h: u16) -> Result<(i16, i16)> {
     if !(0.0..=1.0).contains(&x) || !(0.0..=1.0).contains(&y) {
         bail!("point_norm out of range: ({x}, {y}) — must be within [0, 1]");
     }
-    Ok(((x * w as f64) as i16, (y * h as f64) as i16))
+    // Map onto [0, dim-1] so 1.0 lands on the last on-screen pixel, not one past it.
+    let px = |n: f64, dim: u16| (n * (dim.saturating_sub(1)) as f64).round() as i16;
+    Ok((px(x, w), px(y, h)))
 }
 
 /// Downscale an RGB8 buffer with nearest-neighbour sampling so its longer edge is at
@@ -255,6 +257,17 @@ const BTN_LEFT: u8 = 1;
 const BTN_RIGHT: u8 = 3;
 const BTN_SCROLL_UP: u8 = 4;
 const BTN_SCROLL_DOWN: u8 = 5;
+const BTN_SCROLL_LEFT: u8 = 6;
+const BTN_SCROLL_RIGHT: u8 = 7;
+/// Wire `dx`/`dy` are pixel-denominated (see docs/design/aci-spec.md); one wheel
+/// click ≈ this many pixels. Adapters that speak in wheel clicks convert at their edge.
+const SCROLL_PX_PER_STEP: f64 = 100.0;
+const SCROLL_MAX_STEPS: u32 = 20;
+
+/// Pixels → bounded wheel-click count (shared by both scroll axes).
+fn scroll_steps(px: f64) -> u32 {
+    ((px.abs() / SCROLL_PX_PER_STEP).ceil() as u32).clamp(1, SCROLL_MAX_STEPS)
+}
 
 /// X11 backend: synthetic pointer + keyboard input via the XTEST extension.
 pub struct X11Executor {
@@ -390,7 +403,21 @@ impl X11Executor {
 
     fn resolve(&self, target: Option<&Target>) -> Result<(i16, i16)> {
         match target.context("action requires a target")? {
-            Target::PointPx { x, y } => Ok((*x as i16, *y as i16)),
+            // Validate point_px against the screen the same way point_norm is (#141):
+            // NaN/out-of-range would otherwise silently saturate to a screen edge.
+            Target::PointPx { x, y } => {
+                if !x.is_finite() || !y.is_finite() {
+                    bail!("point_px must be finite: ({x}, {y})");
+                }
+                if *x < 0.0 || *y < 0.0 || *x >= self.width as f64 || *y >= self.height as f64 {
+                    bail!(
+                        "point_px out of range: ({x}, {y}) — must be within [0, {}) x [0, {})",
+                        self.width,
+                        self.height
+                    );
+                }
+                Ok((*x as i16, *y as i16))
+            }
             Target::PointNorm { x, y } => norm_to_px(*x, *y, self.width, self.height),
             Target::ElementRef { .. } => {
                 bail!("element_ref resolution needs the observation engine (M1b, #4)")
@@ -415,9 +442,16 @@ impl X11Executor {
     }
 
     fn type_text(&self, text: &str) -> Result<usize> {
-        for ch in text.chars() {
-            let ks = char_keysym(ch).with_context(|| format!("cannot type char {ch:?}"))?;
-            let (kc, shift) = self.keycode_for(ks)?;
+        // Resolve every char to (keycode, needs_shift) up front so a single untypable
+        // char fails the whole action atomically — never leave a typed prefix behind.
+        let plan: Vec<(u8, bool)> = text
+            .chars()
+            .map(|ch| {
+                let ks = char_keysym(ch).with_context(|| format!("cannot type char {ch:?}"))?;
+                self.keycode_for(ks)
+            })
+            .collect::<Result<_>>()?;
+        for (kc, shift) in plan {
             let shift_kc = if shift {
                 Some(self.keycode_for(KS_SHIFT_L)?.0)
             } else {
@@ -444,12 +478,28 @@ impl X11Executor {
             mod_kcs.push(self.keycode_for(ks)?.0);
         }
         let key_ks = key_keysym(key).with_context(|| format!("unknown key {key:?}"))?;
-        let key_kc = self.keycode_for(key_ks)?.0;
+        // Honor the keysym's shift level: a key like "A"/"!"/"%" lives in keyboard column
+        // 1 and needs Shift held, or it synthesizes the unshifted glyph ('a'/'1'/'5').
+        let (key_kc, needs_shift) = self.keycode_for(key_ks)?;
+        let shift_already = mods
+            .iter()
+            .any(|m| matches!(m.to_ascii_lowercase().as_str(), "shift"));
+        let implicit_shift_kc = if needs_shift && !shift_already {
+            Some(self.keycode_for(KS_SHIFT_L)?.0)
+        } else {
+            None
+        };
         for &m in &mod_kcs {
             self.key_event(m, true)?;
         }
+        if let Some(s) = implicit_shift_kc {
+            self.key_event(s, true)?;
+        }
         self.key_event(key_kc, true)?;
         self.key_event(key_kc, false)?;
+        if let Some(s) = implicit_shift_kc {
+            self.key_event(s, false)?;
+        }
         for &m in mod_kcs.iter().rev() {
             self.key_event(m, false)?;
         }
@@ -502,8 +552,23 @@ fn key_keysym(key: &str) -> Option<u32> {
         "right" => Some(0xff53),
         "home" => Some(0xff50),
         "end" => Some(0xff57),
-        "pageup" => Some(0xff55),
-        "pagedown" => Some(0xff56),
+        "pageup" | "page_up" | "pgup" => Some(0xff55),
+        "pagedown" | "page_down" | "pgdn" => Some(0xff56),
+        "insert" | "ins" => Some(0xff63),
+        "capslock" | "caps_lock" => Some(0xffe5),
+        "numlock" | "num_lock" => Some(0xff7f),
+        "printscreen" | "print" | "prtsc" => Some(0xff61),
+        "menu" | "apps" => Some(0xff67),
+        // Function keys F1..F12 (XK_F1 = 0xffbe, contiguous).
+        f if f.starts_with('f')
+            && f[1..]
+                .parse::<u32>()
+                .map(|n| (1..=12).contains(&n))
+                .unwrap_or(false) =>
+        {
+            let n: u32 = f[1..].parse().unwrap();
+            Some(0xffbe + (n - 1))
+        }
         _ => None,
     }
 }
@@ -573,17 +638,39 @@ impl Executor for X11Executor {
             }
             "scroll" => {
                 let (x, y) = self.resolve(a.target.as_ref())?;
+                let dx = a.dx.unwrap_or(0.0);
                 let dy = a.dy.unwrap_or(0.0);
-                let button = if dy >= 0.0 {
-                    BTN_SCROLL_DOWN
-                } else {
-                    BTN_SCROLL_UP
-                };
-                let steps = ((dy.abs() / 100.0).ceil() as u32).clamp(1, 20);
-                for _ in 0..steps {
-                    self.click_button(button, x, y)?;
+                if dx == 0.0 && dy == 0.0 {
+                    bail!("scroll requires a nonzero dx or dy");
                 }
-                Ok(format!("scrolled {steps} step(s)"))
+                let mut total = 0u32;
+                // Vertical: ACI convention is +dy = down (BTN 5), -dy = up (BTN 4).
+                if dy != 0.0 {
+                    let button = if dy > 0.0 {
+                        BTN_SCROLL_DOWN
+                    } else {
+                        BTN_SCROLL_UP
+                    };
+                    let steps = scroll_steps(dy);
+                    for _ in 0..steps {
+                        self.click_button(button, x, y)?;
+                    }
+                    total += steps;
+                }
+                // Horizontal: +dx = right (BTN 7), -dx = left (BTN 6).
+                if dx != 0.0 {
+                    let button = if dx > 0.0 {
+                        BTN_SCROLL_RIGHT
+                    } else {
+                        BTN_SCROLL_LEFT
+                    };
+                    let steps = scroll_steps(dx);
+                    for _ in 0..steps {
+                        self.click_button(button, x, y)?;
+                    }
+                    total += steps;
+                }
+                Ok(format!("scrolled {total} step(s)"))
             }
             "type_text" => {
                 let text = a.text.as_deref().context("type_text requires `text`")?;
@@ -597,8 +684,10 @@ impl Executor for X11Executor {
             }
             // Dispatched via the capture path (screenshot()), not execute().
             "screenshot" => bail!("screenshot is handled via the capture path"),
-            // We discourage fixed sleeps (prefer readiness probes, D7) — ack as a no-op.
-            "wait" => Ok("wait acknowledged (prefer readiness probes over fixed sleeps)".into()),
+            // `wait` is implemented by the serve loop's bounded async sleep
+            // (connection::dispatch_action, #140); it never reaches execute() on the
+            // live path. Bail rather than ack a no-op that misstates the real semantics.
+            "wait" => bail!("wait is handled by the serve loop (connection::dispatch_action)"),
             other => bail!("unknown verb: {other}"),
         }
     }
@@ -650,10 +739,29 @@ mod tests {
     #[test]
     fn norm_to_px_maps_in_range_and_rejects_out_of_range() {
         assert_eq!(norm_to_px(0.0, 0.0, 800, 600).unwrap(), (0, 0));
-        assert_eq!(norm_to_px(1.0, 1.0, 800, 600).unwrap(), (800, 600));
+        // 1.0 maps to the LAST on-screen pixel (dim-1), not one past the edge.
+        assert_eq!(norm_to_px(1.0, 1.0, 800, 600).unwrap(), (799, 599));
         assert_eq!(norm_to_px(0.5, 0.5, 800, 600).unwrap(), (400, 300));
         assert!(norm_to_px(1.5, 0.5, 800, 600).is_err()); // x > 1
         assert!(norm_to_px(0.5, -0.1, 800, 600).is_err()); // y < 0
+    }
+
+    #[test]
+    fn key_keysym_resolves_function_and_named_keys() {
+        assert_eq!(key_keysym("f1"), Some(0xffbe));
+        assert_eq!(key_keysym("F12"), Some(0xffc9));
+        assert_eq!(key_keysym("f13"), None); // out of F1..F12
+        assert_eq!(key_keysym("insert"), Some(0xff63));
+        assert_eq!(key_keysym("printscreen"), Some(0xff61));
+    }
+
+    #[test]
+    fn scroll_steps_is_pixel_denominated_and_bounded() {
+        assert_eq!(scroll_steps(0.0), 1); // minimum one click
+        assert_eq!(scroll_steps(100.0), 1);
+        assert_eq!(scroll_steps(150.0), 2);
+        assert_eq!(scroll_steps(-300.0), 3);
+        assert_eq!(scroll_steps(1_000_000.0), SCROLL_MAX_STEPS); // clamped
     }
 
     #[test]

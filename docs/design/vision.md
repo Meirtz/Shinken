@@ -95,10 +95,13 @@ path where it works.
 The scope is intentionally the whole CUA stack. **v0.0.1 is not a narrowed product; it is the
 semantic-complete local/reference implementation**: ACI, agent-native dialect/adapters, GUI
 act/observe, screenshot/region/focused capture, screencast, a11y/CDP/element-ref reference paths,
-`.skn`, capability events, artifact transfer, deterministic tasks, and a tiny verifier harness
-should all exist and be tested at local scale. Later milestones are not where the core meaning
-appears; they are where the same semantics become fast, forkable, multi-tenant, cross-substrate,
-cross-OS, and production-hardened.
+**runtime state (checkpoint/fork/resume — already built on the Docker disk tier at local scale)**,
+capability events, artifact transfer, deterministic tasks, and a tiny verifier harness should all
+exist and be tested at local scale. The **`.skn` recording ledger was deferred (#216/#217)** and
+returns as the supporting audit ledger that runtime-state checkpoints branch from — runtime state
+leads, replay follows. Later milestones are not where the core meaning appears; they are where the
+same semantics become fast, forkable, multi-tenant, cross-substrate, cross-OS, and
+production-hardened.
 
 ## 4. The five headline outcomes (as user value)
 
@@ -108,20 +111,25 @@ audit and training ledger it branches from.
 
 | Outcome | What the user gets | Backed by |
 |---|---|---|
-| **1. Stateful, branchable sandboxes** | "Name a runnable checkpoint of any agent run, fork it into N live replicas from one golden state, reset instantly, and resume a suspended session — without re-running the whole task." This is the primitive behind instant reset, N-run eval replicas, best-of-N / counterfactual branches, and long-running or idle-suspended tasks; competitors throw the trace away and have no fork/resume. | **D1** (CoW fork-from-snapshot) + **D5** — immutable checkpoint DAG; a checkpoint references a replay offset (snapshot + event_seq + agent state); instant-reset and branching are the *same* CoW-fork primitive (D7, N≥5 forked eval replicas). |
+| **1. Stateful, branchable sandboxes** | "Name a runnable checkpoint of any agent run, fork it into N live replicas from one golden state, reset instantly, and resume a suspended session — without re-running the whole task." This is the primitive behind instant reset, N-run eval replicas, best-of-N / counterfactual branches, and long-running or idle-suspended tasks; as of 2026-06 no shipped stack wires fork into its harness — the one published fork primitive is cloud-only and unused by its own bench (see [04 Landscape](landscape.md) §2.1/§3). | **D1** (CoW fork-from-snapshot) + **D5** — immutable checkpoint DAG; a checkpoint references a replay offset (snapshot + event_seq + agent state); instant-reset and branching are the *same* CoW-fork primitive (D7, N≥5 forked eval replicas). |
 | **2. Replay ledger** | "Scrub any agent run like a video and re-run from step N off a checkpoint, with a complete record of what happened." A `.skn` bundle is the event-sourced audit and training ledger — actions, observations, permission decisions, verifier receipts, media refs — that the checkpoint DAG branches from; the same bundle harvests as RL/SFT training data. | **D5** — `.skn` (Playwright-trace model), append-only event log referenced *by* the runtime-state checkpoints, not the reverse (D1). |
 | **3. Sandbox capability manager** | "Give this Sandbox network egress, credentials, GPU, persistence, privileged installs, clipboard, screen capture, or OS automation — and keep those powers scoped, revocable, replayed, and isolated." Sandbox-internal dangerous work is allowed by design; crossing the boundary is explicit. | **D6** — capability/entitlement policy + object-capability handles + OS enforcement; secrets brokered via Vault/KMS + egress proxy so plaintext never reaches the model. |
 | **4. Bandwidth optimization** | "Start with screenshots so every GUI agent works, then pay less when structure exists." Structured a11y/DOM observation is the intended fast path for tree-rich apps; the exact blended win must be measured because canvas, Electron, games, and custom UIs can fall back to pixels. Published anchors are **~150× cheaper** than H.264 office video (~20 kbps vs ~3 Mbps) and **~6× cheaper** in tokens (~25k vs ~150k/task), both vendor-published and unverified. | **D3** (screenshot baseline + structured upgrade) + **D4** (dual-channel, NVENC-on-demand). |
 | **5. Real-time streaming** | "Watch and take over a live agent with sub-second, glass-to-glass lag — over a single WebRTC connection in the browser, no native client." Reliable data channel for the event stream + on-demand media track; host↔guest over virtio-vsock, never HTTP polling; target ~50–120 ms same-region. | **D4** — single-PeerConnection WebRTC dual-transport, SFU fan-out, WHIP/WHEP. |
 
-Every competitor leaks on at least three of these. Stateful checkpoint/fork/resume and sandbox capability management are **greenfield** across the field — every other CUA stack throws the trace away and has no fork or resume; streaming/bandwidth is the clear **beat** axis where every competitor is screenshot-poll or VNC/pixel. See [04 Landscape](landscape.md) for the per-axis comparison.
+Every competitor leaks on at least three of these. The precise unclaimed ground (2026-06) is
+**harness-integrated, local-first, vendor-neutral fork** — one stack ships a cloud-only fork primitive
+its own benchmark never uses, another roadmaps fork with no substrate, and every trainer-side harness
+cold-boots per rollout; sandbox capability management remains **greenfield**; streaming/bandwidth is
+the clear **beat** axis where every competitor is screenshot-poll or VNC/pixel. See
+[04 Landscape](landscape.md) for the per-axis comparison.
 
 ## 5. Who it's for
 
 | Audience | What they need | How Shinken serves them |
 |---|---|---|
 | **Agent developers** | A clean SDK to drive a real desktop with their existing model loop, without writing virtualization or streaming glue. | Native streaming py/ts SDK + optional MCP facade (D8); version-pinned adapters for the Anthropic, OpenAI, UI-TARS, and OSWorld schemas (D2) so an off-the-shelf agent drives Shinken unchanged. Open, self-hostable core (D12) — no lock-in. |
-| **Eval engineers & CUA researchers** | Reproducible, massively parallel, *defensible* evaluation — plus trajectory data to train on. | Eval is thin orchestration on the same runtime (D7): a typed verifier DAG, N≥5 CoW-forked replicas → pass@k / pass^k with confidence intervals, task+grader+env versioned together. `.skn` replay doubles as RL/SFT training data — the adoption wedge (D5, D12). |
+| **Eval engineers & CUA researchers** | Reproducible, massively parallel, *defensible* evaluation — plus trajectory data to train on. | Eval is thin orchestration on the same runtime (D7): a typed verifier DAG, N≥5 CoW-forked replicas → pass@k / pass^k with confidence intervals, task+grader+env versioned together — the runtime-state wedge (D12). `.skn` replay doubles as RL/SFT training data, a supporting byproduct of those runs, never the headline (D5). |
 | **Platform admins** | Fleet operability, cost control, multi-tenant safety, audit. | A control plane with warm pools + fork-on-demand, an Action Gateway choke point, dual-timer auto-suspend (idle dominates cost), circuit-breakable Sandbox health, and OTel-GenAI telemetry (D9). Permission grants/denials are first-class, auditable replay events. |
 | **Human supervisors** | To watch, configure sandbox capabilities, and take over mid-run. | The Control Panel: live structured + on-demand pixel view, capability configuration, replay scrubbing, cross-session search, and takeover via the Operator seam (D6, D8). |
 

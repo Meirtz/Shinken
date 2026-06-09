@@ -17,10 +17,18 @@ PLAN = [
 EXPECTED_VERBS = ["click", "type_text", "click", "type_text", "key"]
 
 
-def _verify(_env) -> VerifierReceipt:
+def _verify(env) -> VerifierReceipt:
+    # Read the mock's OBSERVED effects (not a hard-coded True), so this fails if the agent
+    # dispatched the wrong actions or drive() stopped early — i.e. it is not a tautology.
+    state = env.query("state")
+    typed = state.get("typed", "")
+    clicks = state.get("clicks", [])
+    clicked_user = any(c.get("x") == 100 and c.get("y") == 50 for c in clicks)
+    clicked_pass = any(c.get("x") == 100 and c.get("y") == 90 for c in clicks)
     return VerifierReceipt.from_checks(
         [
-            check("task_completed", True),
+            check("typed both fields", typed == "alicesecret", {"observed": typed}),
+            check("clicked username + password", clicked_user and clicked_pass, {"clicks": clicks}),
         ]
     )
 

@@ -12,7 +12,7 @@ An issue belongs in v0.0.1 if it is required for **core CUA semantics at local/r
 - Agent-native dialect or provider adapter.
 - GUI act/observe.
 - Screenshot/focused/region/screencast/a11y/CDP/element-ref reference paths.
-- `.skn` replay/data.
+- Runtime-state checkpoint/fork/resume semantics (the headline differentiator).
 - Capability envelope or permission events.
 - File/artifact transfer semantics.
 - Tiny eval/verifier evidence.
@@ -27,6 +27,7 @@ An issue belongs after v0.0.1 if it mainly optimizes:
 - Windows/macOS/Android production tiers.
 - GPU/TEE.
 - Large-scale eval service.
+- `.skn` recording/playback (deferred per #216/#217; trajectory export is a later, supporting byproduct — never re-headlined over runtime state).
 
 ## Priority Order Inside v0.0.1
 
@@ -42,7 +43,7 @@ An issue belongs after v0.0.1 if it mainly optimizes:
 
 For every v0.0.1 PR, ask:
 
-- Does this change add or alter ACI or `.skn` contract? If yes, are fixtures updated?
+- Does this change add or alter ACI or the runtime-state/checkpoint contract? If yes, are fixtures updated?
 - Does Rust, Python, and JSON Schema agree?
 - Does a user-facing behavior need docs in `docs/user/`?
 - Does a design decision need an ADR update?

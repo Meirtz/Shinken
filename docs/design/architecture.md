@@ -441,7 +441,7 @@ Step-by-step, mapped to decisions:
 
 7. **Record (D5).** Every canonical event (`kind ∈ {action, observation, decision, permission, marker, snapshot_ref, meta}`) is appended to `events.jsonl` with a monotonic `seq`, an interval `dt`, and a wall anchor; `action_id` pairs an action with its before/after observation. Periodic **bisected** checkpoints (env half = VM/microVM snapshot; agent half = messages/plan/RNG-seed) form the immutable **checkpoint DAG**. Decisions follow **OTel-GenAI** semconv (`gen_ai.request.seed` + `gen_ai.response.id` make an LLM decision a replayable recorded input). Media is content-addressed (`resources/<sha1>`) and referenced by hash. The whole thing packs into a single self-contained `.skn` ZIP openable by a zero-server viewer.
 
-8. **Eval (D7).** The Eval Service forks `N≥5` replicas from a golden snapshot, runs the typed verifier DAG against each, and reports `pass@k / pass^k` with confidence intervals. It reads the same `.skn` format and uses the same fork primitive — **the eval layer is the production runtime, layered.** Captured `.skn` trajectories double as RL/SFT training data, the concrete adoption wedge.
+8. **Eval (D7).** The Eval Service forks `N≥5` replicas from a golden snapshot, runs the typed verifier DAG against each, and reports `pass@k / pass^k` with confidence intervals. It reads the same `.skn` format and uses the same fork primitive — **the eval layer is the production runtime, layered.** The fork-N eval loop is the runtime-state wedge (D12); captured `.skn` trajectories double as RL/SFT training data, a supporting byproduct of those runs.
 
 ---
 

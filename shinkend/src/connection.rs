@@ -206,10 +206,13 @@ fn valid_scope(s: &str) -> bool {
     if s == "screen" || s == "active_window" {
         return true;
     }
+    // The id must parse as a real u32 window handle — not merely "all digits". An
+    // out-of-u32-range id (window:4294967296) would otherwise pass here and then
+    // silently fall back to full-screen capture in parse_scope, defeating #139.
     match s.strip_prefix("window:") {
         Some(id) => match id.strip_prefix("0x") {
-            Some(hex) => !hex.is_empty() && hex.bytes().all(|b| b.is_ascii_hexdigit()),
-            None => !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()),
+            Some(hex) => u32::from_str_radix(hex, 16).is_ok(),
+            None => id.parse::<u32>().is_ok(),
         },
         None => false,
     }
@@ -284,7 +287,10 @@ fn dispatch_action(
             let cast = ScreencastSpec {
                 stream_id: call_id.to_string(),
                 fps,
-                max_long_edge: clamp_long_edge(spec.max_long_edge),
+                // Default an unspecified cap to the negotiated max so a busy full-res
+                // desktop can't pin OUTBOUND_CAP × multi-MB frames in the writer queue.
+                max_long_edge: clamp_long_edge(spec.max_long_edge)
+                    .or(Some(protocol::MAX_LONG_EDGE)),
                 scope,
             };
             (ack(call_id, true, None), StreamCtl::Start(cast), 0)
@@ -403,7 +409,17 @@ mod tests {
         for s in ["screen", "active_window", "window:42", "window:0x1a2b"] {
             assert!(valid_scope(s), "{s} should be valid");
         }
-        for s in ["bogus", "window:", "window:xyz", "window:0x", "", "Screen"] {
+        for s in [
+            "bogus",
+            "window:",
+            "window:xyz",
+            "window:0x",
+            "",
+            "Screen",
+            // out-of-u32-range ids must be rejected, not silently full-screened (#139)
+            "window:4294967296",
+            "window:0x1ffffffff",
+        ] {
             assert!(!valid_scope(s), "{s} should be invalid");
         }
     }
