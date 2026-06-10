@@ -1,0 +1,43 @@
+# Shinken a11y-coverage SPIKE image (#2 / E5) — NOT a production image.
+#
+# Extends the lean production base (shinken/sandbox-linux) with the extra GUI surfaces
+# the structured-observation coverage sweep needs: a Chromium browser (CDP AX path), a
+# GTK app (gnome-text-editor), and a lightweight Qt app. The base image stays lean; this
+# extra ~hundreds-of-MB of browser/toolkit is deliberately kept OUT of production.
+#
+# Build (from repo root, AFTER building the base):
+#   docker build -f images/linux/Dockerfile -t shinken/sandbox-linux .
+#   docker build -f images/linux/Dockerfile.a11y -t shinken/sandbox-a11y .
+#
+# Run a throwaway spike container and exec the sweep inside it (see
+# spikes/a11y-coverage/run.sh).
+
+FROM shinken/sandbox-linux
+
+# Re-enter root only to install the extra surfaces, then drop back to the unprivileged
+# user the base image runs as.
+USER root
+ENV DEBIAN_FRONTEND=noninteractive
+
+# chromium                — Chromium browser, exercised over CDP (--remote-debugging-port).
+# gnome-text-editor       — a real GTK4 toolkit app window (AT-SPI).
+# qtbase5-examples        — ships small Qt5 widget demos; the sweep launches the `calculator`
+#   + qt5 libs               example as a lightweight Qt AT-SPI surface (QT_ACCESSIBILITY=1).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        chromium \
+        gnome-text-editor \
+        qt5-qmltooling-plugins libqt5gui5 qtbase5-examples \
+        python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# The Shinken SDK package (`shinken/__init__.py`) imports the WebSocket client eagerly, so
+# even the AT-SPI-only coverage harness needs `websockets>=13` importable; the live CDP
+# attach (`shinken.cdp.CdpSource.tree`) uses `websockets.sync.client` too. Debian's apt
+# `python3-websockets` is 10.4 (no `websockets.asyncio`/`sync` submodules), so install the
+# SDK's pinned floor from PyPI. This is the spike image only — production keeps its own pin.
+RUN pip install --no-cache-dir --break-system-packages "websockets>=13"
+
+# Qt must be told to publish its accessibility tree to AT-SPI.
+ENV QT_ACCESSIBILITY=1 QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1
+
+USER shinken

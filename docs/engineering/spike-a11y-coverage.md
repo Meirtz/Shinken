@@ -38,6 +38,16 @@ by `scripts/a11y_coverage.py`; this document is the Markdown summary the spike r
 
 ## First-party measurement
 
+> **Multi-app sweep done (E5).** The single-app gap called out below has been filled: a multi-surface
+> coverage + tree-diff-bandwidth sweep is recorded in
+> [`../../spikes/a11y-coverage/REPORT.md`](../../spikes/a11y-coverage/REPORT.md) (raw JSON in
+> `spikes/a11y-coverage/evidence.json`, runner `spikes/a11y-coverage/run.sh`). Headline first-party
+> numbers: Qt widget app **87.1% addressable** (AT-SPI), Chromium page content rich over **CDP**
+> (AT-SPI sees only the shell, 0% addressable), GTK fully *roled* but **~10% addressable**, `xterm`
+> exposes **zero** AT-SPI nodes; a stable-frame tree-diff is ~**1–3%** of a screenshot's bytes.
+> Result is *uneven* → **hybrid per-window + pixel fallback**; **D3 stays Provisional**, spike #2 run
+> but not gated. The numbers below are the original single-`zenity` data point that sweep extends.
+
 Run live in the local Linux Sandbox (Docker image, Xvfb + AT-SPI bus) against a GTK dialog (`zenity`):
 
 ```json
@@ -64,22 +74,28 @@ structured-default upgrade stays Provisional and spike #2 stays ungated until th
 below produces those numbers (see [tech-decisions.md](../design/tech-decisions.md) D3,
 [status.md](status.md)).
 
-Note: the zenity row reports roled/bbox coverage but not `pct_addressable` (the metric the report
-itself calls load-bearing); record `pct_addressable` for zenity and every swept app.
+Note: the zenity row above reports roled/bbox coverage but not `pct_addressable` (the metric the
+report itself calls load-bearing). The E5 sweep records it: a plain `zenity --info` dialog is **10
+nodes, 100% roled, 80% bbox, but only `pct_addressable` = 0.10** (one actionable button). The "16
+nodes / 87.5% bbox" above is a richer dialog variant — node count and bbox coverage depend on the
+dialog type, and a fully-*roled* tree is **not** the same as a highly *addressable* one. See
+[`../../spikes/a11y-coverage/REPORT.md`](../../spikes/a11y-coverage/REPORT.md).
 
 ## Per-surface coverage map
 
-The five target surface classes and the path each takes. "Measured" = first-party number recorded;
-"path ready" = backend implemented + tested on fixtures, awaiting an in-image run with that app
-present.
+The target surface classes and the path each takes. "Measured" = first-party number recorded (E5 sweep,
+[`../../spikes/a11y-coverage/REPORT.md`](../../spikes/a11y-coverage/REPORT.md)); "path ready" = backend
+implemented + tested on fixtures, awaiting an in-image run with that app present.
 
 | Surface class | Backend | Expected coverage | Status |
 |---------------|---------|-------------------|--------|
-| GTK / Qt toolkit (zenity, file manager, LibreOffice) | AT-SPI (`atspi`) | high | **measured** (zenity: 16 nodes, 100% roled, 87.5% bbox) |
-| Chromium / Electron page | CDP (`cdp`) | high (browser computes full AX tree) | path ready (#79); awaits a Chromium target in-image |
-| Generic Electron / Chromium-like app | CDP (`cdp`) preferred, AT-SPI fallback | high–medium | path ready |
-| Canvas / WebGL page | — (no semantic tree) | **low** | classified → fallback |
-| Custom-rendered / gamelike surface | — | **near-zero** | classified → fallback |
+| Qt widget toolkit (calculator) | AT-SPI (`atspi`) | high | **measured** — 31 nodes, 100% roled, 93.5% bbox, **87.1% addressable** (the clean structured win) |
+| GTK toolkit (zenity dialog, gnome-text-editor / GTK 4) | AT-SPI (`atspi`) | high → **mixed** | **measured** — 100% roled but **9–10% addressable** (containers/labels dominate; GTK 4 widgets often lack screen bbox) |
+| Chromium / Electron page content | CDP (`cdp`) | high (browser computes full AX tree) | **measured** — 22 page nodes, 100% roled, 68% bbox, stable DOM ids; addressable page-authoring-sensitive (`0.23` here) |
+| Chromium **shell** over AT-SPI | AT-SPI (`atspi`) | **low** | **measured** — only 3–5 chrome-shell nodes, **0% addressable**, no page DOM → use CDP for browser content |
+| Terminal (xterm, VTE/X11) | AT-SPI (`atspi`) | **near-zero** | **measured** — **zero** AT-SPI nodes → pixel fallback |
+| Canvas / WebGL page | — (no semantic tree) | **low** | classified → fallback (**unmeasured** in E5) |
+| Custom-rendered / gamelike surface | — | **near-zero** | classified → fallback (**unmeasured** in E5) |
 
 ## Fallback thresholds (how the router chooses)
 
@@ -109,15 +125,21 @@ determinism of in-guest file/app-state reads) as a separate structured rung for 
 distinct from a11y-for-*acting*.
 
 **Caveat (per the spike's success criteria):** public docs must **not** anchor token/bandwidth claims
-to vendor-published numbers without a first-party caveat. The first-party anchor we currently have is
-the AT-SPI measurement above; structured-vs-screenshot token ratios stated elsewhere should be marked
-*(vendor-published, unverified)* until the multi-app sweep replaces them with measured numbers.
+to vendor-published numbers without a first-party caveat. The E5 sweep now supplies a first-party
+bandwidth anchor: a stable-frame structured **tree-diff is ~1–3% of a screenshot's bytes** (2 043 diff
+/ 10 611 full-tree / 76 517 screenshot bytes, gnome-text-editor type interaction;
+[REPORT.md](../../spikes/a11y-coverage/REPORT.md)). Structured-vs-screenshot ratios stated elsewhere
+should still be marked *(vendor-published, unverified)* unless they cite that measurement.
 
 ## Conclusion
 
-D3's structured-upgrade thesis is **grounded for native toolkit and Chromium surfaces**: a real GTK
-dialog exposes a fully-roled tree with usable geometry on ~88% of nodes, and CDP gives an equal-or-
-richer path for browser/Electron content. Low-coverage surfaces (canvas, games) are explicitly
-classified and routed to the pixel/SoM fallback rather than pretended away. The reference path
-(#77/#78/#79/#80) is implemented and tested; completing the full multi-app size/latency/token sweep
-is tracked as follow-up and does not gate v0.0.1.
+The E5 multi-app sweep ([REPORT.md](../../spikes/a11y-coverage/REPORT.md)) makes the picture concrete
+and **uneven**: the structured fast path is **real and strong** for Qt widget apps (87% addressable
+over AT-SPI) and for Chromium **page content over CDP** (rich roled+boxed+stable-id tree), **weak**
+for GTK (fully roled but ~10% addressable; GTK 4 often omits screen bboxes), and **absent** for
+terminals (`xterm`: zero nodes) and the browser *shell* over AT-SPI. Canvas/WebGL and game surfaces
+remain **unmeasured** (expected near-zero, but not first-party). The honest read is **hybrid
+per-window with pixel fallback**, not a clean structured-default — so **D3 stays Provisional** and
+spike #2 is *run but not gated*. The reference path (#77/#78/#79/#80) is implemented and tested; the
+remaining gates are canvas/game measurement and carrying `value` in the element schema so value-only
+edits show up in the diff.

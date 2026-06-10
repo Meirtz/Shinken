@@ -1,0 +1,241 @@
+{
+  "_about": "First-party a11y-coverage + tree-diff evidence for Shinken spike #2 (E5). Reproduce: bash spikes/a11y-coverage/run.sh",
+  "image": "shinken/sandbox-a11y (FROM shinken/sandbox-linux + chromium + gnome-text-editor + qtbase5-examples)",
+  "atspi_coverage": {
+    "per_app": {
+      "zenity": {
+        "nodes": 10,
+        "named": 6,
+        "pct_named": 0.6,
+        "roled": 10,
+        "pct_roled": 1.0,
+        "with_bbox": 8,
+        "pct_bbox": 0.8,
+        "actionable": 1,
+        "pct_actionable": 0.1,
+        "addressable": 1,
+        "pct_addressable": 0.1,
+        "max_depth": 7
+      },
+      "gnome-text-editor": {
+        "nodes": 117,
+        "named": 70,
+        "pct_named": 0.5983,
+        "roled": 117,
+        "pct_roled": 1.0,
+        "with_bbox": 39,
+        "pct_bbox": 0.3333,
+        "actionable": 16,
+        "pct_actionable": 0.1368,
+        "addressable": 11,
+        "pct_addressable": 0.094,
+        "max_depth": 21
+      },
+      "calculator": {
+        "nodes": 31,
+        "named": 30,
+        "pct_named": 0.9677,
+        "roled": 31,
+        "pct_roled": 1.0,
+        "with_bbox": 29,
+        "pct_bbox": 0.9355,
+        "actionable": 28,
+        "pct_actionable": 0.9032,
+        "addressable": 27,
+        "pct_addressable": 0.871,
+        "max_depth": 4
+      },
+      "xterm": {
+        "nodes": 1,
+        "named": 1,
+        "pct_named": 1.0,
+        "roled": 1,
+        "pct_roled": 1.0,
+        "with_bbox": 0,
+        "pct_bbox": 0.0,
+        "actionable": 0,
+        "pct_actionable": 0.0,
+        "addressable": 0,
+        "pct_addressable": 0.0,
+        "max_depth": 1
+      },
+      "Chromium": {
+        "nodes": 3,
+        "named": 3,
+        "pct_named": 1.0,
+        "roled": 3,
+        "pct_roled": 1.0,
+        "with_bbox": 1,
+        "pct_bbox": 0.3333,
+        "actionable": 0,
+        "pct_actionable": 0.0,
+        "addressable": 0,
+        "pct_addressable": 0.0,
+        "max_depth": 3
+      }
+    },
+    "summary": {
+      "apps_measured": 5,
+      "total_nodes": 162,
+      "mean_pct_roled": 1.0,
+      "mean_pct_named": 0.8332,
+      "mean_pct_bbox": 0.4804,
+      "mean_pct_actionable": 0.228,
+      "mean_pct_addressable": 0.213
+    }
+  },
+  "cdp_coverage": {
+    "source": "cdp",
+    "available": true,
+    "node_count": 22,
+    "coverage": {
+      "nodes": 22,
+      "named": 17,
+      "pct_named": 0.7727,
+      "roled": 22,
+      "pct_roled": 1.0,
+      "with_bbox": 15,
+      "pct_bbox": 0.6818,
+      "actionable": 5,
+      "pct_actionable": 0.2273,
+      "addressable": 5,
+      "pct_addressable": 0.2273,
+      "max_depth": 5
+    },
+    "sample_elements": [
+      {
+        "ref": "e0",
+        "role": "RootWebArea",
+        "name": "Form",
+        "bbox": [
+          0,
+          0,
+          1042,
+          637
+        ],
+        "provenance": {
+          "ax_node_id": "1",
+          "backend_dom_node_id": 1
+        }
+      },
+      {
+        "ref": "e1",
+        "role": "heading",
+        "name": "Account",
+        "bbox": [
+          8,
+          8,
+          1026,
+          38
+        ],
+        "provenance": {
+          "ax_node_id": "10",
+          "backend_dom_node_id": 10
+        }
+      },
+      {
+        "ref": "e2",
+        "role": "StaticText",
+        "name": "Account",
+        "bbox": [
+          8,
+          8,
+          145,
+          38
+        ],
+        "provenance": {
+          "ax_node_id": "18",
+          "backend_dom_node_id": 18
+        }
+      },
+      {
+        "ref": "e6",
+        "role": "StaticText",
+        "name": "Username",
+        "bbox": [
+          8,
+          68,
+          81,
+          19
+        ],
+        "provenance": {
+          "ax_node_id": "19",
+          "backend_dom_node_id": 19
+        }
+      },
+      {
+        "ref": "e8",
+        "role": "textbox",
+        "name": "Username",
+        "bbox": [
+          89,
+          68,
+          179,
+          21
+        ],
+        "provenance": {
+          "ax_node_id": "3",
+          "backend_dom_node_id": 3
+        }
+      },
+      {
+        "ref": "e11",
+        "role": "StaticText",
+        "name": "Password",
+        "bbox": [
+          273,
+          68,
+          74,
+          19
+        ],
+        "provenance": {
+          "ax_node_id": "20",
+          "backend_dom_node_id": 20
+        }
+      },
+      {
+        "ref": "e13",
+        "role": "textbox",
+        "name": "Password",
+        "bbox": [
+          348,
+          68,
+          179,
+          21
+        ],
+        "provenance": {
+          "ax_node_id": "4",
+          "backend_dom_node_id": 4
+        }
+      },
+      {
+        "ref": "e15",
+        "role": "checkbox",
+        "name": " Remember me",
+        "bbox": [
+          536,
+          70,
+          13,
+          13
+        ],
+        "provenance": {
+          "ax_node_id": "5",
+          "backend_dom_node_id": 5
+        }
+      }
+    ]
+  },
+  "bandwidth": {
+    "diff": {
+      "surface": "gnome-text-editor-type",
+      "diff_bytes": 2043,
+      "full_bytes": 10611,
+      "ratio": 0.1925,
+      "added": 10,
+      "removed": 3,
+      "changed": 11,
+      "unchanged": 103
+    },
+    "screenshot_png_bytes": 76517
+  }
+}
