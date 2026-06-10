@@ -1,9 +1,9 @@
 """S5 — local many-sandbox fan-out: one process drives N Docker sandboxes.
 
 The local counterpart of the WAN fan-out (docs/engineering/streaming-bandwidth.md
-§3) and a first datapoint for the N=64/256/1024 concurrency plan
-(docs/engineering/many-sandbox-concurrency.md): for N in {1, 2, 4, 8, 16}, boot N
-local sandboxes, multiplex ALL sync sessions onto one ``shinken.SharedLoop`` (one
+§3) and the real-sandbox anchor for the N=64/256/1024 concurrency plan
+(docs/engineering/many-sandbox-concurrency.md): for N in {1, 2, 4, 8, 16, 32, 64},
+boot N local sandboxes, multiplex ALL sync sessions onto one ``shinken.SharedLoop`` (one
 background event-loop thread total, not one per sandbox), then run ROUNDS
 synchronized rounds of {screenshot JPEG q80 @1024 + click} across all N
 concurrently. Records per-sandbox observe latency, per-round wall-clock, host
@@ -11,7 +11,7 @@ process RSS + thread count, and the summed guest container RSS — the local
 host-resource envelope, where loopback replaces the WAN RTT.
 
 Emits benchmarks/results/local_fanout.json and
-docs/engineering/assets/benchmarks/local_fanout.png.
+docs/assets/bench/local_fanout.png.
 
 Run:  python benchmarks/bench_fanout.py
 """
@@ -25,11 +25,11 @@ import subprocess
 import sys
 import threading
 
-from _common import GEOMETRY, IMAGE, new_axes, now_ms, save_plot, summarize, write_result
+from _common import GEOMETRY, IMAGE, PALETTE, new_axes, now_ms, save_plot, summarize, write_result
 
-NS = [1, 2, 4, 8, 16]
+NS = [int(n) for n in os.environ.get("SHINKEN_BENCH_NS", "1,2,4,8,16,32,64").split(",")]
 ROUNDS = 10
-BOOT_WORKERS = 4  # parallel container boots (bounded so create timings stay sane)
+BOOT_WORKERS = 8  # parallel container boots (bounded so create timings stay sane)
 
 
 def _proc_rss_mib() -> float:
@@ -146,41 +146,89 @@ def plot(payload: dict) -> None:
     d = payload["datapoints"]
     ns = payload["ns"]
     fig, (ax1, ax2) = new_axes(2)
+    from matplotlib.ticker import NullLocator
 
+    def pct(values: list[float], q: float) -> float:
+        s = sorted(values)
+        idx = min(len(s) - 1, max(0, round(q * (len(s) - 1))))
+        return s[idx]
+
+    # --- latency panel: round walls + per-sandbox p50 with a p10-p90 spread band
+    # computed from the raw per-observation rows (10*N samples per tier), since
+    # summarize() omits tail percentiles for small n.
     obs = d["observations"]
-    p50 = [summarize([o["ms"] for o in obs if o["n"] == n])["p50"] for n in ns]
-    p95 = [summarize([o["ms"] for o in obs if o["n"] == n])["p90"] for n in ns]
+    per_n = {n: [o["ms"] for o in obs if o["n"] == n] for n in ns}
+    p10 = [pct(per_n[n], 0.10) for n in ns]
+    p50 = [pct(per_n[n], 0.50) for n in ns]
+    p90 = [pct(per_n[n], 0.90) for n in ns]
     wall = [
-        summarize([r["observe_wall_ms"] for r in d["rounds"] if r["n"] == n])["p50"] for n in ns
+        summarize([r["observe_wall_ms"] for r in d["rounds"] if r["n"] == n]).get("p50", 0.0)
+        for n in ns
     ]
-    click = [summarize([r["click_wall_ms"] for r in d["rounds"] if r["n"] == n])["p50"] for n in ns]
-    ax1.plot(ns, wall, "o-", label="observe round wall (p50)")
-    ax1.plot(ns, click, "s-", label="click round wall (p50)")
-    ax1.plot(ns, p50, "^--", label="per-sandbox observe p50")
-    ax1.plot(ns, p95, "v:", label="per-sandbox observe p90")
+    click = [
+        summarize([r["click_wall_ms"] for r in d["rounds"] if r["n"] == n]).get("p50", 0.0)
+        for n in ns
+    ]
+    ax1.fill_between(
+        ns, p10, p90, color=PALETTE["async"], alpha=0.15, lw=0, label="per-sandbox observe p10–p90"
+    )
+    ax1.plot(ns, p50, "^--", color=PALETTE["async"], label="per-sandbox observe p50")
+    ax1.plot(ns, wall, "o-", color=PALETTE["shared"], label="observe round wall p50")
+    ax1.plot(ns, click, "s-", color=PALETTE["accent"], label="click round wall p50")
     ax1.set_xscale("log", base=2)
     ax1.set_xticks(ns, [str(n) for n in ns])
+    ax1.xaxis.set_minor_locator(NullLocator())
     ax1.set_xlabel("N sandboxes (one process, one SharedLoop thread)")
-    ax1.set_ylabel("ms")
-    ax1.set_title(f"Fan-out latency vs N — {payload['observe']}")
-    ax1.legend(fontsize=8)
+    ax1.set_ylabel("latency (ms)")
+    ax1.set_title("Fan-out latency vs N — JPEG q80 @1024")
+    ax1.legend(loc="upper left", fontsize=8)
 
-    rss = [t["proc_rss_mib"] for t in d["tiers"]]
-    threads = [t["threads"] for t in d["tiers"]]
-    guest = [t["guest_rss_per_sandbox_mib"] or 0 for t in d["tiers"]]
-    ax2.plot(ns, rss, "o-", color="C0", label="host process RSS (MiB)")
-    ax2.plot(ns, guest, "^--", color="C2", label="guest RSS / sandbox (MiB)")
+    # --- resource panel: host RSS + guest RSS/sandbox; threads are a constant 2,
+    # stated as text instead of a degenerate twin axis.
+    tiers = {t["n"]: t for t in d["tiers"]}
+    rss = [tiers[n]["proc_rss_mib"] for n in ns]
+    guest = [tiers[n].get("guest_rss_per_sandbox_mib") or 0 for n in ns]
+    ax2.plot(ns, rss, "o-", color=PALETTE["shared"], label="host process RSS")
+    ax2.plot(ns, guest, "^--", color=PALETTE["neutral"], label="guest RSS / sandbox")
     ax2.set_xscale("log", base=2)
     ax2.set_xticks(ns, [str(n) for n in ns])
+    ax2.xaxis.set_minor_locator(NullLocator())
     ax2.set_xlabel("N sandboxes")
-    ax2.set_ylabel("MiB")
-    twin = ax2.twinx()
-    twin.plot(ns, threads, "s:", color="C1", label="host process threads")
-    twin.set_ylabel("threads", color="C1")
-    lines, labels = ax2.get_legend_handles_labels()
-    l2, lb2 = twin.get_legend_handles_labels()
-    ax2.legend(lines + l2, labels + lb2, fontsize=8, loc="upper left")
+    ax2.set_ylabel("RSS (MiB)")
+    ax2.set_ylim(0, max(max(rss), max(guest)) * 1.28)
     ax2.set_title("Host/guest resource envelope vs N")
+    ax2.text(
+        0.5,
+        0.02,
+        "host event-loop threads: 2 at every N (main + one SharedLoop)",
+        transform=ax2.transAxes,
+        ha="center",
+        va="bottom",
+        fontsize=8.5,
+        color=PALETTE["neutral"],
+        style="italic",
+    )
+    # Known reading artifacts — annotate, don't hide (only when present in the data).
+    others = [g for g in guest[1:] if g]
+    if guest[0] and others and guest[0] > 2 * max(others):
+        ax2.annotate(
+            "N=1 guest outlier:\nfirst-boot settling\n(reading artifact)",
+            xy=(ns[0], guest[0]),
+            xytext=(1.7, guest[0] * 0.78),
+            fontsize=8,
+            color=PALETTE["neutral"],
+            arrowprops={"arrowstyle": "->", "lw": 0.8, "color": PALETTE["neutral"]},
+        )
+    if len(rss) >= 2 and rss[-1] < 0.7 * rss[-2]:
+        ax2.annotate(
+            "N=64 host-RSS dip:\nmacOS memory compression\n(reading artifact)",
+            xy=(ns[-1], rss[-1]),
+            xytext=(10, rss[-1] + 12),
+            fontsize=8,
+            color=PALETTE["neutral"],
+            arrowprops={"arrowstyle": "->", "lw": 0.8, "color": PALETTE["neutral"]},
+        )
+    ax2.legend(loc="upper right", fontsize=8)
     save_plot(fig, "local_fanout")
 
 

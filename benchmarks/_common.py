@@ -6,7 +6,7 @@ emits two artifacts:
 
 - ``benchmarks/results/<suite>.json`` — raw datapoints + environment metadata
   (tracked, so the numbers in the doc are reproducible and auditable), and
-- ``docs/engineering/assets/benchmarks/<suite>.png`` — the matplotlib figure the
+- ``docs/assets/bench/<suite>.png`` — the matplotlib figure the
   benchmarks doc embeds.
 
 Run from the repo root (Docker + the ``shinken/sandbox-linux`` image required)::
@@ -33,7 +33,20 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RESULTS_DIR = REPO_ROOT / "benchmarks" / "results"
-PLOTS_DIR = REPO_ROOT / "docs" / "engineering" / "assets" / "benchmarks"
+PLOTS_DIR = REPO_ROOT / "docs" / "assets" / "bench"
+
+# One semantic palette for every figure in the repo (both the local suites here and
+# plot_remote.py): a codec/mode always renders in the same color everywhere.
+PALETTE = {
+    "png": "#c0392b",  # lossless PNG — red
+    "jpeg": "#2980b9",  # lossy JPEG — blue
+    "delta": "#27ae60",  # lossless dirty-tile delta — green
+    "shared": "#27ae60",  # SharedLoop / async single-thread — green
+    "sync": "#c0392b",  # thread-per-session sync facade — red
+    "async": "#2980b9",  # async core — blue
+    "accent": "#8e44ad",
+    "neutral": "#555555",
+}
 
 # Always measure THIS checkout's SDK: prepend it so an installed/editable `shinken`
 # from another checkout can never shadow the code under test.
@@ -110,7 +123,11 @@ def fill_xterm(env, lines: int = 40) -> None:
 
 
 def summarize(values: list[float]) -> dict[str, float]:
-    """min/p50/mean/p90/p99/max for a latency or size series."""
+    """min/p50/mean/(p90/p99)/max for a latency or size series.
+
+    Tail percentiles are only emitted when the sample actually supports them
+    (nearest-rank p90 needs n>=30, p99 needs n>=100) — below that they would just
+    relabel the max. Consumers should ``.get("p90")`` and fall back to ``max``."""
     if not values:
         return {}
     s = sorted(values)
@@ -119,15 +136,18 @@ def summarize(values: list[float]) -> dict[str, float]:
         idx = min(len(s) - 1, max(0, round(q * (len(s) - 1))))
         return s[idx]
 
-    return {
+    out = {
         "n": len(s),
         "min": round(s[0], 3),
         "p50": round(pct(0.50), 3),
         "mean": round(statistics.fmean(s), 3),
-        "p90": round(pct(0.90), 3),
-        "p99": round(pct(0.99), 3),
         "max": round(s[-1], 3),
     }
+    if len(s) >= 30:
+        out["p90"] = round(pct(0.90), 3)
+    if len(s) >= 100:
+        out["p99"] = round(pct(0.99), 3)
+    return out
 
 
 def write_result(suite: str, payload: dict[str, Any]) -> Path:
@@ -139,18 +159,40 @@ def write_result(suite: str, payload: dict[str, Any]) -> Path:
     return out
 
 
-def new_axes(ncols: int = 1, *, height: float = 4.2, width: float = 6.4):
-    """Consistent matplotlib styling for every suite figure (Agg, no display)."""
+def style() -> None:
+    """Apply the one shared matplotlib style (Agg, no display). Idempotent; called
+    by ``new_axes`` and importable by any plotting script outside this package."""
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    fig, axes = plt.subplots(1, ncols, figsize=(width * ncols, height), dpi=130)
-    for ax in axes if ncols > 1 else [axes]:
+    plt.rcParams.update(
+        {
+            "figure.dpi": 140,
+            "font.size": 11,
+            "axes.titlesize": 12,
+            "axes.labelsize": 11,
+            "legend.fontsize": 9,
+            "xtick.labelsize": 10,
+            "ytick.labelsize": 10,
+            "axes.grid": True,
+            "grid.alpha": 0.25,
+            "grid.linewidth": 0.6,
+            "axes.spines.top": False,
+            "axes.spines.right": False,
+        }
+    )
+
+
+def new_axes(ncols: int = 1, *, height: float = 4.2, width: float = 6.4, nrows: int = 1):
+    """Consistent matplotlib axes for every suite figure."""
+    style()
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(nrows, ncols, figsize=(width * ncols, height * nrows))
+    for ax in fig.axes:
         ax.grid(True, which="both", alpha=0.25, linewidth=0.6)
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
     return fig, axes
 
 

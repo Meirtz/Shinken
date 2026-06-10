@@ -9,7 +9,7 @@ what an unchanged desktop costs (idle suppression + the initial keyframe).
 
 Payload bytes are the decoded image/tile bytes (base64+JSON wire framing adds
 ~33%). Emits benchmarks/results/delta_screencast.json and
-docs/engineering/assets/benchmarks/delta_screencast.png.
+docs/assets/bench/delta_screencast.png.
 
 Run:  python benchmarks/bench_delta_screencast.py
 """
@@ -20,7 +20,7 @@ import sys
 import threading
 import time
 
-from _common import boot, new_axes, save_plot, summarize, write_result
+from _common import PALETTE, boot, new_axes, save_plot, summarize, write_result
 
 MODES: list[tuple[str, dict]] = [
     ("full-png", {}),
@@ -113,48 +113,87 @@ def _mode_rows(points: list[dict], mode: str, phase: str) -> list[dict]:
     return [p for p in points if p["mode"] == mode and p["phase"] == phase]
 
 
+# Semantic colors per _common.PALETTE: PNG red, JPEG blue, delta green, delta+JPEG accent.
+_MODE_STYLE = {
+    "full-png": ("full-PNG", PALETTE["png"]),
+    "full-jpeg-q80": ("full-JPEG q80", PALETTE["jpeg"]),
+    "delta-png": ("delta-PNG", PALETTE["delta"]),
+    "delta-jpeg-q80": ("delta-JPEG q80", PALETTE["accent"]),
+}
+
+
+def _log_kib_axis(ax, lo: float, hi: float) -> None:
+    """Plain-number ticks on a log KiB axis (no bare mid-decade mathtext gaps)."""
+    from matplotlib.ticker import FixedLocator, FuncFormatter, NullFormatter
+
+    ticks = [t for t in (0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200) if lo <= t <= hi]
+    ax.set_ylim(lo, hi)
+    ax.yaxis.set_major_locator(FixedLocator(ticks))
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+    ax.yaxis.set_minor_formatter(NullFormatter())
+
+
 def plot(payload: dict) -> None:
+    from matplotlib.lines import Line2D
+
     points = payload["datapoints"]
     fig, (ax1, ax2) = new_axes(2)
-    colors = dict(zip(payload["modes"], ["C0", "C1", "C2", "C3"]))
+    names = {m: _MODE_STYLE.get(m, (m,))[0] for m in payload["modes"]}
+    colors = {m: _MODE_STYLE.get(m, (m, PALETTE["neutral"]))[1] for m in payload["modes"]}
 
+    all_kib: list[float] = []
     for mode in payload["modes"]:
         rows = _mode_rows(points, mode, "typing")
         xs = [p["seq"] for p in rows]
         ys = [max(p["bytes"], 1) / 1024.0 for p in rows]
-        ax1.plot(xs, ys, "-", linewidth=0.9, alpha=0.8, color=colors[mode], label=mode)
+        all_kib.extend(ys)
+        ax1.plot(xs, ys, "-", linewidth=1.0, alpha=0.85, color=colors[mode], label=names[mode])
         keyframes = [(p["seq"], p["bytes"] / 1024.0) for p in rows if p["kind"] == "full"]
         if keyframes and mode.startswith("delta"):
-            ax1.plot(*zip(*keyframes), "o", ms=5, color=colors[mode], mfc="none")
+            ax1.plot(*zip(*keyframes), "o", ms=6, mew=1.2, color=colors[mode], mfc="none")
     ax1.set_yscale("log")
-    ax1.set_xlabel("frame seq")
+    _log_kib_axis(ax1, min(all_kib) * 0.7, max(all_kib) * 1.5)
+    ax1.set_xlabel(f"frame seq (fps={payload['fps']:g}, ~{payload['type_chars_per_s']:g} chars/s)")
     ax1.set_ylabel("KiB / frame (log)")
-    ax1.set_title(
-        f"Per-frame payload, typing at ~{payload['type_chars_per_s']} chars/s, "
-        f"fps={payload['fps']:g}\n(circles = delta keyframes)"
+    ax1.set_title("Per-frame payload while typing")
+    handles, labels = ax1.get_legend_handles_labels()
+    handles.append(
+        Line2D([], [], linestyle="none", marker="o", ms=6, mew=1.2,
+               mec=PALETTE["neutral"], mfc="none")
     )
-    ax1.legend(fontsize=8)
+    labels.append("delta keyframe")
+    ax1.legend(  # below the axes, fully out of the trace region
+        handles, labels, loc="upper center", bbox_to_anchor=(0.5, -0.22),
+        ncol=3, frameon=False, columnspacing=1.2, handlelength=1.6,
+    )
 
-    means = []
+    stats = []  # (mode, mean, p10, p90) KiB — show spread, not bare means
     for mode in payload["modes"]:
-        rows = _mode_rows(points, mode, "typing")
-        means.append(sum(p["bytes"] for p in rows) / max(1, len(rows)) / 1024.0)
-    base = means[0] if means else 1.0
-    bars = ax2.bar(payload["modes"], means, color=[colors[m] for m in payload["modes"]])
-    for bar, m in zip(bars, means):
+        kib = sorted(p["bytes"] / 1024.0 for p in _mode_rows(points, mode, "typing"))
+        n = len(kib)
+        mean = sum(kib) / max(1, n)
+        p10 = kib[round(0.10 * (n - 1))] if kib else 0.0
+        p90 = kib[round(0.90 * (n - 1))] if kib else 0.0
+        stats.append((mode, mean, p10, p90))
+    base = stats[0][1] if stats else 1.0
+    xs = list(range(len(stats)))
+    ax2.bar(xs, [s[1] for s in stats], color=[colors[s[0]] for s in stats], alpha=0.9)
+    for x, (mode, mean, p10, p90) in zip(xs, stats):
+        ax2.vlines(x, p10, p90, color="#333333", linewidth=1.3)
+        ax2.plot([x, x], [p10, p90], "_", color="#333333", ms=9, mew=1.3)
         ax2.text(
-            bar.get_x() + bar.get_width() / 2,
-            m * 1.05,
-            f"{m:.1f} KiB\n({base / m:.1f}x)" if m else "0",
-            ha="center",
-            fontsize=8,
+            x, max(mean, p90) * 1.3,
+            f"{mean:.1f} KiB\n{base / mean:.1f}x" if mean else "0",
+            ha="center", va="bottom", fontsize=9,
         )
     ax2.set_yscale("log")
-    # log-scale headroom so the tallest bar's label clears the title
-    ax2.set_ylim(min(means) * 0.5, max(means) * 4.0)
+    # log-scale headroom so the tallest label clears the title
+    _log_kib_axis(ax2, min(s[2] for s in stats) * 0.6, max(max(s[1], s[3]) for s in stats) * 4.5)
+    ax2.set_xticks(xs)
+    ax2.set_xticklabels([names[s[0]].replace(" q80", "") for s in stats])
     ax2.set_ylabel("mean KiB / frame (log)")
-    ax2.set_title("Mean payload per delivered frame (typing)\n(x = reduction vs full-PNG)")
-    ax2.tick_params(axis="x", labelsize=8)
+    ax2.set_xlabel("JPEG q80 · whiskers p10–p90 · x = vs full-PNG")
+    ax2.set_title("Mean payload per delivered frame (typing)")
     save_plot(fig, "delta_screencast")
 
 

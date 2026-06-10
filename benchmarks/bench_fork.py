@@ -9,14 +9,17 @@ each leg with repetitions, against the local DockerLocalProvider (disk tier:
                  observation — the baseline cost of "a usable sandbox",
 - checkpoint:    ``provider.checkpoint(handle)`` on a live sandbox with real
                  state (a golden marker file) — REPS repetitions,
-- resume/fork:   fan-out N in {1, 2, 4, 8} live replicas from ONE checkpoint
-                 (concurrently, like ``run_eval_forked``), per-replica resume +
-                 connect + first observation, plus the fan-out wall-clock. Every
-                 replica's inherited golden state is verified (``get_file``), so
-                 a timing row only counts if the fork was REAL.
+- resume/fork:   fan-out N in {1, 2, 4, 8, 16, 32} live replicas from ONE
+                 checkpoint (concurrently, like ``run_eval_forked``), per-replica
+                 resume + connect + first observation, plus the fan-out
+                 wall-clock. Every replica's inherited golden state is verified
+                 (``get_file``), so a timing row only counts if the fork was REAL.
+
+Rep counts are env-overridable: ``SHINKEN_BENCH_FORK_REPS`` (default 16) and
+``SHINKEN_BENCH_FORK_NS`` (comma-separated, default ``1,2,4,8,16,32``).
 
 Emits benchmarks/results/fork_resume.json and
-docs/engineering/assets/benchmarks/fork_resume.png.
+docs/assets/bench/fork_resume.png.
 
 Run:  python benchmarks/bench_fork.py
 """
@@ -24,14 +27,27 @@ Run:  python benchmarks/bench_fork.py
 from __future__ import annotations
 
 import concurrent.futures
+import os
 import sys
 import tempfile
 from pathlib import Path
 
-from _common import GEOMETRY, IMAGE, boot, new_axes, now_ms, save_plot, summarize, write_result
+from _common import (
+    GEOMETRY,
+    IMAGE,
+    PALETTE,
+    boot,
+    new_axes,
+    now_ms,
+    save_plot,
+    summarize,
+    write_result,
+)
 
-REPS = 8
-FANOUT = [1, 2, 4, 8]
+REPS = int(os.environ.get("SHINKEN_BENCH_FORK_REPS", "16"))
+FANOUT = [
+    int(n) for n in os.environ.get("SHINKEN_BENCH_FORK_NS", "1,2,4,8,16,32").split(",")
+]
 MARKER = "golden-state-bench-v1"
 GUEST_FILE = "/tmp/shinken_bench_golden.txt"
 
@@ -122,7 +138,9 @@ def run() -> dict:
         for n in FANOUT:
             t0 = now_ms()
             with concurrent.futures.ThreadPoolExecutor(max_workers=n) as pool:
-                rows = list(pool.map(lambda i: _resume_once(provider, ckpt_id, i), range(n)))
+                rows = list(
+                    pool.map(lambda i: _resume_once(provider, ckpt_id, i), range(n))
+                )
             wall = now_ms() - t0
             for row in rows:
                 fanout_rows.append({"n": n, **row})
@@ -155,77 +173,148 @@ def run() -> dict:
 
 
 def plot(payload: dict) -> None:
+    from matplotlib.ticker import FixedLocator, NullLocator, ScalarFormatter
+
     d = payload["datapoints"]
+    cold = d["cold_boot"]
+    fr = d["fork_resume"]
     fig, (ax1, ax2) = new_axes(2)
 
-    # Panel 1: cold boot vs fork-resume, stacked mean legs.
-    legs = ["provision", "connect", "first obs"]
-    cold_means = [
-        sum(c["create_ms"] for c in d["cold_boot"]) / len(d["cold_boot"]),
-        sum(c["connect_ms"] for c in d["cold_boot"]) / len(d["cold_boot"]),
-        sum(c["first_obs_ms"] for c in d["cold_boot"]) / len(d["cold_boot"]),
-    ]
-    fr = d["fork_resume"]
-    fork_means = [
-        sum(r["resume_ms"] for r in fr) / len(fr),
-        sum(r["connect_ms"] for r in fr) / len(fr),
-        sum(r["first_obs_ms"] for r in fr) / len(fr),
-    ]
-    ckpt_mean = sum(c["checkpoint_ms"] for c in d["checkpoint"]) / len(d["checkpoint"])
-    bottoms = [0.0, 0.0]
-    for i, leg in enumerate(legs):
-        vals = [cold_means[i], fork_means[i]]
-        ax1.bar(
-            ["cold boot\n(no state)", "fork from checkpoint\n(inherits state)"],
-            vals,
-            bottom=bottoms,
-            label=leg,
-            color=f"C{i}",
-        )
-        bottoms = [b + v for b, v in zip(bottoms, vals)]
-    ax1.axhline(
-        ckpt_mean,
-        color="C3",
-        linestyle="--",
-        linewidth=1.2,
-        label=f"checkpoint (one-time): {ckpt_mean:.0f} ms",
-    )
-    for x, total in enumerate(bottoms):
-        ax1.text(x, total + 30, f"{total:.0f} ms", ha="center", fontsize=9)
-    ax1.set_ylabel("ms (mean)")
-    ax1.set_title("Time to a USABLE sandbox: cold boot vs disk-tier fork\n(stacked mean legs)")
-    ax1.legend(fontsize=8)
+    def mean(vals: list[float]) -> float:
+        return sum(vals) / len(vals)
 
-    # Panel 2: fan-out scaling.
-    ns = [w["n"] for w in d["fanout_walls"]]
-    ax2.plot(
-        ns, [w["wall_ms"] / 1000.0 for w in d["fanout_walls"]], "o-", label="fan-out wall-clock"
+    # Panel 1: plain bars (mean, min-max whiskers) for the three costs. The
+    # sub-second legs (connect, first obs) are annotated numerically — on an
+    # ~8 s bar they are invisible as stack segments.
+    cold_tot = [c["total_ms"] / 1000.0 for c in cold]
+    fork_tot = [r["total_ms"] / 1000.0 for r in fr]
+    ckpt_s = [c["checkpoint_ms"] / 1000.0 for c in d["checkpoint"]]
+    bars = [
+        ("cold boot\n(no state)", cold_tot, PALETTE["neutral"], 1.0),
+        ("fork from ckpt\n(inherits state)", fork_tot, PALETTE["accent"], 1.0),
+        ("checkpoint\n(paid once)", ckpt_s, PALETTE["accent"], 0.45),
+    ]
+    for x, (_, vals, color, alpha) in enumerate(bars):
+        m = mean(vals)
+        ax1.bar(x, m, width=0.62, color=color, alpha=alpha, zorder=2)
+        ax1.errorbar(
+            x,
+            m,
+            yerr=[[m - min(vals)], [max(vals) - m]],
+            fmt="none",
+            ecolor="#222222",
+            elinewidth=1.1,
+            capsize=4,
+            zorder=3,
+        )
+        ax1.text(x, max(vals) + 0.25, f"{m:.2f} s", ha="center", fontsize=9)
+    ax1.set_xticks(range(len(bars)))
+    ax1.set_xticklabels([b[0] for b in bars], fontsize=9)
+    cold_legs = (
+        f"docker run {mean([c['create_ms'] for c in cold]) / 1000.0:.2f} s\n"
+        f"connect {mean([c['connect_ms'] for c in cold]):.0f} ms\n"
+        f"first obs {mean([c['first_obs_ms'] for c in cold]):.0f} ms"
     )
-    ax2.plot(
-        ns,
-        [w["wall_per_replica_ms"] / 1000.0 for w in d["fanout_walls"]],
-        "s--",
-        label="wall / replica",
+    fork_legs = (
+        f"resume {mean([r['resume_ms'] for r in fr]) / 1000.0:.2f} s\n"
+        f"connect {mean([r['connect_ms'] for r in fr]):.0f} ms\n"
+        f"first obs {mean([r['first_obs_ms'] for r in fr]):.0f} ms"
     )
-    per_replica = {n: [r["total_ms"] / 1000.0 for r in fr if r["n"] == n] for n in ns}
+    ax1.text(
+        0,
+        mean(cold_tot) / 2,
+        cold_legs,
+        ha="center",
+        va="center",
+        color="white",
+        fontsize=8,
+    )
+    ax1.text(
+        1,
+        mean(fork_tot) / 2,
+        fork_legs,
+        ha="center",
+        va="center",
+        color="white",
+        fontsize=8,
+    )
+    ax1.text(
+        0.98,
+        0.98,
+        "fork inherits mid-task state —\nskips setup replay, not the boot\n"
+        "(disk tier: fork time ≈ boot time)",
+        transform=ax1.transAxes,
+        ha="right",
+        va="top",
+        fontsize=9,
+        bbox=dict(boxstyle="round,pad=0.4", fc="#f6f1f9", ec=PALETTE["accent"], lw=0.8),
+    )
+    ax1.set_ylim(0, max(cold_tot + fork_tot) * 1.38)
+    ax1.set_ylabel("seconds to a usable sandbox (mean, min–max)")
+    ax1.set_title("Cold boot vs disk-tier fork")
+
+    # Panel 2: fan-out scaling, with the per-replica spread as a visible band.
+    walls = sorted(d["fanout_walls"], key=lambda w: w["n"])
+    ns = [w["n"] for w in walls]
+    per = {n: [r["total_ms"] / 1000.0 for r in fr if r["n"] == n] for n in ns}
+    ns_band = [n for n in ns if per[n]]
+    ax2.fill_between(
+        ns_band,
+        [min(per[n]) for n in ns_band],
+        [max(per[n]) for n in ns_band],
+        color=PALETTE["accent"],
+        alpha=0.18,
+        linewidth=0,
+    )
+    band_means = [mean(per[n]) for n in ns_band]
     ax2.errorbar(
-        ns,
-        [sum(v) / len(v) for v in per_replica.values()],
+        ns_band,
+        band_means,
         yerr=[
-            [sum(v) / len(v) - min(v) for v in per_replica.values()],
-            [max(v) - sum(v) / len(v) for v in per_replica.values()],
+            [m - min(per[n]) for m, n in zip(band_means, ns_band)],
+            [max(per[n]) - m for m, n in zip(band_means, ns_band)],
         ],
         fmt="^:",
+        markersize=5,
+        color=PALETTE["accent"],
+        ecolor=PALETTE["accent"],
         capsize=3,
-        label="per-replica total (min..max)",
+        label="per-replica total (min–max)",
     )
-    ax2.set_xticks(ns)
+    ax2.plot(
+        ns,
+        [w["wall_ms"] / 1000.0 for w in walls],
+        "o-",
+        color=PALETTE["neutral"],
+        label="fan-out wall-clock",
+    )
+    ax2.plot(
+        ns,
+        [w["wall_per_replica_ms"] / 1000.0 for w in walls],
+        "s--",
+        color=PALETTE["accent"],
+        label="wall / replica (amortized)",
+    )
+    ax2.set_xscale("log", base=2)
+    ax2.xaxis.set_major_locator(FixedLocator(ns))
+    ax2.xaxis.set_major_formatter(ScalarFormatter())
+    ax2.xaxis.set_minor_locator(NullLocator())
+    ax2.set_ylim(0, max(w["wall_ms"] for w in walls) / 1000.0 * 1.18)
+    verified = sum(1 for r in fr if r["inherited_golden_state"])
+    ax2.text(
+        0.5,
+        0.99,
+        f"every replica verified to inherit the golden state ({verified}/{len(fr)})",
+        transform=ax2.transAxes,
+        ha="center",
+        va="top",
+        fontsize=10,
+        color="#333333",
+    )
     ax2.set_xlabel("N replicas forked from one checkpoint")
     ax2.set_ylabel("seconds")
-    ax2.set_title(
-        "Fork fan-out from one golden checkpoint\n(every replica verified to inherit state)"
-    )
-    ax2.legend(fontsize=8)
+    ax2.set_title("Fork fan-out from one checkpoint")
+    ax2.legend(loc="center right", fontsize=8.5)
     save_plot(fig, "fork_resume")
 
 
@@ -236,13 +325,19 @@ def main() -> int:
         "cold_boot_total_ms": summarize([c["total_ms"] for c in d["cold_boot"]]),
         "checkpoint_ms": summarize([c["checkpoint_ms"] for c in d["checkpoint"]]),
         "fork_total_ms": summarize([r["total_ms"] for r in d["fork_resume"]]),
-        "replicas_verified": sum(1 for r in d["fork_resume"] if r["inherited_golden_state"]),
+        "replicas_verified": sum(
+            1 for r in d["fork_resume"] if r["inherited_golden_state"]
+        ),
         "replicas_total": len(d["fork_resume"]),
     }
     write_result("fork_resume", payload)
     plot(payload)
     ok = payload["summary"]["replicas_verified"] == payload["summary"]["replicas_total"]
-    print("all forks inherited the golden state" if ok else "FORK STATE VERIFICATION FAILED")
+    print(
+        "all forks inherited the golden state"
+        if ok
+        else "FORK STATE VERIFICATION FAILED"
+    )
     return 0 if ok else 1
 
 

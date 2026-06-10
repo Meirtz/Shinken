@@ -48,6 +48,8 @@ Legend: ⏳ pending · 🚧 drafting · ✅ drafted
 Operational docs that track the v0.0.1 build:
 
 - [Status](engineering/status.md) — what is implemented vs designed, per subsystem.
+- [Benchmark report](benchmarks/README.md) — every headline number with provenance and
+  evidence-class labels; methodology in [engineering/benchmarks.md](engineering/benchmarks.md).
 - [Release checklist](engineering/release-checklist.md) — the v0.0.1 contract checks that must pass to ship.
 - [Testing](engineering/testing.md) — local and CI test surfaces.
 - [Milestone triage](engineering/milestone-triage.md) — how to classify v0.0.1 vs later work.

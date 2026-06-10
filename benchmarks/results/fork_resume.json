@@ -1,8 +1,8 @@
 {
   "suite": "fork_resume",
   "meta": {
-    "generated_utc": "2026-06-10T17:57:56Z",
-    "git_commit": "ec2aacb",
+    "generated_utc": "2026-06-10T19:39:15Z",
+    "git_commit": "23eed91",
     "python": "3.13.9",
     "host_os": "macOS 26.5.1",
     "host_arch": "arm64",
@@ -14,299 +14,828 @@
     "image_arch": "linux/arm64",
     "screen_geometry": "1280x800x24"
   },
-  "reps": 8,
+  "reps": 16,
   "fanout": [
     1,
     2,
     4,
-    8
+    8,
+    16,
+    32
   ],
   "datapoints": {
     "cold_boot": [
       {
         "rep": 0,
-        "create_ms": 9241.5,
-        "connect_ms": 3.8,
-        "first_obs_ms": 17.8,
-        "total_ms": 9263.2
+        "create_ms": 10770.9,
+        "connect_ms": 4.5,
+        "first_obs_ms": 17.7,
+        "total_ms": 10793.1
       },
       {
         "rep": 1,
-        "create_ms": 7736.4,
-        "connect_ms": 3.5,
-        "first_obs_ms": 14.1,
-        "total_ms": 7754.0
+        "create_ms": 7784.3,
+        "connect_ms": 4.3,
+        "first_obs_ms": 12.2,
+        "total_ms": 7800.8
       },
       {
         "rep": 2,
-        "create_ms": 7738.8,
-        "connect_ms": 4.0,
-        "first_obs_ms": 12.5,
-        "total_ms": 7755.2
+        "create_ms": 7796.4,
+        "connect_ms": 8.1,
+        "first_obs_ms": 17.8,
+        "total_ms": 7822.3
       },
       {
         "rep": 3,
-        "create_ms": 7793.5,
-        "connect_ms": 5.3,
-        "first_obs_ms": 16.4,
-        "total_ms": 7815.3
+        "create_ms": 7776.9,
+        "connect_ms": 5.1,
+        "first_obs_ms": 19.6,
+        "total_ms": 7801.6
       },
       {
         "rep": 4,
-        "create_ms": 7788.2,
-        "connect_ms": 5.0,
-        "first_obs_ms": 15.1,
-        "total_ms": 7808.3
+        "create_ms": 7777.0,
+        "connect_ms": 4.5,
+        "first_obs_ms": 11.3,
+        "total_ms": 7792.9
       },
       {
         "rep": 5,
-        "create_ms": 7802.4,
-        "connect_ms": 7.2,
-        "first_obs_ms": 19.3,
-        "total_ms": 7829.0
+        "create_ms": 7786.5,
+        "connect_ms": 5.4,
+        "first_obs_ms": 19.9,
+        "total_ms": 7811.8
       },
       {
         "rep": 6,
-        "create_ms": 7772.6,
-        "connect_ms": 6.0,
-        "first_obs_ms": 29.1,
-        "total_ms": 7807.7
+        "create_ms": 7772.0,
+        "connect_ms": 3.3,
+        "first_obs_ms": 13.0,
+        "total_ms": 7788.3
       },
       {
         "rep": 7,
-        "create_ms": 7713.0,
-        "connect_ms": 5.1,
-        "first_obs_ms": 19.9,
-        "total_ms": 7738.0
+        "create_ms": 7777.0,
+        "connect_ms": 2.8,
+        "first_obs_ms": 12.6,
+        "total_ms": 7792.4
+      },
+      {
+        "rep": 8,
+        "create_ms": 7797.4,
+        "connect_ms": 6.3,
+        "first_obs_ms": 11.7,
+        "total_ms": 7815.4
+      },
+      {
+        "rep": 9,
+        "create_ms": 7781.7,
+        "connect_ms": 5.2,
+        "first_obs_ms": 18.4,
+        "total_ms": 7805.3
+      },
+      {
+        "rep": 10,
+        "create_ms": 7737.3,
+        "connect_ms": 6.9,
+        "first_obs_ms": 15.9,
+        "total_ms": 7760.1
+      },
+      {
+        "rep": 11,
+        "create_ms": 7723.4,
+        "connect_ms": 6.0,
+        "first_obs_ms": 18.0,
+        "total_ms": 7747.4
+      },
+      {
+        "rep": 12,
+        "create_ms": 7781.2,
+        "connect_ms": 3.2,
+        "first_obs_ms": 12.3,
+        "total_ms": 7796.7
+      },
+      {
+        "rep": 13,
+        "create_ms": 7789.1,
+        "connect_ms": 5.2,
+        "first_obs_ms": 18.7,
+        "total_ms": 7812.9
+      },
+      {
+        "rep": 14,
+        "create_ms": 7762.4,
+        "connect_ms": 5.0,
+        "first_obs_ms": 12.9,
+        "total_ms": 7780.3
+      },
+      {
+        "rep": 15,
+        "create_ms": 7786.5,
+        "connect_ms": 5.6,
+        "first_obs_ms": 19.2,
+        "total_ms": 7811.2
       }
     ],
     "checkpoint": [
       {
         "rep": 0,
-        "checkpoint_ms": 1708.1
+        "checkpoint_ms": 1904.0
       },
       {
         "rep": 1,
-        "checkpoint_ms": 550.5
+        "checkpoint_ms": 652.5
       },
       {
         "rep": 2,
-        "checkpoint_ms": 579.3
+        "checkpoint_ms": 531.3
       },
       {
         "rep": 3,
-        "checkpoint_ms": 534.8
+        "checkpoint_ms": 533.8
       },
       {
         "rep": 4,
-        "checkpoint_ms": 537.3
+        "checkpoint_ms": 530.9
       },
       {
         "rep": 5,
-        "checkpoint_ms": 555.6
+        "checkpoint_ms": 523.3
       },
       {
         "rep": 6,
-        "checkpoint_ms": 524.0
+        "checkpoint_ms": 561.7
       },
       {
         "rep": 7,
-        "checkpoint_ms": 571.8
+        "checkpoint_ms": 562.4
+      },
+      {
+        "rep": 8,
+        "checkpoint_ms": 534.2
+      },
+      {
+        "rep": 9,
+        "checkpoint_ms": 570.0
+      },
+      {
+        "rep": 10,
+        "checkpoint_ms": 677.2
+      },
+      {
+        "rep": 11,
+        "checkpoint_ms": 610.1
+      },
+      {
+        "rep": 12,
+        "checkpoint_ms": 560.0
+      },
+      {
+        "rep": 13,
+        "checkpoint_ms": 592.9
+      },
+      {
+        "rep": 14,
+        "checkpoint_ms": 588.7
+      },
+      {
+        "rep": 15,
+        "checkpoint_ms": 574.0
       }
     ],
     "fork_resume": [
       {
         "n": 1,
         "replica": 0,
-        "resume_ms": 9216.0,
-        "connect_ms": 4.2,
-        "first_obs_ms": 14.6,
-        "total_ms": 9234.9,
-        "inherited_golden_state": true
-      },
-      {
-        "n": 2,
-        "replica": 0,
-        "resume_ms": 7769.0,
-        "connect_ms": 4.9,
-        "first_obs_ms": 14.4,
-        "total_ms": 7788.3,
-        "inherited_golden_state": true
-      },
-      {
-        "n": 2,
-        "replica": 1,
-        "resume_ms": 7768.3,
-        "connect_ms": 5.2,
-        "first_obs_ms": 14.7,
-        "total_ms": 7788.2,
-        "inherited_golden_state": true
-      },
-      {
-        "n": 4,
-        "replica": 0,
-        "resume_ms": 7677.9,
-        "connect_ms": 4.5,
-        "first_obs_ms": 18.4,
-        "total_ms": 7700.8,
-        "inherited_golden_state": true
-      },
-      {
-        "n": 4,
-        "replica": 1,
-        "resume_ms": 7673.6,
+        "resume_ms": 9258.7,
         "connect_ms": 6.1,
-        "first_obs_ms": 11.8,
-        "total_ms": 7691.5,
+        "first_obs_ms": 17.9,
+        "total_ms": 9282.7,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 2,
+        "replica": 0,
+        "resume_ms": 7732.7,
+        "connect_ms": 5.5,
+        "first_obs_ms": 18.5,
+        "total_ms": 7756.7,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 2,
+        "replica": 1,
+        "resume_ms": 7731.9,
+        "connect_ms": 6.2,
+        "first_obs_ms": 18.5,
+        "total_ms": 7756.6,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 4,
+        "replica": 0,
+        "resume_ms": 7685.4,
+        "connect_ms": 5.7,
+        "first_obs_ms": 13.1,
+        "total_ms": 7704.2,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 4,
+        "replica": 1,
+        "resume_ms": 7684.8,
+        "connect_ms": 5.9,
+        "first_obs_ms": 13.3,
+        "total_ms": 7704.0,
         "inherited_golden_state": true
       },
       {
         "n": 4,
         "replica": 2,
-        "resume_ms": 7676.1,
-        "connect_ms": 4.0,
-        "first_obs_ms": 11.8,
-        "total_ms": 7691.9,
+        "resume_ms": 7682.3,
+        "connect_ms": 5.8,
+        "first_obs_ms": 15.1,
+        "total_ms": 7703.2,
         "inherited_golden_state": true
       },
       {
         "n": 4,
         "replica": 3,
-        "resume_ms": 7664.2,
-        "connect_ms": 4.7,
-        "first_obs_ms": 11.8,
-        "total_ms": 7680.7,
+        "resume_ms": 7683.9,
+        "connect_ms": 5.6,
+        "first_obs_ms": 13.7,
+        "total_ms": 7703.2,
         "inherited_golden_state": true
       },
       {
         "n": 8,
         "replica": 0,
-        "resume_ms": 7549.6,
-        "connect_ms": 4.9,
-        "first_obs_ms": 10.6,
-        "total_ms": 7565.2,
+        "resume_ms": 7538.0,
+        "connect_ms": 4.8,
+        "first_obs_ms": 9.4,
+        "total_ms": 7552.3,
         "inherited_golden_state": true
       },
       {
         "n": 8,
         "replica": 1,
-        "resume_ms": 7552.2,
+        "resume_ms": 7539.8,
         "connect_ms": 7.1,
-        "first_obs_ms": 12.8,
-        "total_ms": 7572.1,
+        "first_obs_ms": 10.1,
+        "total_ms": 7557.0,
         "inherited_golden_state": true
       },
       {
         "n": 8,
         "replica": 2,
-        "resume_ms": 7549.4,
-        "connect_ms": 7.2,
-        "first_obs_ms": 15.8,
-        "total_ms": 7572.4,
+        "resume_ms": 7538.4,
+        "connect_ms": 4.0,
+        "first_obs_ms": 9.2,
+        "total_ms": 7551.7,
         "inherited_golden_state": true
       },
       {
         "n": 8,
         "replica": 3,
-        "resume_ms": 7553.4,
-        "connect_ms": 5.9,
-        "first_obs_ms": 13.1,
-        "total_ms": 7572.5,
+        "resume_ms": 7539.3,
+        "connect_ms": 6.3,
+        "first_obs_ms": 8.8,
+        "total_ms": 7554.4,
         "inherited_golden_state": true
       },
       {
         "n": 8,
         "replica": 4,
-        "resume_ms": 7552.6,
-        "connect_ms": 5.9,
-        "first_obs_ms": 13.2,
-        "total_ms": 7571.8,
+        "resume_ms": 7538.9,
+        "connect_ms": 5.4,
+        "first_obs_ms": 11.0,
+        "total_ms": 7555.2,
         "inherited_golden_state": true
       },
       {
         "n": 8,
         "replica": 5,
-        "resume_ms": 7538.4,
-        "connect_ms": 6.9,
-        "first_obs_ms": 11.2,
-        "total_ms": 7556.6,
+        "resume_ms": 7536.8,
+        "connect_ms": 6.4,
+        "first_obs_ms": 8.3,
+        "total_ms": 7551.4,
         "inherited_golden_state": true
       },
       {
         "n": 8,
         "replica": 6,
-        "resume_ms": 7539.9,
-        "connect_ms": 6.0,
-        "first_obs_ms": 12.6,
-        "total_ms": 7558.5,
+        "resume_ms": 7535.5,
+        "connect_ms": 7.0,
+        "first_obs_ms": 8.8,
+        "total_ms": 7551.3,
         "inherited_golden_state": true
       },
       {
         "n": 8,
         "replica": 7,
-        "resume_ms": 7538.1,
-        "connect_ms": 6.6,
-        "first_obs_ms": 16.6,
-        "total_ms": 7561.3,
+        "resume_ms": 7536.0,
+        "connect_ms": 7.2,
+        "first_obs_ms": 8.2,
+        "total_ms": 7551.5,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 16,
+        "replica": 0,
+        "resume_ms": 7454.0,
+        "connect_ms": 4.3,
+        "first_obs_ms": 11.8,
+        "total_ms": 7470.1,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 16,
+        "replica": 1,
+        "resume_ms": 8474.6,
+        "connect_ms": 11.9,
+        "first_obs_ms": 20.0,
+        "total_ms": 8506.5,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 16,
+        "replica": 2,
+        "resume_ms": 8474.8,
+        "connect_ms": 13.0,
+        "first_obs_ms": 18.2,
+        "total_ms": 8506.0,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 16,
+        "replica": 3,
+        "resume_ms": 8475.9,
+        "connect_ms": 15.6,
+        "first_obs_ms": 42.5,
+        "total_ms": 8534.0,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 16,
+        "replica": 4,
+        "resume_ms": 8467.5,
+        "connect_ms": 23.9,
+        "first_obs_ms": 24.7,
+        "total_ms": 8516.0,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 16,
+        "replica": 5,
+        "resume_ms": 8471.9,
+        "connect_ms": 56.8,
+        "first_obs_ms": 14.3,
+        "total_ms": 8543.0,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 16,
+        "replica": 6,
+        "resume_ms": 8471.4,
+        "connect_ms": 9.5,
+        "first_obs_ms": 25.0,
+        "total_ms": 8506.0,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 16,
+        "replica": 7,
+        "resume_ms": 8465.1,
+        "connect_ms": 12.5,
+        "first_obs_ms": 35.0,
+        "total_ms": 8512.6,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 16,
+        "replica": 8,
+        "resume_ms": 8450.9,
+        "connect_ms": 14.7,
+        "first_obs_ms": 22.3,
+        "total_ms": 8488.0,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 16,
+        "replica": 9,
+        "resume_ms": 8448.2,
+        "connect_ms": 11.5,
+        "first_obs_ms": 20.1,
+        "total_ms": 8479.7,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 16,
+        "replica": 10,
+        "resume_ms": 8450.2,
+        "connect_ms": 13.2,
+        "first_obs_ms": 31.2,
+        "total_ms": 8494.6,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 16,
+        "replica": 11,
+        "resume_ms": 8447.0,
+        "connect_ms": 14.6,
+        "first_obs_ms": 28.0,
+        "total_ms": 8489.6,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 16,
+        "replica": 12,
+        "resume_ms": 8439.0,
+        "connect_ms": 17.1,
+        "first_obs_ms": 23.6,
+        "total_ms": 8479.7,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 16,
+        "replica": 13,
+        "resume_ms": 8435.0,
+        "connect_ms": 12.7,
+        "first_obs_ms": 15.1,
+        "total_ms": 8462.7,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 16,
+        "replica": 14,
+        "resume_ms": 8447.0,
+        "connect_ms": 26.6,
+        "first_obs_ms": 47.7,
+        "total_ms": 8521.3,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 16,
+        "replica": 15,
+        "resume_ms": 8426.4,
+        "connect_ms": 14.4,
+        "first_obs_ms": 22.8,
+        "total_ms": 8463.5,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 32,
+        "replica": 0,
+        "resume_ms": 7592.9,
+        "connect_ms": 2.3,
+        "first_obs_ms": 10.2,
+        "total_ms": 7605.4,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 32,
+        "replica": 1,
+        "resume_ms": 8613.0,
+        "connect_ms": 35.7,
+        "first_obs_ms": 32.9,
+        "total_ms": 8681.6,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 32,
+        "replica": 2,
+        "resume_ms": 8633.5,
+        "connect_ms": 33.3,
+        "first_obs_ms": 68.3,
+        "total_ms": 8735.1,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 32,
+        "replica": 3,
+        "resume_ms": 8650.7,
+        "connect_ms": 33.2,
+        "first_obs_ms": 82.2,
+        "total_ms": 8766.1,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 32,
+        "replica": 4,
+        "resume_ms": 8604.4,
+        "connect_ms": 38.1,
+        "first_obs_ms": 29.4,
+        "total_ms": 8671.9,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 32,
+        "replica": 5,
+        "resume_ms": 8635.0,
+        "connect_ms": 40.2,
+        "first_obs_ms": 108.1,
+        "total_ms": 8783.4,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 32,
+        "replica": 6,
+        "resume_ms": 8626.8,
+        "connect_ms": 25.8,
+        "first_obs_ms": 68.2,
+        "total_ms": 8720.8,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 32,
+        "replica": 7,
+        "resume_ms": 8622.1,
+        "connect_ms": 45.7,
+        "first_obs_ms": 106.3,
+        "total_ms": 8774.0,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 32,
+        "replica": 8,
+        "resume_ms": 8620.4,
+        "connect_ms": 415.0,
+        "first_obs_ms": 11.5,
+        "total_ms": 9046.9,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 32,
+        "replica": 9,
+        "resume_ms": 8613.3,
+        "connect_ms": 27.0,
+        "first_obs_ms": 76.3,
+        "total_ms": 8716.6,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 32,
+        "replica": 10,
+        "resume_ms": 8599.2,
+        "connect_ms": 23.9,
+        "first_obs_ms": 30.7,
+        "total_ms": 8653.9,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 32,
+        "replica": 11,
+        "resume_ms": 8604.7,
+        "connect_ms": 54.3,
+        "first_obs_ms": 87.8,
+        "total_ms": 8746.8,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 32,
+        "replica": 12,
+        "resume_ms": 8602.5,
+        "connect_ms": 28.0,
+        "first_obs_ms": 47.5,
+        "total_ms": 8678.0,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 32,
+        "replica": 13,
+        "resume_ms": 8581.8,
+        "connect_ms": 31.1,
+        "first_obs_ms": 18.4,
+        "total_ms": 8631.3,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 32,
+        "replica": 14,
+        "resume_ms": 8592.2,
+        "connect_ms": 88.5,
+        "first_obs_ms": 82.9,
+        "total_ms": 8763.7,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 32,
+        "replica": 15,
+        "resume_ms": 8596.7,
+        "connect_ms": 41.2,
+        "first_obs_ms": 53.4,
+        "total_ms": 8691.3,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 32,
+        "replica": 16,
+        "resume_ms": 8604.0,
+        "connect_ms": 34.2,
+        "first_obs_ms": 54.1,
+        "total_ms": 8692.2,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 32,
+        "replica": 17,
+        "resume_ms": 8570.4,
+        "connect_ms": 35.8,
+        "first_obs_ms": 28.5,
+        "total_ms": 8634.7,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 32,
+        "replica": 18,
+        "resume_ms": 8569.9,
+        "connect_ms": 42.8,
+        "first_obs_ms": 62.8,
+        "total_ms": 8675.5,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 32,
+        "replica": 19,
+        "resume_ms": 8555.8,
+        "connect_ms": 47.1,
+        "first_obs_ms": 32.5,
+        "total_ms": 8635.4,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 32,
+        "replica": 20,
+        "resume_ms": 8581.3,
+        "connect_ms": 42.8,
+        "first_obs_ms": 106.9,
+        "total_ms": 8731.0,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 32,
+        "replica": 21,
+        "resume_ms": 8569.0,
+        "connect_ms": 33.6,
+        "first_obs_ms": 27.3,
+        "total_ms": 8629.9,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 32,
+        "replica": 22,
+        "resume_ms": 8541.8,
+        "connect_ms": 22.1,
+        "first_obs_ms": 20.6,
+        "total_ms": 8584.5,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 32,
+        "replica": 23,
+        "resume_ms": 8570.3,
+        "connect_ms": 40.4,
+        "first_obs_ms": 106.1,
+        "total_ms": 8716.8,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 32,
+        "replica": 24,
+        "resume_ms": 8565.3,
+        "connect_ms": 69.2,
+        "first_obs_ms": 89.4,
+        "total_ms": 8723.9,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 32,
+        "replica": 25,
+        "resume_ms": 8566.1,
+        "connect_ms": 83.5,
+        "first_obs_ms": 63.5,
+        "total_ms": 8713.2,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 32,
+        "replica": 26,
+        "resume_ms": 8527.3,
+        "connect_ms": 28.3,
+        "first_obs_ms": 16.0,
+        "total_ms": 8571.6,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 32,
+        "replica": 27,
+        "resume_ms": 8567.0,
+        "connect_ms": 55.7,
+        "first_obs_ms": 83.2,
+        "total_ms": 8705.9,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 32,
+        "replica": 28,
+        "resume_ms": 8549.4,
+        "connect_ms": 72.8,
+        "first_obs_ms": 84.8,
+        "total_ms": 8706.9,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 32,
+        "replica": 29,
+        "resume_ms": 8559.4,
+        "connect_ms": 83.8,
+        "first_obs_ms": 115.8,
+        "total_ms": 8759.0,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 32,
+        "replica": 30,
+        "resume_ms": 8531.0,
+        "connect_ms": 61.6,
+        "first_obs_ms": 40.2,
+        "total_ms": 8632.8,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 32,
+        "replica": 31,
+        "resume_ms": 8548.9,
+        "connect_ms": 54.2,
+        "first_obs_ms": 88.6,
+        "total_ms": 8691.7,
         "inherited_golden_state": true
       }
     ],
     "fanout_walls": [
       {
         "n": 1,
-        "wall_ms": 9509.8,
-        "wall_per_replica_ms": 9509.8,
+        "wall_ms": 9597.5,
+        "wall_per_replica_ms": 9597.5,
         "all_inherited": true
       },
       {
         "n": 2,
-        "wall_ms": 8173.9,
-        "wall_per_replica_ms": 4087.0,
+        "wall_ms": 8131.9,
+        "wall_per_replica_ms": 4066.0,
         "all_inherited": true
       },
       {
         "n": 4,
-        "wall_ms": 8236.4,
-        "wall_per_replica_ms": 2059.1,
+        "wall_ms": 8245.8,
+        "wall_per_replica_ms": 2061.5,
         "all_inherited": true
       },
       {
         "n": 8,
-        "wall_ms": 8492.7,
-        "wall_per_replica_ms": 1061.6,
+        "wall_ms": 8548.1,
+        "wall_per_replica_ms": 1068.5,
+        "all_inherited": true
+      },
+      {
+        "n": 16,
+        "wall_ms": 10111.5,
+        "wall_per_replica_ms": 632.0,
+        "all_inherited": true
+      },
+      {
+        "n": 32,
+        "wall_ms": 11924.1,
+        "wall_per_replica_ms": 372.6,
         "all_inherited": true
       }
     ]
   },
   "summary": {
     "cold_boot_total_ms": {
-      "n": 8,
-      "min": 7738.0,
-      "p50": 7808.3,
-      "mean": 7971.337,
-      "p90": 7829.0,
-      "p99": 9263.2,
-      "max": 9263.2
+      "n": 16,
+      "min": 7747.4,
+      "p50": 7801.6,
+      "mean": 7983.281,
+      "max": 10793.1
     },
     "checkpoint_ms": {
-      "n": 8,
-      "min": 524.0,
-      "p50": 555.6,
-      "mean": 695.175,
-      "p90": 579.3,
-      "p99": 1708.1,
-      "max": 1708.1
+      "n": 16,
+      "min": 523.3,
+      "p50": 570.0,
+      "mean": 656.688,
+      "max": 1904.0
     },
     "fork_total_ms": {
-      "n": 15,
-      "min": 7556.6,
-      "p50": 7572.5,
-      "mean": 7740.447,
-      "p90": 7788.3,
-      "p99": 9234.9,
-      "max": 9234.9
+      "n": 63,
+      "min": 7470.1,
+      "p50": 8571.6,
+      "mean": 8388.579,
+      "max": 9282.7,
+      "p90": 8759.0
     },
-    "replicas_verified": 15,
-    "replicas_total": 15
+    "replicas_verified": 63,
+    "replicas_total": 63
   }
 }

@@ -28,7 +28,7 @@ From [`streaming-bandwidth.md`](streaming-bandwidth.md):
 |---|---|---|
 | JPEG q80 @1280 frame | 48 KiB | 1 Hz pull ≈ **~405 Mbps** aggregate — feasible on a datacenter NIC |
 | JPEG q80 full 1080p frame | 87 KiB (~100 KB class) | the "worst-case queued frame" used for memory math below |
-| PNG 1080p frame | 1804 KiB | any N-scale PNG plan is dead on arrival (~8.4 Gbps at 1 Hz) |
+| PNG 1080p frame | 1804 KiB | any N-scale PNG plan is dead on arrival (~15 Gbps at 1024 × 1 Hz) |
 | WAN round-trip | ~0.28–0.38 s | per-step latency is RTT-bound, not bandwidth-bound (§5) |
 | thread-per-conn marginal RSS | ~7 MB + 2 threads/sandbox | N=1024 ≈ ~7 GB + ~2000 threads — the sync facade does not scale; the async core / `SharedLoop` does |
 

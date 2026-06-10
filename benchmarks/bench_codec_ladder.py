@@ -14,7 +14,7 @@ scenarios on the 1280x800 Xvfb desktop —
 Latency is loopback round-trip through the sync SDK (capture + encode +
 base64/JSON framing + decode) — bytes are substrate-independent, latency is
 local-only. Emits benchmarks/results/codec_ladder.json and
-docs/engineering/assets/benchmarks/codec_ladder.png.
+docs/assets/bench/codec_ladder.png.
 
 Run:  python benchmarks/bench_codec_ladder.py
 """
@@ -25,7 +25,7 @@ import base64
 import sys
 import time
 
-from _common import boot, fill_xterm, new_axes, now_ms, save_plot, summarize, write_result
+from _common import PALETTE, boot, fill_xterm, new_axes, now_ms, save_plot, summarize, write_result
 
 QUALITIES = [10, 20, 30, 40, 50, 60, 70, 80, 90, 95]
 SCALES = [None, 1024, 768, 512]  # max_long_edge; None = native 1280
@@ -116,45 +116,153 @@ def _cell(points: list[dict], scen: str, fmt: str, q: int | None, scale: int | N
     ]
 
 
-def plot(payload: dict) -> None:
-    points = payload["datapoints"]
-    fig, (ax1, ax2, ax3) = new_axes(3, width=5.4)
-    colors = {None: "C0", 1024: "C1", 768: "C2", 512: "C3"}
+# JPEG = blue family (downscale by shade), PNG = red family — semantics from PALETTE.
+_JPEG_SHADES = {None: "#1b4f72", 1024: PALETTE["jpeg"], 768: "#5dade2", 512: "#85c1e9"}
+_PNG_SHADES = {None: "#78281f", 1024: PALETTE["png"], 768: "#e74c3c", 512: "#f1948a"}
+_SCALE_MARKERS = {None: "o", 1024: "s", 768: "^", 512: "D"}
+_SCEN_MARKERS = {"dense-text": "o", "desktop": "^"}
 
-    for ax, scen in ((ax1, "dense-text"), (ax2, "desktop")):
+
+def _log_ticks(
+    ax, values: list[float], axis: str = "y", candidates: list[int] | None = None
+) -> list[int]:
+    """FixedLocator + ScalarFormatter on a log axis: plain-number ticks chosen to
+    bracket the plotted data (no bare 4x10^-1-style mid-decade gaps), with the axis
+    limits widened so the bracketing ticks are actually visible."""
+    from matplotlib.ticker import FixedLocator, NullLocator, ScalarFormatter
+
+    candidates = candidates or [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000]
+    lo, hi = min(values), max(values)
+    below = [c for c in candidates if c <= lo]
+    above = [c for c in candidates if c >= hi]
+    ticks = [
+        c
+        for c in candidates
+        if (below[-1] if below else candidates[0]) <= c <= (above[0] if above else candidates[-1])
+    ]
+    axis_obj = ax.yaxis if axis == "y" else ax.xaxis
+    axis_obj.set_major_locator(FixedLocator(ticks))
+    fmt = ScalarFormatter()
+    fmt.set_scientific(False)
+    axis_obj.set_major_formatter(fmt)
+    axis_obj.set_minor_locator(NullLocator())
+    (ax.set_ylim if axis == "y" else ax.set_xlim)(ticks[0] * 0.9, ticks[-1] * 1.12)
+    return ticks
+
+
+def _band(points: list[dict], scen: str, fmt: str, q: int | None, scale: int | None):
+    """(mean, min, max) of KiB across the reps of one cell, or None if empty."""
+    vals = [p["bytes"] / 1024.0 for p in _cell(points, scen, fmt, q, scale)]
+    if not vals:
+        return None
+    return sum(vals) / len(vals), min(vals), max(vals)
+
+
+def plot(payload: dict) -> None:
+    from matplotlib.lines import Line2D
+
+    points = payload["datapoints"]
+    qualities = payload["qualities"]
+    fig, axes = new_axes(2, nrows=2)
+    (ax_a, ax_b), (ax_c, ax_d) = axes
+
+    # (a)+(b) — bytes vs JPEG quality, one panel per scenario; min-max band over reps.
+    for ax, scen in ((ax_a, "dense-text"), (ax_b, "desktop")):
+        ymin, ymax = [], []
         for scale in payload["scales"]:
-            label = f"long edge {scale or 1280}"
-            means = []
-            for q in payload["qualities"]:
-                cell = _cell(points, scen, "jpeg", q, scale)
-                means.append(sum(p["bytes"] for p in cell) / max(1, len(cell)) / 1024.0)
-            ax.plot(payload["qualities"], means, "o-", ms=3.5, color=colors[scale], label=label)
-            png = [p["bytes"] / 1024.0 for p in _cell(points, scen, "png", None, scale)]
-            if png:
-                ax.axhline(
-                    sum(png) / len(png),
-                    color=colors[scale],
-                    linestyle="--",
-                    linewidth=0.9,
-                    alpha=0.6,
-                )
+            stats = [_band(points, scen, "jpeg", q, scale) for q in qualities]
+            means = [s[0] for s in stats]
+            ax.plot(
+                qualities,
+                means,
+                marker=_SCALE_MARKERS[scale],
+                ms=4.5,
+                lw=1.6,
+                color=_JPEG_SHADES[scale],
+                label=f"JPEG {scale or 1280} px",
+            )
+            ax.fill_between(
+                qualities,
+                [s[1] for s in stats],
+                [s[2] for s in stats],
+                color=_JPEG_SHADES[scale],
+                alpha=0.18,
+                lw=0,
+            )
+            png = _band(points, scen, "png", None, scale)
+            ax.axhline(png[0], color=_PNG_SHADES[scale], ls="--", lw=1.3, alpha=0.85)
+            ymin.append(min(means + [png[0]]))
+            ymax.append(max(means + [png[0]]))
         ax.set_yscale("log")
+        ticks = _log_ticks(ax, [min(ymin), max(ymax)])
+        ax.set_ylim(top=ticks[-1] * 1.35)  # free a top band so the legend covers no data
         ax.set_xlabel("JPEG quality")
         ax.set_ylabel("KiB / frame (log)")
-        ax.set_title(f"bytes vs quality — {scen}\n(dashed = PNG baseline at same scale)")
-        ax.legend(fontsize=7)
+        ax.set_title(f"Bytes vs JPEG quality — {scen}")
+        handles, labels = ax.get_legend_handles_labels()
+        handles.append(Line2D([], [], color=PALETTE["png"], ls="--", lw=1.3))
+        labels.append("PNG (same scale)")
+        ax.legend(handles, labels, loc="upper left", ncols=3, columnspacing=1.0, handlelength=1.6)
 
-    markers = {"dense-text": "o", "desktop": "^"}
-    for scen in payload["scenarios"]:
-        xs = [p["bytes"] / 1024.0 for p in points if p["scenario"] == scen]
-        ys = [p["ms"] for p in points if p["scenario"] == scen]
-        ax3.scatter(xs, ys, s=8, alpha=0.45, marker=markers[scen], label=scen)
-    ax3.set_xscale("log")
-    ax3.set_yscale("log")
-    ax3.set_xlabel("KiB / frame (log)")
-    ax3.set_ylabel("round-trip ms (log, loopback)")
-    ax3.set_title("Latency vs payload size (all cells)")
-    ax3.legend(fontsize=7)
+    # (c) — latency vs payload, every rep of every cell (the raw spread).
+    for fmt in ("png", "jpeg"):
+        for scen in payload["scenarios"]:
+            sel = [p for p in points if p["format"] == fmt and p["scenario"] == scen]
+            ax_c.scatter(
+                [p["bytes"] / 1024.0 for p in sel],
+                [p["ms"] for p in sel],
+                s=16,
+                alpha=0.5,
+                marker=_SCEN_MARKERS[scen],
+                color=PALETTE[fmt],
+                label=f"{fmt.upper()} — {scen}",
+            )
+    ax_c.set_xscale("log")
+    ax_c.set_yscale("log")
+    _log_ticks(ax_c, [p["bytes"] / 1024.0 for p in points], axis="x")
+    _log_ticks(
+        ax_c,
+        [p["ms"] for p in points],
+        axis="y",
+        candidates=[1, 2, 3, 5, 10, 20, 30, 50, 100],
+    )
+    ax_c.set_xlabel("KiB / frame (log)")
+    ax_c.set_ylabel("round-trip ms (log, loopback)")
+    ax_c.set_title("Latency vs payload — all reps")
+    ax_c.legend(loc="upper left")
+
+    # (d) — the downscale ladder at fixed JPEG q80 vs the PNG baseline.
+    ladder = sorted((s or 1280, s) for s in payload["scales"])
+    xs = [px for px, _ in ladder]
+    dmin, dmax = [], []
+    for fmt, q, color in (("png", None, PALETTE["png"]), ("jpeg", 80, PALETTE["jpeg"])):
+        for scen, ls in (("dense-text", "-"), ("desktop", "--")):
+            stats = [_band(points, scen, fmt, q, scale) for _, scale in ladder]
+            means = [s[0] for s in stats]
+            ax_d.errorbar(
+                xs,
+                means,
+                yerr=[
+                    [m - s[1] for m, s in zip(means, stats)],
+                    [s[2] - m for m, s in zip(means, stats)],
+                ],
+                marker=_SCEN_MARKERS[scen],
+                ms=5,
+                lw=1.6,
+                ls=ls,
+                color=color,
+                capsize=3,
+                label=f"{fmt.upper()}{f' q{q}' if q else ''} — {scen}",
+            )
+            dmin.append(min(means))
+            dmax.append(max(means))
+    ax_d.set_yscale("log")
+    _log_ticks(ax_d, [min(dmin), max(dmax)])
+    ax_d.set_xticks(xs)
+    ax_d.set_xlabel("max long edge (px)")
+    ax_d.set_ylabel("KiB / frame (log)")
+    ax_d.set_title("Downscale ladder — PNG vs JPEG q80")
+    ax_d.legend(loc="upper left")
     save_plot(fig, "codec_ladder")
 
 

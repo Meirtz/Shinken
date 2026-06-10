@@ -8,7 +8,9 @@ Linux/X11 vertical slice** — handshake/auth, pointer+keyboard actions, pixel o
 Docker disk-tier checkpoint/fork/resume + `run_eval_forked`, a local capability-gateway shim,
 and a Python SDK, all under live CI. The **structured/a11y thesis (D3), production permission
 enforcement, `.skn` recording/playback, the control plane, and cross-platform are designed-only
-and not yet built**, and the load-bearing **a11y-coverage spike (#2) is still ungated**.
+and not yet built**. The a11y-coverage spike (#2) has been **measured (E5) — verdict: hybrid
+per-window structured + pixel fallback, so D3's structured-default stays Provisional** (canvas/
+games/Electron still unmeasured, and the guest-runtime observation engine is unbuilt).
 **[`docs/engineering/status.md`](docs/engineering/status.md) is the authoritative built-vs-designed map — read it before
 trusting present-tense claims in the vision docs. This file's status summary must track
 status.md; reconcile both when either changes.**
@@ -37,7 +39,7 @@ committed is world-readable.
 | `shinkend/` | ✅ | Rust Guest Runtime (`shinkend`) |
 | `sdk/python/` | ✅ | Python SDK and CLI |
 | `images/linux/` | ✅ | Local Linux Sandbox image |
-| `benchmarks/` | ✅ | Rerunnable local benchmark suites + raw result JSONs; figures land in `docs/engineering/assets/benchmarks/`, narrative in `docs/engineering/benchmarks.md` |
+| `benchmarks/` | ✅ | Rerunnable local benchmark suites (incl. `bench_client_scale.py` N=1024 client plane) + tracked raw results (`results/*.json`, one-off WAN CSVs in `results/remote/`); ALL figures land in `docs/assets/bench/` (regenerate: `replot.py` + `plot_remote.py`); methodology in `docs/engineering/benchmarks.md`, headline report in `docs/benchmarks/README.md` |
 | `references/` | 🚫 git-ignored | 12 cloned prior-art repos studied for design (OSWorld, cua, codex, anthropic-quickstarts, neko, OpenAdapt, e2b-desktop, UI-TARS-desktop, OmniParser; + 2026-06: uni-agent, CUA-Gym, Agentix); provenance + re-clone in `references/README.md` (tracked) |
 
 ## Conventions
@@ -72,10 +74,11 @@ The immediate work (per the recalibrated priorities):
    **trajectory-level `exit_reason`** (documented precedence, `shinken/runtime/trajectory.py`),
    and **subprocess scorer isolation** (T-5, `shinken/scorer_proc.py`) are all built — see
    [docs/engineering/v0.0.1-plan.md](docs/engineering/v0.0.1-plan.md) §6.
-2. **a11y-coverage spike — STILL UNGATED (#2)** — measure what fraction of real apps (browser,
-   Electron, Qt, canvas, games) expose usable accessibility trees + the bandwidth of a tree diff.
-   This gates the structured-default fast path and the bandwidth/cost claims (D3); the screenshot
-   baseline still carries v0.0.1 usability.
+2. **a11y-coverage spike (#2) — MEASURED (E5), verdict in**: strong Qt/AT-SPI (0.87), browser
+   controls via CDP (1.00 of labeled controls; 0.23 of all nodes), weak GTK, absent terminals;
+   tree-diff ~2 KiB vs ~77 KiB screenshot. **D3 stays Provisional — hybrid, not
+   structured-by-default.** Remaining: canvas/games/Electron coverage + the guest-runtime
+   observation engine; the screenshot baseline still carries v0.0.1 usability.
 3. **Designed-only, not started:** the Capability Manager (production enforcement beyond the local
    gateway shim), `.skn` recording/playback, the memory (CRIU) + sub-ms CoW fork fast tiers,
    control plane + concurrency, dual-channel WebRTC/NVENC, cross-platform (mac/Win) + **Wayland**.

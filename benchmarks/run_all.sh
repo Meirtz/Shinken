@@ -8,12 +8,12 @@
 #
 #   docker build -f images/linux/Dockerfile -t shinken/sandbox-linux .
 #
-# Outputs: benchmarks/results/*.json + docs/engineering/assets/benchmarks/*.png.
+# Outputs: benchmarks/results/*.json + docs/assets/bench/*.png.
 # Total runtime is roughly 15-25 minutes on a laptop-class machine.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-for suite in codec_ladder delta_screencast action_latency fork fanout; do
+for suite in codec_ladder delta_screencast action_latency fork fanout client_scale; do
   echo "=== bench_${suite} ==="
   python3 "benchmarks/bench_${suite}.py"
 done

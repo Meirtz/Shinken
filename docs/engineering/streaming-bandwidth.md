@@ -76,8 +76,8 @@ proxy → SDK connect; then synchronized rounds of {observe JPEG q80 @1280 (~48 
 
 **Reads:**
 - **Bandwidth is feasible because of B1.** At 48 KiB/sandbox/round, 1024 sandboxes at 1 Hz ≈
-  **~405 Mbps** — a datacenter NIC, not a heroic number. With PNG it would be ~8.4 Gbps,
-  infeasible anywhere. JPEG is load-bearing for scale-out, not a nicety.
+  **~405 Mbps** — a datacenter NIC, not a heroic number. With full-res PNG (1804 KiB/frame) it
+  would be ~15 Gbps, infeasible anywhere. JPEG is load-bearing for scale-out, not a nicety.
 - **Per-step latency is WAN-bound** (~0.28–0.38 s round-trip) and begins creeping at N=16 as the
   thread pool contends — observation throughput per worker is dominated by RTT, so batching
   (`act_batch`) and observe/act coalescing matter at WAN distance.

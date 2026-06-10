@@ -1,6 +1,6 @@
 # Shinken — Implementation Status (reality check)
 
-> Date: 2026-06-02 · Scope: what is **actually built and proven** vs **designed-only** vs
+> Date: 2026-06-11 · Scope: what is **actually built and proven** vs **designed-only** vs
 > **unvalidated**. The design corpus (vision/PRD/architecture/ADRs/roadmap) intentionally describes
 > the full CUA infrastructure stack; the *implementation* is the first well-tested local slice of
 > that stack. This page is the honest map between target scope and current code. When in doubt, this
@@ -30,6 +30,10 @@ sandbox image), not just by design.
 | Screenshot capture (X11 GetImage → PNG) | done | live Xvfb + Docker smoke |
 | **Real-time screencast** (server-pushed frames, single-writer transport) | done | #48 — tokio WS integration test + live |
 | **Bandwidth levers**: idle-frame suppression + resolution downscale (`max_long_edge`) | done | #48/#54 — live: 1280×800→640×400, ~3.4× smaller |
+| **JPEG observation codec** (`format`/`quality` per action, capability-negotiated) | done | #243 — measured ~1–21× vs PNG, content-dependent ([benchmarks](benchmarks.md) §2) |
+| **Lossless dirty-tile delta screencast** (changed 64-px tiles + periodic keyframes) | done | B2 — measured ~11× vs full-PNG while typing ([benchmarks](benchmarks.md) §3) |
+| **`SharedLoop`** (N sync sessions on one event-loop thread) + `ping_jitter` fleet decorrelation | done | #244 — measured: 64 real sandboxes / 1,024 mock sessions on one loop thread ([benchmarks](benchmarks.md) §5–§6) |
+| **Rerunnable local benchmark suites** (6 suites, raw JSON + figures tracked) | done | [`benchmarks/`](../../benchmarks) → [benchmarks.md](benchmarks.md) |
 | **Focused-window / region capture** (`scope`: `screen` / `active_window` / `window:<id>`) | done | #55 — live `xclock` `window:<id>` → 200×200 |
 | Python SDK: sync facade + async core, reader/demux (RPC vs server-push) | done | #51 |
 | TypeScript control-surface SDK (`sdk/typescript/`) | done | tracked + CI-tested (dedicated `SDK (TypeScript)` job) |
@@ -69,15 +73,20 @@ These appear in the vision/PRD/architecture/README in present-ish tense, but **n
 - **Code-agent RL readiness** — the typed exec/PTY verb family, headless (`needs_gui=False`) code-image profile, swerex-shim deployment backend, and token-fidelity trajectory fields are **reserved seams, design-only** ([code-agent-rl.md](../design/code-agent-rl.md)); what exists today is the substrate-side exec channel (`shinken.inject`, `put_file`/`get_file`) and `run_eval_forked` as the fork-N primitive.
 - **Full OSWorld-Verified conformance at scale** — the building blocks all **ship** (see the ✅ table: OSWorld-as-a-Workload, the `scripts/osworld_single.py` runner driving **Kimi K2.6** in OSWorld's native **pixel-pyautogui code-block** form — `parse_model_actions` mirrors OSWorld's `parse_code_from_string` — scored by the **official OSWorld evaluator**, the `shinkend` injector for `--backend shinken` actuation, and `run_eval_forked` for the golden→fork-N→score loop). The open-weight Kimi-VL/Aguvis path is a separate adapter (`adapters/kimi.py`). What is **not** done here: a full OSWorld-Verified conformance sweep (Small/full set) with published numbers, and large-N forked scoring at scale.
 
-## 🔬 Unvalidated load-bearing assumptions (spikes NOT run)
+## 🔬 Load-bearing assumptions — what has and hasn't been measured
 
-The roadmap names these as the de-risking spikes. **None have been measured.** Until they are, the
-architecture's core bets are unproven:
+The roadmap names these as the de-risking spikes:
 
-- **Spike A — a11y coverage (#2):** what fraction of real apps expose usable accessibility trees, and
-  how big is a tree diff? This does **not** block the screenshot-based v0.0.1 loop, but it gates
-  structured-observation defaults and every bandwidth/token-cost claim derived from them.
-- **CoW-fork density** (Phase-1 boundary) — fork economics unmeasured.
+- **Spike A — a11y coverage (#2): MEASURED (E5), verdict in.** Coverage of real app surfaces:
+  strong for Qt via AT-SPI (0.87 addressable) and browser-via-CDP (every labeled control
+  resolved; 0.23 of all nodes), weak for GTK (0.09–0.10), absent for terminals; tree-diff ~2 KiB
+  vs ~77 KiB screenshot while typing. **Verdict: supports a *hybrid* per-window structured +
+  pixel fallback, not structured-by-default — D3 stays Provisional** (evidence:
+  [`spikes/a11y-coverage/`](../../spikes/a11y-coverage), summary in
+  [docs/benchmarks/](../benchmarks/README.md)). Canvas/games and Electron remain unmeasured.
+- **Disk-tier fork economics: MEASURED** — checkpoint ~0.6 s live, fan-out wall-clock flat in N
+  ([benchmarks](benchmarks.md) §1). **CoW-fork density** (the designed sub-second fast tier,
+  Phase-1 boundary) remains unmeasured.
 - **Dual-channel WebRTC latency** (Phase-1 boundary) — latency target unmeasured.
 - **NVENC density / GPU-TEE attestation** (Phase-4) — unmeasured.
 
@@ -88,9 +97,9 @@ architecture's core bets are unproven:
 - The milestone is now **v0.0.1 — feature-complete local/reference runtime**: all core semantics
   should exist and be tested locally, even if performance, fork density, WebRTC/SFU/NVENC,
   multi-tenant control-plane operation, and cross-substrate scale come later.
-- Milestone *labels* previously outran both the **contract** (schema drift, #56) and the
-  structured-observation evidence (Spike A not run). Treat the 🔵/🔬 sections as the honest v0.0.1
-  and post-v0.0.1 backlog, not as a reduced product scope.
+- Milestone *labels* previously outran both the **contract** (schema drift, #56 — since closed)
+  and the structured-observation evidence (Spike A — since measured, verdict: hybrid). Treat the
+  🔵/🔬 sections as the honest v0.0.1 and post-v0.0.1 backlog, not as a reduced product scope.
 
 _See also: [roadmap](roadmap.md), [tech decisions D1–D12](../design/tech-decisions.md),
 hardening backlog (#56), a11y-coverage gate (#2)._

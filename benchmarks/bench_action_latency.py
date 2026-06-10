@@ -9,7 +9,7 @@ distributions (p50/p90/p99 + CDF), not just means.
 Ops: ping, move, click, key, type_text (input plane); screenshot PNG native,
 screenshot JPEG q80 native, screenshot JPEG q80 @1024 (observation plane).
 Emits benchmarks/results/action_latency.json and
-docs/engineering/assets/benchmarks/action_latency.png.
+docs/assets/bench/action_latency.png.
 
 Run:  python benchmarks/bench_action_latency.py
 """
@@ -19,7 +19,7 @@ from __future__ import annotations
 import random
 import sys
 
-from _common import boot, fill_xterm, new_axes, now_ms, save_plot, summarize, write_result
+from _common import PALETTE, boot, fill_xterm, new_axes, now_ms, save_plot, summarize, write_result
 
 INPUT_REPS = 300
 OBS_REPS = 150
@@ -86,25 +86,52 @@ def _ops(points: list[dict]) -> list[str]:
 
 
 def plot(payload: dict) -> None:
+    from matplotlib.ticker import FixedLocator, NullLocator, ScalarFormatter
+
     points = payload["datapoints"]
     fig, (ax1, ax2) = new_axes(2)
     input_ops = ["ping", "move", "click", "key", "type_text"]
-    obs_ops = ["screenshot png", "screenshot jpeg q80", "screenshot jpeg q80 @1024"]
+    # observation ops keep the repo-wide codec colors (png red, jpeg blue)
+    obs_series = [
+        ("screenshot png", "PNG native", PALETTE["png"]),
+        ("screenshot jpeg q80", "JPEG q80 native", PALETTE["jpeg"]),
+        ("screenshot jpeg q80 @1024", "JPEG q80 @1024", "#5dade2"),  # lighter jpeg-blue shade
+    ]
 
-    for ax, ops, title in (
-        (ax1, input_ops, f"Input-plane ops (N={payload['input_reps']} each)"),
-        (ax2, obs_ops, f"Observation ops (N={payload['obs_reps']} each)"),
-    ):
-        for op in ops:
-            xs = sorted(p["ms"] for p in points if p["op"] == op)
-            if not xs:
-                continue
-            ys = [(i + 1) / len(xs) for i in range(len(xs))]
-            ax.plot(xs, ys, linewidth=1.4, label=op)
-        ax.set_xscale("log")
-        ax.set_xlabel("round-trip ms (log)")
+    def cdf(ax, op: str, label: str, color: str | None) -> None:
+        xs = sorted(p["ms"] for p in points if p["op"] == op)
+        if not xs:
+            return
+        ys = [(i + 1) / len(xs) for i in range(len(xs))]
+        (line,) = ax.plot(xs, ys, linewidth=1.4, label=label, color=color)
+        p50 = xs[round(0.5 * (len(xs) - 1))]  # faint per-series median marker
+        ax.axvline(p50, color=line.get_color(), alpha=0.3, linewidth=0.8, linestyle="--")
+
+    # Left: input-plane ops — log x, but pinned to plain-number ticks that span
+    # the data (0.37–3.0 ms) so the curves sit under labeled ticks.
+    for op in input_ops:
+        cdf(ax1, op, op, None)
+    ax1.set_xscale("log")
+    ax1.xaxis.set_major_locator(FixedLocator([0.4, 0.6, 1, 2, 3]))
+    ax1.xaxis.set_minor_locator(NullLocator())
+    fmt = ScalarFormatter()
+    fmt.set_scientific(False)
+    ax1.xaxis.set_major_formatter(fmt)
+    ax1.set_xlim(0.35, 3.3)
+    ax1.set_xlabel("round-trip ms (log)")
+    ax1.set_title(f"Latency CDF — input ops (N={payload['input_reps']}/op)")
+
+    # Right: observation ops — the range is narrow (~8–16 ms), so linear x.
+    for op, label, color in obs_series:
+        cdf(ax2, op, label, color)
+    ax2.set_xticks([8, 10, 12, 14, 16])
+    ax2.set_xlim(7.5, 16.5)
+    ax2.set_xlabel("round-trip ms")
+    ax2.set_title(f"Latency CDF — observation ops (N={payload['obs_reps']}/op)")
+
+    for ax in (ax1, ax2):
         ax.set_ylabel("fraction of calls ≤ x")
-        ax.set_title(f"Latency CDF — {title}")
+        ax.set_ylim(0, 1.02)
         ax.legend(fontsize=8, loc="lower right")
     save_plot(fig, "action_latency")
 
