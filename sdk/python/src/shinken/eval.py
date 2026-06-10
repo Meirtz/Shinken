@@ -14,10 +14,25 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from .errors import SandboxDied, ShinkenError, is_connection_loss
 
-class SetupError(RuntimeError):
+
+class SetupError(ShinkenError):
     """Raised by a task's setup/readiness step — reported distinctly from a task
     (verifier) failure, so a flaky environment isn't scored as a failed task."""
+
+
+def _classify_run_failure(exc: BaseException) -> str:
+    """Typed `kind` for an exception raised while running/verifying a replica: `setup`
+    (env readiness), `sandbox_died` (infra death — retry-eligible), or `error` (other
+    harness failure). A passing/failing verdict is classified by the caller, not here.
+    Note `sandbox_died` here means "sandbox unreachable/transport lost" — it is only
+    *confirmed* substrate death when provider exit detail is attached (_confirm_death)."""
+    if isinstance(exc, SetupError):
+        return "setup"
+    if isinstance(exc, SandboxDied) or is_connection_loss(exc):
+        return "sandbox_died"
+    return "error"
 
 
 def check(name: str, ok: bool, evidence: Any = None) -> dict:
@@ -82,6 +97,23 @@ class RunResult:
     wall_s: float
     receipt: VerifierReceipt
     error: str | None = None  # setup/readiness or harness error — NOT a task failure
+    # Typed outcome (#56), so a consumer branches without string-matching `error`:
+    #   pass | fail (task verdict) · setup | sandbox_died | error (not a verdict).
+    # `sandbox_died` is infrastructure death (retry on a fresh sandbox/fork), distinct from
+    # `fail` (the agent did the wrong thing — a real 0 that must NOT be retried).
+    # None derives a safe value in __post_init__ — a constructor that omits `kind` must
+    # never produce a row that silently counts as a pass.
+    kind: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.kind is None:
+            self.kind = "pass" if self.passed else ("error" if self.error is not None else "fail")
+
+    @property
+    def infra_failure(self) -> bool:
+        """True when the run did not produce a verdict because the environment failed —
+        the retry-eligible class (setup readiness or sandbox death)."""
+        return self.kind in ("setup", "sandbox_died")
 
     def to_dict(self) -> dict:
         return {
@@ -91,6 +123,7 @@ class RunResult:
             "wall_s": round(self.wall_s, 6),
             "receipt": self.receipt.to_dict(),
             "error": self.error,
+            "kind": self.kind,
         }
 
 
@@ -99,11 +132,20 @@ class EvalSummary:
     task: str
     n: int
     passed: int
-    setup_errors: int
+    setup_errors: int  # legacy: ALL non-verdict runs (setup + sandbox_died + harness error)
     pass_rate: float
     mean_steps: float
     mean_wall_s: float
     results: list[RunResult]
+    # Per-kind breakdown (#56): {pass, fail, setup, sandbox_died, error}. `setup_errors`
+    # keeps its historical meaning (every run that produced no verdict, including harness
+    # `error` runs); `infra_errors` is the precise retry-eligible subset
+    # (setup + sandbox_died only); `kinds` exposes the full split.
+    kinds: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def infra_errors(self) -> int:
+        return sum(1 for r in self.results if r.infra_failure)
 
     def to_dict(self) -> dict:
         return {
@@ -111,6 +153,8 @@ class EvalSummary:
             "n": self.n,
             "passed": self.passed,
             "setup_errors": self.setup_errors,
+            "infra_errors": self.infra_errors,
+            "kinds": self.kinds,
             "pass_rate": round(self.pass_rate, 4),
             "mean_steps": round(self.mean_steps, 3),
             "mean_wall_s": round(self.mean_wall_s, 6),
@@ -136,6 +180,7 @@ def run_eval(
         passed = False
         steps = 0
         receipt = VerifierReceipt(False, [])
+        kind = "pass"
         t0 = time.perf_counter()
         wall = 0.0
         try:
@@ -148,17 +193,16 @@ def run_eval(
             wall = time.perf_counter() - t0
             receipt = task.verify(env)
             passed = receipt.passed
-        except SetupError as exc:
+            kind = "pass" if passed else "fail"
+        except Exception as exc:  # noqa: BLE001 — classify, never crash the eval loop
             wall = time.perf_counter() - t0
-            err = f"setup: {exc}"
-        except Exception as exc:  # connect/harness/run error — distinct from a task failure
-            wall = time.perf_counter() - t0
-            err = f"error: {exc}"
+            kind = _classify_run_failure(exc)
+            err = f"{kind}: {exc}"
         finally:
             if env is not None:
                 with contextlib.suppress(Exception):
                     env.close()
-        results.append(RunResult(i, passed, steps, wall, receipt, err))
+        results.append(RunResult(i, passed, steps, wall, receipt, err, kind))
 
     return _summarize(task.name, n, results)
 
@@ -166,20 +210,68 @@ def run_eval(
 def _summarize(task_name: str, n: int, results: list[RunResult]) -> EvalSummary:
     """Aggregate per-replica results into an EvalSummary (pass-rate, mean steps/wall)."""
     n_passed = sum(1 for r in results if r.passed)
-    setup_errors = sum(1 for r in results if r.error is not None)
+    non_verdict = sum(1 for r in results if r.error is not None)
     completed = [r for r in results if r.error is None]
     mean_steps = sum(r.steps for r in completed) / len(completed) if completed else 0.0
     mean_wall = sum(r.wall_s for r in results) / len(results) if results else 0.0
+    kinds: dict[str, int] = {}
+    for r in results:
+        kinds[r.kind] = kinds.get(r.kind, 0) + 1
     return EvalSummary(
         task=task_name,
         n=n,
         passed=n_passed,
-        setup_errors=setup_errors,
+        # legacy name = runs that produced no verdict (setup + sandbox_died + harness error);
+        # use `infra_errors` for the precise retry-eligible subset (setup + sandbox_died).
+        setup_errors=non_verdict,
         pass_rate=(n_passed / n if n else 0.0),
         mean_steps=mean_steps,
         mean_wall_s=mean_wall,
         results=results,
+        kinds=kinds,
     )
+
+
+def _confirm_death(provider: Any, handle: Any, exc: BaseException) -> BaseException:
+    """If ``exc`` looks like a lost/hung connection and the provider can introspect the
+    sandbox, return a ``SandboxDied`` (with substrate exit detail) when the sandbox really
+    exited; otherwise return ``exc`` unchanged. A timeout is probed too — a half-open
+    socket on a dead host times out rather than closing, so the probe is the only way to
+    tell a hung-dead sandbox from a merely slow one. Best-effort — a provider without
+    ``check_alive`` or a still-alive sandbox leaves the original exception."""
+    if isinstance(exc, SandboxDied) or handle is None:
+        return exc
+    if not (is_connection_loss(exc) or isinstance(exc, TimeoutError)):
+        return exc
+    check = getattr(provider, "check_alive", None)
+    if check is None:
+        return exc
+    try:
+        check(handle)  # raises SandboxDied(exit detail) if the sandbox exited
+    except SandboxDied as died:
+        died.__cause__ = exc  # keep the original failure for forensics
+        return died
+    except Exception:  # noqa: BLE001 — introspection failed; keep the original error
+        return exc
+    return exc
+
+
+def _refine_with_provider(rr: RunResult, provider: Any, handle: Any) -> RunResult:
+    """Upgrade a coarse ``sandbox_died`` RunResult with provider-confirmed exit detail,
+    keeping the original failure context (which call failed) alongside the substrate
+    detail (why the sandbox died)."""
+    refined = _confirm_death(provider, handle, ConnectionError(rr.error or "connection lost"))
+    if isinstance(refined, SandboxDied):
+        return RunResult(
+            rr.run,
+            False,
+            rr.steps,
+            rr.wall_s,
+            rr.receipt,
+            f"sandbox_died: {refined} (during: {rr.error or 'connection lost'})",
+            "sandbox_died",
+        )
+    return rr
 
 
 def _score_replica(i: int, env: Any, task: Task) -> RunResult:
@@ -188,6 +280,7 @@ def _score_replica(i: int, env: Any, task: Task) -> RunResult:
     passed = False
     steps = 0
     receipt = VerifierReceipt(False, [])
+    kind = "pass"
     t0 = time.perf_counter()
     wall = 0.0
     try:
@@ -197,13 +290,12 @@ def _score_replica(i: int, env: Any, task: Task) -> RunResult:
         wall = time.perf_counter() - t0
         receipt = task.verify(env)
         passed = receipt.passed
-    except SetupError as exc:
+        kind = "pass" if passed else "fail"
+    except Exception as exc:  # noqa: BLE001 — classify, never raise into the fork loop
         wall = time.perf_counter() - t0
-        err = f"setup: {exc}"
-    except Exception as exc:
-        wall = time.perf_counter() - t0
-        err = f"error: {exc}"
-    return RunResult(i, passed, steps, wall, receipt, err)
+        kind = _classify_run_failure(exc)
+        err = f"{kind}: {exc}"
+    return RunResult(i, passed, steps, wall, receipt, err, kind)
 
 
 def run_eval_forked(
@@ -238,9 +330,10 @@ def run_eval_forked(
                 with contextlib.suppress(Exception):
                     env0.close()
         except Exception as exc:  # golden setup/checkpoint failed -> no replicas run
-            label = "setup" if isinstance(exc, SetupError) else "error"
+            exc = _confirm_death(provider, base, exc)  # add exit detail if the base died
+            kind = _classify_run_failure(exc)
             res = [
-                RunResult(i, False, 0, 0.0, VerifierReceipt(False, []), f"{label}: {exc}")
+                RunResult(i, False, 0, 0.0, VerifierReceipt(False, []), f"{kind}: {exc}", kind)
                 for i in range(n)
             ]
             return _summarize(task.name, n, res)
@@ -255,10 +348,18 @@ def run_eval_forked(
             try:
                 handle = provider.resume(ckpt)
                 env = provider.connect(handle)
-                results.append(_score_replica(i, env, task))
+                rr = _score_replica(i, env, task)
+                # If the replica dropped its connection, ask the provider whether the
+                # sandbox actually died — upgrades a coarse "sandbox_died" to one carrying
+                # the substrate exit/signal detail a retry policy can act on.
+                if rr.kind == "sandbox_died" and handle is not None:
+                    rr = _refine_with_provider(rr, provider, handle)
+                results.append(rr)
             except Exception as exc:  # resume/connect failure for this replica
+                exc = _confirm_death(provider, handle, exc)
+                kind = _classify_run_failure(exc)
                 results.append(
-                    RunResult(i, False, 0, 0.0, VerifierReceipt(False, []), f"error: {exc}")
+                    RunResult(i, False, 0, 0.0, VerifierReceipt(False, []), f"{kind}: {exc}", kind)
                 )
             finally:
                 if env is not None:

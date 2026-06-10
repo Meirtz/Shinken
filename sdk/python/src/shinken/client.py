@@ -23,8 +23,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from websockets.asyncio.client import connect as _ws_connect
+from websockets.exceptions import ConnectionClosed as _WsConnectionClosed
 
 from .artifacts import LocalArtifactStore
+from .errors import classify_exception
 from .gateway import CapabilityDenied, check_file_transfer, decide_action
 
 __all__ = ["connect", "aconnect", "Sandbox", "AsyncSandbox", "Capabilities"]
@@ -270,6 +272,13 @@ class AsyncSandbox:
         self._pending[call_id] = fut
         try:
             await self._ws.send(json.dumps(msg))
+        except _WsConnectionClosed as exc:
+            # Normalize the library's send-on-dead-socket exception (NOT a ConnectionError
+            # subclass) at the transport boundary, mirroring _read_loop's wrap — so the
+            # death-while-idle timing (sandbox dies between actions; the NEXT send fails)
+            # classifies as connection loss everywhere downstream (#56 taxonomy).
+            self._pending.pop(call_id, None)
+            raise ConnectionError(f"connection closed sending {msg.get('type')!r}") from exc
         except Exception:
             self._pending.pop(call_id, None)
             raise
@@ -293,6 +302,9 @@ class AsyncSandbox:
         except asyncio.TimeoutError:
             self._discard_pong_waiter(fut)
             raise TimeoutError(f"ping timed out after {self._rpc_timeout}s") from None
+        except _WsConnectionClosed as exc:
+            self._discard_pong_waiter(fut)
+            raise ConnectionError("connection closed sending 'ping'") from exc
         except Exception:
             self._discard_pong_waiter(fut)
             raise
@@ -373,10 +385,14 @@ class AsyncSandbox:
         """Execute an ordered batch of ACI actions serially (#73).
 
         Each action is dispatched in order. The returned result preserves per-action
-        acknowledgements and the batch id for callers that need traceability.
-        With ``stop_on_error`` (default) the batch halts at the first failing action and
-        returns explicit partial state; otherwise it runs them all. Returns
-        ``{batch_id, completed, stopped_at?, results:[{index, verb, ok, action_id/ack/error}]}``."""
+        acknowledgements and the batch id for callers that need traceability. Every action
+        row carries a typed ``status`` (#56) — ``ok | error | timeout | skipped |
+        sandbox_died`` — so a consumer branches on infrastructure death vs a per-action
+        error without string-matching. With ``stop_on_error`` (default) the batch halts at
+        the first failing action, marks the remaining actions ``skipped``, and sets
+        ``failure_kind`` to the failing action's status; otherwise it runs them all. Returns
+        ``{batch_id, completed, stopped_at?, failure_kind?, results:[{index, verb, ok,
+        status, action_id/ack/error}]}``."""
         bid = batch_id or f"batch-{uuid.uuid4().hex[:8]}"
         results: list[dict] = []
         for i, a in enumerate(actions):
@@ -392,20 +408,44 @@ class AsyncSandbox:
                         "index": i,
                         "verb": verb,
                         "ok": True,
+                        "status": "ok",
                         "action_id": reply.get("call_id") or reply.get("cause"),
                         "ack": reply,
                     }
                 )
             except Exception as exc:
-                results.append({"index": i, "verb": verb, "ok": False, "error": str(exc)})
-                if stop_on_error:
+                status = classify_exception(exc)
+                results.append(
+                    {"index": i, "verb": verb, "ok": False, "status": status, "error": str(exc)}
+                )
+                # A dead sandbox is batch-fatal regardless of stop_on_error: dispatching the
+                # rest would only pile up failed sends against a gone connection.
+                if stop_on_error or status == "sandbox_died":
+                    for j in range(i + 1, len(actions)):
+                        results.append(
+                            {
+                                "index": j,
+                                "verb": actions[j].get("verb"),
+                                "ok": False,
+                                "status": "skipped",
+                                "error": "skipped: a prior action in the batch failed",
+                            }
+                        )
                     return {
                         "batch_id": bid,
                         "completed": False,
                         "stopped_at": i,
+                        "failure_kind": status,
                         "results": results,
                     }
-        return {"batch_id": bid, "completed": True, "results": results}
+        # continue-mode batch finished; surface a failure_kind if any action failed.
+        failed = next((r["status"] for r in results if not r["ok"]), None)
+        return {
+            "batch_id": bid,
+            "completed": True,
+            "failure_kind": failed,
+            "results": results,
+        }
 
     async def click(self, target: Any = None, *, x: float | None = None, y: float | None = None):
         return await self.act("click", _target(target, x, y))

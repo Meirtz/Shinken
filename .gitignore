@@ -43,3 +43,6 @@ shinkend-linux-*
 # pytest coverage data
 .coverage
 sdk/python/.coverage
+
+# Claude Code harness state (worktrees, local agent scratch)
+.claude/

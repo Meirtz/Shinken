@@ -133,6 +133,15 @@ class SandboxProvider:
             screenshot_bytes=len(shot["png"]),
         )
 
+    def check_alive(self, handle: SandboxHandle) -> None:
+        """Probe whether the sandbox substrate is still alive. Raise
+        :class:`~shinken.errors.SandboxDied` (with substrate exit/signal detail when the
+        provider can recover it) if it has died; return normally if alive or if the provider
+        cannot introspect. Lets a consumer that caught a dropped connection confirm whether
+        it was infrastructure death (retry on a fresh sandbox) vs a transient/agent error.
+        Default: no-op (a provider that cannot introspect never asserts death)."""
+        return None
+
     def reset(self, handle: SandboxHandle) -> SandboxHandle:
         raise UnsupportedProviderOperation(
             f"{self.capabilities.name} does not support provider-level reset"

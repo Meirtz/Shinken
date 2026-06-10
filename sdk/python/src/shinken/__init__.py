@@ -17,6 +17,7 @@ later milestones (see docs/10-phase0-plan.md).
 
 from .client import AsyncSandbox, Capabilities, Sandbox, aconnect, connect
 from .dialect import DialectError, parse_actions
+from .errors import ACTION_STATUSES, SandboxDied, ShinkenError, classify_exception
 from .gateway import CapabilityDenied
 from .providers import DockerLocalProvider, ExternalProvider, SandboxSpec
 
@@ -28,6 +29,10 @@ __all__ = [
     "AsyncSandbox",
     "Capabilities",
     "CapabilityDenied",
+    "ShinkenError",
+    "SandboxDied",
+    "ACTION_STATUSES",
+    "classify_exception",
     "parse_actions",
     "DialectError",
     "DockerLocalProvider",

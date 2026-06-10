@@ -20,6 +20,7 @@ import sys
 import urllib.request
 from typing import Any
 
+from shinken.errors import SandboxDied, is_connection_loss
 from shinken.osworld import parse_model_actions
 from shinken.runtime import workloads
 
@@ -260,9 +261,16 @@ def run_episode(
             # An eval must not crash on a single unactuatable model output (e.g. a raw shell
             # block, or a verb the actuator doesn't support) — record it and keep going so the
             # agent can re-observe and the episode still reaches a scored terminal state.
+            # BUT infrastructure death is not a skippable action: scoring a dead sandbox 0
+            # records infra failure as task failure (the exact thing #56 exists to prevent),
+            # so propagate it for the caller to classify as sandbox_died and retry.
             try:
                 actuator.step(action, pause=pause)
+            except SandboxDied:
+                raise
             except Exception as exc:
+                if is_connection_loss(exc):
+                    raise SandboxDied(f"actuation lost the sandbox: {exc}") from exc
                 history.append(f"[action skipped: {str(exc)[:100]}]")
         if terminal is not None:
             break

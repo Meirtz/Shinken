@@ -41,9 +41,14 @@ def test_stop_on_error_returns_partial_state(mock_shinkend):
     ) as env:
         res = env.act_batch(batch)
     assert res["completed"] is False and res["stopped_at"] == 1
-    assert res["results"][0]["ok"] is True
+    assert res["results"][0]["ok"] is True and res["results"][0]["status"] == "ok"
     assert res["results"][1]["ok"] is False and res["results"][1]["error"]
-    assert len(res["results"]) == 2  # the third action never ran
+    # the failing action carries a typed status; failure_kind mirrors it (#56)
+    assert res["results"][1]["status"] in ("error", "timeout", "sandbox_died")
+    assert res["failure_kind"] == res["results"][1]["status"]
+    # the third action never ran but is accounted for as a skipped row
+    assert len(res["results"]) == 3
+    assert res["results"][2]["status"] == "skipped" and res["results"][2]["ok"] is False
 
 
 def test_continue_on_error_runs_remaining(mock_shinkend):

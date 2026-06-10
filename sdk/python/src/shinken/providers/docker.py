@@ -17,6 +17,7 @@ from dataclasses import replace
 from typing import Any
 
 from ..artifacts import ArtifactRef, FileScopeError, HashMismatch, sha256_file
+from ..errors import SandboxDied
 from .base import (
     ProviderCapabilities,
     ProviderError,
@@ -202,6 +203,55 @@ class DockerLocalProvider(SandboxProvider):
             self.destroy(handle)
             raise
         return handle
+
+    def check_alive(self, handle: SandboxHandle) -> None:
+        """Raise :class:`~shinken.errors.SandboxDied` (carrying the container's exit code and
+        an OOM signal when applicable) if the container has exited/vanished; return if it is
+        still running. Used to confirm whether a dropped session was real sandbox death."""
+        cid = handle.metadata.get("container_id") or handle.sandbox_id
+        if not cid:
+            return
+        try:
+            result = subprocess.run(
+                [
+                    self.docker_bin,
+                    "inspect",
+                    "-f",
+                    "{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}}",
+                    str(cid),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return  # cannot introspect — do not assert death
+        out = result.stdout.strip()
+        if result.returncode != 0 or not out:
+            # `docker inspect` exits nonzero both when the container is genuinely gone AND
+            # when the daemon is merely unreachable / permission-denied. Only the former is
+            # confirmed death; the latter is "cannot introspect" (the base-class contract:
+            # never assert death when we cannot see). Distinguish on stderr.
+            err = (result.stderr or "").strip()
+            if "no such" in err.lower() or "no such" in out.lower():
+                raise SandboxDied(
+                    f"sandbox {handle.sandbox_id} no longer exists", detail=err or out or None
+                )
+            return  # daemon down / transient / permissions — do not assert death
+        parts = out.split()
+        status = parts[0] if parts else "unknown"
+        # `running` (and the transient `restarting`/`paused`) are not death — only an
+        # exited/dead container is confirmed death.
+        if status in ("running", "restarting", "paused", "created"):
+            return
+        exit_code = int(parts[1]) if len(parts) > 1 and parts[1].lstrip("-").isdigit() else None
+        oom = len(parts) > 2 and parts[2].lower() == "true"
+        raise SandboxDied(
+            f"sandbox {handle.sandbox_id} is not running (status={status})",
+            exit_code=exit_code,
+            signal=9 if oom else None,
+            detail="OOMKilled" if oom else None,
+        )
 
     def _wait_ready(self, handle: SandboxHandle) -> None:
         deadline = time.monotonic() + self.startup_timeout
