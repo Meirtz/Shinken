@@ -3,307 +3,213 @@
 [![CI](https://github.com/Meirtz/Shinken/actions/workflows/ci.yml/badge.svg)](https://github.com/Meirtz/Shinken/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-<p align="center">
-  <img src="https://github.com/Meirtz/Project-ShinKen/raw/main/docs/assets/logo.png" alt="Shinken logo" width="100%">
-</p>
-
 > The open infrastructure stack for computer-use agents: real computers, one typed interface,
-> scoped capabilities, checkpoint/fork/resume of live runtime state, and eval on the same substrate.
+> low-bandwidth observation, checkpoint/fork/resume of live runtime state, and eval on the same substrate.
 
 Shinken is an AI-native, cross-platform **runtime + control plane + control panel** for
-computer-use agents. It is meant to be the full CUA infrastructure layer: boot real desktops and
-browsers, drive them through one Agent-Computer Interface (ACI), grant the sandbox capabilities
-they need, stream and supervise sessions live, checkpoint/fork/resume that live runtime state,
-and run evals on the same substrate.
+computer-use agents (CUAs). It boots real desktops and browsers, drives them through one
+**Agent-Computer Interface (ACI)**, streams and supervises sessions live, **checkpoints / forks
+/ resumes that live runtime state**, and runs evals on the *same* substrate the agent runs on —
+the inversion of a benchmark harness, where eval is thin orchestration over a production runtime.
 
-The ambition is deliberately broad. Shinken is not just a benchmark harness, a cloud browser, a
-VNC desktop, or a model adapter. It is the foundation those pieces plug into: production agent
-runtime, eval environment, runtime-state manager, permission boundary, and future cross-OS fleet
-manager.
+It is not a benchmark, a cloud browser, a VNC desktop, or a model adapter. It is the foundation
+those plug into: production agent runtime, eval environment, runtime-state manager, and cross-OS
+fleet manager.
 
-> **Status (2026-06-02) — early, honest.** The product scope is the full CUA stack above. What
-> runs **today** is a tested Linux/X11 slice plus the runtime + eval scaffolding:
-> typed pointer/keyboard actions, pixel observation (screenshot + **real-time screencast** with
-> idle-suppression + resolution downscale), **focused-window capture**, a Python SDK, model
-> adapters (Anthropic/OpenAI/Kimi-VL), a **provider registry** with **Docker disk-tier
-> checkpoint/fork/resume**, the agent-runtime **narrow waist** (Workload × Runtime × Provider), a
-> runtime **`shinkend` injector**, and a tiny eval harness incl. **OSWorld-as-a-Workload** and a
-> golden→fork-N→score loop — all under live CI. The rest of this README describes the **target
-> design**: cross-platform, accessibility-tree observation, the capability/permission panel, the
-> CRIU **memory** + sub-ms **CoW** fork tiers, the control plane, and WebRTC/GPU streaming are
-> **designed but not yet built**; runtime **replay** / `.skn` playback was intentionally deferred
-> (not on the v0.0.1 path); and the load-bearing a11y-coverage assumption is **not yet validated**.
-> See **[`docs/engineering/status.md`](docs/engineering/status.md)** for the precise built-vs-designed map.
->
-> **Next priority — runtime-state time-travel.** Shinken's headline differentiator is *instant
-> snapshot / checkpoint / fork / resume* of live sandboxes (**D1/D5**) — for high-concurrency eval,
-> best-of-N exploration, counterfactual reruns, and cheap reset from golden states. A reference
-> implementation of these primitives on the Docker tier is the active v0.0.1 work — see
-> [#206](https://github.com/Meirtz/Shinken/issues/206).
+<p align="center">
+  <img src="docs/assets/shinken-agent-sandbox-overview.png" alt="Shinken agent sandbox runtime" width="860">
+</p>
+
+## Status — honest built-vs-designed map (2026-06-11)
+
+Shinken's *design* is the full CUA stack above. The table marks what is **proven in CI today**
+vs **designed-only**. The authoritative map is
+[`docs/engineering/status.md`](docs/engineering/status.md); the measured numbers behind the
+"built" claims are in [`docs/benchmarks/`](docs/benchmarks/README.md).
+
+| area | state | what exists |
+|---|---|---|
+| ACI v0 (typed actions + observation) | ✅ built | handshake/auth, pointer+keyboard via X11/XTEST, screenshot, real-time screencast (idle-suppress + downscale + reconnect), focused-window capture; 11 verbs, contract-tested |
+| Observation codec | ✅ built | PNG (lossless) **+ JPEG** lever (20–139× smaller) **+ lossless dirty-tile delta** (12× on text); codec capability negotiation |
+| Runtime state | ✅ built | Docker disk-tier **checkpoint / fork / resume** behind a provider interface; `run_eval_forked` (golden → fork-N → score) |
+| Concurrency | ✅ built | `SharedLoop` — N sync sessions on one event-loop thread (512 → 1 thread); global frame-budget + ping-jitter knobs |
+| Eval | ✅ built | tiny verifier harness, **OSWorld-as-a-Workload**, typed exit-reason, subprocess scorer isolation; **OSWorld alpha gate passed (score 1.0)** |
+| SDK + adapters | ✅ built | Python SDK (sync + async), TypeScript SDK, Anthropic/OpenAI/Kimi-VL adapters → canonical ACI |
+| Structured a11y/DOM default (D3) | ⏳ provisional | coverage measured (E5): hybrid per-window structured + pixel fallback, *not* structured-by-default |
+| Capability scoping (D6) | ○ mostly designed | a Sandbox is granted the resources its task needs (egress / fs / GPU / …); a local gateway shim records the granted envelope, control-plane resolution is designed |
+| CRIU memory + sub-ms CoW fork | ○ designed | only the Docker disk tier is built |
+| Control plane, WebRTC/GPU, cross-OS, `.skn` replay | ○ designed | reference path collapses these to one local `shinkend` |
 
 ## Why "Shinken"?
 
-Most computer-use sandboxes today are **mogitō**: training swords. They are useful for demos,
-benchmarks, and learning the motions, but they are not built for real side effects, real
-capabilities, real audit, or real scale.
-
-**Shinken (真剣)** means a real sword. The point is not recklessness; it is discipline. A real
-agent runtime must be sharp enough to do production work, and safe enough that every boundary
-capability is scoped, auditable, and under operator control.
+Most computer-use sandboxes are **mogitō** — training swords: fine for demos and benchmarks, not
+built for real side effects, forkable state, eval artifacts, or scale. **Shinken (真剣)** means a
+real sword: sharp enough for production work, with the runtime substance — typed actions,
+checkpointable state, eval on the same runtime — that practice swords skip.
 
 <p align="center">
-  <img src="docs/assets/shinken-vs-mogito.png" alt="Mogito training sword versus Shinken real sword" width="900">
+  <img src="docs/assets/shinken-vs-mogito.png" alt="Mogito training sword versus Shinken real sword" width="820">
 </p>
 
-That is Shinken's stance: **real desktops, real actions, real capabilities, and real
-checkpoint/fork/resume.**
+## Architecture
 
-<p align="center">
-  <img src="docs/assets/shinken-agent-sandbox-overview.png" alt="Shinken agent sandbox: sharp by default, safe by design" width="900">
-</p>
-
-The product shape follows from that stance: keep the practice-friendly ergonomics, then add the
-real-runtime edge that a complete CUA stack needs: sandbox entitlements, runtime state,
-auditable boundary crossings, eval artifacts, and eventually fleet-scale execution.
+Solid = built & in CI today. Dashed = designed, not yet built (the target the same ACI/runtime
+semantics grow into).
 
 ```mermaid
 flowchart LR
-  Agent["Agent / Operator<br/>Claude, OpenAI, UI-TARS, custom"] --> SDK["Shinken SDK<br/>one typed ACI"]
-  SDK --> GW["Action Gateway<br/>auth / budget / capabilities"]
-  GW --> SK["shinkend<br/>Guest Runtime"]
-  SK --> Desktop["Sandbox Desktop<br/>Linux now · Win/macOS later"]
-  SK --> Obs["a11y tree + pixels on demand"]
-  SK --> State["Runtime state<br/>checkpoint · fork · resume"]
-  Human["Human reviewer"] --> Panel["Control Panel<br/>watch / configure / take over"]
-  Panel --> GW
-  State --> Eval["Eval + training data"]
+  Agent["Agent / Operator<br/>Claude · OpenAI · Kimi · custom"] --> SDK["Shinken SDK<br/>one typed ACI"]
+  SDK --> SK["shinkend<br/>Guest Runtime (Rust)"]
+  SK --> Desktop["Sandbox desktop<br/>Linux/X11 today"]
+  SK --> Obs["observation<br/>pixels: PNG · JPEG · delta"]
+  SK --> State["runtime state<br/>checkpoint · fork · resume"]
+  State --> Eval["eval on the runtime<br/>golden → fork-N → score"]
+
+  SDK -.-> CP["Control Plane<br/>scheduling · capability scoping"]:::d
+  CP -.-> SK
+  SK -.-> A11Y["structured obs<br/>AT-SPI · CDP · UIA · AX"]:::d
+  Human["human reviewer"] -.-> Panel["Control Panel<br/>watch / take over"]:::d
+  Panel -.-> CP
+  classDef d stroke-dasharray:5 5,stroke:#999,color:#666;
 ```
 
-## What It Lets You Do
-
-- **Drive real computers with one clean API.** Agents call typed actions like `click`,
-  `type_text`, and `observe` through one Agent-Computer Interface (ACI), not ad hoc
-  `pyautogui` strings. The same ACI is the model-facing contract for desktop apps, browsers,
-  OS dialogs, and future mobile targets.
-- **Start with screenshots, then add structure.** v0.0.1 must work through the universal GUI-agent
-  loop: screenshot observation plus typed mouse/keyboard actions. Accessibility trees, DOM snapshots,
-  element refs, Set-of-Marks, and region/zoom are the structured and visual upgrade paths for lower
-  cost and more stable actions.
-- **Grant real sandbox capabilities.** A Sandbox can be provisioned with network egress,
-  credentials, GPU, persistence, privileged installs, clipboard, screenshots, or OS automation
-  entitlements.
-- **Move files and artifacts as first-class data.** Task fixtures, generated artifacts, logs,
-  media, and task outputs need a Sandbox↔client transfer path with checksums and backpressure.
-- **Checkpoint, restore, fork, and resume runtime state.** Name a runnable checkpoint of a live
-  sandbox, fork it into N replicas from one golden state, reset instantly, or resume a suspended
-  session. This is the primitive behind instant reset, N-run eval replicas, best-of-N /
-  counterfactual branches, and long-running or idle-suspended tasks.
-- **Run evals on the runtime, not beside it.** OSWorld-style tasks, browser tasks, mobile tasks,
-  and custom enterprise tasks should all become verifier-backed runs over the same ACI and runtime
-  substrate.
-- **Scale beyond one laptop.** The reference runtime grows into a control plane with warm pools,
-  fork-from-snapshot reset, policy enforcement, WebRTC media, multi-tenant budgets, and cross-OS
-  substrates.
-
-## Why It Is Different
-
-Most computer-use stacks still run a loop like this:
+Most CUA stacks run: `screenshot → model → pixel click → sleep → screenshot → throw the trace away`.
+Shinken runs a different loop, and *that* loop is the product:
 
 ```text
-screenshot -> model -> pixel click -> sleep -> screenshot -> throw trace away
+structured/pixel observation → typed action → verified result → checkpointable state
 ```
 
-Shinken is designed around a different loop:
+## Measured results
 
-```text
-screenshot observation -> typed action -> sandbox capability -> verified result -> checkpointable state
-```
+First-party, reproducible (`python docs/benchmarks/plots.py`); full tables +
+provenance in [`docs/benchmarks/`](docs/benchmarks/README.md).
 
-That difference is the product. v0.0.1 should implement these semantics at local/reference scale;
-later milestones make the same semantics faster, denser, multi-tenant, and cross-substrate:
+**Observation bandwidth** — encoded in `shinkend`, pulled over the SDK. PNG is the lossless
+default; JPEG is a **content-dependent** lever (it shines on photographic/content-rich frames
+and *loses* to PNG on sparse/flat UIs, so it stays opt-in), and the **lossless dirty-tile
+delta** stream is the robust win during interaction.
 
-- **Works before instrumentation:** screenshots are universal, so the first GUI loop works even on
-  canvas, Electron, games, and custom-rendered apps.
-- **Lower bandwidth and token cost over time:** add a11y/DOM diffs and element refs when the UI
-  exposes useful structure.
-- **Auditable authority:** sandbox capabilities such as network egress, credentials, GPU,
-  persistence, host mounts, and OS automation are explicit, scoped, revocable, and recorded.
-- **Fast artifacts:** file transfer is a profiled data path, not JSON/base64 bolted onto control RPC.
-- **Forkable runtime state:** the same starting point can branch into many live sandboxes.
+<p align="center"><img src="docs/assets/bench/codec_pareto.png" width="640"></p>
 
-## Client / Server Shape
+| measurement | result |
+|---|---|
+| JPEG q80 vs PNG, content-rich 1080p desktop frame (remote, WAN) | 1804 → 87 KiB, **20.7×** |
+| JPEG q80 vs PNG, dense-text 1280px frame (local) | 747 → 553 KiB, **1.35×** |
+| JPEG q80 vs PNG, sparse/flat desktop (local) | 65 → 86 KiB, **PNG wins** |
+| downscale to model input res (q50 @512) | up to **~12×** on top |
+| lossless dirty-tile delta during typing | **11–12×** vs full PNG |
 
-The current implementation starts simple: the Python client talks directly to the Rust Guest
-Runtime for the local/reference slice. The target architecture inserts the Control Plane as the
-mandatory server-side boundary, without changing the ACI or runtime-state semantics.
+The honest read: the codec is a *lever*, not a constant multiplier — which is why PNG is the
+default and JPEG/downscale/delta are explicit. Full ladders (≈3.5k datapoints, local + remote)
+in [`docs/benchmarks/`](docs/benchmarks/README.md) and
+[`docs/engineering/benchmarks.md`](docs/engineering/benchmarks.md).
 
-```mermaid
-flowchart TB
-  subgraph Client["Client side"]
-    CLI["CLI / Python SDK"]
-    OP["Operator<br/>agent loop + model adapter"]
-    CP["Control Panel<br/>human supervise/configure"]
-  end
+**Concurrency** — holding N sandbox sessions in one process. The default sync facade spends one
+OS thread per session; `SharedLoop` holds 512 on **one** thread. The codec is what makes the
+aggregate egress tractable: 1024 sandboxes at 1 Hz project to ~405 Mbps in JPEG vs ~15 Gbps in PNG.
 
-  subgraph Control["Control Server / Control Plane"]
-    AG["Action Gateway<br/>auth -> rate-limit -> budget -> policy -> dispatch"]
-    POL["Policy + capability handles"]
-    SS["State Store<br/>checkpoints · forks · resumes"]
-    FM["Fleet Manager<br/>provision / reset / fork"]
-    EV["Eval Service"]
-  end
+<p align="center"><img src="docs/assets/bench/concurrency.png" width="760"></p>
 
-  subgraph Guest["Guest server inside Sandbox"]
-    SK["shinkend<br/>ACI executor + observation engine"]
-  end
+**Functional** — OSWorld alpha gate **passed** (Kimi K2.6 over `shinkend` on a remote sandbox,
+official evaluator **score 1.0**, 6 steps, 110 s); 74 Rust + 472 Python tests in a 9-job CI.
+Accessibility coverage measured across real apps (E5): strong for Qt (0.87) and browser-via-CDP,
+weak for GTK, absent for terminals — hence the *hybrid* observation default.
 
-  subgraph OS["Guest OS + apps"]
-    APP["Desktop apps"]
-    A11Y["AT-SPI / CDP / UIA / AX"]
-  end
+## Core concepts
 
-  CLI --> OP
-  OP --> AG
-  CP --> AG
-  AG --> SK
-  SK --> APP
-  SK --> A11Y
-  FM --> SS
-  FM --> Guest
-  SS --> EV
-```
+| concept | what it is |
+|---|---|
+| **Sandbox / Session** | one isolated guest computer; a Session is a live attach. Reset and branch are the same fork-from-snapshot primitive. |
+| **ACI** | the versioned, typed action/observation protocol every agent speaks: one tagged-union action (verb + `point_px`/`point_norm`/`element_ref` target), explicit coordinate space, handshake capability negotiation. |
+| **`shinkend`** | the in-sandbox Rust Guest Runtime that executes the ACI and emits the event stream — the structured successor to OSWorld's Flask server. |
+| **Operator / adapter** | client-side translation of a model's grammar (Anthropic/OpenAI/Kimi/OSWorld) to/from canonical ACI; the seam for human takeover. |
+| **Checkpoint / fork / resume** | name a runnable checkpoint of live state, fork it into N replicas from one golden state, resume a suspended session — the headline differentiator. |
+| **Workload × Runtime × Provider** | the semantics-free narrow waist: eval/train/interactive are *consumers*; substrates are *providers*; OSWorld is one Workload. |
+| **Capability** | a runtime entitlement — the resources a Sandbox is granted (net egress, fs scope, GPU, credentials, …). Resource scoping, a supporting feature, not a pillar. |
 
-The rule of thumb: **clients request, the Control Plane authorizes, `shinkend` executes,
-the guest OS changes, and the Fleet Manager checkpoints/forks/resumes that state.**
+## How it compares
 
-## How Agent-Native It Should Feel
+Shinken's wedge is the unclaimed intersection, not winning any single axis. (Competitor speed/
+density figures are vendor-published; see [`docs/design/landscape.md`](docs/design/landscape.md).)
 
-The low-level SDK stays available for debugging and tests, but agents should not be hand-written as
-`env.click(...)` scripts. A computer-use model emits a constrained action dialect; a Shinken adapter
-parses and validates that output, normalizes coordinates, checks the Sandbox capability envelope,
-and only then sends canonical ACI actions to `shinkend`.
+| | cross-OS desktop | runtime fork | structured + pixel obs | eval on same runtime | streaming |
+|---|---|---|---|---|---|
+| **Shinken** | designed (Linux built) | **disk tier built, local-first** | hybrid (measured) | **yes (built)** | PNG/JPEG/delta built; WebRTC designed |
+| trycua/cua | yes | cloud-only, not in its own bench | a11y trees | recreates per reset | VNC |
+| E2B desktop | Linux | snapshot-restore | none | n/a | raw VNC |
+| Morph | Linux | **best-in-class µs CoW** | none | n/a | n/a |
+| OSWorld | Linux (in practice) | slow revert, no fork | full-XML per step | *is* the benchmark | full-frame PNG poll |
+| browser SaaS | no (Chromium only) | no | DOM | no | WebRTC/HLS |
 
-```python
-import shinken
-from shinken.adapters import ShinkenXMLAdapter
-
-adapter = ShinkenXMLAdapter()
-
-with shinken.connect() as env:
-    shot = env.screenshot()                     # universal GUI observation
-
-    # The model returns a restricted action dialect, not arbitrary Python.
-    model_output = """
-    <actions>
-      <click x="640" y="420" button="left"/>
-      <type_text text="agent sandbox runtime"/>
-      <key combo="enter"/>
-    </actions>
-    """
-
-    for action in adapter.parse(model_output, observation=shot):
-        env.act(action.verb, action.target, **action.args)
-```
-
-The same adapter boundary can host XML-like tags, JSON/function-call outputs, Anthropic/OpenAI
-computer-use grammars, UI-TARS normalized coordinates, or OSWorld `computer_13`. The invariant is
-the same: **model dialect in, validated ACI typed actions out**.
-
-Low-level calls such as `env.click(x=...)`, `env.type_text(...)`, and `env.key(...)` remain useful
-for smoke tests and scripting; they are not the primary agent interface.
-
-Boundary-crossing capabilities should be just as explicit:
-
-```python
-with shinken.connect() as env:
-    env.unlock("net.egress", scope="github.com")  # provisioned capability
-    env.run_task("open the project repo and file a bug")
-```
-
-And runtime state should be first-class — name a checkpoint, fork it, or resume it:
+## Quickstart
 
 ```bash
-shinken checkpoint search-demo --name golden     # name a runnable checkpoint of live state
-shinken fork golden --replicas 5                  # fork N live replicas from one golden state
-shinken resume golden                             # resume a suspended session
-```
-
-Those examples are the product target. v0.0.1 should make the semantics real locally/reference
-scale; later milestones optimize the substrate, streaming, fork density, and multi-tenant control
-plane. See [docs/engineering/v0.0.1-plan.md](docs/engineering/v0.0.1-plan.md).
-
-## What Works Today
-
-**v0.0.1 is underway:** schema scaffold, Rust `shinkend`, Python SDK/CLI, a Linux Docker image,
-pointer/keyboard actions, screenshots, screencast/focused capture, model adapters
-(Anthropic/OpenAI/Kimi-VL), a provider registry with Docker disk-tier checkpoint/fork/resume, the
-agent-runtime narrow waist (Workload × Runtime × Provider registries + out-of-tree plugins), a
-runtime `shinkend` injector, an OSWorld `DesktopEnv` shim + OSWorld-as-a-Workload, and a tiny eval
-harness with a golden→fork-N→score loop all exist. The v0.0.1 backlog fills in the rest of the
-semantic surface: a11y/CDP/element-ref reference paths, the capability envelope +
-permission-enforcement gate, high-throughput artifact transfer, and broader OSWorld conformance.
-
-```bash
-# 1) run the Guest Runtime
+# 1) run the Guest Runtime (loopback, no token)
 cargo run --manifest-path shinkend/Cargo.toml
 
-# 2) install and use the Python SDK
-cd sdk/python
-pip install -e ".[dev]"
-shinken connect
+# 2) install the Python SDK
+cd sdk/python && pip install -e ".[dev]"
 ```
 
 ```python
 import shinken
 
-env = shinken.connect()
-print(env.platform)
-print(env.screen_size())
-print(env.capabilities)
-env.close()
+with shinken.connect() as env:                 # connect + ACI handshake
+    print(env.platform, env.screen_size())     # 'linux'  {'w':…, 'h':…}
+    shot = env.screenshot(format="jpeg", quality=80)   # the bandwidth lever
+    env.click(x=640, y=420)
+    env.type_text("real desktops, one typed interface")
 ```
 
-Expected today: connect, print platform/RTT/screen/capabilities, run basic pointer/keyboard actions,
-capture screenshots/focused windows/screencasts, move files through the local/Docker provider,
-exercise Docker disk-tier checkpoint/fork/resume, and run the tiny eval harness (incl.
-OSWorld-as-a-Workload + the golden→fork-N→score loop). Not expected yet: cloud/macOS/Windows
-provider tiers, a11y trees, element refs, production capability enforcement, the CRIU memory / CoW
-fast fork tiers, or cloud fork.
+**Drive with a model adapter** — model dialect in, validated ACI actions out:
 
-## Roadmap
-
-```mermaid
-flowchart LR
-  M0["M0<br/>schema + handshake"] --> V001["v0.0.1<br/>feature-complete reference runtime"]
-  V001 --> P1["Performance/scale<br/>fork tier + WebRTC + panel"]
-  P1 --> P2["Eval/training<br/>at concurrency"]
-  P2 --> P3["Cross-OS + GPU<br/>production tiers"]
+```python
+from shinken.adapters import AnthropicComputerUseAdapter
+adapter = AnthropicComputerUseAdapter()
+with shinken.connect() as env:
+    obs = env.screenshot()
+    action = adapter.to_aci_action(model_tool_call)   # one validated, normalized ACI action
+    env.act(action["verb"], action.get("target"), **action.get("args", {}))
+    result = adapter.to_tool_result(env.screenshot()) # observation back in the model's grammar
 ```
 
-v0.0.1 is tracked under the
-[v0.0.1 milestone](https://github.com/Meirtz/Shinken/milestone/1). The milestone is
-feature-complete at local/reference scale: all core semantics should exist and be tested, even if
-later releases make them fast, scalable, multi-tenant, and production-hardened.
+**Runtime state** — checkpoint / fork / resume a live session, and the forked-eval loop:
 
-## Repository Layout
+```python
+ckpt = env.checkpoint(name="golden")   # name a runnable checkpoint of live state
+fork = env.fork()                       # branch a live replica from here
+env.resume(ckpt)                        # bring a checkpoint back to a connectable sandbox
+
+from shinken.providers import DockerLocalProvider
+from shinken.eval import run_eval_forked
+# golden → fork-N replicas → score, all from ONE checkpoint (provider must support fork):
+summary = run_eval_forked(task, DockerLocalProvider(), n=5)
+```
+
+**Many sandboxes, one process** — the async core is the native fan-out; `SharedLoop` is the
+sync convenience (one thread for all N):
+
+```python
+with shinken.SharedLoop() as loop:
+    envs = [shinken.connect(addr, token=tok, loop=loop) for addr, tok in endpoints]
+    shots = [e.screenshot(format="jpeg") for e in envs]
+```
+
+## Repository layout
 
 ```text
 shinken/
-├─ schema/        ACI JSON Schema
-├─ shinkend/      Rust Guest Runtime inside the Sandbox
-├─ sdk/python/    Python SDK and CLI
-├─ images/linux/  Local Linux Sandbox image
-├─ docs/          Authoritative design docs and Phase-0 plan
-├─ notes/         Working notes, open questions, and sources
-└─ references/    Public prior-art provenance and re-clone notes
+├─ schema/         ACI JSON Schema (the wire contract)
+├─ shinkend/       Rust Guest Runtime inside the Sandbox
+├─ sdk/python/     Python SDK + CLI       sdk/typescript/  TS control-surface SDK
+├─ images/linux/   Local Linux Sandbox image
+├─ docs/           Design canon (ADRs D1–D12), engineering status, benchmarks
+└─ spikes/         a11y-coverage spike (E5) evidence
 ```
 
-Start with:
+- [Benchmarks](docs/benchmarks/README.md) — first-party tables + plots.
+- [Implementation status](docs/engineering/status.md) — precise built-vs-designed map.
+- [Design canon](docs/design/README.md) — scope, architecture, ADRs, tradeoffs.
 
-- [User docs](docs/user/README.md) for runnable behavior and concepts.
-- [Design canon](docs/design/README.md) for full scope, architecture, ADRs, and tradeoffs.
-- [Engineering docs](docs/engineering/README.md) for v0.0.1 implementation, testing, and release
-  gates.
-- [Implementation status](docs/engineering/status.md) for what is actually built today.
-
-> The name "Shinken" (真剣 / 神剣) means a real, live blade: sharp by default, safe by design.
+> "Shinken" (真剣) means a real, live blade: sharp by default, safe by design.

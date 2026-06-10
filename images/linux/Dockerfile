@@ -8,8 +8,8 @@
 # Build (from repo root):  docker build -f images/linux/Dockerfile -t shinken/sandbox-linux .
 # Run (bind to HOST loopback + require a dev token — shinkend refuses a non-loopback
 # bind without SHINKEND_TOKEN). This local reference image is NOT the production isolation
-# boundary (that is a microVM, see docs/design/threat-model.md); when running untrusted
-# agents, additionally harden the container:
+# boundary (that is a microVM, see docs/design/threat-model.md — the isolation & capability
+# note); for a tighter container, add the usual run flags:
 #   docker run --rm -p 127.0.0.1:8765:8765 \
 #     --cap-drop ALL --security-opt no-new-privileges --read-only --tmpfs /tmp \
 #     -e SHINKEND_TOKEN="$(openssl rand -hex 16)" shinken/sandbox-linux
@@ -42,10 +42,10 @@ COPY --from=build /src/shinkend/target/release/shinkend /usr/local/bin/shinkend
 COPY images/linux/start.sh /usr/local/bin/start.sh
 RUN chmod +x /usr/local/bin/start.sh
 
-# Run the desktop + shinkend as a non-root user: it drops the uid-0 kernel attack surface
-# for a container escape. shinkend binds 8765 (>1024, no privilege needed); Xvfb/openbox/
+# Run the desktop + shinkend as a non-root user: standard container hygiene, and shinkend
+# needs no privileges anyway. shinkend binds 8765 (>1024, no privilege needed); Xvfb/openbox/
 # xterm and the /tmp X-lock cleanup all work unprivileged. The token still arrives via env
-# (dev-only; a faithful boundary needs the microVM + Action Gateway, D6).
+# (dev-only; the production isolation boundary is the microVM, D1).
 RUN useradd --create-home --uid 1000 shinken
 USER shinken
 

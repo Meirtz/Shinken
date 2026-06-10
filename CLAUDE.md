@@ -30,7 +30,7 @@ committed is world-readable.
 
 | Path | Tracked? | What |
 |------|----------|------|
-| `docs/` | ✅ | Authoritative docs: vision, PRD, architecture, OSWorld teardown, landscape, ADRs (D1–D12), roadmap, glossary, threat model, economics, Phase-0 plan, ACI spec |
+| `docs/` | ✅ | Authoritative docs: vision, PRD, architecture, OSWorld teardown, landscape, ADRs (D1–D12), roadmap, glossary, isolation & capability note, economics, Phase-0 plan, ACI spec |
 | `notes/` | ✅ | 9 working notes: per-domain deep dives, open questions, sources |
 | `README.md`, `LICENSE` (Apache-2.0) | ✅ | front matter |
 | `schema/` | ✅ | ACI JSON Schema (`aci.schema.json`) |

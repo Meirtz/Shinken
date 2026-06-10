@@ -35,7 +35,7 @@
 | **D3** | Observation = screenshot-first baseline, structured upgrade | Accepted (screenshot baseline) / Provisional (structured-default upgrade, gated on spike #2) | v0.0.1 proves screenshot GUI loop plus reference structure; a11y/DOM diff → Set-of-Marks → region pixels optimize tree-rich apps |
 | **D4** | Streaming = single-PeerConnection WebRTC, dual-transport | Accepted | Reliable data channel = event stream (= the replay log); on-demand media track |
 | **D5** | Runtime state (checkpoint/fork/resume) is the headline; `.skn` replay is a supporting evidence ledger | Accepted | Immutable checkpoint DAG (snapshot/checkpoint/fork/resume) — implemented on the Docker disk tier (#209); the append-only `events.jsonl` / `.skn` replay surface is **removed/deferred per #216** (see [replay](../user/replay.md)). Reset and branch are one primitive |
-| **D6** | Sandbox capabilities = entitlement provisioning + boundary enforcement (Cedar + ocap + OS) | Accepted | Sandboxes can do real work inside the boundary; Cedar/ocap/OS control the capabilities and boundary crossings |
+| **D6** | Capability scoping — a Sandbox is granted the resources its task needs (supporting runtime feature) | Accepted (mostly designed) | In-sandbox power is unscoped; boundary grants (egress/fs/GPU/credentials/…) are scoped + recorded; server-side resolution designed (D9) |
 | **D7** | Eval layer = thin orchestration on the runtime, inverting OSWorld | Accepted (phased) | Typed verifier DAG, golden snapshot per task, N≥5 forked replicas, readiness probes |
 | **D8** | Interfaces = native streaming SDK core + optional MCP facade | Accepted | One IDL → py/ts SDKs; MCP facade at two altitudes; never the hot loop over MCP |
 | **D9** | Control plane = Fleet Manager + Action Gateway | Accepted | Warm pools + fork-on-demand; single auth→rate→budget→policy chokepoint; dual-timer sessions |
@@ -102,11 +102,11 @@ Concrete tier definitions:
 
 | Alternative | Why rejected |
 |---|---|
-| **One VMM for everything (e.g. QEMU q35 only)** | Possible (QEMU covers headless, desktop, Windows, GPU) but forfeits Firecracker-class fork speed on the high-volume headless tier and presents a large attack surface for hostile multi-tenant. Kept as a *unifier fallback* if operational surface must be cut; not the default. |
+| **One VMM for everything (e.g. QEMU q35 only)** | Possible (QEMU covers headless, desktop, Windows, GPU) but forfeits Firecracker-class fork speed on the high-volume headless tier and presents a larger device-model surface for multi-tenant use. Kept as a *unifier fallback* if operational surface must be cut; not the default. |
 | **Firecracker for the desktop/GPU tier** | Dead end: no display device, no GPU; the GPU initiative is paused. Planning a roadmap on it is a trap. |
 | **Cloud Hypervisor for the Linux desktop** | Its virtio-gpu exists only as unmaintained out-of-tree Spectrum-OS patches the maintainers will not upstream. Reserve CLH for GPU/Windows. |
 | **OSWorld-style full snapshot-revert** | Seconds-to-minutes, I/O-bound on disk-delta size; structurally beaten by fork-from-snapshot. |
-| **Containers (bare) as the isolation boundary** | "Your container is not a sandbox": shared host kernel/driver, not a boundary for hostile code. Containers run *under* gVisor/Kata or a microVM, never raw — see the OSS `kubernetes-sigs/agent-sandbox` CRD pattern in D9. |
+| **Containers (bare) as the isolation boundary** | "Your container is not a sandbox": a shared host kernel/driver is not a strong isolation boundary. Containers run *under* gVisor/Kata or a microVM, never raw — see the OSS `kubernetes-sigs/agent-sandbox` CRD pattern in D9. |
 | **GPU passthrough VM that also fast-forks** | Impossible today: VFIO device state is out of scope for snapshots on both CLH and QEMU. The fast-fork killer feature simply does not exist on the GPU tier. |
 
 ### Consequences
@@ -304,7 +304,7 @@ Shinken separates the evidence ledger from runnable state while linking them tig
   <https://github.com/trycua/cua>.)
 - **Verifier-validation mode.** `run_eval_forked` supports a dual-fork agreement gate before a task
   enters an eval/training set: `score(fork(golden_checkpoint)) == 1.0` AND
-  `score(fork(initial_checkpoint)) == 0.0`. This makes the most expensive invariant of adversarial
+  `score(fork(initial_checkpoint)) == 0.0`. This makes the most expensive invariant of automated
   task factories — two isolated environments per validation round (xlang-ai/CUA-Gym provisions
   2 fresh cloud VMs per task for exactly this — <https://github.com/xlang-ai/CUA-Gym>) — two forks
   of one boot.
@@ -338,88 +338,50 @@ Shinken separates the evidence ledger from runnable state while linking them tig
 
 ---
 
-## D6 — Sandbox capabilities: entitlement provisioning + boundary enforcement (Cedar + ocap handle + OS)
+## D6 — Capability scoping (a supporting runtime feature)
 
-**Status:** Accepted. The cornerstone differentiator: Sandboxes are powerful by default inside the isolation boundary, while their boundary-crossing capabilities and OS entitlements are explicit, revocable, replayed, and enforceable.
+**Status:** Accepted (mostly designed). A Sandbox is granted the runtime resources its task
+needs and nothing more. This is resource scoping / entitlement management — supporting runtime
+plumbing, not a headline differentiator.
 
 ### Context
 
-An agent sandbox is valuable precisely because it lets an agent do real, risky work in an isolated computer: install packages, edit files, drive UI, run code, capture screens, and even break the guest before resetting it. The permission model must not turn every ordinary in-sandbox action into a human approval. The boundary must instead decide **what powers this Sandbox is provisioned with** and **what leaves or enters the Sandbox**.
-
-Model-level prompt-injection defenses are unreliable — measured at 0–62% robust against static attacks and 80–100% defeated by adaptive attacks, with human red-teaming at 100% success. The boundary must therefore be **architectural**, holding even when the model is jailbroken. The load-bearing questions are **(a) how to describe sandbox capabilities/entitlements**, **(b) which policy engine can prove grants do not widen accidentally**, and **(c) why policy alone is not enough for live revocation or OS-level friction**.
-
-On the engine: **Cedar** is the only candidate that is **statically analyzable** — its SMT/Lean-verified symbolic compiler lets Shinken *prove* a sandbox capability grant or policy edit "never grants more than before." Cedar's PARC + permit/forbid + forbid-overrides + deny-by-default fits capability provisioning; it is reportedly **42–60× faster than OPA/Rego** with sub-ms decisions (vendor-published, unverified). **Rego is Turing-flexible — you cannot statically prove a change never widens access** — which is disqualifying for boundary capabilities such as credentials, host mounts, external egress, GPU, and persistence.
-
-The deeper insight: **a policy engine alone cannot do live revocation or OS entitlement provisioning.** Decision caching (a published authorizer TTL of ~120 s, ~2 min agent cache refresh) leaves a stale-authorization window. Revocation must be a synchronous bit-flip checked at *use* time, not a wait for a cache to expire. Separately, macOS TCC, Windows tokens, Linux seccomp/Landlock, screen capture, input injection, and accessibility automation require OS-specific preflight and provisioning work; this is part of the product, not a mere approval dialog.
-
-Egress is the highest-leverage control but **SNI/Host filtering is not a hard boundary**: a SOCKS5 null-byte parser differential and DNS-tunneling via subdomain labels both bypass it. The forced **out-of-VM egress proxy** (deny-by-default, scoped wildcards, anti-domain-fronting, optional TLS-MITM, fail-closed) is the production pattern, backed by an OS netns/firewall so an agent ignoring proxy env still cannot reach the internet.
+A Sandbox is powerful *inside* its isolation boundary by design — install packages, edit files,
+drive the UI, run code — because it is a disposable guest. What is worth managing is only what a
+Sandbox is *granted at the boundary*: network egress, filesystem scope, clipboard, GPU,
+privileged install, persistence, credentials, peripheral / OS automation. The permission model
+must not turn ordinary in-sandbox actions into approvals; it only scopes the boundary grants a
+task declares.
 
 ### Decision
 
-A **three-layer sandbox capability** model:
+A Sandbox carries an explicit, default-empty **capability envelope** over a small set of classes
+(`net.egress`, `fs.scope` / host mounts, `clipboard`, `gpu`, `install.privileged`, `persistence`,
+`credentials`, `peripheral` / OS automation). In-sandbox power is expected and unscoped; only
+these boundary grants are scoped, time-boxed, and recorded as events (D5). Human approval is for
+the exceptional boundary grant, never the hot path. Server-side resolution of the envelope and
+credential brokering are control-plane concerns (D9).
 
-```
-   Request/provision a sandbox capability (e.g. net.egress to api.github.com)
-                         │
-   ┌─────────────────────▼──────────────────────┐
-   │  (1) CEDAR  — decision / grammar layer      │   "May this Sandbox have this capability?"
-   │  PARC, permit/forbid, forbid-overrides,     │   statically analyzable (SMT/Lean):
-   │  deny-by-default; template-linked per grant │   prove "no more permissive than before"
-   └─────────────────────┬──────────────────────┘   BEFORE the grant ships (pre-grant gate + CI)
-                         │ permit
-   ┌─────────────────────▼──────────────────────┐
-   │  (2) OCAP HANDLE — caretaker / membrane     │   the LIVE on/off switch the panel toggles.
-   │  unforgeable, attenuable, REVOCABLE ref     │   revoke = O(1) bit-flip, checked at USE time
-   └─────────────────────┬──────────────────────┘   (synchronous, fail-closed — no cache wait)
-                         │ enforce
-   ┌─────────────────────▼──────────────────────┐
-   │  (3) OS ENFORCEMENT — the wall              │   makes it physically real; holds when the
-   │  Linux: bubblewrap + seccomp(net-gate) +    │   model is jailbroken.
-   │  Landlock + cgroups-v2 + OUT-OF-VM egress   │
-   │  proxy.  macOS: Seatbelt + TCC.             │
-   │  Windows: restricted token + capability-SID │
-   └─────────────────────────────────────────────┘
-```
+### Status today vs designed
 
-**Cedar decides the capability envelope; the handle is the live switch; the OS/substrate is the wall.**
-
-- **8 capability classes**, each default-empty at the boundary: `net.egress`, `fs.scope` / host mounts, `clipboard`, `gpu`, `install.privileged/sudo`, `persistence`, `credentials`, `peripheral` / OS automation.
-- **Sandbox-internal power is expected.** A Sandbox image may intentionally include sudo, package managers, screen capture, clipboard, and automation APIs so the agent can do real work. Those powers are safe because they are scoped to the disposable guest unless paired with a boundary capability.
-- **Boundary capabilities are explicit and recorded.** External egress, credential brokering, host filesystem scopes, persistence, expensive compute, peripheral access, and production-side effects are granted by policy, time-boxed, revocable, and emitted as replay events (D5).
-- **HITL is exceptional, not the hot path.** Humans approve unusual boundary grants or policy changes; they should not approve every click, keypress, install, or file edit inside an isolated Sandbox.
-- **OS entitlement management is first-class.** macOS TCC (Accessibility, Screen Recording, Input Monitoring, Automation, Full Disk Access), Windows restricted tokens/capability SIDs, and Linux Landlock/seccomp/netns must be preflighted, provisioned, and surfaced honestly in the capability descriptor.
-- **Secrets brokered via Vault/KMS + proxy header-injection — the model never sees plaintext.** Prefer JIT short-lived credentials (SPIFFE SVIDs, Vault dynamic secrets) tied to the grant lifecycle. Apply the **Rule-of-Two / lethal-trifecta** constraint: at most two of {untrusted input, sensitive data, external comms} unattended, else force human-in-the-loop.
-
-**The boundary rule:** policy is enforced where a capability crosses the Sandbox boundary or binds scarce/privileged host resources. D2's code-as-action and GUI actions are ordinary in-sandbox powers when the Sandbox is provisioned for them; egress, credentials, host mounts, persistence, GPU, and OS automation entitlements flow through the controlled capability layer.
-
-### Alternatives (and why rejected)
-
-| Alternative | Why rejected |
-|---|---|
-| **OPA / Rego as the decision engine** | Turing-flexible → cannot statically prove a policy change never widens access; ~42–60× slower; error-prone in independent benchmarking. Kept only as an *optional outer fleet/org-rule layer* that can further restrict, never widen. |
-| **Policy engine as the enforcement / revoke mechanism** | A decision is advisory until something OS-level enforces it; decision caching leaves a stale-revocation window; OS entitlements still must be provisioned. Hence the separate ocap handle + OS/substrate layers. |
-| **Ask before every dangerous in-sandbox action** | This turns a sandbox runtime into a permission nag. A real agent sandbox should let agents perform risky operations inside the disposable guest; only boundary powers and scarce resources need capability control. |
-| **In-runtime / in-process network allowlist** | Multiple 2025–2026 CVEs (a Claude Code SOCKS5 bypass, AWS AgentCore escapes) show in-runtime allowlists are bypassable. Enforce egress out-of-VM. |
-| **SNI/Host-only egress filtering** | Defeated by domain fronting, broad allowlist entries, and parser differentials; canonicalize at the seam, fail-closed on MITM-required, block raw port 53. |
-| **Hand the agent raw credentials** | The model leaking/exfiltrating a long-lived key has unbounded blast radius; broker at the proxy, prefer JIT SVIDs, exclude secrets from replay. |
-| **Grant-time checks** | TOCTOU; enforce at use time via the live handle. |
+- **Built (reference):** a client-side capability-gateway shim records the granted envelope and
+  routes each action allow / ask / deny (`sdk/python/src/shinken/gateway.py`) — the eval/audit
+  surface, not an enforcement guarantee.
+- **Designed (D9):** server-side resolution so an ungranted action is simply not dispatched, plus
+  OS-level scoping (Linux Landlock/seccomp/cgroups, macOS sandbox profiles, Windows tokens) where
+  the substrate supports it, and credential brokering. The concrete engine is deferred with the
+  control plane.
 
 ### Consequences
 
-- **Positive:** powerful Sandboxes that can do real work; provable non-escalation for boundary grants; synchronous revoke; OS entitlement preflight; a complete, forkable, non-repudiable capability timeline in the replay; the panel is the category-defining product surface.
-- **Negative:** more plumbing (a proxy/indirection handle at each enforcement point); cross-OS enforcement diverges sharply (macOS Seatbelt/TCC, Windows AppContainer egress is coarse) and the panel must degrade to the weakest per-OS enforcement and *say so*.
-- **Risks:** Cedar's tooling/community is younger than OPA's; some mechanisms need recent kernels (Landlock network 6.7+, unprivileged userns disabled on some hosts) — feature-detect with fallback; the egress host-canonicalization gap must be fixed explicitly (do not copy a `normalize_host` that does not strip NUL/control chars).
+- **Positive:** runs declare the resources they touch; boundary grants are scoped and auditable;
+  composes with the runtime-state and eval layers without special-casing.
+- **Negative / deferred:** server-side resolution, cross-OS scoping divergence, and credential
+  brokering are designed-only; the reference shim is advisory.
 
-### Evidence
+See the [isolation & capability note](threat-model.md) for how the isolation and capability
+boundaries fit together.
 
-- Cedar (analyzable, PARC, templates, operators): <https://docs.cedarpolicy.com/policies/syntax-policy.html>, <https://docs.cedarpolicy.com/policies/templates.html>, <https://arxiv.org/pdf/2403.04651>; Cedar Analysis (SMT): <https://aws.amazon.com/blogs/opensource/introducing-cedar-analysis-open-source-tools-for-verifying-authorization-policies/>; OPA→AVP 42–60×: <https://aws.amazon.com/blogs/security/migrating-from-open-policy-agent-to-amazon-verified-permissions/>; Cedar in AgentCore ENFORCE mode: <https://shinyaz.com/en/blog/2026/03/15/bedrock-agentcore-policy-cedar-authorization>
-- ocap caretaker/membrane: <https://tersesystems.github.io/ocaps/guide/management.html>, <https://en.wikipedia.org/wiki/Object-capability_model>
-- OS enforcement: Landlock <https://docs.kernel.org/userspace-api/landlock.html>; capabilities(7) <https://man7.org/linux/man-pages/man7/capabilities.7.html>; Claude Code security model <https://code.claude.com/docs/en/security>
-- Egress proxy + secret brokering: Codex network-proxy <https://github.com/openai/codex/blob/main/codex-rs/network-proxy/src/policy.rs>, MITM credential injection <https://github.com/openai/codex/blob/main/codex-rs/network-proxy/src/mitm_hook.rs>; Cloudflare Outbound Workers <https://blog.cloudflare.com/sandbox-auth/>; SPIFFE/Vault JIT creds <https://www.hashicorp.com/en/blog/vault-enterprise-1-21-spiffe-auth-fips-140-3-level-1-compliance-granular-secret-recovery>
-- Prompt-injection reality + Rule-of-Two: <https://simonwillison.net/2025/Jun/16/the-lethal-trifecta/>, <https://simonw.substack.com/p/new-prompt-injection-papers-agents>; egress bypasses: <https://oddguan.com/blog/second-time-same-sandbox-anthropic-claude-code-network-allowlist-bypass-data-exfiltration/>, <https://unit42.paloaltonetworks.com/bypass-of-aws-sandbox-network-isolation-mode/>
-- Detail in [`../../notes/permissions.md`](../../notes/permissions.md) and the kill chains in [`08-threat-model.md`](threat-model.md).
-
----
 
 ## D7 — Eval layer: thin orchestration on the runtime, inverting OSWorld
 
@@ -509,7 +471,7 @@ A **native streaming SDK core + an optional MCP facade**:
 
 ### Context
 
-Running a computer-use platform at ultra-high concurrency is a **fleet-of-idle-VMs economics problem** layered on a **hostile-untrusted-input security problem**. The industry has converged: don't cold-boot per request — keep **warm pools** and **fork/restore from memory snapshots**. The OSS **`kubernetes-sigs/agent-sandbox`** SIG project has standardized the control-plane primitives (`Sandbox`, `SandboxTemplate`, `SandboxClaim`, `SandboxWarmPool` CRDs) plus pod-snapshot suspend/resume and a cheap suspended cold pool that replenishes the warm pool (a published reference cites ~300 sandboxes/s/cluster, p90 ~200 ms — vendor-published, unverified). **Idle time dominates cost**, so auto-suspend-to-snapshot on idle is the central lever.
+Running a computer-use platform at ultra-high concurrency is a **fleet-of-idle-VMs economics problem**. The industry has converged: don't cold-boot per request — keep **warm pools** and **fork/restore from memory snapshots**. The OSS **`kubernetes-sigs/agent-sandbox`** SIG project has standardized the control-plane primitives (`Sandbox`, `SandboxTemplate`, `SandboxClaim`, `SandboxWarmPool` CRDs) plus pod-snapshot suspend/resume and a cheap suspended cold pool that replenishes the warm pool (a published reference cites ~300 sandboxes/s/cluster, p90 ~200 ms — vendor-published, unverified). **Idle time dominates cost**, so auto-suspend-to-snapshot on idle is the central lever.
 
 ### Decision
 
@@ -614,7 +576,7 @@ GPU is an **opt-in acceleration tier**, not the default path.
 
 | Alternative | Why rejected |
 |---|---|
-| **GPU on by default** | Most tasks are CPU-only; GPU is expensive, snapshot-hostile, and scarce. Keep it opt-in and the fork tier the default. |
+| **GPU on by default** | Most tasks are CPU-only; GPU is expensive, snapshot-resistant, and scarce. Keep it opt-in and the fork tier the default. |
 | **Encode on A100/H100 (the AI fleet)** | Zero NVENC engines; silently forces CPU software encode (x264/SVT-AV1) — high latency, low density. Decision-changing constraint. |
 | **MIG for the encode tier** | MIG doesn't surface NVENC on A100/H100; Ada (L4/L40S) has no MIG. Use vGPU time-slicing or app-level packing. |
 | **Raw time-slicing / MPS for untrusted agents** | No memory/fault isolation; one tenant can OOM or crash the whole GPU. Must sit inside a vGPU/MIG/VM boundary. |
@@ -623,7 +585,7 @@ GPU is an **opt-in acceleration tier**, not the default path.
 
 ### Consequences
 
-- **Positive:** a credible GPU-accelerated tier (3D/WebGL/CUDA/heavy-render) plus a high-fidelity NVENC pixel channel and an enterprise trusted-compute variant — a differentiator no Firecracker-only competitor can match; the expensive, snapshot-hostile pool stays small.
+- **Positive:** a credible GPU-accelerated tier (3D/WebGL/CUDA/heavy-render) plus a high-fidelity NVENC pixel channel and an enterprise trusted-compute variant — a differentiator no Firecracker-only competitor can match; the expensive, snapshot-resistant pool stays small.
 - **Negative:** the GPU tier cannot fast-fork (a major architectural asymmetry); vGPU is a licensed product whose per-concurrent-user cost can dominate GPU TCO; the mdev→vendor-VFIO/SR-IOV transition (kernel 6.8+) makes guest-driver installs fragile and version-matrix-sensitive.
 - **Risks:** per-card density numbers are vendor best-case (e.g. ~130 AV1 720p30 streams/L4 is P1 preset at 720p — vendor-published, unverified) and must be benchmarked at Shinken's resolution/FPS/preset; GPU-TEE + NRAS maturity for agent workloads in 2026 is the unverified enterprise-wedge assumption.
 
@@ -692,4 +654,4 @@ The twelve decisions interlock; the load-bearing couplings:
 - **GPU (D11) is the one tier that breaks the fork invariant (D1):** it is snapshot-light by physics (VFIO/vGPU state is non-migratable), opt-in, and the encode hardware must be physically separate from any A100/H100 AI fleet.
 - **a11y coverage (D3)** is the single most load-bearing unverified assumption across the design; **every "(vendor-published, unverified)"** number in this document requires the first-party measurement plan before it anchors an SLA.
 
-Open questions carried forward (do not paper over): a11y coverage on Electron/Qt/canvas/games; Windows-in-cloud licensing and the macOS 2-VM/host economics; no first-party perf numbers yet; the consolidated threat model ([`08-threat-model.md`](threat-model.md)); the multi-player / non-exclusive computer-use in/out decision; and protocol/event-schema versioning + upcasting. See [`../../notes/open-questions.md`](../../notes/open-questions.md).
+Open questions carried forward (do not paper over): a11y coverage on Electron/Qt/canvas/games; Windows-in-cloud licensing and the macOS 2-VM/host economics; no first-party perf numbers yet; the isolation & capability note ([`threat-model.md`](threat-model.md)); the multi-player / non-exclusive computer-use in/out decision; and protocol/event-schema versioning + upcasting. See [`../../notes/open-questions.md`](../../notes/open-questions.md).

@@ -27,7 +27,7 @@ compatibility stubs that preserve old external links; the canonical copies live 
 | 05 | [Technical decisions (ADRs)](design/tech-decisions.md) | One ADR per decision D1–D12: context, decision, alternatives, consequences, evidence | ✅ |
 | 06 | [Roadmap](engineering/roadmap.md) | Phased plan: v0.0.1 semantic-complete reference runtime → performance/scale → eval at concurrency → cross-OS → cloud + GPU | ✅ |
 | 07 | [Glossary](design/glossary.md) | Shared vocabulary | ✅ |
-| 08 | [Threat model](design/threat-model.md) | Trust boundaries, STRIDE table, 5 kill chains, mitigations mapped to D6 | ✅ |
+| 08 | [Isolation & capability note](design/threat-model.md) | Runtime design note: the isolation boundary (D1) and capability scoping (D6), built vs designed | ✅ |
 | 09 | [Economics & build-vs-buy](design/economics-and-build-vs-buy.md) | Concurrency/cost model, build-vs-buy (OSS substrates vs in-house), measurement plan | ✅ |
 | 10 | [v0.0.1 implementation plan](engineering/v0.0.1-plan.md) | Feature-complete local/reference runtime: ACI, adapters, act/observe, `.skn`, capabilities, artifacts, tiny eval, a11y coverage harness, code layout | ✅ |
 | 11 | [ACI specification](design/aci-spec.md) | The north-star interface: elegant API, typed actions, observation, runtime state (checkpoint/fork/resume), the supporting replay (`.skn`) audit ledger, the async harness core + adapters | ✅ |

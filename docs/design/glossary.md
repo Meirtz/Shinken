@@ -1,6 +1,6 @@
 # 07 — Glossary
 
-Shared vocabulary for the Shinken design corpus. This is the canonical reference for every term used in the sibling docs ([Vision](vision.md), [PRD](prd.md), [Architecture](architecture.md), [OSWorld teardown](osworld-analysis.md), [Landscape](landscape.md), [Tech Decisions](tech-decisions.md), [Roadmap](../engineering/roadmap.md), [Threat Model](threat-model.md), [Economics & Build-vs-Buy](economics-and-build-vs-buy.md)). Decisions are referenced by their **D-number** (see [05 — Tech Decisions](tech-decisions.md)) so each definition reconciles to the choice that owns it. Speed/density/cost numbers are tagged **(vendor-published, unverified)** — no first-party Shinken measurements exist yet, and a measurement spike is a tracked open question (see [Roadmap](../engineering/roadmap.md) and [notes/open-questions.md](../../notes/open-questions.md)). Date of record: **2026-05-30**.
+Shared vocabulary for the Shinken design corpus. This is the canonical reference for every term used in the sibling docs ([Vision](vision.md), [PRD](prd.md), [Architecture](architecture.md), [OSWorld teardown](osworld-analysis.md), [Landscape](landscape.md), [Tech Decisions](tech-decisions.md), [Roadmap](../engineering/roadmap.md), [Isolation & capability note](threat-model.md), [Economics & Build-vs-Buy](economics-and-build-vs-buy.md)). Decisions are referenced by their **D-number** (see [05 — Tech Decisions](tech-decisions.md)) so each definition reconciles to the choice that owns it. Speed/density/cost numbers are tagged **(vendor-published, unverified)** — no first-party Shinken measurements exist yet, and a measurement spike is a tracked open question (see [Roadmap](../engineering/roadmap.md) and [notes/open-questions.md](../../notes/open-questions.md)). Date of record: **2026-05-30**.
 
 Terms are alphabetical. Cross-references use *italics*. External sources are cited inline by URL and collected in [notes/sources.md](../../notes/sources.md).
 
@@ -187,10 +187,6 @@ memory/block state is; macOS APFS clone is disk-style and not a Firecracker-clas
 ### Substrate / Provider
 
 A pluggable virtualization backend under a *Sandbox*. Candidates: Firecracker (headless Linux), QEMU-microvm / crosvm (Linux desktop, virtio-gpu), Cloud Hypervisor (Windows / GPU), Apple Virtualization.framework (macOS on Apple hardware), or the OSS *kubernetes-sigs/agent-sandbox* CRD (container tier). Isolation is **tiered and routed by (OS × needs-GPU × needs-fast-fork)** (**D1**). Firecracker has no display/GPU, so desktop and GPU tiers use heavier VMMs. References: [Firecracker](https://aws.amazon.com/blogs/opensource/firecracker-open-source-secure-fast-microvm-serverless/), [Kata vs Firecracker vs gVisor](https://northflank.com/blog/kata-containers-vs-firecracker-vs-gvisor).
-
-### taint-tracking
-
-Propagating an "untrusted-derived" label through the dataflow so that boundary capability requests built from untrusted content (e.g. web text → external egress with credentials) get stricter handling in the *Capability Manager* (**D6**). It is the mitigation for the prompt-injection → exfiltration kill chain. See the [Threat Model](threat-model.md) for the full chain and rules.
 
 ### tool_runner boundary
 

@@ -1,0 +1,16 @@
+n,mode,loop_threads,rss_mb,rss_delta_mb,observe_all_s,ms_per_sandbox
+1,shared_loop,1,36.3,0.2,0.0,0.29
+2,shared_loop,1,36.6,0.2,0.001,0.51
+4,shared_loop,1,37.0,0.4,0.001,0.28
+8,shared_loop,1,37.5,0.4,0.003,0.38
+16,shared_loop,1,39.1,1.6,0.006,0.4
+32,shared_loop,1,42.3,3.0,0.011,0.35
+64,shared_loop,1,48.2,5.7,0.017,0.26
+128,shared_loop,1,60.0,11.3,0.028,0.22
+256,shared_loop,1,83.4,22.9,0.059,0.23
+512,shared_loop,1,130.2,45.6,0.121,0.24
+1,sync_facade,1,130.7,0.0,0.0,0.47
+4,sync_facade,4,130.7,0.0,0.001,0.3
+16,sync_facade,16,130.7,0.0,0.004,0.25
+64,sync_facade,64,131.6,0.9,0.016,0.25
+256,sync_facade,256,160.8,29.2,0.061,0.24
