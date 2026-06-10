@@ -12,11 +12,13 @@ import base64
 import contextlib
 import json
 import logging
+import random
 import shutil
 import tempfile
 import threading
 import time
 import uuid
+import weakref
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -43,6 +45,59 @@ _MAX_WS_MESSAGE = 16 * 1024 * 1024
 # Bound the handshake recv so aconnect() can't hang forever against a server that accepts
 # the socket but never sends `welcome`.
 _HANDSHAKE_TIMEOUT = 10.0
+# The websockets library's keepalive default, restated so a jittered dial (`ping_jitter`)
+# adds its uniform offset to the same base the un-jittered path uses.
+_PING_INTERVAL = 20.0
+
+# ---- Many-sandbox memory governance (docs/engineering/many-sandbox-concurrency.md §2) ----
+# Each connection bounds its frame queue by COUNT (_FRAME_QUEUE_MAX, drop-oldest) — right for
+# one sandbox, N-unbounded in aggregate: 1024 conns × 32 frames × ~100 KB JPEG ≈ 3.2 GB worst
+# case; with PNG (~1.8 MB/frame) ~59 GB. This knob adds an OPT-IN byte budget shared by every
+# AsyncSandbox on one event loop: when set, each push accounts the frame's resident bytes and
+# evicts the approximately globally-oldest queued frames — whichever connection holds them —
+# until the budget holds.
+#
+# Scope: PER EVENT LOOP. The loop is the deployment unit (one fleet = one loop — the async
+# core directly, or one SharedLoop for sync callers), and the loop's single-threadedness is
+# what makes the shared counter/deque safe WITHOUT locks on the hot path. Two loops = two
+# independent budgets. Default None = off (exactly the current per-connection behavior).
+# Recommended fleet setting: 256 MiB (256 << 20). Set it BEFORE connecting the fleet: frames
+# queued while the knob was off are not in the eviction order and simply drain on consumption.
+GLOBAL_FRAME_BUDGET_BYTES: int | None = None
+
+# loop -> {"used": queued bytes, "frames": live tracked-frame count, "order": deque of
+# AsyncSandbox refs in push order (one per tracked frame; stale entries lazily drained)}.
+# WeakKey so a finished loop's accounting is collectable with it.
+_FRAME_BUDGET_STATES: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+
+
+def _evict_over_budget(state: dict) -> None:
+    """Evict the approximately globally-oldest queued frames on this loop until the byte
+    budget is satisfied. Only ever runs on the owning loop's thread (no locks). ``order``
+    holds one entry per tracked frame push; an entry whose frame was already consumed is
+    stale — skipped here, drained at the head opportunistically, and compacted when stale
+    entries outnumber live frames, so the push path stays O(1) amortized."""
+    order: deque = state["order"]
+    while order and not order[0]._queued_bytes:  # head-drain consumed-frame entries
+        order.popleft()
+    budget = GLOBAL_FRAME_BUDGET_BYTES
+    if budget is not None:
+        while state["used"] > budget and order:
+            sb = order.popleft()
+            if sb._queued_bytes:
+                sb._drop_oldest_frame()
+    # Periodic compaction: stale middle entries (consumed frames) can pile up behind a
+    # long-lived head entry; rebuild so entries == live frames when 4:1 outnumbered.
+    if len(order) > 64 and len(order) > 4 * state["frames"]:
+        per_sandbox: dict[int, int] = {}
+        fresh: deque = deque()
+        for sb in order:
+            n = per_sandbox.get(id(sb), 0)
+            if n < len(sb._queued_bytes):
+                fresh.append(sb)
+                per_sandbox[id(sb)] = n + 1
+        state["order"] = fresh
+
 
 # Sentinels pushed onto the frame queue. _STREAM_END = the stream stopped cleanly (server
 # stop or astop_screencast); _STREAM_LOST = the connection died mid-stream, so a consumer
@@ -190,6 +245,10 @@ class AsyncSandbox:
         self._pending: dict[str, asyncio.Future] = {}
         self._pong_waiters: deque[asyncio.Future] = deque()
         self._frames: asyncio.Queue = asyncio.Queue(maxsize=_FRAME_QUEUE_MAX)
+        # Frame-budget accounting (GLOBAL_FRAME_BUDGET_BYTES): resident size of each queued
+        # FRAME in queue order (sentinels untracked), plus this loop's shared state (lazy).
+        self._queued_bytes: deque[int] = deque()
+        self._budget_state: dict | None = None
         self._reader: asyncio.Task | None = None
         self._rpc_timeout = 30.0  # per-RPC reply deadline (#142); async callers never hang
         self._stream_scope = "screen"  # capture region of the active screencast (#143)
@@ -239,17 +298,65 @@ class AsyncSandbox:
         """Drop queued stream frames/sentinels before starting a new stream."""
         while True:
             try:
-                self._frames.get_nowait()
+                item = self._frames.get_nowait()
             except asyncio.QueueEmpty:
                 return
+            self._account_popped(item)
+
+    def _loop_budget_state(self) -> dict:
+        """This event loop's shared frame-budget accounting (created lazily, cached)."""
+        state = self._budget_state
+        if state is None:
+            loop = asyncio.get_running_loop()
+            state = _FRAME_BUDGET_STATES.get(loop)
+            if state is None:
+                state = {"used": 0, "frames": 0, "order": deque()}
+                _FRAME_BUDGET_STATES[loop] = state
+            self._budget_state = state
+        return state
+
+    def _account_popped(self, item: object) -> None:
+        """Release the budget accounting for one item popped off the frame queue.
+        Sentinels are untracked; ``_queued_bytes`` parallels the queue's frame
+        subsequence, so the popped frame's size is always its head."""
+        if item is _STREAM_END or item is _STREAM_LOST or not self._queued_bytes:
+            return
+        size = self._queued_bytes.popleft()
+        if self._budget_state is not None:
+            self._budget_state["used"] -= size
+            self._budget_state["frames"] -= 1
+
+    def _drop_oldest_frame(self) -> None:
+        """Drop this queue's oldest item (frame or sentinel) and release its accounting."""
+        try:
+            item = self._frames.get_nowait()
+        except asyncio.QueueEmpty:
+            return
+        self._account_popped(item)
 
     def _push_frame(self, item: object) -> None:
-        """Bound the client-side frame queue with drop-oldest semantics."""
+        """Bound the client-side frame queue: drop-oldest at ``_FRAME_QUEUE_MAX`` per
+        connection, plus the opt-in per-loop byte budget (``GLOBAL_FRAME_BUDGET_BYTES``)
+        shared across every AsyncSandbox on this event loop — see
+        docs/engineering/many-sandbox-concurrency.md §2. Always runs on the owning loop's
+        thread (reader task / session coroutines), so the shared accounting needs no locks."""
         if self._frames.full():
-            with contextlib.suppress(asyncio.QueueEmpty):
-                self._frames.get_nowait()
-        with contextlib.suppress(asyncio.QueueFull):
+            self._drop_oldest_frame()
+        try:
             self._frames.put_nowait(item)
+        except asyncio.QueueFull:  # pragma: no cover — full() cleared just above
+            return
+        if item is _STREAM_END or item is _STREAM_LOST:
+            return  # sentinels are never accounted and never evicted by the budget
+        state = self._loop_budget_state()
+        img = (item.get("image") or {}) if isinstance(item, dict) else {}
+        size = len(img.get("ref") or "")  # resident payload: the queued base64 string
+        self._queued_bytes.append(size)
+        state["used"] += size
+        state["frames"] += 1
+        if GLOBAL_FRAME_BUDGET_BYTES is not None:
+            state["order"].append(self)
+            _evict_over_budget(state)
 
     def _dispatch(self, msg: dict) -> None:
         kind = msg.get("type")
@@ -741,6 +848,7 @@ class AsyncSandbox:
             )
         except asyncio.TimeoutError:
             return None
+        self._account_popped(item)  # release the consumed frame's budget bytes
         if item is _STREAM_END:
             return None
         if item is _STREAM_LOST:
@@ -886,6 +994,22 @@ class AsyncSandbox:
         with contextlib.suppress(Exception):
             await self._ws.close()
         self._fail_pending(ConnectionError("session closed"))
+        # Release this session's frame-budget bytes (a closed session must not pin the
+        # shared per-loop budget), but keep the stream sentinels readable: a consumer
+        # calling next_frame() after close still sees END/LOST rather than stale frames.
+        sentinels = []
+        while True:
+            try:
+                item = self._frames.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            if item is _STREAM_END or item is _STREAM_LOST:
+                sentinels.append(item)
+            else:
+                self._account_popped(item)
+        for sentinel in sentinels:
+            with contextlib.suppress(asyncio.QueueFull):
+                self._frames.put_nowait(sentinel)
         if self._artifact_tmp is not None:  # clean the per-session temp store, if we made one
             with contextlib.suppress(Exception):
                 shutil.rmtree(self._artifact_tmp, ignore_errors=True)
@@ -899,9 +1023,21 @@ async def aconnect(
     enforce_capabilities: bool | None = None,
     artifact_root: str | None = None,
     on_ask: Callable[[str, str | None, str], bool] | None = None,
+    ping_jitter: float = 0.0,
 ) -> AsyncSandbox:
-    """Open an async session and complete the ACI handshake."""
-    ws = await _ws_connect(_to_uri(addr), max_size=_MAX_WS_MESSAGE)
+    """Open an async session and complete the ACI handshake.
+
+    ``ping_jitter`` decorrelates keepalive phases across a fleet: the websockets library
+    pings every 20 s *from the moment of connect*, so N sessions dialed together ping in
+    the same tick forever — an N-packet burst every 20 s. A positive jitter draws this
+    connection's ping interval once, at dial time, as ``20.0 + uniform(0, ping_jitter)``
+    (distinct periods drift the phases apart permanently). ``0.0`` (default) keeps the
+    library default untouched. Recommended ~5–10 s for fleets of 256+ — see
+    docs/engineering/many-sandbox-concurrency.md §3.2."""
+    ws_kwargs: dict[str, Any] = {"max_size": _MAX_WS_MESSAGE}
+    if ping_jitter > 0:
+        ws_kwargs["ping_interval"] = _PING_INTERVAL + random.uniform(0.0, ping_jitter)
+    ws = await _ws_connect(_to_uri(addr), **ws_kwargs)
     hello: dict = {"type": "hello", "v": 0, "client": _CLIENT}
     if token:
         hello["token"] = token
@@ -1414,6 +1550,7 @@ def connect(
     artifact_root: str | None = None,
     on_ask: Callable[[str, str | None, str], bool] | None = None,
     loop: SharedLoop | None = None,
+    ping_jitter: float = 0.0,
 ) -> Sandbox:
     """Connect to a running ``shinkend`` and complete the ACI handshake (blocking).
 
@@ -1429,7 +1566,10 @@ def connect(
     spawning a dedicated background thread — pass the same one to every ``connect`` when
     a single process holds many sessions (closing such a Sandbox leaves the shared loop
     running). For CONCURRENT fan-out across many sandboxes, the async core is the native
-    surface: ``aconnect()`` + ``asyncio.gather`` on your own event loop."""
+    surface: ``aconnect()`` + ``asyncio.gather`` on your own event loop.
+
+    ``ping_jitter`` decorrelates keepalive phases across a fleet dialed together (see
+    :func:`aconnect` and docs/engineering/many-sandbox-concurrency.md §3.2)."""
     owns_loop = loop is None
     bg = _BackgroundLoop() if loop is None else loop._bg
     try:
@@ -1441,6 +1581,7 @@ def connect(
                 enforce_capabilities=enforce_capabilities,
                 artifact_root=artifact_root,
                 on_ask=on_ask,
+                ping_jitter=ping_jitter,
             )
         )
     except Exception:

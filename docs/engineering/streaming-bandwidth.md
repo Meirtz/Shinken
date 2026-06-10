@@ -116,3 +116,7 @@ proxy → SDK connect; then synchronized rounds of {observe JPEG q80 @1280 (~48 
 
 Reproduce with the local dev-test harness (not committed): the bandwidth probe and the
 fan-out probe under `devtest/`.
+
+The full many-sandbox concurrency design (memory governance, lifecycle at scale, pull-vs-push
+scheduling, RTT amortization, N=64/256/1024 gates) builds on these numbers:
+[`many-sandbox-concurrency.md`](many-sandbox-concurrency.md).
