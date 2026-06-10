@@ -2,7 +2,7 @@
 
 Semantic-free: no scorer, no reward, no task. It drives any ``operator.Agent`` against any
 ``Session`` and returns a :class:`Trajectory`. Every consumer (eval, train, interactive,
-red-team, …) composes this; none of them are visible here. It is a *convenience* over
+robustness testing, …) composes this; none of them are visible here. It is a *convenience* over
 ``session.observe()`` / ``session.act_batch()`` — a caller may always drive those directly.
 """
 

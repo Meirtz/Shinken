@@ -7,10 +7,10 @@
 ## 1. Why this exists (and the trap it avoids)
 
 Shinken needs **one runtime** that an agent can be driven on for *any* purpose — evaluation, RL/SFT data
-collection, an interactive/production agent harness, red-teaming, regression, dataset replay, and
+collection, an interactive/production agent harness, robustness testing, regression, dataset replay, and
 **uses we have not thought of yet**. The earlier framing — "an OSWorld benchmark adapter" — is too narrow:
 it bakes *evaluation* assumptions (a task list, a `Scorer`, a pass/fail terminal) into the core, so any
-consumer without a "score" (training rollouts, a production agent, red-teaming) fights the abstraction.
+consumer without a "score" (training rollouts, a production agent, robustness testing) fights the abstraction.
 
 **The trap:** if you model the runtime around *consumers* (`eval`, `train`), those concepts leak into the
 core and the scope is permanently narrowed. The fix is to model **mechanism, not policy** — a *narrow
@@ -136,7 +136,7 @@ registry, a uniform CLI (`shinken run <workload> --provider <p> …`), and out-o
 | `eval` | (golden `checkpoint` → `fork` N) → `rollout` → an **optional** `Scorer`(trajectory, session) | pass-rate summary |
 | `train` | `rollout`(s) + a `RewardFn`; `fork` for best-of-N / tree-search / reset-from-golden | trajectories / dataset |
 | `interactive` | one long `Session`, `observe`/`act`, no terminal, no score | session handle |
-| *(red-team, regression, replay, A/B substrate, …)* | other compositions | consumer-defined |
+| *(robustness testing, regression, replay, A/B substrate, …)* | other compositions | consumer-defined |
 
 `Scorer`, `RewardFn`, `TaskSource` live **in the consumer libs, never in the waist**. **OSWorld is one
 example**: a `TaskSource` (its `evaluation_examples` task configs, loaded from `OSWORLD_PATH` — never

@@ -1,6 +1,6 @@
 """Workload — the unified, deliberately under-specified consumer surface.
 
-Every way of *using* the runtime — eval, training, an interactive agent harness, red-team,
+Every way of *using* the runtime — eval, training, an interactive agent harness, robustness testing,
 regression, replay, and uses we have not thought of yet — is a ``Workload``. The protocol
 unifies **entry + discovery**, never **behaviour**: it is a single method, ``run(rt, **params)
 -> Any``. It MUST NEVER grow ``score``/``reward``/``terminal``/``task`` — that is exactly what
