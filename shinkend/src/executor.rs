@@ -90,6 +90,14 @@ pub struct ActionSpec {
     /// delivered frame. Omitted = full frames.
     #[serde(default)]
     pub delta: Option<bool>,
+    /// For `screenshot`: content-negotiated observation. A `frame_hash` from a
+    /// previous screenshot observation; when the freshly captured frame's raw-pixel
+    /// hash equals it, the runtime answers with a compact `not_modified` observation
+    /// (no payload) instead of re-encoding and re-sending identical pixels. Clients
+    /// gate on `capabilities.frame_dedup` (this struct rejects unknown fields, so a
+    /// pre-dedup runtime nacks an action carrying this).
+    #[serde(default)]
+    pub if_none_match: Option<String>,
 }
 
 /// Wire image codec for a captured frame. PNG is the lossless default (back-compatible
@@ -449,10 +457,47 @@ fn encode_jpeg(rgb: &[u8], w: u16, h: u16, quality: u8) -> Result<Vec<u8>> {
     Ok(out)
 }
 
+/// FNV-1a 64-bit offset basis / prime.
+const FNV1A_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+const FNV1A_PRIME: u64 = 0x0000_0100_0000_01b3;
+
+/// Fold `bytes` into a running FNV-1a 64 state (start from [`FNV1A_BASIS`]).
+fn fnv1a_fold(mut hash: u64, bytes: &[u8]) -> u64 {
+    for &b in bytes {
+        hash ^= b as u64;
+        hash = hash.wrapping_mul(FNV1A_PRIME);
+    }
+    hash
+}
+
+/// FNV-1a 64-bit hash — the cheap content hash behind idle-frame suppression
+/// (screencast, over encoded bytes) and screenshot dedup (over raw pixels).
+pub fn fnv1a(bytes: &[u8]) -> u64 {
+    fnv1a_fold(FNV1A_BASIS, bytes)
+}
+
+/// The wire `frame_hash` of a captured frame: FNV-1a 64 over the RAW RGB8 pixels
+/// (dims folded in first, so a row-shift between geometries can't alias), as 16
+/// lowercase hex chars.
+///
+/// The hash is deliberately computed over RAW pixels (post-scope/downscale,
+/// PRE-encode), not the encoded payload, so it is **codec-independent**: the same
+/// framebuffer hashes identically whether the client asked for png or jpeg at any
+/// quality, and stays stable across encoder versions/settings. That is exactly the
+/// identity fork fleets share — N replicas forked from one checkpoint have
+/// byte-identical framebuffers, while their *encoded* bytes could legally differ —
+/// so an `if_none_match` minted by one replica (or codec) matches any other.
+pub fn frame_hash_hex(rgb: &[u8], w: u16, h: u16) -> String {
+    let mut hash = fnv1a_fold(FNV1A_BASIS, &w.to_le_bytes());
+    hash = fnv1a_fold(hash, &h.to_le_bytes());
+    hash = fnv1a_fold(hash, rgb);
+    format!("{hash:016x}")
+}
+
 /// Downscale (if requested) then encode an RGB8 frame per `opts`, returning the codec the
 /// caller should advertise on the wire. Single chokepoint so every backend's `capture`
 /// shares identical downscale+encode semantics.
-fn encode_frame(rgb: &[u8], w: u16, h: u16, opts: EncodeOpts) -> Result<CapturedImage> {
+pub fn encode_frame(rgb: &[u8], w: u16, h: u16, opts: EncodeOpts) -> Result<CapturedImage> {
     let (rgb, w, h) = match opts.max_long_edge {
         Some(m) => downscale_rgb(rgb, w, h, m),
         None => (rgb.to_vec(), w, h),
@@ -1853,6 +1898,55 @@ mod tests {
         .unwrap();
         assert_eq!(img.w, 20); // longer edge capped
         assert_eq!(img.h, 10); // aspect preserved
+    }
+
+    #[test]
+    fn fnv1a_distinguishes_and_repeats() {
+        assert_eq!(fnv1a(b"frame-a"), fnv1a(b"frame-a"));
+        assert_ne!(fnv1a(b"frame-a"), fnv1a(b"frame-b"));
+    }
+
+    /// frame_hash stability: same raw pixels+dims → same hex; any pixel or dimension
+    /// change → different hex. The hex form is 16 lowercase chars (fnv1a-64).
+    #[test]
+    fn frame_hash_is_stable_and_dimension_sensitive() {
+        let rgb = vec![9u8; 4 * 2 * 3];
+        let h1 = frame_hash_hex(&rgb, 4, 2);
+        assert_eq!(h1, frame_hash_hex(&rgb, 4, 2));
+        assert_eq!(h1.len(), 16);
+        assert!(h1
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        // same bytes, transposed dims → different hash (dims are folded in)
+        assert_ne!(h1, frame_hash_hex(&rgb, 2, 4));
+        let mut other = rgb.clone();
+        other[5] ^= 1;
+        assert_ne!(h1, frame_hash_hex(&other, 4, 2));
+    }
+
+    /// The dedup identity is the RAW frame: encoding the same pixels as PNG and JPEG
+    /// yields different payload bytes but the SAME frame_hash — codec-independence,
+    /// the property that lets a hash minted under one codec match under another.
+    #[test]
+    fn frame_hash_is_codec_independent() {
+        let (w, h) = (8u16, 8u16);
+        let rgb = gradient(w, h);
+        let png = encode_frame(&rgb, w, h, EncodeOpts::default()).unwrap();
+        let jpeg = encode_frame(
+            &rgb,
+            w,
+            h,
+            EncodeOpts {
+                max_long_edge: None,
+                format: ImageFormat::Jpeg,
+                quality: 60,
+            },
+        )
+        .unwrap();
+        assert_ne!(png.data, jpeg.data);
+        assert_eq!(frame_hash_hex(&rgb, w, h), frame_hash_hex(&rgb, w, h));
+        // and hashing the ENCODED payloads would NOT have matched:
+        assert_ne!(fnv1a(&png.data), fnv1a(&jpeg.data));
     }
 
     #[test]

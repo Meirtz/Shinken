@@ -10,9 +10,11 @@ measured local datapoints.
 Everything here is reproducible from the repo:
 
 - **Suites** (scripts): [`benchmarks/`](../../benchmarks) — one standalone script per suite,
-  `benchmarks/run_all.sh` (or `make benchmarks`) runs them all serially in ~20–30 min.
+  `benchmarks/run_all.sh` (or `make benchmarks`) runs them all serially in ~20–30 min. The
+  trycua/cua baseline suite (§12) runs separately because it needs the third-party stack
+  installed (`pip install cua-sandbox==0.1.16` + their images).
 - **Raw datapoints** (tracked): [`benchmarks/results/*.json`](../../benchmarks/results) —
-  **~100k individual datapoints** across the ten suites (~10.8k excluding the high-volume
+  **~100k individual datapoints** across the suites (~10.9k excluding the high-volume
   client-scale suite S6), each JSON carrying the full environment fingerprint. No image
   payloads are stored, only numbers.
 - **Figures** (tracked, embedded below): [`docs/assets/bench/*.png`](../assets/bench),
@@ -550,6 +552,190 @@ timeout (i.e. the desktop bring-up stalls; shinkend reports it honestly). It sur
 typed `ProviderError` after `startup_timeout`, and the fork suite records it as an explicit
 `infra_failure` row. 122 consecutive instrumented single boots reproduced zero occurrences;
 root-cause work continues.
+
+## 10. Fleet-level observation dedup over a forked fleet (S10 — `bench_fork_dedup.py`)
+
+The fork-native observation optimization the codec knobs can't reach: N replicas forked from
+ONE golden checkpoint show near-identical screens, yet a plain observe-all ships the same
+frame N times per round. **Content-negotiated observation** closes that: the runtime stamps
+every screenshot with a `frame_hash` computed over **raw pixels** (post-scope/downscale,
+pre-encode — codec-independent, so a hash minted under PNG matches a JPEG request over the
+same framebuffer), the SDK echoes the last seen hash back as `if_none_match`, and on a match
+the runtime skips the encode and answers a ~120-byte `not_modified` instead of the payload.
+One shared `shinken.FrameCache` across the fleet's sessions is what makes it *fleet-level*:
+the first replica's full frame answers every other replica's observe. Capability-negotiated
+(`capabilities.frame_dedup`): old runtimes and old clients are byte-for-byte unaffected.
+Only a runtime that owns fork can line this up — the replicas share pixel identity *by
+construction* (the provider also pins the guest hostname, so a fork can't silently diverge
+from its golden via the shell prompt).
+
+Protocol: golden checkpoint → fork N ∈ {4, 8, 16} (the S4 fan-out) → prime every replica
+with the same deterministic xterm content → 6 observe-all rounds (JPEG q80) with dedup OFF,
+then 6 with dedup ON against one shared FrameCache; mid-way through the ON phase **two
+replicas type different text** — the honest divergence event. Fleet pixel identity is
+verified per run (modal `frame_hash` share), since dedup can only win on replicas that
+really render identical screens: measured **4/4, 7/8, 16/16**.
+
+| | dedup off | dedup on |
+|---|---:|---:|
+| wire per observe-all round, N=16 (identical fleet, steady state) | 1,371 KiB | **1.9 KiB (~725×)** |
+| wire per round, N=16 (first-touch round: one full frame serves the fleet) | 1,371 KiB | 87.5 KiB (~N×) |
+| whole suite, ALL dedup rounds incl. warmup + divergence (N ∈ {4,8,16}) | 14.4 MiB | **0.94 MiB (15.2×)** |
+| dedup hit rate over the suite | — | **93.5%** (157/168 observes) |
+
+The divergence curve behaves exactly as designed: when 2 of N replicas stop matching the
+fleet, the hit rate dips to (N−2)/N for ONE round (each diverged replica pays one full
+frame), then returns to N/N — a diverged replica re-converges against its **own** new
+content (the session-local candidate is preferred over the shared one), while the clean
+replicas never stop hitting. The N=8 run's 7/8 identity row shows the same mechanism
+absorbing real-world imperfection: the one replica whose paint differed simply became its
+own dedup domain after one miss.
+
+![forked-fleet observation dedup](../assets/bench/fork_dedup.png)
+
+**Honest caveats.** (1) Run on a **contended host** (`contended_host: true` — another
+benchmark series was using the same Docker daemon), so round wall-clock numbers are
+indicative only; the byte counts are exact (`wire_len` of every reply, binary framing).
+(2) The steady-state ~725× is the static-identical-fleet ceiling — it measures payload vs
+`not_modified` size, not codec quality; a fleet whose screens *change identically* every
+round would re-fetch one full frame per round (the ~N× row), and a fully diverged fleet
+degrades to ~1× plus a few tens of bytes per observe of hash overhead. (3) Replicas are primed by typing
+the same content because the disk-tier fork re-boots the desktop (files-only state); a
+memory-tier (CRIU) fork would be born pixel-identical and skip the priming step entirely —
+this suite's mechanism is what that tier will inherit. (4) Observes are issued sequentially
+within a round; concurrent observes would turn the first-touch round into N misses (no
+winner yet) but leave steady state unchanged.
+
+## 11. Pipelined step under emulated WAN (S11 — `bench_step_pipeline.py`)
+
+The step-latency lever ([`many-sandbox-concurrency.md`](many-sandbox-concurrency.md) §5): a
+k-action agent step + one observation costs **k+1 serial round-trips** through the plain sync
+facade but **~1 round-trip** through `Sandbox.step()` (pipelined dispatch + fused trailing
+observation, no protocol change). One local sandbox is reached through a TCP delay proxy
+([`benchmarks/_wan_proxy.py`](../../benchmarks/_wan_proxy.py) — macOS has no netem) at added
+RTT ∈ {0 loopback, 50, 150, 300} ms, step shapes k ∈ {3, 5, 8} (+observe JPEG q80 @1024),
+N=30 steps per cell — 720 step datapoints.
+
+**Emulation validation** (recorded in-run, before any step timing): ACI `ping` p50 through the
+proxy measured 0.8 / 53.9 / 153.7 / 303.5 ms against nominal +0 / 50 / 150 / 300 — the proxy
+adds what it claims (~3 ms framework overhead).
+
+| added RTT | k | sequential p50 (k+1 RTT) | `step()` p50 (~1 RTT) | steps/s seq → pipe | speedup (bound k+1) |
+|---:|---:|---:|---:|---:|---:|
+| 0 (loopback) | 3 | 8.7 ms | 7.2 ms | 115 → 138 | 1.2× (4×) |
+| 0 (loopback) | 5 | 9.6 ms | 7.4 ms | 104 → 135 | 1.3× (6×) |
+| 0 (loopback) | 8 | 11.6 ms | 8.0 ms | 86 → 125 | 1.5× (9×) |
+| 50 ms | 3 | 228.8 ms | 66.1 ms | 4.4 → 15.1 | 3.5× (4×) |
+| 50 ms | 5 | 335.7 ms | 61.1 ms | 3.0 → 16.4 | 5.5× (6×) |
+| 50 ms | 8 | 499.2 ms | 63.5 ms | 2.0 → 15.8 | 7.9× (9×) |
+| 150 ms | 3 | 628.3 ms | 164.8 ms | 1.6 → 6.1 | 3.8× (4×) |
+| **150 ms** | **5** | **937.1 ms** | **165.1 ms** | **1.1 → 6.1** | **5.7× (6×)** |
+| 150 ms | 8 | 1400.9 ms | 169.3 ms | 0.7 → 5.9 | 8.3× (9×) |
+| 300 ms | 3 | 1227.8 ms | 318.2 ms | 0.8 → 3.1 | 3.9× (4×) |
+| 300 ms | 5 | 1844.6 ms | 320.5 ms | 0.5 → 3.1 | 5.8× (6×) |
+| 300 ms | 8 | 2751.1 ms | 322.6 ms | 0.4 → 3.1 | 8.5× (9×) |
+
+![step wall p50 vs RTT, and convergence to the (k+1)× bound](../assets/bench/step_pipeline.png)
+
+**Reads:**
+- **The k+1 → ~1 RTT collapse is real and converges to its bound.** Sequential step wall
+  tracks (k+1)·RTT almost exactly (300 ms, k=8: 2.75 s ≈ 9 × 0.306 s); pipelined step wall is
+  ~RTT + 15–20 ms **independent of k** (318–323 ms at 300 ms RTT for k=3/5/8) — the speedup
+  reaches 3.9×/5.8×/8.5× against the 4×/6×/9× theoretical bounds, the gap being the constant
+  server-side execute+encode time that pipelining cannot remove.
+- **At intercontinental distance (~0.28–0.38 s, B1/B3), a 5-action step is the difference
+  between ~0.5 and ~3 steps/s per sandbox** — pipelining is what keeps a WAN rollout
+  RTT-bound at *one* RTT per step rather than k+1.
+- **Failure semantics are honest, not optimistic:** `step()` has no `skipped` status —
+  every action is already on the wire when an earlier one fails and executes server-side
+  regardless, so each row reports its real `ok | error | timeout | sandbox_died` outcome and
+  the fused observation still returns after a mid-step per-action error (unit-tested against
+  a deferred-reply mock; `sdk/python/tests/test_step_pipeline.py`).
+- **Contention caveat:** this run shared the Docker daemon with a concurrent benchmark rerun
+  (~100 live containers), so treat the absolute milliseconds as *contended* — the loopback
+  tier still landed within ~2 ms of the uncontended S3 numbers, and the RTT-dominated ratios
+  (the point of the suite) are insensitive to host load.
+
+## 12. First-party baseline vs trycua/cua local paths (S12 — `bench_baseline_cua.py`)
+
+The same act-and-observe loop measured against the closest analog's **shipped local paths**,
+both stacks as shipped, sequential, warm-ups discarded (the osworld_loop fairness discipline).
+Pinned: `cua-sandbox==0.1.16` (PyPI), `lume 0.3.10`, `trycua/cua-xfce@sha256:3bf853…`
+(their local Linux desktop image, built 2026-03-18, bundles `cua-computer-server 0.3.20`),
+study clone at tag `lume-v0.3.10`. The shinken leg runs at cua-xfce's default **1024×768** so
+the pixel cells are size-matched; both stacks default to PNG screenshots; both pay base64+JSON
+framing (theirs HTTP request/response per command, ours a persistent WebSocket). Both Docker
+legs share one Docker daemon (sequentially, never concurrent); the ~23 GiB `lume pull` running
+on this host that day was paused (SIGSTOP) during the measured window. Reps that failed a
+stack's own readiness gate are recorded in the JSON (`flaked_reps_retried`) and retried once —
+never silently dropped.
+
+| cell (p50, same window) | Shinken | cua local container | ratio |
+|---|---:|---:|---:|
+| boot → usable (create + connect + first screenshot) | 3.8 s | 8.5 s | 2.3× |
+| act + observe step (click + full screenshot) | **2.9 ms** | 174 ms | **61×** |
+| — of which click | 0.54 ms | 3.0 ms | |
+| — of which full screenshot | 2.3 ms | 171 ms | |
+| observation bytes/frame (default PNG, settled desktop) | 22.3 KiB | 92.5 KiB | |
+| JPEG q80 lever (same frame) | 18.7 KiB | SDK raises¹ | |
+| checkpoint live state | **0.56 s** | **not shipped locally**² | |
+| fork → usable (state verified 8/8) | **3.8 s** | **not shipped locally**² | |
+| suspend / resume (`docker pause`/`unpause`)³ | n/a | 38 / 64 ms | |
+
+¹ Their SDK exposes `screenshot(format="jpeg", quality=…)`, but the shipped image's bundled
+`computer-server 0.3.20` ignores it and returns PNG; the SDK's magic-byte guard then raises
+`ValueError: requested 'jpeg' but got 'png'` — recorded verbatim in the JSON.
+² Exercised, not assumed: local `Sandbox.snapshot()` raises
+`NotImplementedError: Snapshots are only supported for cloud sandboxes` (their snapshot tests
+skip without `CUA_API_KEY`). Their cloud docs claim fork-from-snapshot in 1–5 s typical,
+"nearly instant" on CoW storage (vendor-published, unverified).
+³ Their only local state verbs on this path: a pause is not a checkpoint — no copy exists, one
+instance, no fan-out, and the state dies with the container.
+
+![boot, step, and local state verbs: shinken vs cua local](../assets/bench/baseline_cua.png)
+
+**The lume leg (their macOS-VM path on Apple's Virtualization.framework).** Attempted for real,
+and the CLI itself works on this host: `lume 0.3.10` creates Linux VMs via Vz.fw with no
+entitlement issues, `lume serve` answers on :7777, and cloning a stopped VM through their API
+(APFS clonefile — the mechanism behind their local "instant" create-from-base) measured
+**32 ms p50** (n=10, 12 GiB VM with 4 GiB of materialized blocks; the suite's built-in
+mechanism probe, recorded as `clone_probe` in the JSON) — clonefile is metadata-CoW, so the
+cost is size-independent. What blocks the full SDK leg is image logistics, not the host: lume's
+prebuilt registry images are **macOS-only** (their smallest `-cua` image,
+`ghcr.io/trycua/macos-tahoe-cua:latest`, is **22.7 GiB** across 201 layers — measured from the
+GHCR manifest; `ubuntu-noble-vanilla` is 20.0 GiB and lacks their computer-server; Linux lume
+VMs otherwise require a manual ISO install), and the pull sustained only ~1–2 MB/s on this
+link (multi-hour). The suite records the leg as skipped with the reason; once the base image is
+pulled, `SHINKEN_BENCH_CUA_LEGS=cua_lume python benchmarks/bench_baseline_cua.py` fills it in
+and merges with the existing legs. Code-level facts (pinned tag): their `LumeRuntime.fork`
+clones **stopped** VMs only; `checkpoint` of a running VM is stop → clone → restart (memory
+state lost); `suspend` maps to VM stop. Their QEMU "Local VM" Linux path targets KVM hosts
+(their published table: container ~5 s, VM ~30 s) and falls back to software emulation in
+Docker on macOS — not measured here.
+
+**Reads:**
+- **The box layer is the same class; the step loop is not.** Boot-to-usable is 3.8 s vs
+  8.5 s — same order, dominated by `docker run` + desktop readiness on both sides (their
+  image also boots XFCE + VNC + a Python server; ours boots Xvfb + xterm + a Rust runtime; and
+  our readiness gate is stricter — it waits for actual non-black pixels, theirs for the API to
+  answer). The per-step act+observe cost differs by **~61×** (2.9 ms vs 174 ms)
+  — their screenshot is PIL `ImageGrab` + PNG-optimize + base64 per HTTP call, and it grew from
+  ~17 ms on an unpainted desktop to ~171 ms once XFCE finished painting; ours is the
+  in-guest Rust encoder at ~2.3 ms on the settled frame. At agent-loop rates the
+  observation, not the click, is the budget on both stacks.
+- **The runtime-state verbs are the structural difference, and the absence is now a measured
+  fact, not a reading of their docs.** Locally, cua's container path ships pause/unpause only;
+  its lume path forks stopped VMs (a fast ~32 ms clone, but using one costs a full VM boot and
+  checkpointing a running VM is disruptive); `Sandbox.snapshot()` is cloud-only and raises.
+  The golden → checkpoint (0.56 s, live, non-disruptive) → fork-N → verified-usable
+  (3.8 s) loop that `run_eval_forked` is built on has no local equivalent in their stack —
+  consistent with their own framing of snapshots as a cloud feature.
+- **Both stacks are honest PNG-by-default; only one JPEG lever works end-to-end as shipped.**
+  Size-matched settled desktops: 22.3 KiB (xterm desktop) vs 92.5 KiB (XFCE desktop) —
+  content differs, so treat these as each stack's *own-default* frame, not a codec shoot-out
+  (§2 is the controlled codec grid). The strategic read for the landscape doc: the
+  head-to-head with cua lives at this runtime/interface layer; their substrate breadth is
+  complementary (see [`landscape.md §2.17`](../design/landscape.md)).
 
 ## Reproducing
 

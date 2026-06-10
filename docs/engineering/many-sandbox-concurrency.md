@@ -186,18 +186,25 @@ The measured ~0.28–0.38 s round-trip dominates per-step latency; fan-out hides
 sandboxes (N rounds proceed concurrently) but **within** one sandbox's step, serial RPCs
 multiply it:
 
-- **`act_batch` today is SDK-serial** — each action awaits its ack, so k actions ≈ k RTTs
-  (a 5-action step ≈ 1.5–1.9 s).
-- **Designed — pipelined dispatch:** the reader/demux already correlates replies by
-  `call_id`, and shinkend processes a connection's messages in order, so the SDK can send k
-  calls *then* await k futures: ~1 RTT for the batch (~0.3–0.4 s for the same 5-action step,
-  ~5×). Failure semantics must be settled first (what "skipped" means when later actions are
-  already on the wire) — this is the designed successor to today's serial `act_batch`, not a
-  trivial change, so it ships as design only.
-- **Designed — observe+act coalescing:** a step is act → fresh frame; today that is two
-  round-trips. `screenshot` is already an action verb, so a batch whose final action is
-  `screenshot` returns the post-action observation in the same exchange once batches are
-  pipelined — one RTT per *step*, the natural unit for RL rollouts.
+- **`act_batch` stays SDK-serial** — each action awaits its ack, so k actions ≈ k RTTs
+  (a 5-action step ≈ 1.5–1.9 s). It remains the right verb when a caller *wants*
+  stop-on-error semantics (later actions genuinely skipped).
+- **Built — pipelined dispatch (`step()`):** the reader/demux already correlates replies by
+  `call_id`, and shinkend processes a connection's messages in order, so
+  `Sandbox.step(actions, observe=…)` / `AsyncSandbox.step(...)` sends all k calls *then*
+  awaits the k futures: ~1 RTT for the whole step, no protocol change (the wire carries the
+  same standard `action` frames). The failure semantics are settled honestly: there is **no
+  `skipped`** — every action is already on the wire when an earlier one fails and executes
+  server-side regardless, so each result row reports its real #56-taxonomy outcome
+  (`ok | error | timeout | sandbox_died`), and only a client-side gateway denial marks an
+  action that never reached the runtime. Measured in S11
+  ([benchmarks.md §11](benchmarks.md)): at +150 ms emulated RTT a 5-action+observe step drops
+  from ~0.94 s (6 round-trips) to ~0.17 s (5.7×, against the 6× bound).
+- **Built — observe+act coalescing:** a step is act → fresh frame; sequentially that is two
+  round-trips. `screenshot` is already an action verb, so `step(..., observe={...})`
+  pipelines it as the trailing call and returns the post-action observation fused in the
+  same exchange — one RTT per *step*, the natural unit for RL rollouts; the observation
+  still returns after a mid-step per-action error.
 
 ## 6. Failure isolation: no shared fate
 
@@ -258,7 +265,7 @@ the *numbers* land back in this doc and [`streaming-bandwidth.md`](streaming-ban
 | global frame-queue byte budget knob (§2.3) | **built** (default off) |
 | `ping_jitter` at dial (§3.2) | **built** (default off) |
 | jittered/bounded dial pacing, full-jitter reconnect backoff (§3.1, §3.3) | designed — caller-side idiom, snippets above |
-| pipelined `act_batch`, observe+act coalescing (§5) | designed |
+| pipelined `step()` + observe+act coalescing (§5) | **built** (S11-measured, [benchmarks.md §11](benchmarks.md)) |
 | pull-vs-push scheduling guidance (§4) | design guidance over built verbs |
 | N=64/256/1024 gates (§7) | planned, not run |
 

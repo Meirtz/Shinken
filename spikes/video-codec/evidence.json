@@ -1,0 +1,2045 @@
+{
+ "meta": {
+  "spike": "video-codec",
+  "date_utc": "2026-06-10T22:19:00+00:00",
+  "host": {
+   "platform": "macOS-26.5.1-arm64-arm-64bit-Mach-O",
+   "machine": "arm64",
+   "cpu": "Apple M4 Pro"
+  },
+  "resolution": "1280x800",
+  "seconds_per_sequence": 10,
+  "ffmpeg": "ffmpeg version 8.1.1 Copyright (c) 2000-2026 the FFmpeg developers",
+  "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "notes": [
+   "bytes are raw payload bytes (pre-base64); the runtime's base64-in-JSON wire adds +1/3 to every contender equally",
+   "all encoders single-threaded; vcspike times pure compute in-process; ffmpeg utime includes rawvideo demux + swscale rgb24->yuv420p",
+   "psnr_db null = lossless (delta-png); harness PSNR is RGB-domain, ffmpeg PSNR uses the psnr filter forced to rgb24",
+   "x264 rows are a GPL REFERENCE ONLY \u2014 not distributable with Apache-2.0"
+  ]
+ },
+ "results": [
+  {
+   "content": "typing",
+   "fps": 10,
+   "bytes_per_s": 28769.4,
+   "bytes_total": 287694,
+   "decode_ms_per_delivered_frame": {
+    "max": 1.127917,
+    "mean": 0.07996491578947369,
+    "p50": 0.04075,
+    "p95": 0.10183299999999999
+   },
+   "encode_ms_per_frame": {
+    "max": 0.803917,
+    "mean": 0.31671251,
+    "p50": 0.281667,
+    "p95": 0.5329170000000001
+   },
+   "frames_delivered": 95,
+   "frames_in": 100,
+   "keyframes": 4,
+   "psnr_db": null,
+   "tiles_total": 200,
+   "encoder": "delta-png",
+   "instrument": "vcspike-in-process"
+  },
+  {
+   "content": "typing",
+   "fps": 10,
+   "bytes_per_s": 29103.6,
+   "bytes_total": 291036,
+   "decode_ms_per_delivered_frame": {
+    "max": 3.8575,
+    "mean": 0.22619082105263158,
+    "p50": 0.07408400000000001,
+    "p95": 0.182625
+   },
+   "encode_ms_per_frame": {
+    "max": 4.688625,
+    "mean": 0.5217945999999999,
+    "p50": 0.347208,
+    "p95": 0.5535
+   },
+   "frames_delivered": 95,
+   "frames_in": 100,
+   "keyframes": 4,
+   "psnr_db": 51.077524027207694,
+   "tiles_total": 200,
+   "encoder": "delta-jpeg",
+   "instrument": "vcspike-in-process"
+  },
+  {
+   "content": "typing",
+   "fps": 10,
+   "bytes_per_s": 245226.2,
+   "bytes_total": 2452262,
+   "decode_ms_per_delivered_frame": {
+    "max": 4.111167,
+    "mean": 3.6794969578947367,
+    "p50": 3.6974159999999996,
+    "p95": 4.023416999999999
+   },
+   "encode_ms_per_frame": {
+    "max": 4.645166,
+    "mean": 4.170583336842107,
+    "p50": 4.15775,
+    "p95": 4.492999999999999
+   },
+   "frames_delivered": 95,
+   "frames_in": 100,
+   "keyframes": 0,
+   "psnr_db": 51.07753857196141,
+   "tiles_total": 0,
+   "encoder": "jpeg",
+   "instrument": "vcspike-in-process"
+  },
+  {
+   "content": "typing",
+   "fps": 10,
+   "bitrate_bps": 1000000,
+   "bytes_per_s": 3718.1,
+   "bytes_total": 37181,
+   "decode_ms_per_delivered_frame": {
+    "max": 2.565416,
+    "mean": 1.0817412399999997,
+    "p50": 1.032875,
+    "p95": 1.384792
+   },
+   "encode_ms_per_frame": {
+    "max": 6.022667,
+    "mean": 2.838316250000001,
+    "p50": 2.8147490000000004,
+    "p95": 3.4628749999999995
+   },
+   "encode_ms_split": {
+    "h264_encode": {
+     "max": 5.577667,
+     "mean": 2.413584159999999,
+     "p50": 2.371125,
+     "p95": 3.0782499999999997
+    },
+    "rgb_to_yuv420": {
+     "max": 0.7542920000000001,
+     "mean": 0.4247320900000002,
+     "p50": 0.41141700000000003,
+     "p95": 0.576875
+    }
+   },
+   "frames_delivered": 100,
+   "frames_in": 100,
+   "frames_rc_skipped": 0,
+   "psnr_db": 45.441574505989955,
+   "encoder": "h264-openh264@1M",
+   "instrument": "vcspike-in-process"
+  },
+  {
+   "content": "typing",
+   "fps": 10,
+   "bitrate_bps": 2000000,
+   "bytes_per_s": 3284.7,
+   "bytes_total": 32847,
+   "decode_ms_per_delivered_frame": {
+    "max": 2.268875,
+    "mean": 1.0846250100000001,
+    "p50": 1.047583,
+    "p95": 1.2386249999999999
+   },
+   "encode_ms_per_frame": {
+    "max": 4.937417000000001,
+    "mean": 2.7521570499999997,
+    "p50": 2.784042,
+    "p95": 3.224291
+   },
+   "encode_ms_split": {
+    "h264_encode": {
+     "max": 4.538333000000001,
+     "mean": 2.34498622,
+     "p50": 2.356833,
+     "p95": 2.802209
+    },
+    "rgb_to_yuv420": {
+     "max": 0.643875,
+     "mean": 0.4071708299999999,
+     "p50": 0.39325,
+     "p95": 0.518709
+    }
+   },
+   "frames_delivered": 100,
+   "frames_in": 100,
+   "frames_rc_skipped": 0,
+   "psnr_db": 45.48600789647676,
+   "encoder": "h264-openh264@2M",
+   "instrument": "vcspike-in-process"
+  },
+  {
+   "content": "typing",
+   "fps": 10,
+   "bitrate_bps": 4000000,
+   "bytes_per_s": 3284.7,
+   "bytes_total": 32847,
+   "decode_ms_per_delivered_frame": {
+    "max": 2.6749159999999996,
+    "mean": 1.1404945599999998,
+    "p50": 1.083166,
+    "p95": 1.293792
+   },
+   "encode_ms_per_frame": {
+    "max": 5.321125,
+    "mean": 2.8539717100000006,
+    "p50": 2.8320419999999995,
+    "p95": 3.563
+   },
+   "encode_ms_split": {
+    "h264_encode": {
+     "max": 4.9037500000000005,
+     "mean": 2.4400037900000004,
+     "p50": 2.428125,
+     "p95": 3.125833
+    },
+    "rgb_to_yuv420": {
+     "max": 0.816666,
+     "mean": 0.41396792000000004,
+     "p50": 0.406125,
+     "p95": 0.47679200000000005
+    }
+   },
+   "frames_delivered": 100,
+   "frames_in": 100,
+   "frames_rc_skipped": 0,
+   "psnr_db": 45.48600789647676,
+   "encoder": "h264-openh264@4M",
+   "instrument": "vcspike-in-process"
+  },
+  {
+   "content": "typing",
+   "fps": 10,
+   "encoder": "vp8-libvpx@1M",
+   "instrument": "ffmpeg-cli",
+   "frames_in": 100,
+   "frames_delivered": 100,
+   "bytes_total": 95505,
+   "bytes_per_s": 9550.5,
+   "encode_ms_per_frame": {
+    "mean": 3.94
+   },
+   "decode_ms_per_delivered_frame": {
+    "mean": 0.38
+   },
+   "psnr_db": 49.508522,
+   "bench_raw": {
+    "encode": {
+     "utime_s": 0.394,
+     "stime_s": 0.033,
+     "rtime_s": 0.341
+    },
+    "decode": {
+     "utime_s": 0.038,
+     "stime_s": 0.003,
+     "rtime_s": 0.041
+    }
+   }
+  },
+  {
+   "content": "typing",
+   "fps": 10,
+   "encoder": "vp9-libvpx@1M",
+   "instrument": "ffmpeg-cli",
+   "frames_in": 100,
+   "frames_delivered": 100,
+   "bytes_total": 193733,
+   "bytes_per_s": 19373.3,
+   "encode_ms_per_frame": {
+    "mean": 2.86
+   },
+   "decode_ms_per_delivered_frame": {
+    "mean": 0.54
+   },
+   "psnr_db": 71.6833,
+   "bench_raw": {
+    "encode": {
+     "utime_s": 0.286,
+     "stime_s": 0.037,
+     "rtime_s": 0.249
+    },
+    "decode": {
+     "utime_s": 0.054,
+     "stime_s": 0.003,
+     "rtime_s": 0.054
+    }
+   }
+  },
+  {
+   "content": "typing",
+   "fps": 10,
+   "encoder": "vp8-libvpx@4M",
+   "instrument": "ffmpeg-cli",
+   "frames_in": 100,
+   "frames_delivered": 100,
+   "bytes_total": 65398,
+   "bytes_per_s": 6539.8,
+   "encode_ms_per_frame": {
+    "mean": 3.26
+   },
+   "decode_ms_per_delivered_frame": {
+    "mean": 0.28
+   },
+   "psnr_db": 50.843441,
+   "bench_raw": {
+    "encode": {
+     "utime_s": 0.326,
+     "stime_s": 0.029,
+     "rtime_s": 0.227
+    },
+    "decode": {
+     "utime_s": 0.028,
+     "stime_s": 0.003,
+     "rtime_s": 0.028
+    }
+   }
+  },
+  {
+   "content": "typing",
+   "fps": 10,
+   "encoder": "vp9-libvpx@4M",
+   "instrument": "ffmpeg-cli",
+   "frames_in": 100,
+   "frames_delivered": 100,
+   "bytes_total": 167680,
+   "bytes_per_s": 16768.0,
+   "encode_ms_per_frame": {
+    "mean": 4.36
+   },
+   "decode_ms_per_delivered_frame": {
+    "mean": 0.4
+   },
+   "psnr_db": 73.998903,
+   "bench_raw": {
+    "encode": {
+     "utime_s": 0.436,
+     "stime_s": 0.036,
+     "rtime_s": 0.396
+    },
+    "decode": {
+     "utime_s": 0.04,
+     "stime_s": 0.003,
+     "rtime_s": 0.04
+    }
+   }
+  },
+  {
+   "content": "typing",
+   "fps": 10,
+   "encoder": "x264-ref@4M",
+   "instrument": "ffmpeg-cli",
+   "frames_in": 100,
+   "frames_delivered": 100,
+   "bytes_total": 51341,
+   "bytes_per_s": 5134.1,
+   "encode_ms_per_frame": {
+    "mean": 4.58
+   },
+   "decode_ms_per_delivered_frame": {
+    "mean": 0.4
+   },
+   "psnr_db": 51.625244,
+   "bench_raw": {
+    "encode": {
+     "utime_s": 0.458,
+     "stime_s": 0.033,
+     "rtime_s": 0.326
+    },
+    "decode": {
+     "utime_s": 0.04,
+     "stime_s": 0.003,
+     "rtime_s": 0.039
+    }
+   }
+  },
+  {
+   "content": "typing",
+   "fps": 30,
+   "bytes_per_s": 30015.6,
+   "bytes_total": 300156,
+   "decode_ms_per_delivered_frame": {
+    "max": 0.911208,
+    "mean": 0.07140843750000002,
+    "p50": 0.042457999999999996,
+    "p95": 0.09833399999999999
+   },
+   "encode_ms_per_frame": {
+    "max": 0.654375,
+    "mean": 0.27955053000000024,
+    "p50": 0.263625,
+    "p95": 0.392917
+   },
+   "frames_delivered": 112,
+   "frames_in": 300,
+   "keyframes": 4,
+   "psnr_db": null,
+   "tiles_total": 234,
+   "encoder": "delta-png",
+   "instrument": "vcspike-in-process"
+  },
+  {
+   "content": "typing",
+   "fps": 30,
+   "bytes_per_s": 31978.7,
+   "bytes_total": 319787,
+   "decode_ms_per_delivered_frame": {
+    "max": 3.477167,
+    "mean": 0.18484413392857152,
+    "p50": 0.06212500000000001,
+    "p95": 0.139459
+   },
+   "encode_ms_per_frame": {
+    "max": 4.252833,
+    "mean": 0.3319121099999999,
+    "p50": 0.27137500000000003,
+    "p95": 0.384667
+   },
+   "frames_delivered": 112,
+   "frames_in": 300,
+   "keyframes": 4,
+   "psnr_db": 51.06513072634054,
+   "tiles_total": 234,
+   "encoder": "delta-jpeg",
+   "instrument": "vcspike-in-process"
+  },
+  {
+   "content": "typing",
+   "fps": 30,
+   "bytes_per_s": 289178.5,
+   "bytes_total": 2891785,
+   "decode_ms_per_delivered_frame": {
+    "max": 3.764667,
+    "mean": 3.1915212142857143,
+    "p50": 3.1626250000000002,
+    "p95": 3.3471249999999997
+   },
+   "encode_ms_per_frame": {
+    "max": 4.573958999999999,
+    "mean": 3.9214706785714277,
+    "p50": 3.886375,
+    "p95": 4.069875
+   },
+   "frames_delivered": 112,
+   "frames_in": 300,
+   "keyframes": 0,
+   "psnr_db": 51.065142793903576,
+   "tiles_total": 0,
+   "encoder": "jpeg",
+   "instrument": "vcspike-in-process"
+  },
+  {
+   "content": "typing",
+   "fps": 30,
+   "bitrate_bps": 1000000,
+   "bytes_per_s": 7191.9,
+   "bytes_total": 71919,
+   "decode_ms_per_delivered_frame": {
+    "max": 2.3513330000000003,
+    "mean": 1.0401198699999996,
+    "p50": 1.012667,
+    "p95": 1.162375
+   },
+   "encode_ms_per_frame": {
+    "max": 4.750584,
+    "mean": 2.71948652,
+    "p50": 2.708541,
+    "p95": 3.157959
+   },
+   "encode_ms_split": {
+    "h264_encode": {
+     "max": 4.331042,
+     "mean": 2.334724166666666,
+     "p50": 2.313958,
+     "p95": 2.7207500000000002
+    },
+    "rgb_to_yuv420": {
+     "max": 0.549458,
+     "mean": 0.38476235333333336,
+     "p50": 0.369208,
+     "p95": 0.480167
+    }
+   },
+   "frames_delivered": 300,
+   "frames_in": 300,
+   "frames_rc_skipped": 0,
+   "psnr_db": 45.856245682433425,
+   "encoder": "h264-openh264@1M",
+   "instrument": "vcspike-in-process"
+  },
+  {
+   "content": "typing",
+   "fps": 30,
+   "bitrate_bps": 2000000,
+   "bytes_per_s": 7531.5,
+   "bytes_total": 75315,
+   "decode_ms_per_delivered_frame": {
+    "max": 3.7690829999999997,
+    "mean": 1.0576597399999998,
+    "p50": 0.997375,
+    "p95": 1.5772920000000001
+   },
+   "encode_ms_per_frame": {
+    "max": 5.618249,
+    "mean": 2.681552230000003,
+    "p50": 2.665083,
+    "p95": 3.2705
+   },
+   "encode_ms_split": {
+    "h264_encode": {
+     "max": 5.201207999999999,
+     "mean": 2.2897048500000006,
+     "p50": 2.274166,
+     "p95": 2.80375
+    },
+    "rgb_to_yuv420": {
+     "max": 1.601167,
+     "mean": 0.3918473799999999,
+     "p50": 0.370917,
+     "p95": 0.47362499999999996
+    }
+   },
+   "frames_delivered": 300,
+   "frames_in": 300,
+   "frames_rc_skipped": 0,
+   "psnr_db": 45.75849742892369,
+   "encoder": "h264-openh264@2M",
+   "instrument": "vcspike-in-process"
+  },
+  {
+   "content": "typing",
+   "fps": 30,
+   "bitrate_bps": 4000000,
+   "bytes_per_s": 7090.1,
+   "bytes_total": 70901,
+   "decode_ms_per_delivered_frame": {
+    "max": 9.546791,
+    "mean": 1.124555146666668,
+    "p50": 1.053,
+    "p95": 1.286417
+   },
+   "encode_ms_per_frame": {
+    "max": 6.790083,
+    "mean": 2.7649973733333337,
+    "p50": 2.755292,
+    "p95": 3.4354579999999997
+   },
+   "encode_ms_split": {
+    "h264_encode": {
+     "max": 6.399833,
+     "mean": 2.357160443333333,
+     "p50": 2.373125,
+     "p95": 2.9092919999999998
+    },
+    "rgb_to_yuv420": {
+     "max": 1.28225,
+     "mean": 0.40783693000000004,
+     "p50": 0.382708,
+     "p95": 0.514416
+    }
+   },
+   "frames_delivered": 300,
+   "frames_in": 300,
+   "frames_rc_skipped": 0,
+   "psnr_db": 45.773938281271036,
+   "encoder": "h264-openh264@4M",
+   "instrument": "vcspike-in-process"
+  },
+  {
+   "content": "typing",
+   "fps": 30,
+   "encoder": "vp8-libvpx@1M",
+   "instrument": "ffmpeg-cli",
+   "frames_in": 300,
+   "frames_delivered": 300,
+   "bytes_total": 249714,
+   "bytes_per_s": 24971.4,
+   "encode_ms_per_frame": {
+    "mean": 3.7466666666666666
+   },
+   "decode_ms_per_delivered_frame": {
+    "mean": 0.3466666666666667
+   },
+   "psnr_db": 48.463844,
+   "bench_raw": {
+    "encode": {
+     "utime_s": 1.124,
+     "stime_s": 0.079,
+     "rtime_s": 0.826
+    },
+    "decode": {
+     "utime_s": 0.104,
+     "stime_s": 0.005,
+     "rtime_s": 0.103
+    }
+   }
+  },
+  {
+   "content": "typing",
+   "fps": 30,
+   "encoder": "vp9-libvpx@1M",
+   "instrument": "ffmpeg-cli",
+   "frames_in": 300,
+   "frames_delivered": 300,
+   "bytes_total": 348066,
+   "bytes_per_s": 34806.6,
+   "encode_ms_per_frame": {
+    "mean": 2.92
+   },
+   "decode_ms_per_delivered_frame": {
+    "mean": 0.4666666666666667
+   },
+   "psnr_db": 73.473749,
+   "bench_raw": {
+    "encode": {
+     "utime_s": 0.876,
+     "stime_s": 0.091,
+     "rtime_s": 0.737
+    },
+    "decode": {
+     "utime_s": 0.14,
+     "stime_s": 0.008,
+     "rtime_s": 0.138
+    }
+   }
+  },
+  {
+   "content": "typing",
+   "fps": 30,
+   "encoder": "vp8-libvpx@4M",
+   "instrument": "ffmpeg-cli",
+   "frames_in": 300,
+   "frames_delivered": 300,
+   "bytes_total": 186738,
+   "bytes_per_s": 18673.8,
+   "encode_ms_per_frame": {
+    "mean": 3.5833333333333335
+   },
+   "decode_ms_per_delivered_frame": {
+    "mean": 0.3233333333333333
+   },
+   "psnr_db": 50.384923,
+   "bench_raw": {
+    "encode": {
+     "utime_s": 1.075,
+     "stime_s": 0.082,
+     "rtime_s": 0.753
+    },
+    "decode": {
+     "utime_s": 0.097,
+     "stime_s": 0.007,
+     "rtime_s": 0.095
+    }
+   }
+  },
+  {
+   "content": "typing",
+   "fps": 30,
+   "encoder": "vp9-libvpx@4M",
+   "instrument": "ffmpeg-cli",
+   "frames_in": 300,
+   "frames_delivered": 300,
+   "bytes_total": 309477,
+   "bytes_per_s": 30947.7,
+   "encode_ms_per_frame": {
+    "mean": 5.056666666666667
+   },
+   "decode_ms_per_delivered_frame": {
+    "mean": 0.3233333333333333
+   },
+   "psnr_db": 78.529017,
+   "bench_raw": {
+    "encode": {
+     "utime_s": 1.517,
+     "stime_s": 0.094,
+     "rtime_s": 1.377
+    },
+    "decode": {
+     "utime_s": 0.097,
+     "stime_s": 0.007,
+     "rtime_s": 0.096
+    }
+   }
+  },
+  {
+   "content": "typing",
+   "fps": 30,
+   "encoder": "x264-ref@4M",
+   "instrument": "ffmpeg-cli",
+   "frames_in": 300,
+   "frames_delivered": 300,
+   "bytes_total": 106365,
+   "bytes_per_s": 10636.5,
+   "encode_ms_per_frame": {
+    "mean": 4.76
+   },
+   "decode_ms_per_delivered_frame": {
+    "mean": 0.3933333333333333
+   },
+   "psnr_db": 51.598752,
+   "bench_raw": {
+    "encode": {
+     "utime_s": 1.428,
+     "stime_s": 0.091,
+     "rtime_s": 0.993
+    },
+    "decode": {
+     "utime_s": 0.118,
+     "stime_s": 0.007,
+     "rtime_s": 0.116
+    }
+   }
+  },
+  {
+   "content": "scroll",
+   "fps": 10,
+   "bytes_per_s": 3781195.1,
+   "bytes_total": 37811951,
+   "decode_ms_per_delivered_frame": {
+    "max": 3.238708,
+    "mean": 2.699822990000001,
+    "p50": 2.6854999999999998,
+    "p95": 3.018042
+   },
+   "encode_ms_per_frame": {
+    "max": 2.246625,
+    "mean": 1.8007028999999997,
+    "p50": 1.786709,
+    "p95": 2.116208
+   },
+   "frames_delivered": 100,
+   "frames_in": 100,
+   "keyframes": 4,
+   "psnr_db": null,
+   "tiles_total": 13212,
+   "encoder": "delta-png",
+   "instrument": "vcspike-in-process"
+  },
+  {
+   "content": "scroll",
+   "fps": 10,
+   "bytes_per_s": 2470286.2,
+   "bytes_total": 24702862,
+   "decode_ms_per_delivered_frame": {
+    "max": 6.109166,
+    "mean": 4.8722242,
+    "p50": 4.817292,
+    "p95": 5.376625000000001
+   },
+   "encode_ms_per_frame": {
+    "max": 5.315958,
+    "mean": 3.6942475599999995,
+    "p50": 3.617583,
+    "p95": 4.399542
+   },
+   "frames_delivered": 100,
+   "frames_in": 100,
+   "keyframes": 4,
+   "psnr_db": 37.273337070368285,
+   "tiles_total": 13212,
+   "encoder": "delta-jpeg",
+   "instrument": "vcspike-in-process"
+  },
+  {
+   "content": "scroll",
+   "fps": 10,
+   "bytes_per_s": 1761360.1,
+   "bytes_total": 17613601,
+   "decode_ms_per_delivered_frame": {
+    "max": 7.258958000000001,
+    "mean": 5.32311915,
+    "p50": 5.239667,
+    "p95": 6.092666
+   },
+   "encode_ms_per_frame": {
+    "max": 10.300625,
+    "mean": 5.192363800000002,
+    "p50": 4.983333,
+    "p95": 6.025375
+   },
+   "frames_delivered": 100,
+   "frames_in": 100,
+   "keyframes": 0,
+   "psnr_db": 37.27340229012959,
+   "tiles_total": 0,
+   "encoder": "jpeg",
+   "instrument": "vcspike-in-process"
+  },
+  {
+   "content": "scroll",
+   "fps": 10,
+   "bitrate_bps": 1000000,
+   "bytes_per_s": 73023.8,
+   "bytes_total": 730238,
+   "decode_ms_per_delivered_frame": {
+    "max": 4.080333,
+    "mean": 1.3780874130434781,
+    "p50": 1.252,
+    "p95": 1.709125
+   },
+   "encode_ms_per_frame": {
+    "max": 8.956374,
+    "mean": 6.967660470000003,
+    "p50": 7.395874999999999,
+    "p95": 8.750208
+   },
+   "encode_ms_split": {
+    "h264_encode": {
+     "max": 8.480333,
+     "mean": 6.516312100000001,
+     "p50": 6.953625,
+     "p95": 8.266333000000001
+    },
+    "rgb_to_yuv420": {
+     "max": 0.744875,
+     "mean": 0.45134836999999983,
+     "p50": 0.440125,
+     "p95": 0.63
+    }
+   },
+   "frames_delivered": 92,
+   "frames_in": 100,
+   "frames_rc_skipped": 8,
+   "psnr_db": 23.123348042392028,
+   "encoder": "h264-openh264@1M",
+   "instrument": "vcspike-in-process"
+  },
+  {
+   "content": "scroll",
+   "fps": 10,
+   "bitrate_bps": 2000000,
+   "bytes_per_s": 73427.8,
+   "bytes_total": 734278,
+   "decode_ms_per_delivered_frame": {
+    "max": 5.593875,
+    "mean": 1.3255654300000002,
+    "p50": 1.189,
+    "p95": 1.5932920000000002
+   },
+   "encode_ms_per_frame": {
+    "max": 15.745624999999999,
+    "mean": 7.029390060000004,
+    "p50": 6.940083,
+    "p95": 8.028500000000001
+   },
+   "encode_ms_split": {
+    "h264_encode": {
+     "max": 15.387125,
+     "mean": 6.583701650000002,
+     "p50": 6.432708,
+     "p95": 7.430375000000001
+    },
+    "rgb_to_yuv420": {
+     "max": 0.6390830000000001,
+     "mean": 0.44568841000000015,
+     "p50": 0.43104200000000004,
+     "p95": 0.598125
+    }
+   },
+   "frames_delivered": 100,
+   "frames_in": 100,
+   "frames_rc_skipped": 0,
+   "psnr_db": 38.30489239764863,
+   "encoder": "h264-openh264@2M",
+   "instrument": "vcspike-in-process"
+  },
+  {
+   "content": "scroll",
+   "fps": 10,
+   "bitrate_bps": 4000000,
+   "bytes_per_s": 74808.3,
+   "bytes_total": 748083,
+   "decode_ms_per_delivered_frame": {
+    "max": 7.675458,
+    "mean": 1.37728829,
+    "p50": 1.201833,
+    "p95": 1.6484159999999999
+   },
+   "encode_ms_per_frame": {
+    "max": 12.613042,
+    "mean": 7.45281248,
+    "p50": 7.350959,
+    "p95": 9.107251000000002
+   },
+   "encode_ms_split": {
+    "h264_encode": {
+     "max": 11.726958,
+     "mean": 6.912671630000002,
+     "p50": 6.799834000000001,
+     "p95": 8.090417
+    },
+    "rgb_to_yuv420": {
+     "max": 2.8305420000000003,
+     "mean": 0.5401408500000001,
+     "p50": 0.4665,
+     "p95": 0.886084
+    }
+   },
+   "frames_delivered": 100,
+   "frames_in": 100,
+   "frames_rc_skipped": 0,
+   "psnr_db": 38.66490733837345,
+   "encoder": "h264-openh264@4M",
+   "instrument": "vcspike-in-process"
+  },
+  {
+   "content": "scroll",
+   "fps": 10,
+   "encoder": "vp8-libvpx@1M",
+   "instrument": "ffmpeg-cli",
+   "frames_in": 100,
+   "frames_delivered": 100,
+   "bytes_total": 1360638,
+   "bytes_per_s": 136063.8,
+   "encode_ms_per_frame": {
+    "mean": 6.5
+   },
+   "decode_ms_per_delivered_frame": {
+    "mean": 1.22
+   },
+   "psnr_db": 40.609834,
+   "bench_raw": {
+    "encode": {
+     "utime_s": 0.65,
+     "stime_s": 0.045,
+     "rtime_s": 0.565
+    },
+    "decode": {
+     "utime_s": 0.122,
+     "stime_s": 0.005,
+     "rtime_s": 0.122
+    }
+   }
+  },
+  {
+   "content": "scroll",
+   "fps": 10,
+   "encoder": "vp9-libvpx@1M",
+   "instrument": "ffmpeg-cli",
+   "frames_in": 100,
+   "frames_delivered": 100,
+   "bytes_total": 2716661,
+   "bytes_per_s": 271666.1,
+   "encode_ms_per_frame": {
+    "mean": 9.63
+   },
+   "decode_ms_per_delivered_frame": {
+    "mean": 2.66
+   },
+   "psnr_db": 25.199551,
+   "bench_raw": {
+    "encode": {
+     "utime_s": 0.963,
+     "stime_s": 0.062,
+     "rtime_s": 0.948
+    },
+    "decode": {
+     "utime_s": 0.266,
+     "stime_s": 0.007,
+     "rtime_s": 0.268
+    }
+   }
+  },
+  {
+   "content": "scroll",
+   "fps": 10,
+   "encoder": "vp8-libvpx@4M",
+   "instrument": "ffmpeg-cli",
+   "frames_in": 100,
+   "frames_delivered": 100,
+   "bytes_total": 1334417,
+   "bytes_per_s": 133441.7,
+   "encode_ms_per_frame": {
+    "mean": 5.26
+   },
+   "decode_ms_per_delivered_frame": {
+    "mean": 1.07
+   },
+   "psnr_db": 49.906593,
+   "bench_raw": {
+    "encode": {
+     "utime_s": 0.526,
+     "stime_s": 0.038,
+     "rtime_s": 0.427
+    },
+    "decode": {
+     "utime_s": 0.107,
+     "stime_s": 0.004,
+     "rtime_s": 0.106
+    }
+   }
+  },
+  {
+   "content": "scroll",
+   "fps": 10,
+   "encoder": "vp9-libvpx@4M",
+   "instrument": "ffmpeg-cli",
+   "frames_in": 100,
+   "frames_delivered": 100,
+   "bytes_total": 5714673,
+   "bytes_per_s": 571467.3,
+   "encode_ms_per_frame": {
+    "mean": 11.11
+   },
+   "decode_ms_per_delivered_frame": {
+    "mean": 4.6
+   },
+   "psnr_db": 42.961426,
+   "bench_raw": {
+    "encode": {
+     "utime_s": 1.111,
+     "stime_s": 0.059,
+     "rtime_s": 1.091
+    },
+    "decode": {
+     "utime_s": 0.46,
+     "stime_s": 0.009,
+     "rtime_s": 0.474
+    }
+   }
+  },
+  {
+   "content": "scroll",
+   "fps": 10,
+   "encoder": "x264-ref@4M",
+   "instrument": "ffmpeg-cli",
+   "frames_in": 100,
+   "frames_delivered": 100,
+   "bytes_total": 1737389,
+   "bytes_per_s": 173738.9,
+   "encode_ms_per_frame": {
+    "mean": 6.75
+   },
+   "decode_ms_per_delivered_frame": {
+    "mean": 1.69
+   },
+   "psnr_db": 53.45067,
+   "bench_raw": {
+    "encode": {
+     "utime_s": 0.675,
+     "stime_s": 0.04,
+     "rtime_s": 0.541
+    },
+    "decode": {
+     "utime_s": 0.169,
+     "stime_s": 0.004,
+     "rtime_s": 0.169
+    }
+   }
+  },
+  {
+   "content": "scroll",
+   "fps": 30,
+   "bytes_per_s": 11278872.8,
+   "bytes_total": 112788728,
+   "decode_ms_per_delivered_frame": {
+    "max": 6.535542,
+    "mean": 2.8435319299999975,
+    "p50": 2.8064999999999998,
+    "p95": 3.3185409999999997
+   },
+   "encode_ms_per_frame": {
+    "max": 2.897708,
+    "mean": 2.114729176666666,
+    "p50": 2.104708,
+    "p95": 2.4497910000000003
+   },
+   "frames_delivered": 300,
+   "frames_in": 300,
+   "keyframes": 10,
+   "psnr_db": null,
+   "tiles_total": 38811,
+   "encoder": "delta-png",
+   "instrument": "vcspike-in-process"
+  },
+  {
+   "content": "scroll",
+   "fps": 30,
+   "bytes_per_s": 7341143.0,
+   "bytes_total": 73411430,
+   "decode_ms_per_delivered_frame": {
+    "max": 6.240500000000001,
+    "mean": 4.857827656666667,
+    "p50": 4.814791,
+    "p95": 5.358125
+   },
+   "encode_ms_per_frame": {
+    "max": 5.659667,
+    "mean": 3.853258763333332,
+    "p50": 3.77975,
+    "p95": 4.332916
+   },
+   "frames_delivered": 300,
+   "frames_in": 300,
+   "keyframes": 10,
+   "psnr_db": 37.274353902020394,
+   "tiles_total": 38811,
+   "encoder": "delta-jpeg",
+   "instrument": "vcspike-in-process"
+  },
+  {
+   "content": "scroll",
+   "fps": 30,
+   "bytes_per_s": 5283058.6,
+   "bytes_total": 52830586,
+   "decode_ms_per_delivered_frame": {
+    "max": 6.140083,
+    "mean": 5.068157930000002,
+    "p50": 5.064209,
+    "p95": 5.440582999999999
+   },
+   "encode_ms_per_frame": {
+    "max": 8.752958,
+    "mean": 4.893731373333333,
+    "p50": 4.857708,
+    "p95": 5.134958999999999
+   },
+   "frames_delivered": 300,
+   "frames_in": 300,
+   "keyframes": 0,
+   "psnr_db": 37.27441563905468,
+   "tiles_total": 0,
+   "encoder": "jpeg",
+   "instrument": "vcspike-in-process"
+  },
+  {
+   "content": "scroll",
+   "fps": 30,
+   "bitrate_bps": 1000000,
+   "bytes_per_s": 124151.7,
+   "bytes_total": 1241517,
+   "decode_ms_per_delivered_frame": {
+    "max": 4.911625,
+    "mean": 1.3798377857142858,
+    "p50": 1.254208,
+    "p95": 2.677
+   },
+   "encode_ms_per_frame": {
+    "max": 38.999876,
+    "mean": 5.2984525100000015,
+    "p50": 7.028959,
+    "p95": 8.050833
+   },
+   "encode_ms_split": {
+    "h264_encode": {
+     "max": 38.611292,
+     "mean": 4.756554716666665,
+     "p50": 6.5465,
+     "p95": 7.482
+    },
+    "rgb_to_yuv420": {
+     "max": 4.532625,
+     "mean": 0.5418977933333337,
+     "p50": 0.46945899999999996,
+     "p95": 0.834
+    }
+   },
+   "frames_delivered": 196,
+   "frames_in": 300,
+   "frames_rc_skipped": 104,
+   "psnr_db": 18.51421957115489,
+   "encoder": "h264-openh264@1M",
+   "instrument": "vcspike-in-process"
+  },
+  {
+   "content": "scroll",
+   "fps": 30,
+   "bitrate_bps": 2000000,
+   "bytes_per_s": 173699.1,
+   "bytes_total": 1736991,
+   "decode_ms_per_delivered_frame": {
+    "max": 4.31625,
+    "mean": 1.3524482450592887,
+    "p50": 1.266417,
+    "p95": 1.588875
+   },
+   "encode_ms_per_frame": {
+    "max": 9.363790999999999,
+    "mean": 6.6097443033333345,
+    "p50": 7.57725,
+    "p95": 8.413
+   },
+   "encode_ms_split": {
+    "h264_encode": {
+     "max": 8.526957999999999,
+     "mean": 5.99052040666666,
+     "p50": 6.9933749999999995,
+     "p95": 7.812083
+    },
+    "rgb_to_yuv420": {
+     "max": 1.649667,
+     "mean": 0.6192238966666663,
+     "p50": 0.622333,
+     "p95": 0.899875
+    }
+   },
+   "frames_delivered": 253,
+   "frames_in": 300,
+   "frames_rc_skipped": 47,
+   "psnr_db": 22.199164552368988,
+   "encoder": "h264-openh264@2M",
+   "instrument": "vcspike-in-process"
+  },
+  {
+   "content": "scroll",
+   "fps": 30,
+   "bitrate_bps": 4000000,
+   "bytes_per_s": 188260.7,
+   "bytes_total": 1882607,
+   "decode_ms_per_delivered_frame": {
+    "max": 4.331917,
+    "mean": 1.3255696989966546,
+    "p50": 1.214375,
+    "p95": 1.619333
+   },
+   "encode_ms_per_frame": {
+    "max": 9.030582999999998,
+    "mean": 7.347040546666672,
+    "p50": 7.3697919999999995,
+    "p95": 8.530458000000001
+   },
+   "encode_ms_split": {
+    "h264_encode": {
+     "max": 8.272165999999999,
+     "mean": 6.754701376666667,
+     "p50": 6.782792000000001,
+     "p95": 7.8621669999999995
+    },
+    "rgb_to_yuv420": {
+     "max": 1.085417,
+     "mean": 0.5923391700000004,
+     "p50": 0.562083,
+     "p95": 0.85525
+    }
+   },
+   "frames_delivered": 299,
+   "frames_in": 300,
+   "frames_rc_skipped": 1,
+   "psnr_db": 35.01130606703625,
+   "encoder": "h264-openh264@4M",
+   "instrument": "vcspike-in-process"
+  },
+  {
+   "content": "scroll",
+   "fps": 30,
+   "encoder": "vp8-libvpx@1M",
+   "instrument": "ffmpeg-cli",
+   "frames_in": 300,
+   "frames_delivered": 300,
+   "bytes_total": 1405943,
+   "bytes_per_s": 140594.3,
+   "encode_ms_per_frame": {
+    "mean": 6.57
+   },
+   "decode_ms_per_delivered_frame": {
+    "mean": 0.71
+   },
+   "psnr_db": 30.529831,
+   "bench_raw": {
+    "encode": {
+     "utime_s": 1.971,
+     "stime_s": 0.135,
+     "rtime_s": 1.664
+    },
+    "decode": {
+     "utime_s": 0.213,
+     "stime_s": 0.009,
+     "rtime_s": 0.213
+    }
+   }
+  },
+  {
+   "content": "scroll",
+   "fps": 30,
+   "encoder": "vp9-libvpx@1M",
+   "instrument": "ffmpeg-cli",
+   "frames_in": 300,
+   "frames_delivered": 300,
+   "bytes_total": 3463609,
+   "bytes_per_s": 346360.9,
+   "encode_ms_per_frame": {
+    "mean": 6.973333333333334
+   },
+   "decode_ms_per_delivered_frame": {
+    "mean": 1.4566666666666668
+   },
+   "psnr_db": 26.6074,
+   "bench_raw": {
+    "encode": {
+     "utime_s": 2.092,
+     "stime_s": 0.129,
+     "rtime_s": 1.977
+    },
+    "decode": {
+     "utime_s": 0.437,
+     "stime_s": 0.008,
+     "rtime_s": 0.436
+    }
+   }
+  },
+  {
+   "content": "scroll",
+   "fps": 30,
+   "encoder": "vp8-libvpx@4M",
+   "instrument": "ffmpeg-cli",
+   "frames_in": 300,
+   "frames_delivered": 300,
+   "bytes_total": 3707301,
+   "bytes_per_s": 370730.1,
+   "encode_ms_per_frame": {
+    "mean": 5.27
+   },
+   "decode_ms_per_delivered_frame": {
+    "mean": 1.0233333333333334
+   },
+   "psnr_db": 47.433661,
+   "bench_raw": {
+    "encode": {
+     "utime_s": 1.581,
+     "stime_s": 0.089,
+     "rtime_s": 1.284
+    },
+    "decode": {
+     "utime_s": 0.307,
+     "stime_s": 0.006,
+     "rtime_s": 0.306
+    }
+   }
+  },
+  {
+   "content": "scroll",
+   "fps": 30,
+   "encoder": "vp9-libvpx@4M",
+   "instrument": "ffmpeg-cli",
+   "frames_in": 300,
+   "frames_delivered": 300,
+   "bytes_total": 8157467,
+   "bytes_per_s": 815746.7,
+   "encode_ms_per_frame": {
+    "mean": 7.633333333333334
+   },
+   "decode_ms_per_delivered_frame": {
+    "mean": 2.4133333333333336
+   },
+   "psnr_db": 41.777916,
+   "bench_raw": {
+    "encode": {
+     "utime_s": 2.29,
+     "stime_s": 0.1,
+     "rtime_s": 2.162
+    },
+    "decode": {
+     "utime_s": 0.724,
+     "stime_s": 0.008,
+     "rtime_s": 0.723
+    }
+   }
+  },
+  {
+   "content": "scroll",
+   "fps": 30,
+   "encoder": "x264-ref@4M",
+   "instrument": "ffmpeg-cli",
+   "frames_in": 300,
+   "frames_delivered": 300,
+   "bytes_total": 3550334,
+   "bytes_per_s": 355033.4,
+   "encode_ms_per_frame": {
+    "mean": 5.946666666666666
+   },
+   "decode_ms_per_delivered_frame": {
+    "mean": 1.2533333333333334
+   },
+   "psnr_db": 48.014177,
+   "bench_raw": {
+    "encode": {
+     "utime_s": 1.784,
+     "stime_s": 0.09,
+     "rtime_s": 1.377
+    },
+    "decode": {
+     "utime_s": 0.376,
+     "stime_s": 0.008,
+     "rtime_s": 0.374
+    }
+   }
+  },
+  {
+   "content": "photo-pan",
+   "fps": 10,
+   "bytes_per_s": 23148378.3,
+   "bytes_total": 231483783,
+   "decode_ms_per_delivered_frame": {
+    "max": 7.8885,
+    "mean": 6.413044159999998,
+    "p50": 6.399083,
+    "p95": 6.922166000000001
+   },
+   "encode_ms_per_frame": {
+    "max": 7.378834,
+    "mean": 4.510629110000002,
+    "p50": 4.4767920000000005,
+    "p95": 5.0309159999999995
+   },
+   "frames_delivered": 100,
+   "frames_in": 100,
+   "keyframes": 4,
+   "psnr_db": null,
+   "tiles_total": 24960,
+   "encoder": "delta-png",
+   "instrument": "vcspike-in-process"
+  },
+  {
+   "content": "photo-pan",
+   "fps": 10,
+   "bytes_per_s": 2731911.7,
+   "bytes_total": 27319117,
+   "decode_ms_per_delivered_frame": {
+    "max": 14.07775,
+    "mean": 8.288535019999998,
+    "p50": 8.279625000000001,
+    "p95": 8.910333
+   },
+   "encode_ms_per_frame": {
+    "max": 9.070958000000001,
+    "mean": 5.9825907900000015,
+    "p50": 5.873375,
+    "p95": 6.911166
+   },
+   "frames_delivered": 100,
+   "frames_in": 100,
+   "keyframes": 4,
+   "psnr_db": 32.3096422177698,
+   "tiles_total": 24960,
+   "encoder": "delta-jpeg",
+   "instrument": "vcspike-in-process"
+  },
+  {
+   "content": "photo-pan",
+   "fps": 10,
+   "bytes_per_s": 1167233.2,
+   "bytes_total": 11672332,
+   "decode_ms_per_delivered_frame": {
+    "max": 4.891167,
+    "mean": 4.485056320000001,
+    "p50": 4.465707999999999,
+    "p95": 4.638125
+   },
+   "encode_ms_per_frame": {
+    "max": 5.288875,
+    "mean": 5.052499189999999,
+    "p50": 5.04975,
+    "p95": 5.156541
+   },
+   "frames_delivered": 100,
+   "frames_in": 100,
+   "keyframes": 0,
+   "psnr_db": 32.32379260802295,
+   "tiles_total": 0,
+   "encoder": "jpeg",
+   "instrument": "vcspike-in-process"
+  },
+  {
+   "content": "photo-pan",
+   "fps": 10,
+   "bitrate_bps": 1000000,
+   "bytes_per_s": 50103.7,
+   "bytes_total": 501037,
+   "decode_ms_per_delivered_frame": {
+    "max": 2.689666,
+    "mean": 1.3511467099999999,
+    "p50": 1.1865,
+    "p95": 1.890375
+   },
+   "encode_ms_per_frame": {
+    "max": 10.600666,
+    "mean": 3.6755270499999995,
+    "p50": 2.3291679999999997,
+    "p95": 9.486458
+   },
+   "encode_ms_split": {
+    "h264_encode": {
+     "max": 10.137,
+     "mean": 3.2843929000000016,
+     "p50": 1.9543339999999998,
+     "p95": 9.134542000000001
+    },
+    "rgb_to_yuv420": {
+     "max": 0.534541,
+     "mean": 0.39113415,
+     "p50": 0.367625,
+     "p95": 0.49195900000000004
+    }
+   },
+   "frames_delivered": 100,
+   "frames_in": 100,
+   "frames_rc_skipped": 0,
+   "psnr_db": 31.80718071500675,
+   "encoder": "h264-openh264@1M",
+   "instrument": "vcspike-in-process"
+  },
+  {
+   "content": "photo-pan",
+   "fps": 10,
+   "bitrate_bps": 2000000,
+   "bytes_per_s": 79774.8,
+   "bytes_total": 797748,
+   "decode_ms_per_delivered_frame": {
+    "max": 2.930167,
+    "mean": 1.5650833999999998,
+    "p50": 1.4742920000000002,
+    "p95": 2.471458
+   },
+   "encode_ms_per_frame": {
+    "max": 12.018374,
+    "mean": 4.403591149999998,
+    "p50": 3.840916,
+    "p95": 9.528459
+   },
+   "encode_ms_split": {
+    "h264_encode": {
+     "max": 11.531333,
+     "mean": 3.9508886700000003,
+     "p50": 3.17775,
+     "p95": 8.770667
+    },
+    "rgb_to_yuv420": {
+     "max": 0.811958,
+     "mean": 0.4527024799999999,
+     "p50": 0.389459,
+     "p95": 0.773792
+    }
+   },
+   "frames_delivered": 100,
+   "frames_in": 100,
+   "frames_rc_skipped": 0,
+   "psnr_db": 31.845383887068785,
+   "encoder": "h264-openh264@2M",
+   "instrument": "vcspike-in-process"
+  },
+  {
+   "content": "photo-pan",
+   "fps": 10,
+   "bitrate_bps": 4000000,
+   "bytes_per_s": 72836.1,
+   "bytes_total": 728361,
+   "decode_ms_per_delivered_frame": {
+    "max": 3.141833,
+    "mean": 1.5421421699999995,
+    "p50": 1.456583,
+    "p95": 2.5769170000000003
+   },
+   "encode_ms_per_frame": {
+    "max": 12.273916,
+    "mean": 4.253319579999999,
+    "p50": 3.761291,
+    "p95": 9.580417
+   },
+   "encode_ms_split": {
+    "h264_encode": {
+     "max": 11.775541,
+     "mean": 3.770058359999999,
+     "p50": 3.2705,
+     "p95": 9.030708
+    },
+    "rgb_to_yuv420": {
+     "max": 0.886375,
+     "mean": 0.48326122000000005,
+     "p50": 0.46091699999999997,
+     "p95": 0.705417
+    }
+   },
+   "frames_delivered": 100,
+   "frames_in": 100,
+   "frames_rc_skipped": 0,
+   "psnr_db": 31.854133939748998,
+   "encoder": "h264-openh264@4M",
+   "instrument": "vcspike-in-process"
+  },
+  {
+   "content": "photo-pan",
+   "fps": 10,
+   "encoder": "vp8-libvpx@1M",
+   "instrument": "ffmpeg-cli",
+   "frames_in": 100,
+   "frames_delivered": 100,
+   "bytes_total": 1367276,
+   "bytes_per_s": 136727.6,
+   "encode_ms_per_frame": {
+    "mean": 7.39
+   },
+   "decode_ms_per_delivered_frame": {
+    "mean": 1.59
+   },
+   "psnr_db": 32.383081,
+   "bench_raw": {
+    "encode": {
+     "utime_s": 0.739,
+     "stime_s": 0.031,
+     "rtime_s": 0.642
+    },
+    "decode": {
+     "utime_s": 0.159,
+     "stime_s": 0.004,
+     "rtime_s": 0.159
+    }
+   }
+  },
+  {
+   "content": "photo-pan",
+   "fps": 10,
+   "encoder": "vp9-libvpx@1M",
+   "instrument": "ffmpeg-cli",
+   "frames_in": 100,
+   "frames_delivered": 100,
+   "bytes_total": 2062125,
+   "bytes_per_s": 206212.5,
+   "encode_ms_per_frame": {
+    "mean": 13.17
+   },
+   "decode_ms_per_delivered_frame": {
+    "mean": 3.23
+   },
+   "psnr_db": 32.806658,
+   "bench_raw": {
+    "encode": {
+     "utime_s": 1.317,
+     "stime_s": 0.042,
+     "rtime_s": 1.28
+    },
+    "decode": {
+     "utime_s": 0.323,
+     "stime_s": 0.007,
+     "rtime_s": 0.333
+    }
+   }
+  },
+  {
+   "content": "photo-pan",
+   "fps": 10,
+   "encoder": "vp8-libvpx@4M",
+   "instrument": "ffmpeg-cli",
+   "frames_in": 100,
+   "frames_delivered": 100,
+   "bytes_total": 3302189,
+   "bytes_per_s": 330218.9,
+   "encode_ms_per_frame": {
+    "mean": 7.48
+   },
+   "decode_ms_per_delivered_frame": {
+    "mean": 2.25
+   },
+   "psnr_db": 33.686873,
+   "bench_raw": {
+    "encode": {
+     "utime_s": 0.748,
+     "stime_s": 0.033,
+     "rtime_s": 0.651
+    },
+    "decode": {
+     "utime_s": 0.225,
+     "stime_s": 0.004,
+     "rtime_s": 0.226
+    }
+   }
+  },
+  {
+   "content": "photo-pan",
+   "fps": 10,
+   "encoder": "vp9-libvpx@4M",
+   "instrument": "ffmpeg-cli",
+   "frames_in": 100,
+   "frames_delivered": 100,
+   "bytes_total": 6446627,
+   "bytes_per_s": 644662.7,
+   "encode_ms_per_frame": {
+    "mean": 16.97
+   },
+   "decode_ms_per_delivered_frame": {
+    "mean": 7.19
+   },
+   "psnr_db": 33.504593,
+   "bench_raw": {
+    "encode": {
+     "utime_s": 1.697,
+     "stime_s": 0.045,
+     "rtime_s": 1.664
+    },
+    "decode": {
+     "utime_s": 0.719,
+     "stime_s": 0.007,
+     "rtime_s": 0.72
+    }
+   }
+  },
+  {
+   "content": "photo-pan",
+   "fps": 10,
+   "encoder": "x264-ref@4M",
+   "instrument": "ffmpeg-cli",
+   "frames_in": 100,
+   "frames_delivered": 100,
+   "bytes_total": 6157966,
+   "bytes_per_s": 615796.6,
+   "encode_ms_per_frame": {
+    "mean": 9.85
+   },
+   "decode_ms_per_delivered_frame": {
+    "mean": 4.08
+   },
+   "psnr_db": 40.715788,
+   "bench_raw": {
+    "encode": {
+     "utime_s": 0.985,
+     "stime_s": 0.038,
+     "rtime_s": 0.852
+    },
+    "decode": {
+     "utime_s": 0.408,
+     "stime_s": 0.005,
+     "rtime_s": 0.407
+    }
+   }
+  },
+  {
+   "content": "photo-pan",
+   "fps": 30,
+   "bytes_per_s": 69442960.6,
+   "bytes_total": 694429606,
+   "decode_ms_per_delivered_frame": {
+    "max": 9.8495,
+    "mean": 6.351843340000003,
+    "p50": 6.319667,
+    "p95": 6.873457999999999
+   },
+   "encode_ms_per_frame": {
+    "max": 5.6155420000000005,
+    "mean": 4.4595690300000035,
+    "p50": 4.436917,
+    "p95": 5.006667
+   },
+   "frames_delivered": 300,
+   "frames_in": 300,
+   "keyframes": 10,
+   "psnr_db": null,
+   "tiles_total": 75400,
+   "encoder": "delta-png",
+   "instrument": "vcspike-in-process"
+  },
+  {
+   "content": "photo-pan",
+   "fps": 30,
+   "bytes_per_s": 8228259.2,
+   "bytes_total": 82282592,
+   "decode_ms_per_delivered_frame": {
+    "max": 8.973375,
+    "mean": 7.945620109999996,
+    "p50": 8.032375,
+    "p95": 8.387625
+   },
+   "encode_ms_per_frame": {
+    "max": 7.553292,
+    "mean": 5.769044329999998,
+    "p50": 5.732916,
+    "p95": 6.066083
+   },
+   "frames_delivered": 300,
+   "frames_in": 300,
+   "keyframes": 10,
+   "psnr_db": 32.30953079566034,
+   "tiles_total": 75400,
+   "encoder": "delta-jpeg",
+   "instrument": "vcspike-in-process"
+  },
+  {
+   "content": "photo-pan",
+   "fps": 30,
+   "bytes_per_s": 3501661.8,
+   "bytes_total": 35016618,
+   "decode_ms_per_delivered_frame": {
+    "max": 16.176375,
+    "mean": 4.718725040000001,
+    "p50": 4.57975,
+    "p95": 5.233458
+   },
+   "encode_ms_per_frame": {
+    "max": 13.885167000000001,
+    "mean": 5.2166587300000025,
+    "p50": 5.07675,
+    "p95": 5.65925
+   },
+   "frames_delivered": 300,
+   "frames_in": 300,
+   "keyframes": 0,
+   "psnr_db": 32.32377690112025,
+   "tiles_total": 0,
+   "encoder": "jpeg",
+   "instrument": "vcspike-in-process"
+  },
+  {
+   "content": "photo-pan",
+   "fps": 30,
+   "bitrate_bps": 1000000,
+   "bytes_per_s": 125153.3,
+   "bytes_total": 1251533,
+   "decode_ms_per_delivered_frame": {
+    "max": 2.6811249999999998,
+    "mean": 1.4208466280701755,
+    "p50": 1.376333,
+    "p95": 1.70525
+   },
+   "encode_ms_per_frame": {
+    "max": 11.011209,
+    "mean": 4.251656340000002,
+    "p50": 4.078083,
+    "p95": 7.144832999999999
+   },
+   "encode_ms_split": {
+    "h264_encode": {
+     "max": 10.581667,
+     "mean": 3.833790670000002,
+     "p50": 3.671667,
+     "p95": 6.702458
+    },
+    "rgb_to_yuv420": {
+     "max": 0.7489169999999999,
+     "mean": 0.41786567,
+     "p50": 0.391042,
+     "p95": 0.62225
+    }
+   },
+   "frames_delivered": 285,
+   "frames_in": 300,
+   "frames_rc_skipped": 15,
+   "psnr_db": 31.568035346634677,
+   "encoder": "h264-openh264@1M",
+   "instrument": "vcspike-in-process"
+  },
+  {
+   "content": "photo-pan",
+   "fps": 30,
+   "bitrate_bps": 2000000,
+   "bytes_per_s": 235348.5,
+   "bytes_total": 2353485,
+   "decode_ms_per_delivered_frame": {
+    "max": 2.835792,
+    "mean": 1.6096689233333332,
+    "p50": 1.599,
+    "p95": 1.846
+   },
+   "encode_ms_per_frame": {
+    "max": 9.3465,
+    "mean": 4.991202803333331,
+    "p50": 4.859041,
+    "p95": 8.302917
+   },
+   "encode_ms_split": {
+    "h264_encode": {
+     "max": 8.951333,
+     "mean": 4.530000956666664,
+     "p50": 4.4412080000000005,
+     "p95": 7.863125
+    },
+    "rgb_to_yuv420": {
+     "max": 0.99675,
+     "mean": 0.4612018466666667,
+     "p50": 0.384833,
+     "p95": 0.7532920000000001
+    }
+   },
+   "frames_delivered": 300,
+   "frames_in": 300,
+   "frames_rc_skipped": 0,
+   "psnr_db": 31.749495971592914,
+   "encoder": "h264-openh264@2M",
+   "instrument": "vcspike-in-process"
+  },
+  {
+   "content": "photo-pan",
+   "fps": 30,
+   "bitrate_bps": 4000000,
+   "bytes_per_s": 256307.1,
+   "bytes_total": 2563071,
+   "decode_ms_per_delivered_frame": {
+    "max": 2.7195840000000002,
+    "mean": 1.527522209999999,
+    "p50": 1.4845,
+    "p95": 1.964916
+   },
+   "encode_ms_per_frame": {
+    "max": 9.996334000000001,
+    "mean": 4.445586093333338,
+    "p50": 4.061,
+    "p95": 8.764833
+   },
+   "encode_ms_split": {
+    "h264_encode": {
+     "max": 9.429042,
+     "mean": 3.9936836066666674,
+     "p50": 3.5452090000000003,
+     "p95": 8.347417
+    },
+    "rgb_to_yuv420": {
+     "max": 0.779625,
+     "mean": 0.4519024866666663,
+     "p50": 0.41970799999999997,
+     "p95": 0.673166
+    }
+   },
+   "frames_delivered": 300,
+   "frames_in": 300,
+   "frames_rc_skipped": 0,
+   "psnr_db": 31.819544773973348,
+   "encoder": "h264-openh264@4M",
+   "instrument": "vcspike-in-process"
+  },
+  {
+   "content": "photo-pan",
+   "fps": 30,
+   "encoder": "vp8-libvpx@1M",
+   "instrument": "ffmpeg-cli",
+   "frames_in": 300,
+   "frames_delivered": 300,
+   "bytes_total": 1308866,
+   "bytes_per_s": 130886.6,
+   "encode_ms_per_frame": {
+    "mean": 6.233333333333333
+   },
+   "decode_ms_per_delivered_frame": {
+    "mean": 1.0466666666666666
+   },
+   "psnr_db": 31.793428,
+   "bench_raw": {
+    "encode": {
+     "utime_s": 1.87,
+     "stime_s": 0.088,
+     "rtime_s": 1.584
+    },
+    "decode": {
+     "utime_s": 0.314,
+     "stime_s": 0.01,
+     "rtime_s": 0.322
+    }
+   }
+  },
+  {
+   "content": "photo-pan",
+   "fps": 30,
+   "encoder": "vp9-libvpx@1M",
+   "instrument": "ffmpeg-cli",
+   "frames_in": 300,
+   "frames_delivered": 300,
+   "bytes_total": 1537798,
+   "bytes_per_s": 153779.8,
+   "encode_ms_per_frame": {
+    "mean": 11.696666666666667
+   },
+   "decode_ms_per_delivered_frame": {
+    "mean": 1.61
+   },
+   "psnr_db": 32.247848,
+   "bench_raw": {
+    "encode": {
+     "utime_s": 3.509,
+     "stime_s": 0.102,
+     "rtime_s": 3.382
+    },
+    "decode": {
+     "utime_s": 0.483,
+     "stime_s": 0.008,
+     "rtime_s": 0.488
+    }
+   }
+  },
+  {
+   "content": "photo-pan",
+   "fps": 30,
+   "encoder": "vp8-libvpx@4M",
+   "instrument": "ffmpeg-cli",
+   "frames_in": 300,
+   "frames_delivered": 300,
+   "bytes_total": 4798424,
+   "bytes_per_s": 479842.4,
+   "encode_ms_per_frame": {
+    "mean": 6.263333333333334
+   },
+   "decode_ms_per_delivered_frame": {
+    "mean": 1.5266666666666666
+   },
+   "psnr_db": 32.738666,
+   "bench_raw": {
+    "encode": {
+     "utime_s": 1.879,
+     "stime_s": 0.09,
+     "rtime_s": 1.641
+    },
+    "decode": {
+     "utime_s": 0.458,
+     "stime_s": 0.007,
+     "rtime_s": 0.456
+    }
+   }
+  },
+  {
+   "content": "photo-pan",
+   "fps": 30,
+   "encoder": "vp9-libvpx@4M",
+   "instrument": "ffmpeg-cli",
+   "frames_in": 300,
+   "frames_delivered": 300,
+   "bytes_total": 6275629,
+   "bytes_per_s": 627562.9,
+   "encode_ms_per_frame": {
+    "mean": 13.963333333333333
+   },
+   "decode_ms_per_delivered_frame": {
+    "mean": 3.42
+   },
+   "psnr_db": 32.716987,
+   "bench_raw": {
+    "encode": {
+     "utime_s": 4.189,
+     "stime_s": 0.098,
+     "rtime_s": 4.063
+    },
+    "decode": {
+     "utime_s": 1.026,
+     "stime_s": 0.008,
+     "rtime_s": 1.024
+    }
+   }
+  },
+  {
+   "content": "photo-pan",
+   "fps": 30,
+   "encoder": "x264-ref@4M",
+   "instrument": "ffmpeg-cli",
+   "frames_in": 300,
+   "frames_delivered": 300,
+   "bytes_total": 6588121,
+   "bytes_per_s": 658812.1,
+   "encode_ms_per_frame": {
+    "mean": 7.1
+   },
+   "decode_ms_per_delivered_frame": {
+    "mean": 1.8466666666666667
+   },
+   "psnr_db": 36.17476,
+   "bench_raw": {
+    "encode": {
+     "utime_s": 2.13,
+     "stime_s": 0.091,
+     "rtime_s": 1.725
+    },
+    "decode": {
+     "utime_s": 0.554,
+     "stime_s": 0.009,
+     "rtime_s": 0.555
+    }
+   }
+  }
+ ]
+}

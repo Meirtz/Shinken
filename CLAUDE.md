@@ -38,10 +38,11 @@ committed is world-readable.
 | `README.md`, `LICENSE` (Apache-2.0) | ✅ | front matter |
 | `schema/` | ✅ | ACI JSON Schema (`aci.schema.json`) |
 | `shinkend/` | ✅ | Rust Guest Runtime (`shinkend`) |
-| `sdk/python/` | ✅ | Python SDK and CLI |
+| `sdk/python/` | ✅ | Python SDK and CLI (incl. `shinken/integrations/` — swerex/uni-agent, CUA-Gym, Agentix, ProRL-Agent-Server interop adapters) |
 | `images/linux/` | ✅ | Local Linux Sandbox image |
+| `examples/` | ✅ | Runnable interop examples (`cua_gym_shinken.py`, `agentix_shinken.py`, `uniagent_shinken.py` — scripted, no model API) |
 | `benchmarks/` | ✅ | Rerunnable local benchmark suites (incl. `bench_client_scale.py` N=1024 client plane) + tracked raw results (`results/*.json`, one-off WAN CSVs in `results/remote/`); ALL figures land in `docs/assets/bench/` (regenerate: `replot.py` + `plot_remote.py`); methodology in `docs/engineering/benchmarks.md`, headline report in `docs/benchmarks/README.md` |
-| `references/` | 🚫 git-ignored | 12 cloned prior-art repos studied for design (OSWorld, cua, codex, anthropic-quickstarts, neko, OpenAdapt, e2b-desktop, UI-TARS-desktop, OmniParser; + 2026-06: uni-agent, CUA-Gym, Agentix); provenance + re-clone in `references/README.md` (tracked) |
+| `references/` | 🚫 git-ignored | 13 cloned prior-art repos studied for design (OSWorld, cua, codex, anthropic-quickstarts, neko, OpenAdapt, e2b-desktop, UI-TARS-desktop, OmniParser; + 2026-06: uni-agent, CUA-Gym, Agentix, ProRL-Agent-Server); provenance + re-clone in `references/README.md` (tracked) |
 
 ## Conventions
 
@@ -71,7 +72,8 @@ single-connection SDK readiness loop took `provider.create()` from ~7.7 s to ~0.
 opt-in **warm-pool fork graft** (pre-booted containers + `docker diff` delta) serves
 restore/fork without the boot (files-only, same tier as `docker commit`) — see
 [docs/engineering/benchmarks.md](docs/engineering/benchmarks.md) §1/§9. The Python SDK
-(sync facade + reader/demux) ships too. `.skn` recording is **not** built (removed/deferred, #216/#217). Full built-vs-designed
+(sync facade + reader/demux, plus a pipelined `step()` — k actions + a fused observation in
+~1 RTT, S11-measured) ships too. `.skn` recording is **not** built (removed/deferred, #216/#217). Full built-vs-designed
 map: **[docs/engineering/status.md](docs/engineering/status.md)**.
 
 The immediate work (per the recalibrated priorities):

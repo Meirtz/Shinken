@@ -41,6 +41,14 @@ pub struct Capabilities {
     /// sent base64-in-JSON text frames).
     #[serde(default)]
     pub binary_frames: bool,
+    /// Whether this runtime understands content-negotiated screenshots: it emits
+    /// `frame_hash` on screenshot observations, honors `if_none_match` on the
+    /// screenshot action, and answers a hash match with the compact `not_modified`
+    /// observation. Defaults false when absent (pre-dedup welcome) — a client must
+    /// not send `if_none_match` unless this is advertised, because pre-dedup
+    /// runtimes reject unknown action fields.
+    #[serde(default)]
+    pub frame_dedup: bool,
 }
 
 fn default_image_formats() -> Vec<String> {
@@ -144,6 +152,17 @@ pub enum Message {
         /// that changed since the previous delivered frame, INSTEAD of `image`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tiles: Option<Vec<TileRef>>,
+        /// Content hash of the captured frame's RAW pixels (codec-independent —
+        /// `executor::frame_hash_hex`). Set on one-shot screenshot observations;
+        /// the value a client echoes back as the screenshot action's `if_none_match`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        frame_hash: Option<String>,
+        /// Content-negotiated screenshot: the captured frame's hash equals the
+        /// request's `if_none_match`, so the payload is omitted — always sent with
+        /// `frame_hash` + `cause` and never `image`/`tiles` (and as a JSON text
+        /// frame even on a binary session: there is no payload to carry).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        not_modified: Option<bool>,
     },
 }
 
@@ -199,6 +218,11 @@ pub fn capabilities() -> Capabilities {
         image_formats: ["png", "jpeg"].iter().map(|s| s.to_string()).collect(),
         // Binary media framing: opt-in per session via hello.accept.binary_frames.
         binary_frames: true,
+        // Content-negotiated screenshots: request-scoped (if_none_match), nothing to
+        // negotiate per session beyond advertising it. The pyautogui fallback backend
+        // has no raw capture, so it simply never emits a frame_hash (and thus never
+        // matches) — a full frame is always the safe answer.
+        frame_dedup: true,
     }
 }
 
@@ -224,6 +248,8 @@ pub fn stream_frame(stream_id: &str, seq: u64, image: ImageRef) -> Message {
         seq: Some(seq),
         image: Some(image),
         tiles: None,
+        frame_hash: None,
+        not_modified: None,
     }
 }
 
@@ -236,6 +262,25 @@ pub fn stream_tiles_frame(stream_id: &str, seq: u64, tiles: Vec<TileRef>) -> Mes
         seq: Some(seq),
         image: None,
         tiles: Some(tiles),
+        frame_hash: None,
+        not_modified: None,
+    }
+}
+
+/// Build the compact content-negotiated screenshot answer: the freshly captured
+/// frame's raw-pixel hash equals the request's `if_none_match`, so no payload is
+/// re-sent — only the hash the client already holds the bytes for. Travels as JSON
+/// text even on a binary-negotiated session (there is no payload to carry).
+pub fn not_modified_observation(call_id: &str, frame_hash: &str) -> Message {
+    Message::Observation {
+        obs_id: format!("obs-{call_id}"),
+        cause: Some(call_id.to_string()),
+        stream: None,
+        seq: None,
+        image: None,
+        tiles: None,
+        frame_hash: Some(frame_hash.to_string()),
+        not_modified: Some(true),
     }
 }
 
@@ -286,12 +331,15 @@ fn assemble_binary(header: &serde_json::Value, payloads: &[&[u8]]) -> Vec<u8> {
 }
 
 /// Build one binary `observation` carrying a full image: a one-shot screenshot when
-/// `cause` is set, a screencast (key)frame when `stream`/`seq` are.
+/// `cause` is set, a screencast (key)frame when `stream`/`seq` are. `frame_hash` is
+/// the raw-pixel content hash (screenshot dedup) — set on one-shot screenshots from
+/// a raw-capture backend, absent on stream frames.
 pub fn binary_image_frame(
     obs_id: &str,
     cause: Option<&str>,
     stream: Option<&str>,
     seq: Option<u64>,
+    frame_hash: Option<&str>,
     meta: BinaryImageMeta<'_>,
     data: &[u8],
 ) -> Vec<u8> {
@@ -315,6 +363,9 @@ pub fn binary_image_frame(
     }
     if let Some(q) = seq {
         header["seq"] = q.into();
+    }
+    if let Some(fh) = frame_hash {
+        header["frame_hash"] = fh.into();
     }
     assemble_binary(&header, &[data])
 }
@@ -547,6 +598,74 @@ mod tests {
         );
     }
 
+    /// The advertised frame-dedup capability must exist in the published schema
+    /// (Welcome.capabilities.frame_dedup, Action.if_none_match, the observation's
+    /// frame_hash/not_modified), so negotiation never promises a contract shape the
+    /// schema doesn't know.
+    #[test]
+    fn advertised_frame_dedup_is_in_schema() {
+        assert!(capabilities().frame_dedup);
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../schema/aci.schema.json");
+        let raw = std::fs::read_to_string(path).expect("read schema/aci.schema.json");
+        let schema: serde_json::Value = serde_json::from_str(&raw).expect("parse aci schema");
+        assert_eq!(
+            schema["$defs"]["Welcome"]["properties"]["capabilities"]["properties"]["frame_dedup"]
+                ["type"],
+            "boolean",
+            "schema Welcome.capabilities must define frame_dedup"
+        );
+        assert_eq!(
+            schema["$defs"]["Action"]["properties"]["if_none_match"]["type"], "string",
+            "schema Action must define if_none_match"
+        );
+        assert_eq!(
+            schema["$defs"]["ObservationMsg"]["properties"]["frame_hash"]["type"], "string",
+            "schema ObservationMsg must define frame_hash"
+        );
+        assert_eq!(
+            schema["$defs"]["ObservationMsg"]["properties"]["not_modified"]["const"], true,
+            "schema ObservationMsg must define not_modified (const true)"
+        );
+        assert_eq!(
+            schema["$defs"]["BinaryFrameHeader"]["properties"]["frame_hash"]["type"], "string",
+            "schema BinaryFrameHeader must define frame_hash"
+        );
+    }
+
+    // Back-compat: a welcome from a pre-dedup runtime (no frame_dedup field) must
+    // parse as false — clients must not send if_none_match against those (they
+    // reject unknown action fields).
+    #[test]
+    fn welcome_without_frame_dedup_parses_as_false() {
+        let old = r#"{"type":"welcome","v":0,
+            "server":{"name":"shinkend","version":"0.0.0","platform":"linux"},
+            "capabilities":{"schema_version":0,"verbs":[],"targets":[],
+                            "observation_types":[],"max_long_edge":2576}}"#;
+        let msg: Message = serde_json::from_str(old).unwrap();
+        match msg {
+            Message::Welcome { capabilities, .. } => assert!(!capabilities.frame_dedup),
+            other => panic!("expected welcome, got {other:?}"),
+        }
+    }
+
+    /// The compact not_modified observation: cause + frame_hash + not_modified=true,
+    /// and NO image/tiles — the shape the schema's ObservationMsg rule pins.
+    #[test]
+    fn not_modified_observation_is_compact_and_correlated() {
+        let msg = not_modified_observation("c7", "deadbeefdeadbeef");
+        let text = serde_json::to_string(&msg).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["type"], "observation");
+        assert_eq!(v["cause"], "c7");
+        assert_eq!(v["not_modified"], true);
+        assert_eq!(v["frame_hash"], "deadbeefdeadbeef");
+        assert!(v.get("image").is_none() && v.get("tiles").is_none());
+        assert!(v.get("stream").is_none() && v.get("seq").is_none());
+        // and it round-trips through the typed Message
+        let back: Message = serde_json::from_str(&text).unwrap();
+        assert!(matches!(back, Message::Observation { .. }));
+    }
+
     // Back-compat: a welcome from a pre-binary runtime (no binary_frames field) must
     // parse as false — those runtimes only ever sent base64-in-JSON text frames.
     #[test]
@@ -572,6 +691,7 @@ mod tests {
             None,
             Some("s1"),
             Some(7),
+            None,
             BinaryImageMeta {
                 w: 640,
                 h: 400,
@@ -603,6 +723,7 @@ mod tests {
             Some("c1"),
             None,
             None,
+            Some("00ff00ff00ff00ff"),
             BinaryImageMeta {
                 w: 2,
                 h: 2,
@@ -616,6 +737,8 @@ mod tests {
         assert_eq!(header["cause"], "c1");
         assert!(header.get("stream").is_none());
         assert!(header.get("seq").is_none());
+        // the one-shot screenshot header carries the raw-pixel content hash
+        assert_eq!(header["frame_hash"], "00ff00ff00ff00ff");
     }
 
     /// Binary tiles frame: payloads concatenated in tile order, offsets contiguous.

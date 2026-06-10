@@ -15,7 +15,15 @@ M0 implements the handshake + ``ping``/``query``. Observation, actions, and the
 later milestones (see docs/10-phase0-plan.md).
 """
 
-from .client import AsyncSandbox, Capabilities, Sandbox, SharedLoop, aconnect, connect
+from .client import (
+    AsyncSandbox,
+    Capabilities,
+    FrameCache,
+    Sandbox,
+    SharedLoop,
+    aconnect,
+    connect,
+)
 from .dialect import DialectError, parse_actions
 from .errors import ACTION_STATUSES, SandboxDied, ShinkenError, classify_exception
 from .gateway import CapabilityDenied
@@ -29,6 +37,7 @@ __all__ = [
     "AsyncSandbox",
     "SharedLoop",
     "Capabilities",
+    "FrameCache",
     "CapabilityDenied",
     "ShinkenError",
     "SandboxDied",

@@ -46,7 +46,8 @@
             "observation_types": { "type": "array", "items": { "$ref": "#/$defs/ObservationType" } },
             "max_long_edge": { "type": "integer", "minimum": 1 },
             "image_formats": { "type": "array", "items": { "$ref": "#/$defs/ImageFormat" }, "description": "image codecs this runtime can encode; a client must not request a format outside this list. Absent on pre-negotiation welcomes, which a client treats as png-only." },
-            "binary_frames": { "type": "boolean", "description": "whether this runtime can deliver image-bearing observations as binary WebSocket messages when the client opts in via hello.accept.binary_frames (see $defs.BinaryFrameHeader). Absent on pre-binary welcomes, which a client treats as false (text frames only)." }
+            "binary_frames": { "type": "boolean", "description": "whether this runtime can deliver image-bearing observations as binary WebSocket messages when the client opts in via hello.accept.binary_frames (see $defs.BinaryFrameHeader). Absent on pre-binary welcomes, which a client treats as false (text frames only)." },
+            "frame_dedup": { "type": "boolean", "description": "whether this runtime understands content-negotiated screenshots: it emits `frame_hash` on screenshot observations, honors `if_none_match` on the screenshot action, and answers a hash match with the compact `not_modified` observation (no payload). Absent on older welcomes, which a client treats as false — a client MUST NOT send if_none_match unless this is advertised (older runtimes reject unknown action fields)." }
           }
         }
       }
@@ -87,12 +88,15 @@
         "elements": { "type": "array", "items": { "$ref": "#/$defs/Element" } },
         "delta": { "type": "object", "properties": { "added": { "type": "array", "items": { "$ref": "#/$defs/Element" } }, "removed": { "type": "array", "items": { "type": "string" } }, "changed": { "type": "array", "items": { "$ref": "#/$defs/Element" } } } },
         "image": { "type": "object", "required": ["ref", "w", "h"], "properties": { "ref": { "type": "string" }, "w": { "type": "integer" }, "h": { "type": "integer" }, "scope": { "$ref": "#/$defs/Scope" }, "format": { "$ref": "#/$defs/ImageFormat", "description": "codec of `ref` bytes; defaults to png when absent" } } },
-        "tiles": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/Tile" }, "description": "dirty-tile delta frame (start_screencast delta=true): only the tiles that changed since the previous delivered frame, INSTEAD of `image`. Tile coordinates are in the delivered (post-downscale) resolution of the stream's last full keyframe; the consumer composites them onto that keyframe. Each tile's `ref` is encoded in the stream's format/quality." }
+        "tiles": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/Tile" }, "description": "dirty-tile delta frame (start_screencast delta=true): only the tiles that changed since the previous delivered frame, INSTEAD of `image`. Tile coordinates are in the delivered (post-downscale) resolution of the stream's last full keyframe; the consumer composites them onto that keyframe. Each tile's `ref` is encoded in the stream's format/quality." },
+        "frame_hash": { "type": "string", "description": "content hash of the captured frame's RAW pixels (post-scope/downscale, pre-encode — codec-independent: fnv1a-64 hex over dims+RGB). Set on one-shot screenshot observations from a frame_dedup runtime; the value a client echoes back as the screenshot action's if_none_match." },
+        "not_modified": { "const": true, "description": "content-negotiated screenshot (if_none_match): the freshly captured frame's hash equals the request's if_none_match, so the payload is omitted — the client already holds these exact pixels, keyed by frame_hash. Always carries frame_hash + cause and never image/tiles. Sent as a JSON text frame even on a binary-negotiated session (there is no payload to carry)." }
       },
       "allOf": [
         { "if": { "required": ["stream"] }, "then": { "required": ["stream", "seq"], "anyOf": [ { "required": ["image"] }, { "required": ["tiles"] } ] } },
         { "if": { "required": ["seq"] }, "then": { "required": ["stream"] } },
-        { "if": { "required": ["tiles"] }, "then": { "required": ["stream"], "not": { "required": ["image"] } } }
+        { "if": { "required": ["tiles"] }, "then": { "required": ["stream"], "not": { "required": ["image"] } } },
+        { "if": { "required": ["not_modified"] }, "then": { "required": ["not_modified", "frame_hash", "cause"], "allOf": [ { "not": { "required": ["image"] } }, { "not": { "required": ["tiles"] } } ] } }
       ]
     },
     "Tile": {
@@ -128,7 +132,8 @@
             "format": { "$ref": "#/$defs/ImageFormat" }
           }
         },
-        "tiles": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/BinaryTile" } }
+        "tiles": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/BinaryTile" } },
+        "frame_hash": { "type": "string", "description": "content hash of the frame's RAW pixels (see ObservationMsg.frame_hash) — set on one-shot screenshot headers from a frame_dedup runtime" }
       },
       "allOf": [
         { "if": { "required": ["stream"] }, "then": { "required": ["stream", "seq"], "anyOf": [ { "required": ["image"] }, { "required": ["tiles"] } ] } },
@@ -165,7 +170,8 @@
         "format": { "$ref": "#/$defs/ImageFormat", "description": "wire codec for screenshot/start_screencast frames: png (default, lossless) or jpeg (bandwidth lever); omitted = png. Must be one of the welcome's advertised image_formats." },
         "quality": { "type": "integer", "minimum": 1, "maximum": 100, "description": "jpeg quality 1-100 (ignored for png); omitted = runtime default" },
         "delta": { "type": "boolean", "description": "start_screencast: dirty-tile delta mode. The runtime diffs each captured frame against the previous delivered one in 64px tiles and pushes only the changed tiles (`tiles` on the observation) instead of a full `image`; a full keyframe is sent on the first frame, after a resume, and periodically thereafter. Unchanged frames are idle-suppressed as usual. Omitted = false (full frames)." },
-        "resume_stream": { "type": "string", "description": "on start_screencast, asks the runtime to continue the named logical stream: if the runtime still holds that stream's state, pushed frames carry the SAME `stream` id and `seq` continues from where it left off (the frame gap is detectable from the first frame); otherwise a fresh stream starts (new id, seq 0) and the client learns continuity was lost" }
+        "resume_stream": { "type": "string", "description": "on start_screencast, asks the runtime to continue the named logical stream: if the runtime still holds that stream's state, pushed frames carry the SAME `stream` id and `seq` continues from where it left off (the frame gap is detectable from the first frame); otherwise a fresh stream starts (new id, seq 0) and the client learns continuity was lost" },
+        "if_none_match": { "type": "string", "description": "screenshot: a `frame_hash` from a previous screenshot observation (this session's or — across forked replicas with near-identical screens — another session's). If the freshly captured frame's raw-pixel hash equals it, the runtime answers with the compact `not_modified` observation instead of re-sending the payload. Only meaningful against a runtime advertising capabilities.frame_dedup; a client MUST NOT send it otherwise (older runtimes reject unknown action fields)." }
       },
       "allOf": [
         { "if": { "required": ["verb"], "properties": { "verb": { "enum": ["click", "double_click", "right_click", "move", "scroll"] } } }, "then": { "required": ["target"] } },

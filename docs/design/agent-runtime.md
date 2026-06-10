@@ -160,19 +160,79 @@ priority order. None of this touches the waist — all are consumers/composition
    current code path) and `Trajectory.exit_reason` covers `traj_exit_reason`, so the conversion is
    lossless once a token-level adapter fills them. The
    train Workload exposes an HTTP gym facade (`/reset`, `/step`, `/evaluate`) because that is the
-   shape verl/TRL-style trainers consume. Cheapest interop deliverable: a swerex-protocol shim — run
-   `swerex.server` inside `images/linux` so uni-agent's attach deployment drives a Shinken sandbox
-   unmodified, or contribute a ~300-line deployment backend whose `start()` forks from a golden
-   checkpoint instead of cold-booting. <https://github.com/verl-project/uni-agent>
-2. **eval — CUA-Gym bundles as a second task source.** Exported bundles are OSWorld-shape
-   `config.json` (download + execute setup) plus an in-guest python evaluator printing `REWARD: X.X`;
-   support = one task-source + scorer pair and one `register()` line, unlocking 32k oracle-validated
-   RLVR tasks. <https://github.com/xlang-ai/CUA-Gym>
-3. **orchestrators — be provider-shaped.** Keep the SDK session surface compatible with the provider
-   protocols layer-above orchestrators define (create/delete/get + async session context manager +
-   lazy client — the shape of Agentix's `SandboxProvider`), so out-of-tree integrations are trivial
-   and the closest conceptual neighbors become distribution channels for the waist.
+   shape verl/TRL-style trainers consume. The cheapest interop deliverable — a swerex-shaped
+   deployment backend whose `start()` can fork from a golden checkpoint instead of cold-booting —
+   **now ships in-tree** (`shinken.integrations.swerex`; see the subsection below).
+   <https://github.com/verl-project/uni-agent>
+2. **eval — CUA-Gym bundles as a second task source — SHIPPED** (`shinken.integrations.cua_gym`).
+   Exported bundles are OSWorld-shape `config.json` (download + execute setup) plus an in-guest
+   python evaluator printing `REWARD: X.X`; `CuaGymTaskSource` loads them (from
+   `$CUA_GYM_TASKS`, never embedded in-tree) and `ShinkenCuaGymEnv` mirrors their VM-env method
+   surface (screenshot/execute/run_python/upload/download/… — duck-typed, no cua-gym import)
+   with **fork-native reset**: bundle setup runs once into a golden checkpoint and every
+   `reset()` forks a replica from it, replacing their fresh-cloud-VM-per-environment lifecycle.
+   This unlocks 32k oracle-validated RLVR tasks with zero authoring; consumer-side only
+   (`TaskSource` never enters the waist). Example: `examples/cua_gym_shinken.py`.
+   <https://github.com/xlang-ai/CUA-Gym>
+3. **orchestrators — be provider-shaped — SHIPPED for Agentix** (`shinken.integrations.agentix`).
+   `ShinkenAgentixProvider` exposes any Shinken provider (default `DockerLocalProvider`) + the
+   typed ACI through the exact provider Protocol Agentix orchestrates — async
+   `create/delete/get` + the scoped `session()` context manager + the
+   `(sandbox_id, runtime_url, status)` handle shape — structurally (runtime-checkable, no
+   agentix import; `register_with_agentix()` soft-registers into an installed Agentix). The
+   handle carries the typed ACI (`sandbox.aci()`) instead of their pickle-RPC `remote()`, and
+   `golden=<checkpoint>` makes every `create()` fork from a golden state — the runtime-state
+   lifecycle their roadmap names and their backends lack. The same shape discipline keeps other
+   layer-above orchestrators trivial out-of-tree targets. Example: `examples/agentix_shinken.py`.
    <https://github.com/Agentix-Project/Agentix>
+
+### Consumers: RL rollout servers
+
+A rollout-as-a-service control plane (reference: **ProRL-Agent-Server**,
+<https://github.com/NVIDIA-NeMo/ProRL-Agent-Server>, Apache-2.0; paper
+<https://arxiv.org/abs/2603.18815>) sits *above* the waist: trainers submit task instances over
+HTTP and receive scored token-level trajectories, while distributed gateway nodes run an
+INIT → RUN → EVAL assembly line, giving each rollout session **one long-lived sandbox runtime**
+loaded as a plugin (`RuntimeSpec.import_path = "module:Class"`). The plugin contract is small and
+sandbox-shaped — `start/stop/cancel`, `exec(command, cwd, env, timeout_sec) → ExecResult`
+(timeout reported as `return_code == -1`), `upload_/download_ file/dir`, plus honest capability
+properties — i.e. exactly a Provider-backed session minus the GUI. Shinken serves it **in-tree**:
+`sdk/python/src/shinken/integrations/prorl_agent_server.py` maps one Shinken provider-managed
+sandbox per rollout session, maps the INIT stage onto **resume-from-golden** (D5,
+`kwargs.golden_snapshot`) instead of a cold boot, and leaves the in-guest ACI (`shinkend`)
+available to the harness command for real GUI observation/action. Nothing of this touches the
+waist: the rollout server is one more consumer; the runtime plugin is a thin shim over the
+Provider layer (duck-typed, fixture-tested, no hard dependency on the external package).
+
+### Consumers: uni-agent / verl (swerex-shaped deployment — built)
+
+The narrow-waist story applied: **the trainer is a consumer, Shinken is the runtime.** uni-agent
+(<https://github.com/verl-project/uni-agent>, studied at commit `75788ab9`) reaches every sandbox
+backend through the SWE-ReX deployment/runtime protocol (<https://github.com/SWE-agent/SWE-ReX>) —
+an async deployment (`start`/`stop`/`is_alive` + `runtime`) whose runtime exposes
+`create_session`/`run_in_session`/`execute`/`read_file`/`write_file`/`upload`/`close`. Its
+`AgentEnv` (the env layer verl rollouts drive) touches only that surface, so anything
+deployment-shaped is a uni-agent backend.
+
+`sdk/python/src/shinken/integrations/swerex.py` implements that shape fresh over the waist (no
+SWE-ReX code vendored, no `swerex`/`uni_agent` import at module import time — responses/exceptions
+duck-type the protocol and upgrade to the real classes when the package is installed):
+
+| swerex operation | Shinken surface |
+|---|---|
+| `Deployment.start()` | `provider.create(spec)` + `provider.connect()` (ACI handshake = readiness); **fork-native**: `checkpoint=<golden id>` makes every `start()` a `provider.resume` from the committed golden state |
+| `Deployment.stop()` / `is_alive()` | session `close()` + `provider.destroy()` / session `ping()` |
+| `create_session` / `run_in_session` | bash session emulated over substrate exec (`docker exec bash -lc`, the channel `shinken.inject` proves), exported env + cwd persisted per session, real exit codes |
+| `execute` | one-shot substrate exec (argv or shell) |
+| `read_file` / `write_file` / `upload` | `sandbox.get_file` / `sandbox.put_file` (hash-verified, real guest boundary) |
+
+What the verl-style RL stack gets for free by sitting on this seam: the GUI half of the ACI
+(screenshot/screencast/pointer/keyboard) next to the shell half on the *same* sandbox, and the
+runtime-state primitives — `checkpoint`/`fork`/`resume` and the `run_eval_forked`
+golden-checkpoint → fork-N → score loop — so rollouts reset from a golden state instead of
+cold-booting per episode (the cold-boot pattern uni-agent/CUA-Gym/Agentix all ship today, see
+[status](../engineering/status.md)). Runnable wiring: `examples/uniagent_shinken.py`; protocol-shape
+unit tests + a Docker-gated live test: `sdk/python/tests/test_swerex_integration.py`.
 
 ## 6. Desensitization — structural, not disciplinary
 

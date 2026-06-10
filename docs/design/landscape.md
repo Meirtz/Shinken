@@ -214,6 +214,52 @@ Each capsule: **What** it is · **Strengths** · **Weaknesses** · **Lesson** (w
 
 **Lesson.** A layer-above complement on a slow collision course — keep orchestration a consumer of the waist (D7/D12). Shape the SDK session surface `SandboxProvider`-compatible so an out-of-tree `agentix-provider-shinken` is trivial. ADOPT their registry + resume/ack + failure-taxonomy patterns. Their roadmapped fork confirms the runtime-state lead is real but time-boxed — publish first-party fork-vs-fresh-sandbox numbers while it lasts.
 
+### 2.17 Substrate or rival? cua and e2b as Shinken Providers (measured 2026-06-11)
+
+**What.** A first-party measured baseline against trycua/cua's two shipped *local* paths (the
+Docker/XFCE Linux container and the lume macOS VM on Apple's Virtualization.framework), plus an
+e2b-desktop local-feasibility check — run to answer the "beat or complement?" question §2.1/§2.2
+left open. Suite, raw data, and methodology: S12 in
+[`docs/engineering/benchmarks.md`](../engineering/benchmarks.md) (`benchmarks/bench_baseline_cua.py`,
+both stacks as shipped, sequential, warm-ups discarded; cua-sandbox 0.1.16, lume 0.3.10,
+repo tag `lume-v0.3.10`).
+
+**What the measurement settles.** On the same host, the boot-to-usable and per-step costs of the
+two Docker-backed Linux desktops are the *same class* — the box is not where the stacks diverge.
+They diverge at the runtime layer: locally, cua's `Sandbox.snapshot()` raises
+`NotImplementedError: Snapshots are only supported for cloud sandboxes` (captured by the suite, and
+their own snapshot tests skip without `CUA_API_KEY`); its Docker path's only state verbs are
+`docker pause`/`unpause` (no copy, 1:1, no fan-out), and its lume path forks **stopped** VMs only
+(APFS clonefile — genuinely fast, 32 ms p50 measured through their API — but checkpointing a
+*running* VM is stop → clone → restart: disruptive, memory state lost). Shinken's checkpoint of a
+*live* sandbox (0.56 s) plus verified fork→usable (3.8 s, 8/8 state-verified) is the loop neither
+local path ships; the act+observe step gap (2.9 ms vs 174 ms p50) compounds it at agent-loop rates. e2b's SDK has no local mode at all: `Sandbox.create()`
+without an API key raises `AuthenticationException` against `api.e2b.app` (measured,
+e2b-desktop 2.4.1 / e2b 2.28.0); self-hosting is a Terraform cluster deploy (GCP supported, AWS
+beta — <https://github.com/e2b-dev/infra>), not a laptop path. Its pause/resume *is* a real
+memory-state primitive (~4 s per GiB RAM to pause, ~1 s to resume — vendor-published, unverified;
+<https://e2b.dev/docs/sandbox/persistence>) but it is 1:1 persistence, not 1:N fork.
+
+**Could they be Shinken Providers? Yes — and that is the strategic read.** The M5 lane already
+proved the pattern: inject a static `shinkend` into a box someone else manages, and the typed ACI,
+delta screencast, and eval harness ride on top. Concretely: (a) **cua-docker/cua-cloud** map
+cleanly onto `SandboxProvider.create/connect/destroy`; their cloud snapshot→`Image`→boot loop
+could even back a remote `checkpoint/fork` implementation. (b) **lume** is the most attractive
+piece: a vendor-neutral macOS-VM substrate (MIT, HTTP API, clone/pull/run verbs) that would give
+Shinken its first macOS Provider without owning Virtualization.framework code — with the honest
+caveats that prebuilt lume images are macOS-only and huge (the smallest `-cua` image is ~23 GiB;
+`ubuntu-noble-vanilla` is ~20 GiB, measured from the GHCR manifests), Linux lume VMs require a
+manual ISO install, and Apple licensing caps concurrent macOS VMs at 2/host. (c) **e2b** is
+provider-shaped through `create(template)/connect/kill` + command execution for `shinkend`
+injection; fork would degrade to template re-instantiation (their pause/resume cannot fan out).
+
+**Lesson.** The head-to-head with cua is real but narrow — it lives at the runtime/interface layer
+(typed wire contract, server-push observation, live checkpoint + verified fork, eval on the same
+runtime), not at the box layer, where their substrate breadth is an asset to *consume*, not race.
+BUILD the out-of-tree providers (`cua-docker`, `lume`, `e2b`) as TAM for the narrow waist (D1/D12);
+keep publishing the harness-integrated local-fork numbers while the lead is time-boxed (§2.16); and
+treat lume specifically as the candidate macOS substrate for the D10 cross-platform leg.
+
 ---
 
 ## 3. The competitive matrix

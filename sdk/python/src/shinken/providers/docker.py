@@ -100,12 +100,23 @@ class DockerLocalProvider(SandboxProvider):
         warm_pool_size: int = 0,
         warm_pool_spec: SandboxSpec | None = None,
         warm_pool_claim_timeout: float = 0.0,
+        hostname: str | None = "shinken",
     ) -> None:
         self.image = image
         self.docker_bin = docker_bin
         self.host = host
         self.name_prefix = name_prefix
         self.startup_timeout = startup_timeout
+        # Deterministic guest hostname (None = let Docker derive one from the container
+        # id). A FIXED default is the fork-faithful posture: without it every replica
+        # resumed from one checkpoint boots with a different hostname, so hostname-
+        # derived guest state — the shell prompt painted in the xterm, $HOSTNAME baked
+        # into files — silently diverges from the golden (and between replicas), which
+        # both breaks checkpointed state that references the hostname and defeats
+        # cross-replica observation dedup (near-identical screens differing only in the
+        # prompt). Memory-tier forks (CRIU) clone the hostname anyway; the disk tier
+        # should match.
+        self.hostname = hostname
         # Guest network posture (#152). Default "bridge": the guest shares Docker's bridge
         # and HAS egress — this local reference provider is not an egress boundary (true
         # isolation needs the out-of-VM egress proxy, D6). "none" gives the guest no
@@ -150,11 +161,12 @@ class DockerLocalProvider(SandboxProvider):
             )
             self._pool_thread.start()
 
-    def connect(self, handle: SandboxHandle):
+    def connect(self, handle: SandboxHandle, **connect_kwargs):
         """Connect, then wire file transfer through the **actual guest** filesystem via
         `docker cp` (#154) instead of the host-local reference store, so `put_file`/
-        `get_file` move bytes across the real Sandbox boundary."""
-        env = super().connect(handle)
+        `get_file` move bytes across the real Sandbox boundary. Extra keyword
+        arguments pass through to :func:`shinken.connect` (see the base class)."""
+        env = super().connect(handle, **connect_kwargs)
         container_id = handle.metadata.get("container_id") or handle.sandbox_id
         if container_id:
             env._set_guest_transport(DockerGuestTransport(str(container_id), self.docker_bin))
@@ -213,6 +225,8 @@ class DockerLocalProvider(SandboxProvider):
             "-e",
             f"SCREEN_GEOMETRY={spec.screen_geometry}",
         ]
+        if self.hostname:
+            cmd += ["--hostname", self.hostname]
         # Caller-supplied guest env (SandboxSpec.extra_env), e.g. SHINKEND_DAMAGE=off.
         # Provider-reserved names stay authoritative: they are set above and the LAST
         # -e wins in docker, so reserved keys are skipped here instead of trusted.

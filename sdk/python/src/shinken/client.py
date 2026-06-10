@@ -12,6 +12,7 @@ import base64
 import contextlib
 import json
 import logging
+import os
 import random
 import shutil
 import tempfile
@@ -19,7 +20,7 @@ import threading
 import time
 import uuid
 import weakref
-from collections import deque
+from collections import OrderedDict, deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -31,7 +32,7 @@ from .artifacts import LocalArtifactStore
 from .errors import classify_exception
 from .gateway import CapabilityDenied, check_file_transfer, decide_action
 
-__all__ = ["connect", "aconnect", "Sandbox", "AsyncSandbox", "Capabilities"]
+__all__ = ["connect", "aconnect", "Sandbox", "AsyncSandbox", "Capabilities", "FrameCache"]
 
 _log = logging.getLogger("shinken.client")
 
@@ -135,6 +136,11 @@ class Capabilities:
     # (u32 LE header_len | JSON header | raw codec payload) when the client opts in
     # via hello.accept.binary_frames. False on welcomes from pre-binary runtimes.
     binary_frames: bool = False
+    # Whether the runtime understands content-negotiated screenshots: frame_hash on
+    # screenshot observations, if_none_match on the screenshot action, not_modified
+    # on a hash hit. False on older welcomes — the SDK never sends if_none_match
+    # then (pre-dedup runtimes reject unknown action fields).
+    frame_dedup: bool = False
 
 
 def _to_uri(addr: str) -> str:
@@ -179,6 +185,33 @@ def _target(target: Any, x: float | None, y: float | None) -> dict | None:
     return None
 
 
+def _image_payload(reply: dict) -> dict:
+    """Decode an ``observation`` reply's image into the SDK screenshot shape:
+    ``{'bytes', 'format', 'w', 'h', 'wire_len'}`` (+ ``frame_hash`` when the runtime
+    stamped one) — plus a ``'png'`` alias of ``bytes`` ONLY when the codec really is
+    PNG, so legacy code blindly reading ``shot['png']`` fails loudly rather than
+    mislabeling JPEG bytes as PNG. Decodes both wire paths via :func:`_image_bytes`:
+    binary-frame raw payloads and text-path base64 ``ref``."""
+    img = reply.get("image") or {}
+    raw = _image_bytes(img)  # binary-path raw bytes, or text-path base64 decoded
+    out = {
+        "bytes": raw,
+        "format": img.get("format", "png"),
+        "w": img.get("w"),
+        "h": img.get("h"),
+        # On-the-wire size of the observation that carried this image (binary
+        # frame or JSON text), for bandwidth accounting. None on mocked replies
+        # injected without a transport.
+        "wire_len": reply.get("wire_len"),
+    }
+    if out["format"] == "png":
+        out["png"] = raw  # back-compat alias, only when it really is PNG
+    frame_hash = reply.get("frame_hash")
+    if frame_hash is not None:
+        out["frame_hash"] = frame_hash
+    return out
+
+
 def _parse_welcome(welcome: dict) -> tuple[Capabilities, str]:
     """Validate a `welcome` payload and build (Capabilities, platform). Raises on mismatch."""
     if welcome.get("type") != "welcome":
@@ -203,6 +236,7 @@ def _parse_welcome(welcome: dict) -> tuple[Capabilities, str]:
             max_long_edge=caps.get("max_long_edge"),
             image_formats=caps.get("image_formats") or ["png"],
             binary_frames=bool(caps.get("binary_frames", False)),
+            frame_dedup=bool(caps.get("frame_dedup", False)),
         ),
         (welcome.get("server") or {}).get("platform", "linux"),
     )
@@ -238,6 +272,114 @@ def _parse_binary_frame(raw: bytes) -> dict:
     return msg
 
 
+# Env default for screenshot dedup (`screenshot(dedup=...)` / `connect(screenshot_dedup=...)`):
+# set SHINKEN_SCREENSHOT_DEDUP=1 to turn content-negotiated screenshots on for every session
+# that doesn't say otherwise. Read at connect time, not import time, so tests/processes can
+# flip it without reimporting.
+_DEDUP_ENV = "SHINKEN_SCREENSHOT_DEDUP"
+
+
+def _env_dedup_default() -> bool:
+    return os.environ.get(_DEDUP_ENV, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+class FrameCache:
+    """Content-addressed screenshot store for content-negotiated observation
+    (``if_none_match``) — ``frame_hash → frame dict`` with an LRU cap.
+
+    Every dedup-enabled session keeps a private one by default (per-session
+    last-frame dedup). The fork-fleet move is to share ONE across many sessions::
+
+        cache = shinken.FrameCache()
+        envs = [provider.connect(h, frame_cache=cache) for h in replicas]
+
+    N replicas forked from one checkpoint show near-identical screens, and the
+    frame hash is computed runtime-side over RAW pixels (codec-independent), so a
+    frame fetched once from ANY replica answers the other N-1 observes with a
+    ~200-byte ``not_modified`` instead of N full payloads.
+
+    Thread-safe (a lock around every access): sessions on different event loops /
+    a SharedLoop thread can share one cache. The LRU cap bounds memory at roughly
+    ``max_entries`` × one encoded frame."""
+
+    def __init__(self, max_entries: int = 64) -> None:
+        self._lock = threading.Lock()
+        # (params_key, frame_hash) -> frame dict ({'bytes', 'format', 'w', 'h'}
+        # [+ 'png' alias]). Keyed by params TOO, not the hash alone: the hash is over
+        # raw pixels (codec-independent), so the same screen under png and jpeg
+        # shares a hash while the cached payload bytes differ.
+        self._entries: OrderedDict[tuple[str, str], dict] = OrderedDict()
+        # params_key (scope|format|quality) -> the hash most recently SEEN under those
+        # params (stored or matched), i.e. the best if_none_match candidate for a
+        # session that has no frame of its own yet.
+        self._last: dict[str, str] = {}
+        self._max = max(1, int(max_entries))
+        self.hits = 0
+        self.misses = 0
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._entries)
+
+    def candidate(self, params_key: str) -> tuple[str, dict] | None:
+        """The best ``(frame_hash, frame)`` to offer as ``if_none_match`` for these
+        capture params, or None. The returned frame reference stays valid even if
+        the entry is evicted afterwards (the caller holds it across the RPC)."""
+        with self._lock:
+            h = self._last.get(params_key)
+            if h is None:
+                return None
+            frame = self._entries.get((params_key, h))
+            if frame is None:
+                return None
+            self._entries.move_to_end((params_key, h))
+            return h, frame
+
+    def lookup(self, params_key: str, frame_hash: str) -> dict | None:
+        """The cached frame for these params + content hash, or None (refreshes
+        LRU recency)."""
+        with self._lock:
+            frame = self._entries.get((params_key, frame_hash))
+            if frame is not None:
+                self._entries.move_to_end((params_key, frame_hash))
+            return frame
+
+    def put(self, params_key: str, frame_hash: str, frame: dict) -> None:
+        """Store a full frame under its params + content hash and make it the
+        candidate for ``params_key``; evicts least-recently-used entries past the cap."""
+        with self._lock:
+            self._entries[(params_key, frame_hash)] = frame
+            self._entries.move_to_end((params_key, frame_hash))
+            self._last[params_key] = frame_hash
+            while len(self._entries) > self._max:
+                (evicted_key, evicted_hash), _ = self._entries.popitem(last=False)
+                # drop a dangling candidate pointer so candidate() stays honest
+                if self._last.get(evicted_key) == evicted_hash:
+                    del self._last[evicted_key]
+
+    def touch(self, params_key: str, frame_hash: str) -> None:
+        """Record a confirmed hit: ``frame_hash`` is the live content under these
+        params (keeps the candidate pointer fresh across interleaved sessions)."""
+        with self._lock:
+            if (params_key, frame_hash) in self._entries:
+                self._entries.move_to_end((params_key, frame_hash))
+                self._last[params_key] = frame_hash
+
+    def record(self, hit: bool) -> None:
+        with self._lock:
+            if hit:
+                self.hits += 1
+            else:
+                self.misses += 1
+
+    @property
+    def hit_rate(self) -> float | None:
+        """hits / (hits + misses), or None before any dedup-enabled screenshot."""
+        with self._lock:
+            total = self.hits + self.misses
+            return (self.hits / total) if total else None
+
+
 class AsyncSandbox:
     """An async session against a running ``shinkend``."""
 
@@ -250,10 +392,25 @@ class AsyncSandbox:
         enforce_capabilities: bool | None = None,
         artifact_root: str | None = None,
         on_ask: Callable[[str, str | None, str], bool] | None = None,
+        frame_cache: FrameCache | None = None,
+        screenshot_dedup: bool | None = None,
     ) -> None:
         self._ws = ws
         self.capabilities = capabilities
         self.platform_name = platform
+        # Content-negotiated screenshots (if_none_match). The frame cache is private
+        # per session by default; pass ONE shared shinken.FrameCache() to many
+        # sessions so forked replicas dedup against each other's frames. The default
+        # dedup posture comes from the ctor knob, falling back to the
+        # SHINKEN_SCREENSHOT_DEDUP env var; screenshot(dedup=...) overrides per call.
+        self._frame_cache = frame_cache if frame_cache is not None else FrameCache(max_entries=8)
+        self._dedup_default = (
+            _env_dedup_default() if screenshot_dedup is None else bool(screenshot_dedup)
+        )
+        # This session's own last full frame per params_key: (frame_hash, frame dict).
+        # Preferred over the shared cache's candidate, so a replica that diverged from
+        # the fleet re-converges on ITS OWN content after one miss.
+        self._last_shot: dict[str, tuple[str, dict]] = {}
         self._seq = 0
         # Per-instance call-id salt (#56): start_screencast call_ids seed the runtime's
         # SERVER-WIDE stream resume registry, so two SDK clients on one shinkend must
@@ -670,6 +827,189 @@ class AsyncSandbox:
             "results": results,
         }
 
+    async def step(
+        self,
+        actions: list[dict],
+        *,
+        observe: dict | None = None,
+        step_id: str | None = None,
+    ) -> dict:
+        """Execute one agent step — k actions plus an optional trailing observation — in
+        **~ONE round-trip** instead of k+1 (docs/engineering/many-sandbox-concurrency.md §5).
+
+        All k action frames (and the trailing ``screenshot`` when ``observe`` is given)
+        are sent WITHOUT awaiting a reply between them; the k(+1) correlated replies are
+        then awaited in order. shinkend processes a connection's messages strictly in
+        order and the reader/demux correlates replies by ``call_id``, so this needs **no
+        protocol change**: the wire carries the exact same standard ``action`` frames as
+        ``act()``. (The alternative — a server-side batch verb — was rejected: the
+        schema's ``ActionBatch`` is deliberately a client-side convention, NOT a wire
+        message, and a new wire verb would buy no latency over pipelining while growing
+        the contract surface.)
+
+        ``observe`` is a screenshot parameter dict (``scope`` / ``format`` / ``quality``
+        / ``max_long_edge``), e.g. ``{"format": "jpeg", "quality": 80, "max_long_edge":
+        1024}`` — the post-step observation comes back **fused in the same exchange**,
+        decoded like :meth:`screenshot`. ``None`` skips it. An unadvertised ``format``
+        raises :class:`ValueError` before anything is sent.
+
+        **Honest failure semantics — there is no ``skipped`` here.** Unlike
+        ``act_batch(stop_on_error=True)``, every action is already on the wire when an
+        earlier one fails, and the runtime executes the rest regardless; each result row
+        therefore reports that action's REAL outcome with the #56 taxonomy (``ok | error
+        | timeout | sandbox_died``), and the trailing observation still returns after a
+        mid-step per-action error. The one exception is a local gateway denial — decided
+        client-side, before dispatch — which yields an ``error`` row whose action never
+        reached the runtime (the remaining actions still ship; pipelined dispatch has no
+        early stop). A denied ``observe`` yields ``observation=None`` plus
+        ``observation_error`` without suppressing the actions. If the connection dies
+        mid-step, replies already received keep their results and the rest classify
+        ``sandbox_died`` — whether those actions executed before the death is unknowable
+        from the client, exactly like any other write that raced a crash.
+
+        Returns ``{step_id, completed, failure_kind, results: [{index, verb, ok, status,
+        action_id/ack | error}], observation, observation_error}`` — ``completed`` is
+        True when every action row carries a deliberate outcome (``ok``/``error``; no
+        ``timeout``/``sandbox_died``), and ``failure_kind`` mirrors the first failing
+        row's status like continue-mode :meth:`act_batch`."""
+        sid = step_id or f"step-{uuid.uuid4().hex[:8]}"
+        if observe is not None:
+            self._check_image_format(observe.get("format"))
+        loop = asyncio.get_running_loop()
+        rows: list[dict | None] = [None] * len(actions)
+        sends: list[tuple[int, str, dict]] = []  # (index, call_id, wire message)
+        for i, a in enumerate(actions):
+            verb = a.get("verb")
+            try:
+                if not verb:
+                    raise ValueError("action has no 'verb'")
+                self._gate(verb)
+            except Exception as exc:
+                # Never dispatched (malformed, or gateway-denied before the wire).
+                rows[i] = {
+                    "index": i,
+                    "verb": verb,
+                    "ok": False,
+                    "status": classify_exception(exc),
+                    "error": str(exc),
+                }
+                continue
+            action: dict = {"verb": verb}
+            if a.get("target") is not None:
+                action["target"] = a["target"]
+            action.update(
+                {k: v for k, v in a.items() if k not in ("verb", "target") and v is not None}
+            )
+            cid = self._next_id()
+            sends.append((i, cid, {"type": "action", "call_id": cid, "action": action}))
+        observation: dict | None = None
+        observation_error: str | None = None
+        obs_cid: str | None = None
+        wire: list[tuple[int | None, str, dict]] = list(sends)
+        if observe is not None:
+            try:
+                self._gate("screenshot")
+                action = {"verb": "screenshot"}
+                action.update({k: v for k, v in observe.items() if v is not None})
+                obs_cid = self._next_id()
+                msg = {"type": "action", "call_id": obs_cid, "action": action}
+                wire.append((None, obs_cid, msg))
+            except CapabilityDenied as exc:
+                observation_error = str(exc)
+        # Register EVERY future before the first send: a reply can land while later
+        # sends are still going out, and the demux must already know the call_id.
+        futs: dict[str, asyncio.Future] = {}
+        for _i, cid, _msg in wire:
+            fut = loop.create_future()
+            self._pending[cid] = fut
+            futs[cid] = fut
+        # Pipelined dispatch: every frame goes out before ANY reply is awaited. A send
+        # failure mid-burst promptly fails this step's still-pending futures so the
+        # await loop below classifies them at once (instead of burning one RPC timeout
+        # each); replies that already landed keep their results.
+        for _i, _cid, msg in wire:
+            try:
+                await self._ws.send(json.dumps(msg))
+            except Exception as exc:
+                err: Exception = exc
+                if isinstance(exc, _WsConnectionClosed):
+                    err = ConnectionError(
+                        f"connection closed sending {msg['action'].get('verb')!r}"
+                    )
+                    err.__cause__ = exc
+                for cid, fut in futs.items():
+                    self._pending.pop(cid, None)
+                    if not fut.done():
+                        fut.set_exception(err)
+                break
+        timeout = self._rpc_timeout
+        for i, cid, msg in sends:
+            verb = msg["action"]["verb"]
+            try:
+                reply = await asyncio.wait_for(futs[cid], timeout)
+            except asyncio.TimeoutError:
+                self._pending.pop(cid, None)
+                rows[i] = {
+                    "index": i,
+                    "verb": verb,
+                    "ok": False,
+                    "status": "timeout",
+                    "error": f"reply for {verb!r} ({cid}) timed out after {timeout}s",
+                }
+                continue
+            except Exception as exc:
+                rows[i] = {
+                    "index": i,
+                    "verb": verb,
+                    "ok": False,
+                    "status": classify_exception(exc),
+                    "error": str(exc),
+                }
+                continue
+            # A successful one-shot `screenshot` inside the step is answered with an
+            # `observation` (no `ok` field), like act() handles it.
+            ok = True if reply.get("type") == "observation" else reply.get("ok")
+            if ok:
+                self._action_count += 1
+                rows[i] = {
+                    "index": i,
+                    "verb": verb,
+                    "ok": True,
+                    "status": "ok",
+                    "action_id": reply.get("call_id") or reply.get("cause"),
+                    "ack": reply,
+                }
+            else:
+                rows[i] = {
+                    "index": i,
+                    "verb": verb,
+                    "ok": False,
+                    "status": "error",
+                    "error": reply.get("error", f"action {verb!r} failed"),
+                }
+        if obs_cid is not None:
+            try:
+                reply = await asyncio.wait_for(futs[obs_cid], timeout)
+                if reply.get("type") == "observation":
+                    observation = _image_payload(reply)
+                else:
+                    observation_error = reply.get("error", "screenshot failed")
+            except asyncio.TimeoutError:
+                self._pending.pop(obs_cid, None)
+                observation_error = f"observation ({obs_cid}) timed out after {timeout}s"
+            except Exception as exc:
+                observation_error = str(exc)
+        failure_kind = next((r["status"] for r in rows if r and not r["ok"]), None)
+        completed = all(r is not None and r["status"] in ("ok", "error") for r in rows)
+        return {
+            "step_id": sid,
+            "completed": completed,
+            "failure_kind": failure_kind,
+            "results": rows,
+            "observation": observation,
+            "observation_error": observation_error,
+        }
+
     async def click(self, target: Any = None, *, x: float | None = None, y: float | None = None):
         return await self.act("click", _target(target, x, y))
 
@@ -709,6 +1049,7 @@ class AsyncSandbox:
         *,
         format: str | None = None,
         quality: int | None = None,
+        dedup: bool | None = None,
     ) -> dict:
         """Capture pixels on demand.
 
@@ -716,8 +1057,20 @@ class AsyncSandbox:
         ``"jpeg"`` (the bandwidth lever — a 1080p desktop is ~1.8 MB as PNG vs ~0.1 MB as
         quality-80 JPEG). ``quality`` (1–100) tunes JPEG; ignored for PNG.
 
-        Returns ``{'bytes', 'format', 'w', 'h'}`` — ``bytes`` is the raw encoded image and
-        ``format`` says which codec. When the codec is PNG, ``'png'`` is kept as a
+        ``dedup`` turns on content-negotiated observation: the request carries
+        ``if_none_match`` with the last seen ``frame_hash`` (this session's, or — with
+        a shared :class:`FrameCache` — any session's on the same cache), and when the
+        captured frame's raw-pixel hash matches, the runtime answers a ~200-byte
+        ``not_modified`` instead of re-sending the payload; the SDK transparently
+        returns the cached frame with ``deduped=True``. ``None`` defers to the
+        session default (``connect(screenshot_dedup=…)`` / ``$SHINKEN_SCREENSHOT_DEDUP``).
+        Silently inactive against a runtime that doesn't advertise
+        ``capabilities.frame_dedup`` (no ``if_none_match`` ever goes on the wire —
+        pre-dedup runtimes reject unknown action fields).
+
+        Returns ``{'bytes', 'format', 'w', 'h', 'deduped', …}`` — ``bytes`` is the raw
+        encoded image and ``format`` says which codec; ``frame_hash`` is present when
+        the runtime computed one. When the codec is PNG, ``'png'`` is kept as a
         back-compatible alias of ``bytes``; it is ABSENT for other codecs, so legacy
         code blindly reading ``shot['png']`` fails loudly rather than mislabeling JPEG
         bytes as PNG.
@@ -732,23 +1085,48 @@ class AsyncSandbox:
             action["format"] = format
         if quality is not None:
             action["quality"] = quality
+        # Content negotiation, capability-gated: only a frame_dedup runtime ever sees
+        # if_none_match (older ones reject unknown action fields). Prefer this
+        # session's own last frame (fast re-convergence after divergence), then the
+        # shared cache's candidate (the cross-replica fleet case). The candidate
+        # frame reference is held across the RPC, so a concurrent LRU eviction can
+        # never strand a not_modified answer.
+        use_dedup = (self._dedup_default if dedup is None else bool(dedup)) and bool(
+            self.capabilities.frame_dedup
+        )
+        key = f"{scope}|{format or 'png'}|{quality}"
+        candidate: tuple[str, dict] | None = None
+        if use_dedup:
+            candidate = self._last_shot.get(key) or self._frame_cache.candidate(key)
+            if candidate is not None:
+                action["if_none_match"] = candidate[0]
         reply = await self._rpc({"type": "action", "call_id": call_id, "action": action})
         if reply.get("type") != "observation":
             raise RuntimeError(reply.get("error", "screenshot failed"))
-        img = reply.get("image") or {}
-        raw = _image_bytes(img)  # binary-path raw bytes, or text-path base64 decoded
-        out = {
-            "bytes": raw,
-            "format": img.get("format", "png"),
-            "w": img.get("w"),
-            "h": img.get("h"),
-            # On-the-wire size of the observation that carried this image (binary
-            # frame or JSON text), for bandwidth accounting. None on mocked replies
-            # injected without a transport.
-            "wire_len": reply.get("wire_len"),
-        }
-        if out["format"] == "png":
-            out["png"] = raw  # back-compat alias, only when it really is PNG
+        if reply.get("not_modified"):
+            if candidate is None:  # never offered a hash — a protocol violation
+                raise RuntimeError("runtime sent not_modified to a request without if_none_match")
+            frame_hash, frame = candidate
+            self._last_shot[key] = candidate
+            self._frame_cache.touch(key, frame_hash)
+            self._frame_cache.record(hit=True)
+            return {
+                **frame,
+                "deduped": True,
+                "frame_hash": reply.get("frame_hash", frame_hash),
+                # the wire really moved only the compact not_modified observation
+                "wire_len": reply.get("wire_len"),
+            }
+        out = _image_payload(reply)
+        out["deduped"] = False
+        frame_hash = out.get("frame_hash")
+        if frame_hash is not None and use_dedup:
+            # cache the frame WITHOUT the per-reply fields, keyed by content
+            frame = {k: v for k, v in out.items() if k not in ("deduped", "wire_len")}
+            self._last_shot[key] = (frame_hash, frame)
+            self._frame_cache.put(key, frame_hash, frame)
+        if use_dedup:
+            self._frame_cache.record(hit=False)
         return out
 
     async def type_text(self, text: str):
@@ -1097,6 +1475,8 @@ async def aconnect(
     on_ask: Callable[[str, str | None, str], bool] | None = None,
     ping_jitter: float = 0.0,
     binary_frames: bool = True,
+    frame_cache: FrameCache | None = None,
+    screenshot_dedup: bool | None = None,
 ) -> AsyncSandbox:
     """Open an async session and complete the ACI handshake.
 
@@ -1107,6 +1487,13 @@ async def aconnect(
     returns the exact same frame/screenshot dicts to callers. A pre-binary runtime
     ignores the offer and keeps text frames, so this is always safe to leave on; pass
     ``False`` to pin the legacy base64-in-JSON path (e.g. for A/B measurements).
+
+    ``frame_cache`` / ``screenshot_dedup`` configure content-negotiated screenshots
+    (``if_none_match``): ``screenshot_dedup=True`` makes every ``screenshot()`` dedup
+    by default (otherwise ``$SHINKEN_SCREENSHOT_DEDUP`` decides, default off), and
+    passing ONE shared :class:`FrameCache` to many sessions lets forked replicas
+    dedup against EACH OTHER's frames — see :class:`FrameCache`. Inactive against a
+    runtime that doesn't advertise ``capabilities.frame_dedup``.
 
     ``ping_jitter`` decorrelates keepalive phases across a fleet: the websockets library
     pings every 20 s *from the moment of connect*, so N sessions dialed together ping in
@@ -1142,6 +1529,8 @@ async def aconnect(
         enforce_capabilities=enforce_capabilities,
         artifact_root=artifact_root,
         on_ask=on_ask,
+        frame_cache=frame_cache,
+        screenshot_dedup=screenshot_dedup,
     )
     sandbox._start_reader()  # the reader owns recv() from here on
     return sandbox
@@ -1377,6 +1766,26 @@ class Sandbox:
             self._inner.act_batch(actions, stop_on_error=stop_on_error, batch_id=batch_id)
         )
 
+    def step(
+        self, actions: list[dict], *, observe: dict | None = None, step_id: str | None = None
+    ) -> dict:
+        """One agent step in **~ONE round-trip**: pipeline k actions (plus an optional
+        trailing observation, fused into the same exchange) without awaiting between
+        sends — the WAN step-latency lever (many-sandbox-concurrency.md §5)::
+
+            res = env.step(
+                [{"verb": "click", "target": pt}, {"verb": "type_text", "text": "hi"}],
+                observe={"format": "jpeg", "quality": 80, "max_long_edge": 1024},
+            )
+            res["results"]      # per-action #56-taxonomy rows (no `skipped` — see below)
+            res["observation"]  # the post-step frame, same shape as screenshot()
+
+        See :meth:`AsyncSandbox.step` for the full contract — in particular the honest
+        failure semantics: actions already on the wire after a failure execute
+        server-side regardless, so each row reports its real outcome and the observation
+        still returns after a mid-step per-action error."""
+        return self._loop.run(self._inner.step(actions, observe=observe, step_id=step_id))
+
     def click(self, target: Any = None, *, x: float | None = None, y: float | None = None):
         return self._loop.run(self._inner.click(target, x=x, y=y))
 
@@ -1395,9 +1804,16 @@ class Sandbox:
         return self._loop.run(self._inner.scroll(target, x=x, y=y, dy=dy))
 
     def screenshot(
-        self, scope: str = "screen", *, format: str | None = None, quality: int | None = None
+        self,
+        scope: str = "screen",
+        *,
+        format: str | None = None,
+        quality: int | None = None,
+        dedup: bool | None = None,
     ) -> dict:
-        return self._loop.run(self._inner.screenshot(scope, format=format, quality=quality))
+        return self._loop.run(
+            self._inner.screenshot(scope, format=format, quality=quality, dedup=dedup)
+        )
 
     def observe(self, structured: bool = False, source: Any = None) -> dict:
         """Observe the desktop. ``structured=True`` captures the accessibility tree as
@@ -1635,11 +2051,17 @@ def connect(
     loop: SharedLoop | None = None,
     ping_jitter: float = 0.0,
     binary_frames: bool = True,
+    frame_cache: FrameCache | None = None,
+    screenshot_dedup: bool | None = None,
 ) -> Sandbox:
     """Connect to a running ``shinkend`` and complete the ACI handshake (blocking).
 
     ``binary_frames`` (default on) negotiates binary media framing — see
     :func:`aconnect`; the returned frames/screenshots keep the exact same dict shape.
+
+    ``frame_cache`` / ``screenshot_dedup`` configure content-negotiated screenshots
+    (``if_none_match`` dedup) — see :func:`aconnect` and :class:`FrameCache`; share
+    one cache across the sessions of a forked fleet to dedup across replicas.
 
     ``sandbox_capabilities`` overrides the session's v0 capability envelope.
     ``enforce_capabilities`` controls the local Action Gateway shim (#84/#161): when on,
@@ -1670,6 +2092,8 @@ def connect(
                 on_ask=on_ask,
                 ping_jitter=ping_jitter,
                 binary_frames=binary_frames,
+                frame_cache=frame_cache,
+                screenshot_dedup=screenshot_dedup,
             )
         )
     except Exception:

@@ -115,7 +115,7 @@ observation (pixels now, hybrid structured designed) → typed action → verifi
 
 ## Measured results
 
-First-party numbers; **~100k tracked datapoints** across ten rerunnable local suites plus
+First-party numbers; **~100k tracked datapoints** across thirteen rerunnable local suites plus
 audited one-off WAN runs. Full tables, provenance, and evidence-class labels:
 [`docs/benchmarks/`](docs/benchmarks/README.md); methodology:
 [`docs/engineering/benchmarks.md`](docs/engineering/benchmarks.md).
@@ -142,8 +142,12 @@ sandbox takes **~0.57 s** and is non-disruptive. After the push-based readiness 
 `ready` query; `provider.create()` 7.7 s → **~0.2 s** p50), a classic fork→usable is
 **~0.6 s**, and the opt-in **warm-pool graft** (pre-booted containers + the checkpoint's
 filesystem delta) reaches **~0.12 s** — every replica verified to inherit the golden state,
-files-only semantics (the same tier as `docker commit`). The **CRIU memory tier is
-de-risked by a positive spike**: the full desktop tree dumps in ~60 ms and restores into a
+files-only semantics (the same tier as `docker commit`). And because forked replicas render
+identical pixels *by construction*, **content-negotiated observation** (`if_none_match`
+against a raw-pixel `frame_hash`, one shared `FrameCache` across the fleet) collapses the
+fleet's observe traffic to ~one stream: measured **15.2×** wire cut over N ∈ {4, 8, 16}
+forked fleets (~725× at steady state, honest divergence curve — benchmarks §10). The **CRIU
+memory tier is de-risked by a positive spike**: the full desktop tree dumps in ~60 ms and restores into a
 fresh container in ~40 ms — carrying *live process/memory state*, which no files-only
 mechanism can (`spikes/criu-memory-tier/`; privileged rig, latency evidence only). The CoW
 fast tier remains designed.
@@ -188,11 +192,45 @@ Shinken's wedge is the unclaimed intersection, not winning any single axis. Surv
 | | cross-OS desktop | runtime fork | structured + pixel obs | eval on same runtime | streaming |
 |---|---|---|---|---|---|
 | **Shinken** | designed (Linux built) | **disk tier built + measured, local-first** | hybrid (coverage measured) | **yes — `run_eval_forked` built** | PNG/JPEG/delta built; WebRTC designed |
-| trycua/cua | yes | cloud-only; not used by its own bench | a11y trees | recreates env per reset | VNC |
-| E2B desktop | Linux | snapshot-restore | none | n/a | raw VNC |
+| trycua/cua | yes | cloud-only — local `snapshot()` raises (measured); local verbs = `docker pause` / stopped-VM clone | a11y trees | recreates env per reset | VNC + polled PNG (measured: 174 ms/step vs our 2.9 ms) |
+| E2B desktop | Linux | cloud pause/resume, 1:1 (API-key required — no keyless/local mode, measured) | none | n/a | raw VNC |
 | Morph | Linux | **ms-class CoW (vendor-published P99 ~1.3 ms)** | none | n/a | n/a |
 | OSWorld | Linux (in practice) | slow revert, no fork | full-XML per step | *is* the benchmark | full-frame PNG poll |
 | browser SaaS | no (Chromium only) | no | DOM | no | WebRTC/HLS |
+
+The cua and e2b cells marked *measured* are first-party, rerunnable numbers — both stacks as
+shipped, same host, same window, pinned versions
+([S12](docs/engineering/benchmarks.md), [`docs/benchmarks/`](docs/benchmarks/README.md) §7).
+
+## Integrations
+
+Adapters that plug Shinken under stacks that already exist (duck-typed protocol shapes, no
+hard dependency on the target framework; each ships fixture tests + a runnable example):
+
+- **OSWorld** — a `DesktopEnv`-shaped shim (`shinken.osworld`) + OSWorld-as-a-Workload
+  (`osworld-eval`): OSWorld-format pyautogui/computer_13 actions actuate over the typed ACI,
+  OSWorld's own evaluator scores (alpha gate passed at score 1.0).
+- **uni-agent / verl** — `shinken.integrations.swerex` implements the SWE-ReX deployment/runtime
+  protocol [uni-agent](https://github.com/verl-project/uni-agent) drives its sandboxes through, so
+  verl-style rollout collection runs on Shinken sandboxes (with fork-from-golden-checkpoint
+  `start()`); see [`examples/uniagent_shinken.py`](examples/uniagent_shinken.py) and
+  [agent-runtime.md](docs/design/agent-runtime.md).
+- **CUA-Gym** ([xlang-ai/CUA-Gym](https://github.com/xlang-ai/CUA-Gym)) —
+  `shinken.integrations.cua_gym`: exported task bundles as a `TaskSource` + their VM-env
+  method surface, with **fork-native reset** — bundle setup runs once into a golden
+  checkpoint and every `reset()` forks a fresh replica from it (seconds on the Docker disk
+  tier) instead of provisioning a fresh cloud VM per environment. 32k oracle-validated RLVR
+  tasks, zero authoring. Example: `examples/cua_gym_shinken.py`.
+- **Agentix** ([Agentix-Project/Agentix](https://github.com/Agentix-Project/Agentix)) —
+  `shinken.integrations.agentix`: a `SandboxProvider`-shaped provider (async
+  `create/delete/get` + scoped `session()`) exposing `DockerLocalProvider` + the typed ACI to
+  their orchestration, with `golden=<checkpoint>` turning every `create()` into a fork from a
+  golden state. Example: `examples/agentix_shinken.py`.
+- **ProRL-Agent-Server** ([NVIDIA-NeMo/ProRL-Agent-Server](https://github.com/NVIDIA-NeMo/ProRL-Agent-Server))
+  — `shinken.integrations.prorl_agent_server`: a rollout-as-a-service runtime plugin
+  (`BaseRuntime` contract — `start/stop/cancel`, `exec`, file up/download) giving each rollout
+  session one provider-managed Shinken sandbox, with the INIT stage mapped onto
+  **resume-from-golden** instead of a cold boot. Example: `scripts/prorl_runtime_example.py`.
 
 ## Status — honest built-vs-designed map
 
@@ -227,6 +265,7 @@ shinken/
 ├─ shinkend/       Rust Guest Runtime inside the Sandbox
 ├─ sdk/python/     Python SDK + CLI       sdk/typescript/  TS control-surface SDK
 ├─ images/linux/   Local Linux Sandbox image
+├─ examples/       Runnable interop examples (CUA-Gym, Agentix, uni-agent — scripted, no model API)
 ├─ benchmarks/     Rerunnable benchmark suites + tracked raw results (local + remote CSVs)
 ├─ spikes/         a11y-coverage spike (E5) evidence
 ├─ docs/           Design canon (ADRs D1–D12), engineering status, benchmark report

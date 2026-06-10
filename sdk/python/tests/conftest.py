@@ -144,7 +144,19 @@ def _record(state: dict, action: dict) -> None:
         )
 
 
-async def _handler(ws, streams: dict[str, int] | None = None, support_binary: bool = True) -> None:
+def _mock_frame_hash(state: dict) -> str:
+    """The mock's screen-content identity: a deterministic function of the observed
+    effects, so typing/clicking 'changes the screen' (the hash) like a real desktop
+    and an untouched session keeps a stable hash — what the dedup tests need."""
+    return f"fh-{len(state['typed'])}-{len(state['clicks'])}"
+
+
+async def _handler(
+    ws,
+    streams: dict[str, int] | None = None,
+    support_binary: bool = True,
+    support_dedup: bool = True,
+) -> None:
     cast: asyncio.Task | None = None
     state = {"typed": "", "keys": [], "clicks": [], "moves": [], "scrolls": [], "casts": []}
     # Resume registry (#56): logical stream id -> next seq. Server-instance scoped
@@ -204,6 +216,8 @@ async def _handler(ws, streams: dict[str, int] | None = None, support_binary: bo
             }
             if support_binary:
                 capabilities["binary_frames"] = True
+            if support_dedup:
+                capabilities["frame_dedup"] = True
             await ws.send(
                 json.dumps(
                     {
@@ -232,10 +246,44 @@ async def _handler(ws, streams: dict[str, int] | None = None, support_binary: bo
             cid = msg.get("call_id")
             _record(state, action)
             if verb == "screenshot":
+                # A PRE-DEDUP runtime parses actions with deny_unknown_fields: an
+                # if_none_match it has never heard of is a hard nack, not a silent
+                # ignore — the back-compat behavior the SDK's capability gate must
+                # never trigger.
+                if not support_dedup and "if_none_match" in action:
+                    await ws.send(
+                        json.dumps(
+                            {
+                                "type": "ack",
+                                "call_id": cid,
+                                "ok": False,
+                                "error": "bad action: unknown field `if_none_match`",
+                            }
+                        )
+                    )
+                    continue
+                frame_hash = _mock_frame_hash(state)
+                # Content negotiation (frame_dedup): a hash hit answers with the
+                # compact not_modified observation — TEXT even on a binary session
+                # (no payload to carry), like the real runtime.
+                if support_dedup and action.get("if_none_match") == frame_hash:
+                    await ws.send(
+                        json.dumps(
+                            {
+                                "type": "observation",
+                                "obs_id": "o1",
+                                "cause": cid,
+                                "not_modified": True,
+                                "frame_hash": frame_hash,
+                            }
+                        )
+                    )
+                    continue
                 # Echo the requested codec so a test can assert `format` travelled the
                 # wire (the real runtime reports the codec it actually encoded in).
                 fmt = action.get("format") or "png"
                 meta = {"w": 1, "h": 1, "scope": "screen", "format": fmt}
+                extra = {"frame_hash": frame_hash} if support_dedup else {}
                 if binary:
                     await ws.send(
                         _binary_frame(
@@ -244,6 +292,7 @@ async def _handler(ws, streams: dict[str, int] | None = None, support_binary: bo
                                 "obs_id": "o1",
                                 "cause": cid,
                                 "image": {"off": 0, "len": len(_PNG_1X1_BYTES), **meta},
+                                **extra,
                             },
                             [_PNG_1X1_BYTES],
                         )
@@ -256,6 +305,7 @@ async def _handler(ws, streams: dict[str, int] | None = None, support_binary: bo
                                 "obs_id": "o1",
                                 "cause": cid,
                                 "image": {"ref": _PNG_1X1, **meta},
+                                **extra,
                             }
                         )
                     )
@@ -301,7 +351,9 @@ async def _handler(ws, streams: dict[str, int] | None = None, support_binary: bo
         cast.cancel()
 
 
-def _start_mock_server(support_binary: bool = True) -> tuple[str, object, object]:
+def _start_mock_server(
+    support_binary: bool = True, support_dedup: bool = True
+) -> tuple[str, object, object]:
     """Start one mock shinkend on its own loop/thread; return (addr, loop, thread)."""
     port = _free_port()
     loop = asyncio.new_event_loop()
@@ -310,7 +362,12 @@ def _start_mock_server(support_binary: bool = True) -> tuple[str, object, object
 
     async def _boot():
         return await serve(
-            functools.partial(_handler, streams=streams, support_binary=support_binary),
+            functools.partial(
+                _handler,
+                streams=streams,
+                support_binary=support_binary,
+                support_dedup=support_dedup,
+            ),
             "127.0.0.1",
             port,
         )
@@ -346,6 +403,20 @@ def mock_shinkend_text_only():
     the welcome, the client's ``accept.binary_frames`` offer is ignored, and every
     observation stays base64-in-JSON text — the old-server back-compat path."""
     addr, loop, thread = _start_mock_server(support_binary=False)
+    try:
+        yield addr
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(timeout=2)
+
+
+@pytest.fixture
+def mock_shinkend_no_dedup():
+    """A mock that simulates a PRE-DEDUP runtime: no ``frame_dedup`` capability in
+    the welcome, and any screenshot carrying ``if_none_match`` is hard-nacked (the
+    real old runtime's deny_unknown_fields behavior) — so a test passes only if the
+    SDK's capability gate kept the field off the wire."""
+    addr, loop, thread = _start_mock_server(support_dedup=False)
     try:
         yield addr
     finally:

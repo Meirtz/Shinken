@@ -1,0 +1,27 @@
+[package]
+name = "vcspike"
+version = "0.0.0"
+edition = "2021"
+description = "Spike harness: delta-PNG tiles (faithful replication of shinkend's B2 encoder) vs JPEG-per-frame vs in-process software H.264 (openh264)."
+license = "Apache-2.0"
+publish = false
+
+[[bin]]
+name = "vcspike"
+path = "src/main.rs"
+
+[dependencies]
+# Same crates + versions as shinkend/Cargo.toml so the delta-PNG / JPEG numbers are
+# byte-identical to what the runtime would produce.
+png = "0.17"
+jpeg-encoder = "0.6"
+anyhow = "1"
+# The in-process software-H.264 candidate (Cisco OpenH264, BSD-2-Clause; the crate
+# builds the upstream C++ source via cc — no system libs, works on aarch64).
+openh264 = "0.9"
+serde_json = "1.0.150"
+# default-features = false drops rayon so the decode-cost numbers stay single-core.
+jpeg-decoder = { version = "0.3.2", default-features = false }
+
+[profile.release]
+lto = true

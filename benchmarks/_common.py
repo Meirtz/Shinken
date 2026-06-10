@@ -337,9 +337,12 @@ def new_axes(
     return fig, axes
 
 
-def save_plot(fig, suite: str) -> Path:
-    PLOTS_DIR.mkdir(parents=True, exist_ok=True)
-    out = PLOTS_DIR / f"{suite}.png"
+def save_plot(fig, suite: str, out_dir: Path | None = None) -> Path:
+    """Save the suite figure. Default target is ``docs/assets/bench/`` (``PLOTS_DIR``,
+    where ALL tracked figures live); ``out_dir`` overrides for one-off destinations."""
+    target = PLOTS_DIR if out_dir is None else Path(out_dir)
+    target.mkdir(parents=True, exist_ok=True)
+    out = target / f"{suite}.png"
     fig.tight_layout()
     fig.savefig(out, bbox_inches="tight")
     print(f"wrote {out.relative_to(REPO_ROOT)}")

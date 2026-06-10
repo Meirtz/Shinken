@@ -18,11 +18,12 @@ Figures live in [`docs/assets/bench/`](../assets/bench) and regenerate from trac
 
 | artifact | class | what it holds |
 |---|---|---|
-| `benchmarks/results/*.json` | local | 10 suites (13 tracked result JSONs), ~100k individual datapoints, each carrying the host/image fingerprint of its run |
+| `benchmarks/results/*.json` | local | 13 suites (16 tracked result JSONs), ~100k individual datapoints, each carrying the host/image fingerprint of its run |
 | `benchmarks/results/remote/codec_ladder.csv` | remote WAN | 45 cells: format × quality × downscale, one content-rich 1080p frame |
 | `benchmarks/results/remote/fanout_remote.csv` | remote WAN | end-to-end fan-out envelope, N = 4/8/16 real remote sandboxes |
 | `spikes/a11y-coverage/evidence.json` | local spike | accessibility-tree coverage by app surface (E5) |
 | `benchmarks/results/coverage.json` | local | line coverage per module, Rust + Python (§6b) — repro: [testing.md](../engineering/testing.md) |
+| `benchmarks/results/baseline_cua.json` | local | head-to-head vs trycua/cua's shipped local paths (§7) — repro: `benchmarks/bench_baseline_cua.py` |
 
 ---
 
@@ -186,9 +187,28 @@ If N sandboxes each emit one 48.3 KiB JPEG q80 @1280 frame per second: **~405 Mb
 N=1024** — a datacenter NIC. The same workload in full-res PNG (1804.5 KiB) projects to
 **~15 Gbps**, infeasible anywhere. These are decoded payload bytes; base64+JSON wire framing
 adds ~33% until binary frames land. The chart marks the one *measured* point at N=1024 — the
-§2b sustained client-plane ingest — alongside the projected curves.
+§2b sustained client-plane ingest — alongside the projected curves. For fleets of **forked
+replicas** there is a measured lever beyond the codec: content-negotiated observation dedup
+collapses the N near-identical streams to ~one (§3 — 15.2× measured over a 16-replica
+fleet's observe rounds, ~725× at steady state).
 
 ![aggregate egress projection](../assets/bench/aggregate_egress.png)
+
+### 2d. Step pipelining — the RTT lever for WAN rollouts
+
+![step pipelining](../assets/bench/step_pipeline.png)
+
+Where 2b's fan-out hides the WAN RTT *across* sandboxes, `Sandbox.step()` removes it *within*
+one sandbox's step: a k-action step + observation is k+1 serial round-trips through the plain
+facade but ~1 round-trip pipelined (all k+1 calls sent before any reply is awaited — no
+protocol change, and honest per-action failure rows since actions on the wire execute
+regardless). Measured against one real sandbox behind a delay proxy
+(`benchmarks/bench_step_pipeline.py`, N=30/cell): at **150 ms** WAN RTT a 5-action+observe
+step falls from **~0.94 s to ~0.17 s** of runtime overhead (5.7×, vs the 6× bound) — per
+sandbox that is ~1.1 → ~6.1 steps/s, so an RL rollout collector at intercontinental distance
+pays roughly **one RTT per step instead of six**, and the per-step runtime tax stops scaling
+with how many actions the policy emits. Pipelined step wall is ~RTT + 15–20 ms regardless of
+k ∈ {3, 5, 8}. Full grid: [engineering/benchmarks.md §11](../engineering/benchmarks.md).
 
 ---
 
@@ -234,6 +254,22 @@ tier's edge is **what it carries** — live process/memory state (open apps, mid
 processes), which no files-only mechanism captures — at a ~40–50 ms restore cost. Caveats in
 the spike report: privileged-container rig (latency evidence, not an isolation posture); no
 SOFT_DIRTY/USERFAULTFD on this kernel.
+
+**Fleet-level observation dedup (S10, `bench_fork_dedup.py`)** `[local — rerunnable]` — the
+observation-side payoff of owning fork: N replicas minted from one checkpoint render
+near-identical screens *by construction*, so the ACI's content-negotiated screenshot
+(`if_none_match` against a runtime `frame_hash` computed over raw pixels — codec-independent)
+plus ONE shared `shinken.FrameCache` across the fleet's sessions lets the whole fleet pay for
+each distinct screen once: every other observe is answered by a ~120-byte `not_modified`.
+Measured over fleets of 4/8/16 with fleet pixel-identity verified per run (4/4, 7/8, 16/16):
+**15.2× wire bytes cut** across all dedup rounds (14.4 MiB → 0.94 MiB, hit rate 93.5%),
+**~725× at steady state** (N=16: 1,371 KiB → 1.9 KiB per observe-all round), and an honest
+divergence curve — when 2 replicas type different text the hit rate dips to (N−2)/N for one
+round, then each diverged replica re-converges against its own new content. Old runtimes and
+clients are unaffected (capability-negotiated). No general-purpose sandbox API can offer this:
+it works because fork makes the replicas' pixels identical, not approximately similar.
+
+![forked-fleet observation dedup](../assets/bench/fork_dedup.png)
 
 ![fork and fan-out](../assets/bench/fork_resume.png)
 ![warm-pool graft](../assets/bench/fork_resume_pool.png)
@@ -373,6 +409,40 @@ the same parameterized pointer arm that `click`'s fixture exercises, so a verb-s
 regression (e.g. wrong button/click-count argv) would not be caught; (3) `double_click`,
 `right_click`, `scroll`, and `wait` appear in **no live smoke**. Python test paths are under
 `sdk/python/tests/`, Rust tests in `shinkend/src/`.
+
+---
+
+## 7. Comparison vs other stacks — measured where possible
+
+The closest analog (trycua/cua) measured head-to-head on its **shipped local paths**, plus an
+e2b-desktop feasibility check. Every `[local — rerunnable]` cell reruns from
+`benchmarks/bench_baseline_cua.py` (pins: `cua-sandbox==0.1.16`, `lume 0.3.10`,
+`trycua/cua-xfce@sha256:3bf853…`); both stacks as shipped, sequential, warm-ups discarded,
+size-matched at 1024×768, PNG defaults on both sides. Methodology + full table:
+[`../engineering/benchmarks.md` §12](../engineering/benchmarks.md).
+
+![baseline vs cua](../assets/bench/baseline_cua.png)
+
+| cell | Shinken | trycua/cua (local container) | label |
+|---|---|---|---|
+| boot → usable (p50) | **3.8 s** | 8.5 s | `[local — rerunnable]` |
+| act + observe step (p50) | **2.9 ms** | 174 ms (~61×) | `[local — rerunnable]` |
+| observation bytes/frame (default PNG, settled desktop) | 22.3 KiB | 92.5 KiB | `[local — rerunnable]` |
+| JPEG observation lever | 18.7 KiB (q80) | SDK raises (shipped server ignores `format`) | `[local — rerunnable]` |
+| checkpoint live state | **0.56 s**, non-disruptive | not shipped locally (`Sandbox.snapshot()` raises `NotImplementedError`) | `[local — rerunnable]` |
+| fork → usable, state verified 8/8 | **3.8 s** | not shipped locally; `docker pause`/`unpause` only (38/64 ms, no copy/fan-out) | `[local — rerunnable]` |
+| cua lume (macOS VM): clone of a *stopped* VM | n/a | 32 ms p50 via their API (APFS clonefile; built-in mechanism probe, 12 GiB VM / 4 GiB materialized — the full SDK leg needs a 22.7 GiB macOS-only image and merges in when pulled) | `[local — partial]` |
+| cua cloud: snapshot → fork | n/a | "1–5 s typical", "nearly instant" on CoW storage, `stateful` memory flag (VMs) | `[vendor-published]` |
+| cua local VM (QEMU): boot | n/a | ~30 s on KVM hosts (their docs; software-emulated on macOS, not measured) | `[vendor-published]` |
+| e2b: local / keyless use | n/a | none — `Sandbox.create()` without `E2B_API_KEY` raises `AuthenticationException` against `api.e2b.app` (e2b-desktop 2.4.1 / e2b 2.28.0); self-host = Terraform cluster (GCP; AWS beta), not a laptop path | `[local — measured absence]` |
+| e2b: pause / resume | n/a | pause ≈ 4 s per GiB RAM, resume ≈ 1 s, memory+disk preserved indefinitely; 1:1 persistence, no 1:N fork in the public SDK | `[vendor-published]` |
+
+The Shinken boot/fork cells here are the *suite's own* conservative re-measurements taken in
+the same run as the cua cells; the faster S9/warm-pool numbers in §3 are the current
+operating points. Sources for the vendor-published rows: <https://cua.ai/docs> (snapshots
+guide; Linux sandbox table), <https://e2b.dev/docs/sandbox/persistence>,
+<https://github.com/e2b-dev/infra>. The strategic complement/compete read lives in
+[`../design/landscape.md` §2.17](../design/landscape.md).
 
 ## Reproducing
 

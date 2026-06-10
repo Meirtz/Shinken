@@ -355,39 +355,14 @@ fn dispatch_action(
                 format,
                 quality,
             };
-            let reply = match exec.capture(&scope, opts) {
-                // A binary-negotiated session gets the image as one WS Binary message
-                // (raw codec bytes after the JSON header — no base64, no megabyte JSON
-                // string); everyone else keeps the base64-in-JSON observation.
-                Ok(img) if binary => Reply::Binary(protocol::binary_image_frame(
-                    &format!("obs-{call_id}"),
-                    Some(call_id),
-                    None,
-                    None,
-                    protocol::BinaryImageMeta {
-                        w: img.w,
-                        h: img.h,
-                        scope: &scope,
-                        format: img.format.as_str(),
-                    },
-                    &img.data,
-                )),
-                Ok(img) => Reply::Text(encode(&Message::Observation {
-                    obs_id: format!("obs-{call_id}"),
-                    cause: Some(call_id.to_string()),
-                    stream: None,
-                    seq: None,
-                    image: Some(protocol::ImageRef {
-                        data: img.to_base64(),
-                        w: img.w,
-                        h: img.h,
-                        scope,
-                        format: img.format.as_str().to_string(),
-                    }),
-                    tiles: None,
-                })),
-                Err(e) => ack(call_id, false, Some(e.to_string())),
-            };
+            let reply = screenshot_reply(
+                call_id,
+                &scope,
+                opts,
+                spec.if_none_match.as_deref(),
+                exec,
+                binary,
+            );
             (reply, StreamCtl::None, 0)
         }
         "start_screencast" => {
@@ -439,6 +414,104 @@ fn dispatch_action(
             Err(e) => (ack(call_id, false, Some(e.to_string())), StreamCtl::None, 0),
         },
     }
+}
+
+/// Answer one `screenshot` action, with content negotiation when the backend can
+/// capture raw pixels: capture RAW once, hash it (`executor::frame_hash_hex` — the
+/// hash is over raw pixels, NOT the encoded payload, so it is codec-independent;
+/// see its docs for why that is the right identity for fork fleets), and
+///
+/// - on an `if_none_match` hit, skip the encode entirely and answer with the
+///   compact `not_modified` observation (no payload — the client already holds
+///   these pixels, keyed by `frame_hash`);
+/// - otherwise encode the SAME raw buffer (downscale already applied by
+///   `capture_raw`) and attach `frame_hash` to the observation, so the client can
+///   offer it on its next request.
+///
+/// A backend without raw capture (e.g. the pyautogui fallback) keeps the plain
+/// encoded-capture path: full frame, no `frame_hash` — `if_none_match` then simply
+/// never matches, which is always the safe answer.
+fn screenshot_reply(
+    call_id: &str,
+    scope: &str,
+    opts: EncodeOpts,
+    if_none_match: Option<&str>,
+    exec: &dyn Executor,
+    binary: bool,
+) -> Reply {
+    if exec.supports_raw_capture() {
+        return match exec.capture_raw(scope, opts.max_long_edge) {
+            Ok((rgb, w, h)) => {
+                let hash = crate::executor::frame_hash_hex(&rgb, w, h);
+                if if_none_match == Some(hash.as_str()) {
+                    // Not modified: no encode, no payload — text even on a binary
+                    // session (there are no payload bytes to frame).
+                    return Reply::Text(encode(&protocol::not_modified_observation(
+                        call_id, &hash,
+                    )));
+                }
+                // capture_raw already downscaled; encoding must not downscale again.
+                let encode_opts = EncodeOpts {
+                    max_long_edge: None,
+                    ..opts
+                };
+                match crate::executor::encode_frame(&rgb, w, h, encode_opts) {
+                    Ok(img) => image_reply(call_id, scope, &img, Some(&hash), binary),
+                    Err(e) => ack(call_id, false, Some(e.to_string())),
+                }
+            }
+            Err(e) => ack(call_id, false, Some(e.to_string())),
+        };
+    }
+    match exec.capture(scope, opts) {
+        Ok(img) => image_reply(call_id, scope, &img, None, binary),
+        Err(e) => ack(call_id, false, Some(e.to_string())),
+    }
+}
+
+/// Build the full-image screenshot observation in the session's negotiated wire
+/// form: a binary WS message (raw codec bytes after the JSON header) on a binary
+/// session, the base64-in-JSON text observation otherwise. `frame_hash` (raw-pixel
+/// content hash) rides along on both forms when the capture path computed one.
+fn image_reply(
+    call_id: &str,
+    scope: &str,
+    img: &crate::executor::CapturedImage,
+    frame_hash: Option<&str>,
+    binary: bool,
+) -> Reply {
+    if binary {
+        return Reply::Binary(protocol::binary_image_frame(
+            &format!("obs-{call_id}"),
+            Some(call_id),
+            None,
+            None,
+            frame_hash,
+            protocol::BinaryImageMeta {
+                w: img.w,
+                h: img.h,
+                scope,
+                format: img.format.as_str(),
+            },
+            &img.data,
+        ));
+    }
+    Reply::Text(encode(&Message::Observation {
+        obs_id: format!("obs-{call_id}"),
+        cause: Some(call_id.to_string()),
+        stream: None,
+        seq: None,
+        image: Some(protocol::ImageRef {
+            data: img.to_base64(),
+            w: img.w,
+            h: img.h,
+            scope: scope.to_string(),
+            format: img.format.as_str().to_string(),
+        }),
+        tiles: None,
+        frame_hash: frame_hash.map(str::to_string),
+        not_modified: None,
+    }))
 }
 
 fn ack(call_id: &str, ok: bool, error: Option<String>) -> Reply {
@@ -647,6 +720,164 @@ mod tests {
         let big =
             s.on_text(r#"{"type":"action","call_id":"c2","action":{"verb":"wait","ms":99999999}}"#);
         assert_eq!(big.delay_ms, MAX_WAIT_MS);
+    }
+
+    /// A backend whose raw frame never changes — the dedup hit case.
+    struct StaticRawExec;
+    impl Executor for StaticRawExec {
+        fn execute(&self, _: &ActionSpec) -> anyhow::Result<String> {
+            Ok(String::new())
+        }
+        fn backend(&self) -> &'static str {
+            "static-raw"
+        }
+        fn capture_raw(&self, _: &str, _: Option<u32>) -> anyhow::Result<(Vec<u8>, u16, u16)> {
+            Ok((vec![7u8; 2 * 2 * 3], 2, 2))
+        }
+        fn supports_raw_capture(&self) -> bool {
+            true
+        }
+    }
+
+    /// A backend with ONLY encoded capture (no raw pixels) — like the pyautogui
+    /// fallback: screenshots work, but no frame_hash is ever computed.
+    struct EncodedOnlyExec;
+    impl Executor for EncodedOnlyExec {
+        fn execute(&self, _: &ActionSpec) -> anyhow::Result<String> {
+            Ok(String::new())
+        }
+        fn backend(&self) -> &'static str {
+            "encoded-only"
+        }
+        fn capture(
+            &self,
+            _: &str,
+            _: EncodeOpts,
+        ) -> anyhow::Result<crate::executor::CapturedImage> {
+            Ok(crate::executor::CapturedImage {
+                data: b"png-bytes".to_vec(),
+                format: ImageFormat::Png,
+                w: 1,
+                h: 1,
+            })
+        }
+    }
+
+    fn obs_json(step: Step) -> serde_json::Value {
+        serde_json::from_str(&step.reply.unwrap().into_text()).unwrap()
+    }
+
+    /// Content-negotiated screenshot (#frame-dedup): the first screenshot carries a
+    /// frame_hash; echoing it back as if_none_match over an unchanged screen yields
+    /// the compact not_modified observation (no image); a stale hash yields the
+    /// full frame again.
+    #[test]
+    fn screenshot_if_none_match_answers_not_modified_on_hash_hit() {
+        let mut s = Session::new(None, Arc::new(StaticRawExec));
+        s.on_text(HELLO);
+        let v = obs_json(
+            s.on_text(r#"{"type":"action","call_id":"c1","action":{"verb":"screenshot"}}"#),
+        );
+        assert_eq!(v["type"], "observation");
+        assert!(v["image"]["ref"].is_string());
+        let hash = v["frame_hash"]
+            .as_str()
+            .expect("frame_hash on screenshot")
+            .to_string();
+        assert!(v.get("not_modified").is_none());
+
+        // Hash hit → not_modified, no payload, same hash, correlated by cause.
+        let v = obs_json(s.on_text(&format!(
+            r#"{{"type":"action","call_id":"c2","action":{{"verb":"screenshot","if_none_match":"{hash}"}}}}"#,
+        )));
+        assert_eq!(v["type"], "observation");
+        assert_eq!(v["not_modified"], true);
+        assert_eq!(v["frame_hash"], hash.as_str());
+        assert_eq!(v["cause"], "c2");
+        assert!(v.get("image").is_none() && v.get("tiles").is_none());
+
+        // Stale hash → full frame again (with the current hash attached).
+        let v = obs_json(s.on_text(
+            r#"{"type":"action","call_id":"c3","action":{"verb":"screenshot","if_none_match":"0000000000000000"}}"#,
+        ));
+        assert!(v["image"]["ref"].is_string());
+        assert_eq!(v["frame_hash"], hash.as_str());
+        assert!(v.get("not_modified").is_none());
+    }
+
+    /// The dedup identity is codec-independent: a hash minted under PNG matches a
+    /// JPEG request over the same pixels (the hash is over RAW pixels, not payload).
+    #[test]
+    fn if_none_match_matches_across_codecs() {
+        let mut s = Session::new(None, Arc::new(StaticRawExec));
+        s.on_text(HELLO);
+        let v = obs_json(s.on_text(
+            r#"{"type":"action","call_id":"c1","action":{"verb":"screenshot","format":"png"}}"#,
+        ));
+        let hash = v["frame_hash"].as_str().unwrap().to_string();
+        let v = obs_json(s.on_text(&format!(
+            r#"{{"type":"action","call_id":"c2","action":{{"verb":"screenshot","format":"jpeg","if_none_match":"{hash}"}}}}"#,
+        )));
+        assert_eq!(v["not_modified"], true);
+    }
+
+    /// A changing screen never matches: the VirtualExecutor's frame advances every
+    /// capture, so an if_none_match echo still gets a full frame (a NEW hash).
+    #[test]
+    fn if_none_match_misses_when_the_screen_changed() {
+        let mut s = session(None);
+        s.on_text(HELLO);
+        let v = obs_json(
+            s.on_text(r#"{"type":"action","call_id":"c1","action":{"verb":"screenshot"}}"#),
+        );
+        let hash = v["frame_hash"].as_str().unwrap().to_string();
+        let v = obs_json(s.on_text(&format!(
+            r#"{{"type":"action","call_id":"c2","action":{{"verb":"screenshot","if_none_match":"{hash}"}}}}"#,
+        )));
+        assert!(v["image"]["ref"].is_string());
+        assert!(v.get("not_modified").is_none());
+        assert_ne!(v["frame_hash"].as_str().unwrap(), hash);
+    }
+
+    /// A backend without raw capture keeps the plain path: full frame, NO frame_hash
+    /// — if_none_match simply never matches (always the safe answer).
+    #[test]
+    fn backend_without_raw_capture_serves_full_frames_without_hash() {
+        let mut s = Session::new(None, Arc::new(EncodedOnlyExec));
+        s.on_text(HELLO);
+        let v = obs_json(s.on_text(
+            r#"{"type":"action","call_id":"c1","action":{"verb":"screenshot","if_none_match":"0000000000000000"}}"#,
+        ));
+        assert_eq!(v["type"], "observation");
+        assert!(v["image"]["ref"].is_string());
+        assert!(v.get("frame_hash").is_none());
+        assert!(v.get("not_modified").is_none());
+    }
+
+    /// On a binary-negotiated session the full screenshot is a binary frame whose
+    /// header carries frame_hash, while a not_modified answer is TEXT (no payload
+    /// to carry).
+    #[test]
+    fn binary_session_gets_frame_hash_header_and_text_not_modified() {
+        const HELLO_BINARY: &str = r#"{"type":"hello","v":0,"client":{"name":"t","version":"0"},"accept":{"binary_frames":true}}"#;
+        let mut s = Session::new(None, Arc::new(StaticRawExec));
+        s.on_text(HELLO_BINARY);
+        let step = s.on_text(r#"{"type":"action","call_id":"c1","action":{"verb":"screenshot"}}"#);
+        let Some(Reply::Binary(frame)) = step.reply else {
+            panic!("expected a binary screenshot frame");
+        };
+        let hlen = u32::from_le_bytes(frame[..4].try_into().unwrap()) as usize;
+        let header: serde_json::Value = serde_json::from_slice(&frame[4..4 + hlen]).unwrap();
+        let hash = header["frame_hash"]
+            .as_str()
+            .expect("hash in binary header")
+            .to_string();
+        // Hash hit → a TEXT not_modified observation even on the binary session.
+        let v = obs_json(s.on_text(&format!(
+            r#"{{"type":"action","call_id":"c2","action":{{"verb":"screenshot","if_none_match":"{hash}"}}}}"#,
+        )));
+        assert_eq!(v["not_modified"], true);
+        assert_eq!(v["frame_hash"], hash.as_str());
     }
 
     #[test]

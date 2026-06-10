@@ -112,8 +112,11 @@ class SandboxProvider:
     def create(self, spec: SandboxSpec | None = None) -> SandboxHandle:
         raise NotImplementedError
 
-    def connect(self, handle: SandboxHandle) -> Sandbox:
-        env = connect(handle.addr, token=handle.token)
+    def connect(self, handle: SandboxHandle, **connect_kwargs: Any) -> Sandbox:
+        """Open a session to the sandbox. Extra keyword arguments are passed through
+        to :func:`shinken.connect` (e.g. ``frame_cache=`` to share one
+        :class:`~shinken.FrameCache` across a forked fleet, ``screenshot_dedup=``)."""
+        env = connect(handle.addr, token=handle.token, **connect_kwargs)
         # Attach the provider context so sandbox.checkpoint()/fork()/resume() can use
         # the substrate lifecycle operations (#206).
         env._set_provider_context(self, handle)

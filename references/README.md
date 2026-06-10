@@ -27,6 +27,7 @@ git clone --depth 1 https://github.com/microsoft/OmniParser.git               # 
 git clone --depth 1 https://github.com/verl-project/uni-agent.git             # uni-agent
 git clone --depth 1 https://github.com/xlang-ai/CUA-Gym.git                   # CUA-Gym
 git clone --depth 1 https://github.com/Agentix-Project/Agentix.git            # Agentix
+git clone --depth 1 --branch stable https://github.com/NVIDIA-NeMo/ProRL-Agent-Server.git  # ProRL-Agent-Server
 ```
 
 ## What's here
@@ -45,6 +46,7 @@ git clone --depth 1 https://github.com/Agentix-Project/Agentix.git            # 
 | `uni-agent/` | https://github.com/verl-project/uni-agent | verl-team unified build/run/**train** agent framework (RL rollout collection + training backend). Studied for the train-lane interop seam (#223): Shinken as a stateful env/substrate under verl-style rollout collection. |
 | `CUA-Gym/` | https://github.com/xlang-ai/CUA-Gym | OSWorld-team follow-up: scaled, verifiable training environments + task hub for computer-use agents (arXiv:2605.25624). Studied for the task/verifier pipeline and as a candidate second Workload behind the OSWorld one. |
 | `Agentix/` | https://github.com/Agentix-Project/Agentix | "Universal bridge between agents and environments" (eval / RL / rollout collection without bespoke glue). Closest conceptual neighbor to our narrow-waist agent-runtime; studied for bridge/plugin abstractions and interop positioning. |
+| `ProRL-Agent-Server/` | https://github.com/NVIDIA-NeMo/ProRL-Agent-Server | Rollout-as-a-service control plane for agent RL (Apache-2.0; arXiv:2603.18815): HTTP rollout API, gateway INIT→RUN→EVAL assembly line, token-in/token-out trajectory capture, pluggable per-session runtimes via `RuntimeSpec.import_path`. Studied for the runtime plugin contract our `integrations/prorl_agent_server.py` implements. |
 
 ### OSWorld submodules (not initialized)
 

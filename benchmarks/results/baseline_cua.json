@@ -1,0 +1,1321 @@
+{
+  "suite": "baseline_cua",
+  "meta": {
+    "generated_utc": "2026-06-10T23:08:57Z",
+    "git_commit": "23eed91",
+    "python": "3.13.9",
+    "host_os": "macOS 26.5.1",
+    "host_arch": "arm64",
+    "host_cpu": "Apple M4 Pro",
+    "host_cores": "14",
+    "host_mem_gib": 48.0,
+    "docker_server": "29.4.3",
+    "image": "shinken/sandbox-linux",
+    "image_arch": "linux/arm64",
+    "screen_geometry": "1280x800x24"
+  },
+  "versions": {
+    "cua_sandbox_pin": "0.1.16",
+    "cua_sandbox": "0.1.16",
+    "lume": "0.3.10",
+    "cua_xfce_digest": "trycua/cua-xfce@sha256:3bf8536d354d4212aa7a2ed6309f63b573f587da50abb42692fc37e230832d91",
+    "cua_macos_image": "ghcr.io/trycua/macos-tahoe-cua:latest"
+  },
+  "fairness": {
+    "ordering": "legs run sequentially (shinken \u2192 cua_docker \u2192 cua_lume), never concurrent",
+    "warmups_discarded": {
+      "boot": 1,
+      "step": 5
+    },
+    "geometry": "shinken matched to cua-xfce default (1024x768x24)",
+    "docker_sharing": "shinken and cua_docker legs share one Docker daemon (sequentially)",
+    "lume_leg": "macOS VM on Virtualization.framework \u2014 no Docker in the path; CPU contention only",
+    "codecs": "each stack at its shipped default screenshot codec (PNG for both)"
+  },
+  "summary": {
+    "shinken": {
+      "boot_to_usable_ms": {
+        "n": 8,
+        "min": 3741.6,
+        "p50": 3787.0,
+        "mean": 3781.075,
+        "p90": 3793.3,
+        "p99": 3807.2,
+        "max": 3807.2
+      },
+      "step_ms": {
+        "n": 60,
+        "min": 2.356,
+        "p50": 2.867,
+        "mean": 3.026,
+        "p90": 3.799,
+        "p99": 4.481,
+        "max": 5.063
+      },
+      "click_ms": {
+        "n": 60,
+        "min": 0.431,
+        "p50": 0.536,
+        "mean": 0.575,
+        "p90": 0.731,
+        "p99": 0.83,
+        "max": 0.847
+      },
+      "screenshot_ms": {
+        "n": 60,
+        "min": 1.9,
+        "p50": 2.277,
+        "mean": 2.452,
+        "p90": 3.131,
+        "p99": 3.652,
+        "max": 4.357
+      },
+      "obs_bytes_default": {
+        "n": 60,
+        "min": 22847.0,
+        "p50": 22847.0,
+        "mean": 22859.25,
+        "p90": 22896.0,
+        "p99": 22896.0,
+        "max": 22896.0
+      },
+      "checkpoint_ms": {
+        "n": 8,
+        "min": 534.4,
+        "p50": 557.2,
+        "mean": 553.688,
+        "p90": 561.5,
+        "p99": 580.0,
+        "max": 580.0
+      },
+      "fork_to_usable_ms": {
+        "n": 8,
+        "min": 3454.9,
+        "p50": 3762.8,
+        "mean": 3721.887,
+        "p90": 3764.0,
+        "p99": 3772.3,
+        "max": 3772.3
+      },
+      "forks_verified": true
+    },
+    "cua_docker": {
+      "boot_to_usable_ms": {
+        "n": 8,
+        "min": 8482.1,
+        "p50": 8546.8,
+        "mean": 8534.562,
+        "p90": 8562.4,
+        "p99": 8581.5,
+        "max": 8581.5
+      },
+      "step_ms": {
+        "n": 60,
+        "min": 168.949,
+        "p50": 173.747,
+        "mean": 176.35,
+        "p90": 185.096,
+        "p99": 196.881,
+        "max": 206.881
+      },
+      "click_ms": {
+        "n": 60,
+        "min": 1.916,
+        "p50": 3.04,
+        "mean": 3.043,
+        "p90": 3.715,
+        "p99": 4.591,
+        "max": 4.683
+      },
+      "screenshot_ms": {
+        "n": 60,
+        "min": 166.237,
+        "p50": 170.607,
+        "mean": 173.306,
+        "p90": 182.219,
+        "p99": 194.137,
+        "max": 203.506
+      },
+      "obs_bytes_default": {
+        "n": 60,
+        "min": 94648.0,
+        "p50": 94749.0,
+        "mean": 94720.383,
+        "p90": 94749.0,
+        "p99": 94749.0,
+        "max": 94749.0
+      },
+      "suspend_ms": {
+        "n": 20,
+        "min": 25.6,
+        "p50": 38.2,
+        "mean": 36.305,
+        "p90": 42.5,
+        "p99": 48.9,
+        "max": 48.9
+      },
+      "resume_ms": {
+        "n": 20,
+        "min": 58.8,
+        "p50": 63.5,
+        "mean": 65.03,
+        "p90": 71.1,
+        "p99": 83.9,
+        "max": 83.9
+      }
+    },
+    "cua_lume": {
+      "skipped": "base image not pulled (cua-base-679740436527; ~23 GiB one-time `lume pull`)",
+      "clone_probe_ms": {
+        "n": 10,
+        "min": 27.2,
+        "p50": 32.5,
+        "mean": 35.11,
+        "p90": 44.1,
+        "p99": 49.2,
+        "max": 49.2
+      }
+    }
+  },
+  "legs": {
+    "shinken": {
+      "geometry": "1024x768x24",
+      "boot": [
+        {
+          "rep": 1,
+          "create_ms": 3764.2,
+          "connect_ms": 5.2,
+          "first_obs_ms": 7.2,
+          "total_ms": 3776.7
+        },
+        {
+          "rep": 2,
+          "create_ms": 3769.6,
+          "connect_ms": 8.1,
+          "first_obs_ms": 9.3,
+          "total_ms": 3787.0
+        },
+        {
+          "rep": 3,
+          "create_ms": 3766.6,
+          "connect_ms": 6.0,
+          "first_obs_ms": 7.8,
+          "total_ms": 3780.5
+        },
+        {
+          "rep": 4,
+          "create_ms": 3780.3,
+          "connect_ms": 6.7,
+          "first_obs_ms": 6.2,
+          "total_ms": 3793.3
+        },
+        {
+          "rep": 5,
+          "create_ms": 3728.5,
+          "connect_ms": 5.1,
+          "first_obs_ms": 8.0,
+          "total_ms": 3741.6
+        },
+        {
+          "rep": 6,
+          "create_ms": 3761.1,
+          "connect_ms": 3.8,
+          "first_obs_ms": 5.6,
+          "total_ms": 3770.4
+        },
+        {
+          "rep": 7,
+          "create_ms": 3791.1,
+          "connect_ms": 7.7,
+          "first_obs_ms": 8.3,
+          "total_ms": 3807.2
+        },
+        {
+          "rep": 8,
+          "create_ms": 3775.5,
+          "connect_ms": 6.1,
+          "first_obs_ms": 10.3,
+          "total_ms": 3791.9
+        }
+      ],
+      "step": [
+        {
+          "rep": 5,
+          "click_ms": 0.761,
+          "screenshot_ms": 3.532,
+          "step_ms": 4.294,
+          "bytes": 22847
+        },
+        {
+          "rep": 6,
+          "click_ms": 0.847,
+          "screenshot_ms": 3.413,
+          "step_ms": 4.26,
+          "bytes": 22896
+        },
+        {
+          "rep": 7,
+          "click_ms": 0.705,
+          "screenshot_ms": 4.357,
+          "step_ms": 5.063,
+          "bytes": 22847
+        },
+        {
+          "rep": 8,
+          "click_ms": 0.83,
+          "screenshot_ms": 3.652,
+          "step_ms": 4.481,
+          "bytes": 22847
+        },
+        {
+          "rep": 9,
+          "click_ms": 0.828,
+          "screenshot_ms": 3.395,
+          "step_ms": 4.223,
+          "bytes": 22847
+        },
+        {
+          "rep": 10,
+          "click_ms": 0.692,
+          "screenshot_ms": 3.131,
+          "step_ms": 3.822,
+          "bytes": 22896
+        },
+        {
+          "rep": 11,
+          "click_ms": 0.597,
+          "screenshot_ms": 3.077,
+          "step_ms": 3.674,
+          "bytes": 22847
+        },
+        {
+          "rep": 12,
+          "click_ms": 0.629,
+          "screenshot_ms": 2.868,
+          "step_ms": 3.496,
+          "bytes": 22847
+        },
+        {
+          "rep": 13,
+          "click_ms": 0.696,
+          "screenshot_ms": 2.92,
+          "step_ms": 3.616,
+          "bytes": 22847
+        },
+        {
+          "rep": 14,
+          "click_ms": 0.626,
+          "screenshot_ms": 2.819,
+          "step_ms": 3.445,
+          "bytes": 22896
+        },
+        {
+          "rep": 15,
+          "click_ms": 0.551,
+          "screenshot_ms": 2.652,
+          "step_ms": 3.203,
+          "bytes": 22847
+        },
+        {
+          "rep": 16,
+          "click_ms": 0.528,
+          "screenshot_ms": 2.61,
+          "step_ms": 3.138,
+          "bytes": 22847
+        },
+        {
+          "rep": 17,
+          "click_ms": 0.547,
+          "screenshot_ms": 2.561,
+          "step_ms": 3.107,
+          "bytes": 22847
+        },
+        {
+          "rep": 18,
+          "click_ms": 0.531,
+          "screenshot_ms": 2.613,
+          "step_ms": 3.144,
+          "bytes": 22896
+        },
+        {
+          "rep": 19,
+          "click_ms": 0.558,
+          "screenshot_ms": 2.503,
+          "step_ms": 3.061,
+          "bytes": 22847
+        },
+        {
+          "rep": 20,
+          "click_ms": 0.587,
+          "screenshot_ms": 2.538,
+          "step_ms": 3.125,
+          "bytes": 22847
+        },
+        {
+          "rep": 21,
+          "click_ms": 0.596,
+          "screenshot_ms": 2.738,
+          "step_ms": 3.334,
+          "bytes": 22847
+        },
+        {
+          "rep": 22,
+          "click_ms": 0.512,
+          "screenshot_ms": 2.331,
+          "step_ms": 2.843,
+          "bytes": 22896
+        },
+        {
+          "rep": 23,
+          "click_ms": 0.463,
+          "screenshot_ms": 2.482,
+          "step_ms": 2.944,
+          "bytes": 22847
+        },
+        {
+          "rep": 24,
+          "click_ms": 0.508,
+          "screenshot_ms": 2.362,
+          "step_ms": 2.871,
+          "bytes": 22847
+        },
+        {
+          "rep": 25,
+          "click_ms": 0.521,
+          "screenshot_ms": 2.348,
+          "step_ms": 2.869,
+          "bytes": 22847
+        },
+        {
+          "rep": 26,
+          "click_ms": 0.513,
+          "screenshot_ms": 2.346,
+          "step_ms": 2.86,
+          "bytes": 22896
+        },
+        {
+          "rep": 27,
+          "click_ms": 0.489,
+          "screenshot_ms": 2.277,
+          "step_ms": 2.766,
+          "bytes": 22847
+        },
+        {
+          "rep": 28,
+          "click_ms": 0.536,
+          "screenshot_ms": 2.256,
+          "step_ms": 2.792,
+          "bytes": 22847
+        },
+        {
+          "rep": 29,
+          "click_ms": 0.477,
+          "screenshot_ms": 2.288,
+          "step_ms": 2.765,
+          "bytes": 22847
+        },
+        {
+          "rep": 30,
+          "click_ms": 0.475,
+          "screenshot_ms": 2.229,
+          "step_ms": 2.704,
+          "bytes": 22896
+        },
+        {
+          "rep": 31,
+          "click_ms": 0.506,
+          "screenshot_ms": 2.184,
+          "step_ms": 2.69,
+          "bytes": 22847
+        },
+        {
+          "rep": 32,
+          "click_ms": 0.472,
+          "screenshot_ms": 2.191,
+          "step_ms": 2.663,
+          "bytes": 22847
+        },
+        {
+          "rep": 33,
+          "click_ms": 0.462,
+          "screenshot_ms": 2.148,
+          "step_ms": 2.61,
+          "bytes": 22847
+        },
+        {
+          "rep": 34,
+          "click_ms": 0.444,
+          "screenshot_ms": 2.116,
+          "step_ms": 2.561,
+          "bytes": 22896
+        },
+        {
+          "rep": 35,
+          "click_ms": 0.45,
+          "screenshot_ms": 2.245,
+          "step_ms": 2.694,
+          "bytes": 22847
+        },
+        {
+          "rep": 36,
+          "click_ms": 0.455,
+          "screenshot_ms": 2.047,
+          "step_ms": 2.502,
+          "bytes": 22847
+        },
+        {
+          "rep": 37,
+          "click_ms": 0.502,
+          "screenshot_ms": 2.05,
+          "step_ms": 2.553,
+          "bytes": 22847
+        },
+        {
+          "rep": 38,
+          "click_ms": 0.437,
+          "screenshot_ms": 2.01,
+          "step_ms": 2.447,
+          "bytes": 22896
+        },
+        {
+          "rep": 39,
+          "click_ms": 0.453,
+          "screenshot_ms": 2.102,
+          "step_ms": 2.555,
+          "bytes": 22847
+        },
+        {
+          "rep": 40,
+          "click_ms": 0.478,
+          "screenshot_ms": 2.078,
+          "step_ms": 2.556,
+          "bytes": 22847
+        },
+        {
+          "rep": 41,
+          "click_ms": 0.487,
+          "screenshot_ms": 2.048,
+          "step_ms": 2.536,
+          "bytes": 22847
+        },
+        {
+          "rep": 42,
+          "click_ms": 0.44,
+          "screenshot_ms": 2.092,
+          "step_ms": 2.533,
+          "bytes": 22896
+        },
+        {
+          "rep": 43,
+          "click_ms": 0.488,
+          "screenshot_ms": 2.066,
+          "step_ms": 2.554,
+          "bytes": 22847
+        },
+        {
+          "rep": 44,
+          "click_ms": 0.507,
+          "screenshot_ms": 2.081,
+          "step_ms": 2.588,
+          "bytes": 22847
+        },
+        {
+          "rep": 45,
+          "click_ms": 0.431,
+          "screenshot_ms": 2.137,
+          "step_ms": 2.568,
+          "bytes": 22847
+        },
+        {
+          "rep": 46,
+          "click_ms": 0.489,
+          "screenshot_ms": 3.31,
+          "step_ms": 3.799,
+          "bytes": 22896
+        },
+        {
+          "rep": 47,
+          "click_ms": 0.68,
+          "screenshot_ms": 2.202,
+          "step_ms": 2.882,
+          "bytes": 22847
+        },
+        {
+          "rep": 48,
+          "click_ms": 0.624,
+          "screenshot_ms": 2.65,
+          "step_ms": 3.274,
+          "bytes": 22847
+        },
+        {
+          "rep": 49,
+          "click_ms": 0.776,
+          "screenshot_ms": 2.163,
+          "step_ms": 2.939,
+          "bytes": 22847
+        },
+        {
+          "rep": 50,
+          "click_ms": 0.731,
+          "screenshot_ms": 2.326,
+          "step_ms": 3.057,
+          "bytes": 22896
+        },
+        {
+          "rep": 51,
+          "click_ms": 0.715,
+          "screenshot_ms": 2.149,
+          "step_ms": 2.864,
+          "bytes": 22847
+        },
+        {
+          "rep": 52,
+          "click_ms": 0.53,
+          "screenshot_ms": 1.982,
+          "step_ms": 2.512,
+          "bytes": 22847
+        },
+        {
+          "rep": 53,
+          "click_ms": 0.456,
+          "screenshot_ms": 1.9,
+          "step_ms": 2.356,
+          "bytes": 22847
+        },
+        {
+          "rep": 54,
+          "click_ms": 0.464,
+          "screenshot_ms": 1.995,
+          "step_ms": 2.46,
+          "bytes": 22896
+        },
+        {
+          "rep": 55,
+          "click_ms": 0.475,
+          "screenshot_ms": 2.157,
+          "step_ms": 2.632,
+          "bytes": 22847
+        },
+        {
+          "rep": 56,
+          "click_ms": 0.666,
+          "screenshot_ms": 2.253,
+          "step_ms": 2.918,
+          "bytes": 22847
+        },
+        {
+          "rep": 57,
+          "click_ms": 0.648,
+          "screenshot_ms": 2.218,
+          "step_ms": 2.867,
+          "bytes": 22847
+        },
+        {
+          "rep": 58,
+          "click_ms": 0.645,
+          "screenshot_ms": 2.309,
+          "step_ms": 2.954,
+          "bytes": 22896
+        },
+        {
+          "rep": 59,
+          "click_ms": 0.542,
+          "screenshot_ms": 2.132,
+          "step_ms": 2.673,
+          "bytes": 22847
+        },
+        {
+          "rep": 60,
+          "click_ms": 0.679,
+          "screenshot_ms": 2.405,
+          "step_ms": 3.084,
+          "bytes": 22847
+        },
+        {
+          "rep": 61,
+          "click_ms": 0.724,
+          "screenshot_ms": 2.133,
+          "step_ms": 2.858,
+          "bytes": 22847
+        },
+        {
+          "rep": 62,
+          "click_ms": 0.612,
+          "screenshot_ms": 2.146,
+          "step_ms": 2.758,
+          "bytes": 22896
+        },
+        {
+          "rep": 63,
+          "click_ms": 0.641,
+          "screenshot_ms": 2.676,
+          "step_ms": 3.317,
+          "bytes": 22847
+        },
+        {
+          "rep": 64,
+          "click_ms": 0.762,
+          "screenshot_ms": 2.105,
+          "step_ms": 2.867,
+          "bytes": 22847
+        }
+      ],
+      "obs_default": {
+        "codec": "png (protocol default)",
+        "n": 60
+      },
+      "obs_jpeg80_bytes": {
+        "n": 10,
+        "min": 19182.0,
+        "p50": 19182.0,
+        "mean": 19182.0,
+        "p90": 19182.0,
+        "p99": 19182.0,
+        "max": 19182.0
+      },
+      "checkpoint_ms": [
+        534.4,
+        554.9,
+        536.1,
+        557.3,
+        580.0,
+        548.1,
+        561.5,
+        557.2
+      ],
+      "fork_to_usable": [
+        {
+          "rep": 0,
+          "resume_ms": 3444.1,
+          "connect_ms": 3.8,
+          "first_obs_ms": 7.0,
+          "total_ms": 3454.9,
+          "inherited_golden_state": true
+        },
+        {
+          "rep": 1,
+          "resume_ms": 3755.7,
+          "connect_ms": 4.0,
+          "first_obs_ms": 4.0,
+          "total_ms": 3763.7,
+          "inherited_golden_state": true
+        },
+        {
+          "rep": 2,
+          "resume_ms": 3751.3,
+          "connect_ms": 3.4,
+          "first_obs_ms": 8.1,
+          "total_ms": 3762.8,
+          "inherited_golden_state": true
+        },
+        {
+          "rep": 3,
+          "resume_ms": 3744.8,
+          "connect_ms": 4.1,
+          "first_obs_ms": 5.0,
+          "total_ms": 3753.9,
+          "inherited_golden_state": true
+        },
+        {
+          "rep": 4,
+          "resume_ms": 3748.7,
+          "connect_ms": 5.5,
+          "first_obs_ms": 9.8,
+          "total_ms": 3764.0,
+          "inherited_golden_state": true
+        },
+        {
+          "rep": 5,
+          "resume_ms": 3732.1,
+          "connect_ms": 3.2,
+          "first_obs_ms": 6.0,
+          "total_ms": 3741.2,
+          "inherited_golden_state": true
+        },
+        {
+          "rep": 6,
+          "resume_ms": 3749.6,
+          "connect_ms": 4.3,
+          "first_obs_ms": 8.4,
+          "total_ms": 3762.3,
+          "inherited_golden_state": true
+        },
+        {
+          "rep": 7,
+          "resume_ms": 3762.5,
+          "connect_ms": 4.3,
+          "first_obs_ms": 5.5,
+          "total_ms": 3772.3,
+          "inherited_golden_state": true
+        }
+      ],
+      "measured_utc": "2026-06-10T23:04:37Z"
+    },
+    "cua_docker": {
+      "image": "trycua/cua-xfce:latest",
+      "boot": [
+        {
+          "rep": 1,
+          "create_connect_ms": 8419.9,
+          "first_obs_ms": 62.2,
+          "total_ms": 8482.1,
+          "first_obs_bytes": 17109
+        },
+        {
+          "rep": 2,
+          "create_connect_ms": 8445.6,
+          "first_obs_ms": 65.0,
+          "total_ms": 8510.6,
+          "first_obs_bytes": 17023
+        },
+        {
+          "rep": 3,
+          "create_connect_ms": 8464.4,
+          "first_obs_ms": 63.4,
+          "total_ms": 8527.8,
+          "first_obs_bytes": 17023
+        },
+        {
+          "rep": 4,
+          "create_connect_ms": 8450.2,
+          "first_obs_ms": 63.8,
+          "total_ms": 8514.0,
+          "first_obs_bytes": 17023
+        },
+        {
+          "rep": 5,
+          "create_connect_ms": 8499.1,
+          "first_obs_ms": 63.3,
+          "total_ms": 8562.4,
+          "first_obs_bytes": 17023
+        },
+        {
+          "rep": 6,
+          "create_connect_ms": 8486.2,
+          "first_obs_ms": 65.1,
+          "total_ms": 8551.3,
+          "first_obs_bytes": 17227
+        },
+        {
+          "rep": 7,
+          "create_connect_ms": 8482.3,
+          "first_obs_ms": 64.5,
+          "total_ms": 8546.8,
+          "first_obs_bytes": 17227
+        },
+        {
+          "rep": 8,
+          "create_connect_ms": 8518.2,
+          "first_obs_ms": 63.4,
+          "total_ms": 8581.5,
+          "first_obs_bytes": 17227
+        }
+      ],
+      "dimensions": [
+        1024,
+        768
+      ],
+      "step": [
+        {
+          "rep": 5,
+          "click_ms": 3.328,
+          "screenshot_ms": 166.908,
+          "step_ms": 170.236,
+          "bytes": 94749
+        },
+        {
+          "rep": 6,
+          "click_ms": 3.04,
+          "screenshot_ms": 167.035,
+          "step_ms": 170.075,
+          "bytes": 94749
+        },
+        {
+          "rep": 7,
+          "click_ms": 2.147,
+          "screenshot_ms": 167.841,
+          "step_ms": 169.989,
+          "bytes": 94749
+        },
+        {
+          "rep": 8,
+          "click_ms": 3.46,
+          "screenshot_ms": 166.882,
+          "step_ms": 170.342,
+          "bytes": 94749
+        },
+        {
+          "rep": 9,
+          "click_ms": 2.927,
+          "screenshot_ms": 170.152,
+          "step_ms": 173.08,
+          "bytes": 94749
+        },
+        {
+          "rep": 10,
+          "click_ms": 2.837,
+          "screenshot_ms": 167.331,
+          "step_ms": 170.169,
+          "bytes": 94749
+        },
+        {
+          "rep": 11,
+          "click_ms": 3.847,
+          "screenshot_ms": 169.029,
+          "step_ms": 172.876,
+          "bytes": 94749
+        },
+        {
+          "rep": 12,
+          "click_ms": 2.716,
+          "screenshot_ms": 178.578,
+          "step_ms": 181.294,
+          "bytes": 94749
+        },
+        {
+          "rep": 13,
+          "click_ms": 1.916,
+          "screenshot_ms": 167.526,
+          "step_ms": 169.443,
+          "bytes": 94749
+        },
+        {
+          "rep": 14,
+          "click_ms": 3.291,
+          "screenshot_ms": 168.661,
+          "step_ms": 171.951,
+          "bytes": 94749
+        },
+        {
+          "rep": 15,
+          "click_ms": 2.712,
+          "screenshot_ms": 166.237,
+          "step_ms": 168.949,
+          "bytes": 94749
+        },
+        {
+          "rep": 16,
+          "click_ms": 2.901,
+          "screenshot_ms": 167.817,
+          "step_ms": 170.717,
+          "bytes": 94749
+        },
+        {
+          "rep": 17,
+          "click_ms": 3.573,
+          "screenshot_ms": 167.376,
+          "step_ms": 170.949,
+          "bytes": 94749
+        },
+        {
+          "rep": 18,
+          "click_ms": 2.129,
+          "screenshot_ms": 168.433,
+          "step_ms": 170.562,
+          "bytes": 94749
+        },
+        {
+          "rep": 19,
+          "click_ms": 3.201,
+          "screenshot_ms": 168.887,
+          "step_ms": 172.089,
+          "bytes": 94749
+        },
+        {
+          "rep": 20,
+          "click_ms": 2.999,
+          "screenshot_ms": 169.315,
+          "step_ms": 172.313,
+          "bytes": 94749
+        },
+        {
+          "rep": 21,
+          "click_ms": 2.631,
+          "screenshot_ms": 169.466,
+          "step_ms": 172.097,
+          "bytes": 94749
+        },
+        {
+          "rep": 22,
+          "click_ms": 3.444,
+          "screenshot_ms": 170.777,
+          "step_ms": 174.22,
+          "bytes": 94749
+        },
+        {
+          "rep": 23,
+          "click_ms": 3.634,
+          "screenshot_ms": 169.251,
+          "step_ms": 172.885,
+          "bytes": 94749
+        },
+        {
+          "rep": 24,
+          "click_ms": 3.054,
+          "screenshot_ms": 170.692,
+          "step_ms": 173.747,
+          "bytes": 94749
+        },
+        {
+          "rep": 25,
+          "click_ms": 3.169,
+          "screenshot_ms": 171.008,
+          "step_ms": 174.177,
+          "bytes": 94749
+        },
+        {
+          "rep": 26,
+          "click_ms": 2.988,
+          "screenshot_ms": 168.916,
+          "step_ms": 171.904,
+          "bytes": 94749
+        },
+        {
+          "rep": 27,
+          "click_ms": 2.436,
+          "screenshot_ms": 167.546,
+          "step_ms": 169.983,
+          "bytes": 94749
+        },
+        {
+          "rep": 28,
+          "click_ms": 2.567,
+          "screenshot_ms": 169.434,
+          "step_ms": 172.001,
+          "bytes": 94749
+        },
+        {
+          "rep": 29,
+          "click_ms": 2.182,
+          "screenshot_ms": 171.859,
+          "step_ms": 174.041,
+          "bytes": 94749
+        },
+        {
+          "rep": 30,
+          "click_ms": 2.433,
+          "screenshot_ms": 174.499,
+          "step_ms": 176.931,
+          "bytes": 94749
+        },
+        {
+          "rep": 31,
+          "click_ms": 3.715,
+          "screenshot_ms": 177.985,
+          "step_ms": 181.699,
+          "bytes": 94749
+        },
+        {
+          "rep": 32,
+          "click_ms": 2.981,
+          "screenshot_ms": 180.15,
+          "step_ms": 183.131,
+          "bytes": 94749
+        },
+        {
+          "rep": 33,
+          "click_ms": 3.179,
+          "screenshot_ms": 173.289,
+          "step_ms": 176.469,
+          "bytes": 94749
+        },
+        {
+          "rep": 34,
+          "click_ms": 2.573,
+          "screenshot_ms": 178.444,
+          "step_ms": 181.017,
+          "bytes": 94749
+        },
+        {
+          "rep": 35,
+          "click_ms": 2.162,
+          "screenshot_ms": 174.799,
+          "step_ms": 176.961,
+          "bytes": 94749
+        },
+        {
+          "rep": 36,
+          "click_ms": 2.944,
+          "screenshot_ms": 183.32,
+          "step_ms": 186.264,
+          "bytes": 94749
+        },
+        {
+          "rep": 37,
+          "click_ms": 2.835,
+          "screenshot_ms": 181.851,
+          "step_ms": 184.686,
+          "bytes": 94749
+        },
+        {
+          "rep": 38,
+          "click_ms": 2.385,
+          "screenshot_ms": 172.159,
+          "step_ms": 174.544,
+          "bytes": 94749
+        },
+        {
+          "rep": 39,
+          "click_ms": 2.878,
+          "screenshot_ms": 182.219,
+          "step_ms": 185.096,
+          "bytes": 94749
+        },
+        {
+          "rep": 40,
+          "click_ms": 2.387,
+          "screenshot_ms": 174.357,
+          "step_ms": 176.743,
+          "bytes": 94749
+        },
+        {
+          "rep": 41,
+          "click_ms": 2.961,
+          "screenshot_ms": 178.262,
+          "step_ms": 181.223,
+          "bytes": 94749
+        },
+        {
+          "rep": 42,
+          "click_ms": 3.078,
+          "screenshot_ms": 182.659,
+          "step_ms": 185.737,
+          "bytes": 94749
+        },
+        {
+          "rep": 43,
+          "click_ms": 3.021,
+          "screenshot_ms": 178.861,
+          "step_ms": 181.881,
+          "bytes": 94749
+        },
+        {
+          "rep": 44,
+          "click_ms": 3.61,
+          "screenshot_ms": 176.908,
+          "step_ms": 180.517,
+          "bytes": 94749
+        },
+        {
+          "rep": 45,
+          "click_ms": 2.708,
+          "screenshot_ms": 186.841,
+          "step_ms": 189.549,
+          "bytes": 94749
+        },
+        {
+          "rep": 46,
+          "click_ms": 2.362,
+          "screenshot_ms": 188.779,
+          "step_ms": 191.14,
+          "bytes": 94749
+        },
+        {
+          "rep": 47,
+          "click_ms": 2.744,
+          "screenshot_ms": 194.137,
+          "step_ms": 196.881,
+          "bytes": 94749
+        },
+        {
+          "rep": 48,
+          "click_ms": 3.375,
+          "screenshot_ms": 203.506,
+          "step_ms": 206.881,
+          "bytes": 94648
+        },
+        {
+          "rep": 49,
+          "click_ms": 3.801,
+          "screenshot_ms": 175.44,
+          "step_ms": 179.24,
+          "bytes": 94648
+        },
+        {
+          "rep": 50,
+          "click_ms": 3.139,
+          "screenshot_ms": 168.597,
+          "step_ms": 171.735,
+          "bytes": 94648
+        },
+        {
+          "rep": 51,
+          "click_ms": 3.049,
+          "screenshot_ms": 168.185,
+          "step_ms": 171.235,
+          "bytes": 94648
+        },
+        {
+          "rep": 52,
+          "click_ms": 2.655,
+          "screenshot_ms": 169.557,
+          "step_ms": 172.212,
+          "bytes": 94648
+        },
+        {
+          "rep": 53,
+          "click_ms": 3.207,
+          "screenshot_ms": 170.607,
+          "step_ms": 173.814,
+          "bytes": 94648
+        },
+        {
+          "rep": 54,
+          "click_ms": 3.603,
+          "screenshot_ms": 169.029,
+          "step_ms": 172.632,
+          "bytes": 94648
+        },
+        {
+          "rep": 55,
+          "click_ms": 3.092,
+          "screenshot_ms": 168.337,
+          "step_ms": 171.429,
+          "bytes": 94648
+        },
+        {
+          "rep": 56,
+          "click_ms": 2.072,
+          "screenshot_ms": 169.956,
+          "step_ms": 172.028,
+          "bytes": 94648
+        },
+        {
+          "rep": 57,
+          "click_ms": 3.428,
+          "screenshot_ms": 173.178,
+          "step_ms": 176.606,
+          "bytes": 94648
+        },
+        {
+          "rep": 58,
+          "click_ms": 4.058,
+          "screenshot_ms": 169.32,
+          "step_ms": 173.378,
+          "bytes": 94648
+        },
+        {
+          "rep": 59,
+          "click_ms": 3.385,
+          "screenshot_ms": 169.861,
+          "step_ms": 173.247,
+          "bytes": 94648
+        },
+        {
+          "rep": 60,
+          "click_ms": 4.591,
+          "screenshot_ms": 173.135,
+          "step_ms": 177.726,
+          "bytes": 94648
+        },
+        {
+          "rep": 61,
+          "click_ms": 3.306,
+          "screenshot_ms": 171.953,
+          "step_ms": 175.26,
+          "bytes": 94648
+        },
+        {
+          "rep": 62,
+          "click_ms": 4.683,
+          "screenshot_ms": 168.622,
+          "step_ms": 173.305,
+          "bytes": 94648
+        },
+        {
+          "rep": 63,
+          "click_ms": 3.283,
+          "screenshot_ms": 169.17,
+          "step_ms": 172.452,
+          "bytes": 94648
+        },
+        {
+          "rep": 64,
+          "click_ms": 3.797,
+          "screenshot_ms": 173.459,
+          "step_ms": 177.255,
+          "bytes": 94648
+        }
+      ],
+      "obs_default": {
+        "codec": "png (SDK default)",
+        "n": 60
+      },
+      "obs_jpeg80": {
+        "supported": false,
+        "raises": "ValueError: requested 'jpeg' but got 'png' (magic bytes: 89504e47)"
+      },
+      "snapshot_local": {
+        "supported": false,
+        "raises": "NotImplementedError: Snapshots are only supported for cloud sandboxes"
+      },
+      "suspend_ms": [
+        48.9,
+        40.3,
+        42.5,
+        39.8,
+        39.4,
+        40.2,
+        37.3,
+        31.9,
+        30.8,
+        26.7,
+        42.7,
+        27.3,
+        38.2,
+        25.6,
+        29.2,
+        37.7,
+        40.5,
+        29.0,
+        37.9,
+        40.2
+      ],
+      "resume_ms": [
+        81.8,
+        83.9,
+        64.3,
+        67.1,
+        64.7,
+        63.5,
+        59.3,
+        58.8,
+        63.1,
+        62.0,
+        64.3,
+        60.2,
+        60.5,
+        71.1,
+        62.8,
+        63.5,
+        64.1,
+        61.9,
+        63.6,
+        60.1
+      ],
+      "measured_utc": "2026-06-10T23:07:06Z"
+    },
+    "cua_lume": {
+      "skipped": "base image not pulled (cua-base-679740436527; ~23 GiB one-time `lume pull`)",
+      "clone_probe": {
+        "what": "stopped-VM clone via the lume API (same endpoint as LumeRuntime.fork)",
+        "vm_disk_gib": 12,
+        "materialized_gib": 4,
+        "clone_ms": [
+          40.3,
+          44.1,
+          49.2,
+          36.7,
+          32.5,
+          28.0,
+          28.5,
+          30.3,
+          27.2,
+          34.3
+        ],
+        "note": "mechanism probe on an empty Linux VM \u2014 not a desktop workload"
+      },
+      "measured_utc": "2026-06-10T23:08:57Z"
+    }
+  }
+}

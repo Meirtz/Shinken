@@ -576,7 +576,7 @@ fn spawn_screencast(
                 continue; // clean tick — nothing was captured
             };
             // Idle suppression hashes the RAW encoded bytes — no base64 detour.
-            let hash = fnv1a(&img.data);
+            let hash = executor::fnv1a(&img.data);
             if last_hash == Some(hash) {
                 // The screen matches the delivered frame: the pending damage was
                 // visually a no-op (e.g. redraw with identical pixels) — clear it.
@@ -819,6 +819,7 @@ fn full_frame_msg(
             None,
             Some(&spec.stream_id),
             Some(seq),
+            None,
             protocol::BinaryImageMeta {
                 w: img.w,
                 h: img.h,
@@ -883,16 +884,6 @@ fn tiles_frame_msg(
     serde_json::to_string(&msg).ok().map(WsMessage::Text)
 }
 
-/// FNV-1a 64-bit hash — used to detect unchanged frames cheaply.
-fn fnv1a(bytes: &[u8]) -> u64 {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for &b in bytes {
-        hash ^= b as u64;
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    hash
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -923,12 +914,6 @@ mod tests {
         assert!(is_loopback("[::1]:8765"));
         assert!(!is_loopback("0.0.0.0:8765"));
         assert!(!is_loopback("10.0.0.5:8765"));
-    }
-
-    #[test]
-    fn fnv1a_distinguishes_and_repeats() {
-        assert_eq!(fnv1a(b"frame-a"), fnv1a(b"frame-a"));
-        assert_ne!(fnv1a(b"frame-a"), fnv1a(b"frame-b"));
     }
 
     const HELLO: &str = r#"{"type":"hello","v":0,"client":{"name":"t","version":"0"}}"#;

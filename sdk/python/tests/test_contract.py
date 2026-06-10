@@ -45,6 +45,25 @@ def _act(verb, **kw):
         _act("screenshot", scope="window:0x1f"),
         _act("screenshot", format="jpeg", quality=50),
         _act("screenshot", format="png"),
+        # content-negotiated screenshot: offer a previously seen frame_hash
+        _act("screenshot", if_none_match="00ff00ff00ff00ff"),
+        _act("screenshot", format="jpeg", quality=80, if_none_match="00ff00ff00ff00ff"),
+        # a full screenshot observation carrying the frame's raw-pixel hash
+        {
+            "type": "observation",
+            "obs_id": "o",
+            "cause": "c1",
+            "frame_hash": "00ff00ff00ff00ff",
+            "image": {"ref": "x", "w": 8, "h": 8, "scope": "screen"},
+        },
+        # the compact not_modified answer: cause + frame_hash, NO payload
+        {
+            "type": "observation",
+            "obs_id": "o",
+            "cause": "c1",
+            "not_modified": True,
+            "frame_hash": "00ff00ff00ff00ff",
+        },
         {
             "type": "observation",
             "obs_id": "o",
@@ -84,6 +103,22 @@ def _act(verb, **kw):
                 "image_formats": ["png", "jpeg"],
             },
         },
+        # welcome advertising content-negotiated screenshots (frame_dedup)
+        {
+            "type": "welcome",
+            "v": 0,
+            "server": {"name": "shinkend", "version": "0", "platform": "linux"},
+            "capabilities": {
+                "schema_version": 0,
+                "verbs": ["click"],
+                "targets": ["point_px"],
+                "observation_types": ["screenshot"],
+                "max_long_edge": 2576,
+                "image_formats": ["png", "jpeg"],
+                "binary_frames": True,
+                "frame_dedup": True,
+            },
+        },
     ],
 )
 def test_aci_wire_vocab_validates(msg):
@@ -107,6 +142,30 @@ def test_aci_wire_vocab_validates(msg):
         # delta is a strict boolean, not truthy-anything
         _act("start_screencast", delta="yes"),
         _act("start_screencast", delta=1),
+        # if_none_match is a hash STRING, never a number/bool
+        _act("screenshot", if_none_match=7),
+        _act("screenshot", if_none_match=True),
+        # not_modified is const true — a false value is not a wire shape
+        {
+            "type": "observation",
+            "obs_id": "o",
+            "cause": "c1",
+            "not_modified": False,
+            "frame_hash": "00ff00ff00ff00ff",
+        },
+        # not_modified must carry frame_hash (the client's cache key) ...
+        {"type": "observation", "obs_id": "o", "cause": "c1", "not_modified": True},
+        # ... and cause (it answers a one-shot screenshot, never a stream frame)
+        {"type": "observation", "obs_id": "o", "not_modified": True, "frame_hash": "00ff"},
+        # not_modified means NO payload — image/tiles are contradictions
+        {
+            "type": "observation",
+            "obs_id": "o",
+            "cause": "c1",
+            "not_modified": True,
+            "frame_hash": "00ff00ff00ff00ff",
+            "image": {"ref": "x", "w": 8, "h": 8},
+        },
         # a tile requires all of x/y/w/h/ref and admits nothing else
         {
             "type": "observation",
@@ -181,6 +240,14 @@ def _validate_binary_header(header):
             "obs_id": "obs-c1",
             "cause": "c1",
             "image": {"off": 0, "len": 1234, "w": 8, "h": 8, "scope": "screen", "format": "jpeg"},
+        },
+        # one-shot screenshot header carrying the raw-pixel frame_hash (frame_dedup)
+        {
+            "type": "observation",
+            "obs_id": "obs-c1",
+            "cause": "c1",
+            "frame_hash": "00ff00ff00ff00ff",
+            "image": {"off": 0, "len": 1234, "w": 8, "h": 8, "scope": "screen", "format": "png"},
         },
         # stream keyframe
         {
