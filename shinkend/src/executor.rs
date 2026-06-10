@@ -15,8 +15,8 @@ use base64::Engine as _;
 use serde::Deserialize;
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{
-    AtomEnum, ConnectionExt as _, ImageFormat, Window, BUTTON_PRESS_EVENT, BUTTON_RELEASE_EVENT,
-    KEY_PRESS_EVENT, KEY_RELEASE_EVENT, MOTION_NOTIFY_EVENT,
+    AtomEnum, ConnectionExt as _, ImageFormat as XImageFormat, Window, BUTTON_PRESS_EVENT,
+    BUTTON_RELEASE_EVENT, KEY_PRESS_EVENT, KEY_RELEASE_EVENT, MOTION_NOTIFY_EVENT,
 };
 use x11rb::protocol::xtest::ConnectionExt as _;
 
@@ -71,12 +71,83 @@ pub struct ActionSpec {
     /// lever. Larger frames are downscaled; `None` keeps full resolution.
     #[serde(default)]
     pub max_long_edge: Option<u32>,
+    /// Wire codec for `screenshot`/`start_screencast` frames: `png` (default, lossless)
+    /// or `jpeg` (bandwidth lever). Unknown values are rejected.
+    #[serde(default)]
+    pub format: Option<String>,
+    /// JPEG quality 1–100 (ignored for PNG); defaults to a balanced value when JPEG is
+    /// requested without one.
+    #[serde(default)]
+    pub quality: Option<u8>,
+    /// For `start_screencast`: ask to continue the named logical stream. If the
+    /// runtime still holds that stream's state, frames keep the SAME `stream` id and
+    /// `seq` continues where it left off; otherwise a fresh stream starts (#56).
+    #[serde(default)]
+    pub resume_stream: Option<String>,
 }
 
-/// A captured frame: a base64-encoded PNG plus its pixel dimensions.
+/// Wire image codec for a captured frame. PNG is the lossless default (back-compatible
+/// with v0 clients that never sent a `format`); JPEG is the bandwidth lever — a 1080p
+/// desktop screenshot is ~1.8 MB as PNG but ~80–150 KB as quality-80 JPEG, which is what
+/// makes driving many sandboxes from one control process affordable (#bandwidth).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageFormat {
+    Png,
+    Jpeg,
+}
+
+impl ImageFormat {
+    /// Wire/MIME-subtype string for this codec.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ImageFormat::Png => "png",
+            ImageFormat::Jpeg => "jpeg",
+        }
+    }
+
+    /// Parse a wire `format` value; an absent field keeps the lossless PNG default.
+    /// Accepts exactly the schema enum (`png` | `jpeg`) — no aliases, no trimming — so the
+    /// runtime never accepts a value the published contract rejects. An unknown codec is
+    /// an error (no silent fallback — the client asked for something the runtime cannot
+    /// honor).
+    pub fn parse(s: Option<&str>) -> Result<ImageFormat> {
+        match s {
+            None => Ok(ImageFormat::Png),
+            Some("png") => Ok(ImageFormat::Png),
+            Some("jpeg") => Ok(ImageFormat::Jpeg),
+            Some(other) => bail!("unsupported image format: {other:?} (expected png or jpeg)"),
+        }
+    }
+}
+
+/// How to encode a captured frame: optional downscale, codec, and (JPEG) quality.
+#[derive(Debug, Clone, Copy)]
+pub struct EncodeOpts {
+    pub max_long_edge: Option<u32>,
+    pub format: ImageFormat,
+    /// JPEG quality 1–100; ignored for PNG. Clamped into range at encode time.
+    pub quality: u8,
+}
+
+/// Default JPEG quality — high enough that a VLM reads the screen cleanly, low enough
+/// for the bandwidth win. Used when a client requests JPEG without a `quality`.
+pub const DEFAULT_JPEG_QUALITY: u8 = 80;
+
+impl Default for EncodeOpts {
+    fn default() -> Self {
+        EncodeOpts {
+            max_long_edge: None,
+            format: ImageFormat::Png,
+            quality: DEFAULT_JPEG_QUALITY,
+        }
+    }
+}
+
+/// A captured frame: base64-encoded image bytes, the codec they are in, and pixel dims.
 #[derive(Debug, Clone)]
 pub struct CapturedImage {
-    pub png_base64: String,
+    pub data_base64: String,
+    pub format: ImageFormat,
     pub w: u16,
     pub h: u16,
 }
@@ -96,10 +167,11 @@ pub trait Executor: Send + Sync {
     fn screenshot(&self) -> Result<CapturedImage> {
         bail!("screenshot not supported by the {} backend", self.backend())
     }
-    /// Capture a region (`scope`) as a PNG, optionally downscaled so the longer edge
-    /// is at most `max_long_edge` px (a screencast bandwidth lever). `scope` is one of
-    /// `screen`, `active_window`, or `window:<id>`. Default: full screen, no scaling.
-    fn capture(&self, _scope: &str, _max_long_edge: Option<u32>) -> Result<CapturedImage> {
+    /// Capture a region (`scope`), optionally downscaled so the longer edge is at most
+    /// `opts.max_long_edge` px and encoded in `opts.format` (a screencast bandwidth
+    /// lever). `scope` is one of `screen`, `active_window`, or `window:<id>`. Default:
+    /// full screen, no scaling, lossless PNG.
+    fn capture(&self, _scope: &str, _opts: EncodeOpts) -> Result<CapturedImage> {
         self.screenshot()
     }
 }
@@ -175,6 +247,38 @@ fn encode_png(rgb: &[u8], w: u32, h: u32) -> Result<Vec<u8>> {
         writer.finish()?;
     }
     Ok(out)
+}
+
+/// Encode raw RGB8 pixels as a baseline JPEG. `quality` is clamped to 1–100. Pure-Rust
+/// encoder (no C deps) so the static musl build that gets injected into a sandbox stays
+/// portable.
+fn encode_jpeg(rgb: &[u8], w: u16, h: u16, quality: u8) -> Result<Vec<u8>> {
+    let q = quality.clamp(1, 100);
+    let mut out = Vec::new();
+    let enc = jpeg_encoder::Encoder::new(&mut out, q);
+    enc.encode(rgb, w, h, jpeg_encoder::ColorType::Rgb)
+        .map_err(|e| anyhow::anyhow!("jpeg encode failed: {e}"))?;
+    Ok(out)
+}
+
+/// Downscale (if requested) then encode an RGB8 frame per `opts`, returning the codec the
+/// caller should advertise on the wire. Single chokepoint so every backend's `capture`
+/// shares identical downscale+encode semantics.
+fn encode_frame(rgb: &[u8], w: u16, h: u16, opts: EncodeOpts) -> Result<CapturedImage> {
+    let (rgb, w, h) = match opts.max_long_edge {
+        Some(m) => downscale_rgb(rgb, w, h, m),
+        None => (rgb.to_vec(), w, h),
+    };
+    let bytes = match opts.format {
+        ImageFormat::Png => encode_png(&rgb, w as u32, h as u32)?,
+        ImageFormat::Jpeg => encode_jpeg(&rgb, w, h, opts.quality)?,
+    };
+    Ok(CapturedImage {
+        data_base64: B64.encode(bytes),
+        format: opts.format,
+        w,
+        h,
+    })
 }
 
 const EXECUTOR_ENV: &str = "SHINKEND_EXECUTOR";
@@ -370,7 +474,7 @@ impl X11Executor {
         ensure!(wu * hu > 0, "zero-sized capture region");
         let reply = {
             let conn = self.conn.lock().expect("x11 conn lock");
-            let cookie = conn.get_image(ImageFormat::Z_PIXMAP, drawable, 0, 0, w, h, !0)?;
+            let cookie = conn.get_image(XImageFormat::Z_PIXMAP, drawable, 0, 0, w, h, !0)?;
             cookie.reply()?
         };
         let bpp = reply.data.len() / (wu * hu);
@@ -596,21 +700,12 @@ impl Executor for X11Executor {
     }
 
     fn screenshot(&self) -> Result<CapturedImage> {
-        self.capture("screen", None)
+        self.capture("screen", EncodeOpts::default())
     }
 
-    fn capture(&self, scope: &str, max_long_edge: Option<u32>) -> Result<CapturedImage> {
+    fn capture(&self, scope: &str, opts: EncodeOpts) -> Result<CapturedImage> {
         let (rgb, w, h) = self.capture_scope(parse_scope(scope))?;
-        let (rgb, w, h) = match max_long_edge {
-            Some(m) => downscale_rgb(&rgb, w, h, m),
-            None => (rgb, w, h),
-        };
-        let png = encode_png(&rgb, w as u32, h as u32)?;
-        Ok(CapturedImage {
-            png_base64: B64.encode(png),
-            w,
-            h,
-        })
+        encode_frame(&rgb, w, h, opts)
     }
 
     fn execute(&self, a: &ActionSpec) -> Result<String> {
@@ -721,10 +816,22 @@ impl Executor for VirtualExecutor {
         let rgb: Vec<u8> = (0..2u8 * 2 * 3).map(|i| n.wrapping_add(i)).collect();
         let png = encode_png(&rgb, 2, 2)?;
         Ok(CapturedImage {
-            png_base64: B64.encode(png),
+            data_base64: B64.encode(png),
+            format: ImageFormat::Png,
             w: 2,
             h: 2,
         })
+    }
+
+    /// Honor the requested codec/scale even on the synthetic backend, so a client that
+    /// asked for JPEG never receives PNG bytes labeled by a frame the trait default
+    /// produced (the reported `format` must always match the actual encoding).
+    fn capture(&self, _scope: &str, opts: EncodeOpts) -> Result<CapturedImage> {
+        let n = self
+            .frame
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed) as u8;
+        let rgb: Vec<u8> = (0..2u8 * 2 * 3).map(|i| n.wrapping_add(i)).collect();
+        encode_frame(&rgb, 2, 2, opts)
     }
 }
 
@@ -829,6 +936,88 @@ mod tests {
         assert!(out.contains("scroll"));
         assert_eq!(ex.log.lock().unwrap().as_slice(), ["scroll"]);
         assert_eq!(ex.backend(), "virtual");
+    }
+
+    #[test]
+    fn image_format_matches_the_schema_enum_exactly() {
+        assert_eq!(ImageFormat::parse(None).unwrap(), ImageFormat::Png);
+        assert_eq!(ImageFormat::parse(Some("png")).unwrap(), ImageFormat::Png);
+        assert_eq!(ImageFormat::parse(Some("jpeg")).unwrap(), ImageFormat::Jpeg);
+        // The schema enum is exactly ["png", "jpeg"]: no aliases, no trimming, no empty
+        // string — the runtime must not accept what the published contract rejects.
+        for bad in ["webp", "jpg", "jpeg ", " png", ""] {
+            assert!(
+                ImageFormat::parse(Some(bad)).is_err(),
+                "{bad:?} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn jpeg_encodes_smaller_than_png_and_carries_format() {
+        // A 64x64 photographic-ish gradient: PNG keeps it lossless+large, JPEG compresses it.
+        let (w, h) = (64u16, 64u16);
+        let rgb: Vec<u8> = (0..(w as usize * h as usize))
+            .flat_map(|i| {
+                let x = (i % w as usize) as u8;
+                let y = (i / w as usize) as u8;
+                [x.wrapping_mul(3), y.wrapping_mul(5), x ^ y]
+            })
+            .collect();
+        let png = encode_frame(
+            &rgb,
+            w,
+            h,
+            EncodeOpts {
+                max_long_edge: None,
+                format: ImageFormat::Png,
+                quality: 80,
+            },
+        )
+        .unwrap();
+        let jpeg = encode_frame(
+            &rgb,
+            w,
+            h,
+            EncodeOpts {
+                max_long_edge: None,
+                format: ImageFormat::Jpeg,
+                quality: 80,
+            },
+        )
+        .unwrap();
+        assert_eq!(png.format, ImageFormat::Png);
+        assert_eq!(jpeg.format, ImageFormat::Jpeg);
+        assert_eq!((jpeg.w, jpeg.h), (w, h));
+        // base64 inflates both equally; comparing encoded lengths is a fair size proxy.
+        assert!(
+            jpeg.data_base64.len() < png.data_base64.len(),
+            "jpeg ({}) should be smaller than png ({})",
+            jpeg.data_base64.len(),
+            png.data_base64.len()
+        );
+        // JPEG bytes start with the SOI marker 0xFFD8.
+        let bytes = B64.decode(&jpeg.data_base64).unwrap();
+        assert_eq!(&bytes[..2], &[0xFF, 0xD8]);
+    }
+
+    #[test]
+    fn encode_frame_downscales_before_encoding() {
+        let (w, h) = (100u16, 50u16);
+        let rgb = vec![128u8; w as usize * h as usize * 3];
+        let img = encode_frame(
+            &rgb,
+            w,
+            h,
+            EncodeOpts {
+                max_long_edge: Some(20),
+                format: ImageFormat::Jpeg,
+                quality: 80,
+            },
+        )
+        .unwrap();
+        assert_eq!(img.w, 20); // longer edge capped
+        assert_eq!(img.h, 10); // aspect preserved
     }
 
     #[test]

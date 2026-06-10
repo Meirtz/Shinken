@@ -46,3 +46,9 @@ sdk/python/.coverage
 
 # Claude Code harness state (worktrees, local agent scratch)
 .claude/
+
+# local operator map (key files / secrets / branch state) — never upload
+map.md
+
+# local run receipts (minimal; raw ones never uploaded)
+runs/

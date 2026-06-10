@@ -138,17 +138,25 @@ Eval scores are only defensible if they are comparable to the official OSWorld h
 
 ## Implementation Work Items
 
-### 1. Guest Injection
+### 1. Guest Injection — IMPLEMENTED
 
-Add an OSWorld bootstrap helper that can install/start Shinken inside the official VM:
+`shinken.inject` injects `shinkend` over a user-chosen transport (`docker`/`ssh`/`osworld-exec`),
+readiness-polls the bound port, and fails loudly with no silent fallback. Build the target-arch
+binary with `scripts/build_shinkend_linux.sh` (reuses the image's `build` stage, `--platform
+linux/amd64`, copies the binary out) so it is a one-liner, not tribal knowledge:
 
 ```text
-build shinkend -> upload binary -> set SHINKEND_ADDR/SHINKEND_TOKEN ->
-start process -> probe / ACI handshake
+scripts/build_shinkend_linux.sh -> dist/shinkend-linux-x86_64
+osworld_single.py --inject-method osworld-exec --shinkend-binary dist/shinkend-linux-x86_64
+  -> upload + set SHINKEND_ADDR/TOKEN + DISPLAY + SHINKEND_EXECUTOR=x11_xtest
+  -> start process -> readiness poll -> ACI handshake
 ```
 
-The helper may initially use OSWorld's existing setup/execute channel to copy and launch the daemon.
-That is acceptable for bring-up because it is benchmark bootstrap, not the model-facing action path.
+The injection **pins the X11 backend** (`pin_x11_display` → `SHINKEND_EXECUTOR=x11_xtest`,
+`DISPLAY=:0`): a missing/unreachable guest display then fails the readiness poll loudly instead of
+silently binding the no-op virtual backend (which screenshots a dead display and scores every task
+0). This uses OSWorld's existing setup/execute channel for bootstrap, not the model-facing action
+path.
 
 ### 2. Address Discovery
 
@@ -242,15 +250,18 @@ The first implementation may be more specific, but it should keep this shape in 
 
 ## Acceptance Checklist
 
-Single task:
+Single task (in-repo readiness done; remaining items need an external OSWorld VM + model endpoint):
 
 - [ ] Official OSWorld task config selected.
 - [ ] Official image/snapshot started.
-- [ ] `shinkend` injected and reachable.
-- [ ] Shinken SDK observes the desktop.
-- [ ] Shinken SDK executes typed actions.
-- [ ] Official evaluator returns a score.
-- [ ] JSON result written with task id, steps, wall time, score, and error field.
+- [x] `shinkend` injection path implemented — `shinken.inject` (readiness-polled, X11-pinned, no
+  silent fallback) + `scripts/build_shinkend_linux.sh` for the target-arch binary.
+- [x] Shinken SDK observes the desktop (the OSWorld `DesktopEnv` shim → ACI screenshot).
+- [x] Shinken SDK executes typed actions (pixel-pyautogui → ACI, scroll units reconciled).
+- [ ] Official evaluator returns a score (needs a live VM run).
+- [x] JSON result record implemented — `osworld_single.py --out` writes task id, task_id, snapshot,
+  model, steps, wall_s, score, error, and parity warnings; written even when the run raises.
+- [ ] **Execute the gate for real** and commit the result receipt (the one remaining external step).
 
 Small set:
 

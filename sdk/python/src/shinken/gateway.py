@@ -29,6 +29,25 @@ VERB_CAPABILITY: dict[str, str | None] = {
 #: ``fs_scope`` values that mean "no filesystem access is granted".
 _NO_FS_SCOPE = {None, "", "none", "false", False}
 
+#: JSON Schema for one capability/permission decision event (#83/E4) — the contract surface
+#: a recorder/eval/trajectory layer consumes. ``decision`` is the gateway verdict;
+#: ``granted`` is whether the action was ultimately permitted (an ``ask`` may be granted or
+#: denied by the approval handler).
+CAPABILITY_EVENT_SCHEMA: dict = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["type", "capability", "subject", "decision", "granted", "ts"],
+    "properties": {
+        "type": {"const": "capability"},
+        "capability": {"type": ["string", "null"]},
+        "subject": {"type": "string", "description": "the verb / named capability / fs direction"},
+        "decision": {"enum": ["allow", "ask", "deny"]},
+        "granted": {"type": "boolean"},
+        "reason": {"type": ["string", "null"]},
+        "ts": {"type": "number"},
+    },
+}
+
 
 class CapabilityDenied(RuntimeError):
     """Raised when the gateway denies an action because its capability isn't granted."""

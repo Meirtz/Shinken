@@ -31,7 +31,7 @@ pub struct Capabilities {
     pub max_long_edge: u32,
 }
 
-/// An image carried in an `observation` (base64 PNG + dimensions).
+/// An image carried in an `observation` (base64 image bytes + codec + dimensions).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageRef {
     #[serde(rename = "ref")]
@@ -39,6 +39,14 @@ pub struct ImageRef {
     pub w: u16,
     pub h: u16,
     pub scope: String,
+    /// Codec of `data`: `png` (default/back-compatible) or `jpeg`. A client that ignores
+    /// this still gets a valid image (PNG remains the default when no `format` is sent).
+    #[serde(default = "default_image_format")]
+    pub format: String,
+}
+
+fn default_image_format() -> String {
+    "png".to_string()
 }
 
 /// One ACI message. `#[serde(tag = "type")]` gives the `{"type": "..."}` discriminator.

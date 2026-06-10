@@ -163,3 +163,25 @@ def test_ssh_host_with_leading_dash_is_rejected(fake_binary, captured_run):
             method="ssh",
             readiness_timeout=0,
         )
+
+
+def test_pin_x11_display_forces_x11_backend_and_display():
+    from shinken.inject import pin_x11_display
+
+    t = pin_x11_display(InjectionTarget(container="c"))
+    assert t.env["DISPLAY"] == ":0"
+    assert t.env["SHINKEND_EXECUTOR"] == "x11_xtest"
+    # does not clobber a caller-set display
+    t2 = pin_x11_display(InjectionTarget(container="c", env={"DISPLAY": ":99"}))
+    assert t2.env["DISPLAY"] == ":99" and t2.env["SHINKEND_EXECUTOR"] == "x11_xtest"
+
+
+def test_injected_start_command_exports_env(fake_binary, captured_run):
+    # target.env (DISPLAY, SHINKEND_EXECUTOR) must reach the started shinkend so a missing
+    # display fails loud (x11_xtest) instead of silently binding the virtual backend.
+    from shinken.inject import pin_x11_display
+
+    target = pin_x11_display(InjectionTarget(container="abc"))
+    inject_shinkend(target, fake_binary, method="docker", readiness_timeout=0)
+    start = next(" ".join(c) for c in captured_run if "SHINKEND_ADDR" in " ".join(c))
+    assert "SHINKEND_EXECUTOR=x11_xtest" in start and "DISPLAY=:0" in start

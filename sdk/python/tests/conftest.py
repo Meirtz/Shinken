@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import json
 import socket
 import threading
@@ -46,13 +47,23 @@ def _free_port() -> int:
 
 
 async def _push_frames(
-    ws, stream_id: str, fps: float, max_long_edge: int | None = None, scope: str = "screen"
+    ws,
+    stream_id: str,
+    fps: float,
+    max_long_edge: int | None = None,
+    scope: str = "screen",
+    start_seq: int = 0,
+    streams: dict[str, int] | None = None,
+    format: str = "png",
 ) -> None:
     """Push server-pushed screencast frames with advancing seq until cancelled. The
     frame's reported width echoes ``max_long_edge`` so a test can confirm the cap
     travelled over the wire from the SDK; ``scope`` echoes the requested capture
-    region, as the real runtime tags every frame with ``spec.scope`` (#143)."""
-    seq = 0
+    region, as the real runtime tags every frame with ``spec.scope`` (#143).
+    ``start_seq``/``streams`` mirror the runtime's resume registry (#56): seq starts
+    where the logical stream left off, and every sent frame records the next seq so a
+    later ``resume_stream`` can continue it."""
+    seq = start_seq
     period = max(1.0 / fps, 0.005)
     width = max_long_edge or 1
     with contextlib.suppress(asyncio.CancelledError, Exception):
@@ -64,11 +75,19 @@ async def _push_frames(
                         "obs_id": f"{stream_id}-{seq}",
                         "stream": stream_id,
                         "seq": seq,
-                        "image": {"ref": _PNG_1X1, "w": width, "h": 1, "scope": scope},
+                        "image": {
+                            "ref": _PNG_1X1,
+                            "w": width,
+                            "h": 1,
+                            "scope": scope,
+                            "format": format,
+                        },
                     }
                 )
             )
             seq += 1
+            if streams is not None:
+                streams[stream_id] = seq
             await asyncio.sleep(period)
 
 
@@ -87,11 +106,27 @@ def _record(state: dict, action: dict) -> None:
         state["keys"].append(action.get("keys", ""))
     elif verb == "scroll":
         state["scrolls"].append({"dx": action.get("dx"), "dy": action.get("dy")})
+    elif verb == "start_screencast":
+        # The capture params each start/resume actually carried over the wire, so a
+        # test can assert a resume re-sent the ORIGINAL fps/max_long_edge/scope (#56).
+        state["casts"].append(
+            {
+                "fps": action.get("fps"),
+                "max_long_edge": action.get("max_long_edge"),
+                "scope": action.get("scope"),
+                "resume_stream": action.get("resume_stream"),
+                "format": action.get("format"),
+                "quality": action.get("quality"),
+            }
+        )
 
 
-async def _handler(ws) -> None:
+async def _handler(ws, streams: dict[str, int] | None = None) -> None:
     cast: asyncio.Task | None = None
-    state = {"typed": "", "keys": [], "clicks": [], "moves": [], "scrolls": []}
+    state = {"typed": "", "keys": [], "clicks": [], "moves": [], "scrolls": [], "casts": []}
+    # Resume registry (#56): logical stream id -> next seq. Server-instance scoped
+    # (shared across this mock's connections, so a reconnecting client can resume).
+    streams = {} if streams is None else streams
     async for raw in ws:
         msg = json.loads(raw)
         # Validate every inbound frame against the ACI schema, so SDK-emitted wire drift
@@ -165,13 +200,22 @@ async def _handler(ws) -> None:
             cid = msg.get("call_id")
             _record(state, action)
             if verb == "screenshot":
+                # Echo the requested codec so a test can assert `format` travelled the
+                # wire (the real runtime reports the codec it actually encoded in).
+                fmt = action.get("format") or "png"
                 await ws.send(
                     json.dumps(
                         {
                             "type": "observation",
                             "obs_id": "o1",
                             "cause": cid,
-                            "image": {"ref": _PNG_1X1, "w": 1, "h": 1, "scope": "screen"},
+                            "image": {
+                                "ref": _PNG_1X1,
+                                "w": 1,
+                                "h": 1,
+                                "scope": "screen",
+                                "format": fmt,
+                            },
                         }
                     )
                 )
@@ -181,12 +225,25 @@ async def _handler(ws) -> None:
                     with contextlib.suppress(Exception):
                         await cast
                     cast = None
+                # Honor resume_stream with the runtime's semantics (#56): a known
+                # logical stream keeps its id and seq carries on; an unknown or
+                # expired one starts fresh (id = call_id, seq 0).
+                resume = action.get("resume_stream")
+                stream_id, start_seq = cid, 0
+                if resume is not None and resume in streams:
+                    stream_id, start_seq = resume, streams[resume]
                 await ws.send(json.dumps({"type": "ack", "call_id": cid, "ok": True}))
-                action = msg.get("action") or {}
                 fps = action.get("fps") or 50
                 cast = asyncio.create_task(
                     _push_frames(
-                        ws, cid, fps, action.get("max_long_edge"), action.get("scope") or "screen"
+                        ws,
+                        stream_id,
+                        fps,
+                        action.get("max_long_edge"),
+                        action.get("scope") or "screen",
+                        start_seq,
+                        streams,
+                        action.get("format") or "png",
                     )
                 )
             elif verb == "stop_screencast":
@@ -202,14 +259,15 @@ async def _handler(ws) -> None:
         cast.cancel()
 
 
-@pytest.fixture
-def mock_shinkend():
+def _start_mock_server() -> tuple[str, object, object]:
+    """Start one mock shinkend on its own loop/thread; return (addr, loop, thread)."""
     port = _free_port()
     loop = asyncio.new_event_loop()
     ready = threading.Event()
+    streams: dict[str, int] = {}
 
     async def _boot():
-        return await serve(_handler, "127.0.0.1", port)
+        return await serve(functools.partial(_handler, streams=streams), "127.0.0.1", port)
 
     def run() -> None:
         asyncio.set_event_loop(loop)
@@ -220,8 +278,37 @@ def mock_shinkend():
     thread = threading.Thread(target=run, name="mock-shinkend", daemon=True)
     thread.start()
     assert ready.wait(5), "mock shinkend failed to start"
+    return f"127.0.0.1:{port}", loop, thread
+
+
+@pytest.fixture
+def mock_shinkend():
+    # Resume registry shared across this server's connections (#56) — but NOT across
+    # tests (fresh per fixture). SDK call_ids are salted per AsyncSandbox instance
+    # (c<salt>-<n>), so concurrent clients can't collide as stream ids either.
+    addr, loop, thread = _start_mock_server()
     try:
-        yield f"127.0.0.1:{port}"
+        yield addr
     finally:
         loop.call_soon_threadsafe(loop.stop)
         thread.join(timeout=2)
+
+
+@pytest.fixture
+def mock_shinkend_many():
+    """A factory yielding ``n`` independent mock shinkend addrs — for tests that hold
+    several distinct sandboxes at once (e.g. SharedLoop). Each call returns ONLY the
+    servers it started; all are torn down at fixture exit."""
+    servers: list[tuple[str, object, object]] = []
+
+    def make(n: int) -> list[str]:
+        new = [_start_mock_server() for _ in range(n)]
+        servers.extend(new)
+        return [s[0] for s in new]
+
+    try:
+        yield make
+    finally:
+        for _addr, loop, thread in servers:
+            loop.call_soon_threadsafe(loop.stop)
+            thread.join(timeout=2)

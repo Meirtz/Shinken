@@ -100,7 +100,7 @@ see the per-file diffs for specifics.
 | C‑1 | Schema `Hello` gained an optional `token` field. | The schema forbade the `token` the Rust runtime requires and the client sends — the authenticated handshake failed validation. Both schema copies stay byte-identical (parity test). A `hello`-with-token case was added to the contract test. | `schema/aci.schema.json` (+ packaged copy), `sdk/python/tests/test_contract.py` | ✅ P0 |
 | C‑2 | `ActionBatch` `$def` relabeled as an **SDK-side batching convention** (not a wire message — it is deliberately absent from the top-level `oneOf`). | It looked like a normative wire shape nothing implements; a test validates the SDK batch shape against it, so it is kept but clarified rather than deleted. | `schema/aci.schema.json` | ✅ P2 |
 | C‑3 | `aci-spec.md` canonical v0 verb list gained `start_screencast`/`stop_screencast` (was 9, schema has 11); the broken `schema/skn.schema.json` link replaced with prose. | The canonical enumeration drifted from the schema + advertised capabilities; the `.skn` schema does not exist (removed with #216). | [`../design/aci-spec.md`](../design/aci-spec.md) | ✅ P1 |
-| C‑4 | **#56 contract reconciliation + hardening** — the screencast wire vocabulary is schema-validated and contract-tested, and the **error taxonomy is now implemented**: `SandboxDied` (exit/signal detail), typed per-action `act_batch` status (`ok\|error\|timeout\|skipped\|sandbox_died`) + `failure_kind`, eval `RunResult.kind` + `infra_failure`, and `provider.check_alive()` upgrading a drop to confirmed sandbox death. The remaining #56 work is **screencast reconnect semantics** (`stream`/`seq` resume/replay-unacked/ack) and a trajectory-level exit-reason field (with #223). | RL/eval consumers must branch infra-death vs task-failure and need a specified reconnect contract for the stream fields the runtime already ships. | `shinken/errors.py`, `eval.py`, `client.py`, `providers/*`; [`v0.0.1-plan.md`](v0.0.1-plan.md) §6 | ✅ (taxonomy) / 🟡 (reconnect) P1 |
+| C‑4 | **#56 contract reconciliation + hardening** — the screencast wire vocabulary is schema-validated and contract-tested, and the **error taxonomy is now implemented**: `SandboxDied` (exit/signal detail), typed per-action `act_batch` status (`ok\|error\|timeout\|skipped\|sandbox_died`) + `failure_kind`, eval `RunResult.kind` + `infra_failure`, and `provider.check_alive()` upgrading a drop to confirmed sandbox death. **Screencast reconnect is now implemented too**: `start_screencast` + `resume_stream` continues a live logical stream (same `stream` id, `seq` carrying on — the frame gap readable off the first frame; a runtime-side bounded/TTL'd resume registry) or restarts fresh at seq 0 when the state is gone, with `resume_screencast` in the SDK. The remaining #56 work is a trajectory-level exit-reason field (with #223). | RL/eval consumers must branch infra-death vs task-failure and need a specified reconnect contract for the stream fields the runtime already ships. | `shinken/errors.py`, `eval.py`, `client.py`, `providers/*`, `shinkend/src/main.rs`; [`v0.0.1-plan.md`](v0.0.1-plan.md) §6 | ✅ (taxonomy + reconnect) / 🟡 (exit reason) P1 |
 | C‑5 | Scroll contract settled: `dx`/`dy` are **pixels**; `dx` (horizontal) is honored by the executor; all producers emit a `target`. | Three producers disagreed on units and one emitted targetless scrolls the executor rejects; the field now means one thing everywhere. | schema + executor + adapters + dialect | ✅ P0 |
 
 ---
@@ -142,12 +142,14 @@ The 🔵/🟡 items above, plus the implementation follow-ups of ✅-recorded de
 doc edits are done, the code is not) and two standing items with no inventory row of their own
 (spike #2; the D8 MCP facade) — collected so none is lost:
 
-1. **#56 — error taxonomy DONE; screencast reconnect remaining** (C‑4) — the `SandboxDied` class,
-   per-action `act_batch` status, and eval `kind`/`infra_failure` shipped; what's left is the
-   `stream`/`seq` resume/replay-unacked/ack stream contract and a trajectory-level exit-reason field
-   (with #223). *P1.*
-2. **D2 exec/file wire shape** (A‑7) — decide typed verbs vs sidecar in the #56 reconciliation; record
-   the decision rather than letting every Workload tunnel untyped. *P1.*
+1. **#56 — error taxonomy + screencast reconnect DONE; trajectory exit reason remaining** (C‑4) —
+   the `SandboxDied` class, per-action `act_batch` status, eval `kind`/`infra_failure`, and the
+   `resume_stream` reconnect contract (stream identity + seq continuity, gap detectability) all
+   shipped; what's left is a trajectory-level exit-reason field (with #223). *P1.*
+2. **D2 exec/file wire shape — SETTLED** (A‑7) — recorded in [tech-decisions](../design/tech-decisions.md)
+   D2: `exec`/file-transfer are NOT ACI wire verbs in v0.0.1 (they flow over the substrate's own
+   channel; SDK `put_file`/`get_file` stay substrate-side); typed wire verbs deferred post-v0.0.1.
+   *Done.*
 3. **Three-tier dependency split** (A‑4) — implement the host/base/runtime buckets in the Workload/Provider
    packaging before a heavy-evaluator Workload lands. *P1.*
 4. **Registry → entry points** (A‑3) — graduate out-of-tree discovery post-v0.0.1. *P1.*
@@ -159,7 +161,8 @@ doc edits are done, the code is not) and two standing items with no inventory ro
 7. **Main-branch protection** (#52, T‑8) — enable required status checks the moment the repo goes public. *P1.*
 8. **a11y coverage spike #2** — still the single load-bearing ungated assumption; run the multi-app sweep
    with the sharpened hypothesis (hybrid-per-window for acting + guest-state probe for verifying) and
-   record `pct_addressable`. *P0 to unblock D3/D4.*
+   record `pct_addressable`. *P0 to unblock D3/D4.* (Separately **settled 2026-06**: `element_ref`
+   resolution is SDK-side for v0.0.1; guest-side resolution is post-v0.0.1/#96 — see D3.)
 9. **#213 / #96** — PyAutoGUI contract test + native-automation/a11y backend ladder. *P2.*
 10. **MCP facade (D8)** — a thin `shinken mcp` wrapper is a re-sequencing candidate to pull to the
     Phase-1 boundary (never the hot loop); not a commitment. *P2.*

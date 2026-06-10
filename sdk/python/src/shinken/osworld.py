@@ -32,20 +32,24 @@ from .client import connect
 
 def _first_str_arg(line: str, fn_pattern: str) -> str | None:
     """Extract the first quoted string argument of a ``fn(...)`` call, quote-aware and
-    escape-aware (so ``write("don't")`` yields ``don't``, not ``don``). Returns None if no
-    such call/string is present."""
-    m = re.search(
-        rf"(?:pyautogui\.)?{fn_pattern}\(\s*(['\"])((?:\\.|(?!\1).)*)\1",
-        line,
-        re.DOTALL,
-    )
-    if not m:
-        return None
-    quote, body = m.group(1), m.group(2)
-    try:
-        return ast.literal_eval(f"{quote}{body}{quote}")
-    except (ValueError, SyntaxError):
-        return body
+    escape-aware (so ``write("don't")`` yields ``don't``, not ``don``). Handles triple-quoted
+    strings (``write(\"\"\"cmd\"\"\")`` — real K2.6 output) BEFORE single/double, since a
+    triple quote starts with a single/double quote and a naive matcher would read it as an
+    empty string. Returns None if no such call/string is present."""
+    call = rf"(?:pyautogui\.)?{fn_pattern}\(\s*"
+    # Try triple-quoted first (''' or """), then single/double; both escape-aware.
+    for pat in (
+        rf"{call}(\"\"\"|''')((?:\\.|(?!\1).)*)\1",
+        rf"{call}(['\"])((?:\\.|(?!\1).)*)\1",
+    ):
+        m = re.search(pat, line, re.DOTALL)
+        if m:
+            quote, body = m.group(1), m.group(2)
+            try:
+                return ast.literal_eval(f"{quote}{body}{quote}")
+            except (ValueError, SyntaxError):
+                return body
+    return None
 
 
 def _split_top_level_semicolons(text: str) -> list[str]:

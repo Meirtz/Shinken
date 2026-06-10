@@ -301,5 +301,11 @@ jobs:
                           pass
               prov.cleanup_snapshots()
           PY
+      - if: steps.present.outputs.go == 'true'
+        name: E1 — scripted >=5-step real-app GUI task verified via guest state
+        run: PYTHONPATH=sdk/python/src python scripts/scripted_task_smoke.py
+      - if: steps.present.outputs.go == 'true'
+        name: E9 — run_eval_forked over the Docker tier with a real-state verifier
+        run: PYTHONPATH=sdk/python/src python scripts/forked_eval_smoke.py 3
       - if: steps.present.outputs.go == 'false'
         run: echo "::error::Docker image or a smoke script is missing — this gate must not be skipped"; exit 1

@@ -87,12 +87,12 @@ class AnthropicComputerUseAdapter:
 
         Preserves coordinate space + image size as ``metadata`` so model pixels map back
         to the display."""
-        png = observation.get("png")
-        if not png:
-            raise AdapterError("screenshot", "observation has no PNG bytes")
+        data = observation.get("bytes") or observation.get("png")
+        if not data:
+            raise AdapterError("screenshot", "observation has no image bytes")
         size = image_size(observation)
         return {
-            "content": [screenshot_image_block(png)],
+            "content": [screenshot_image_block(data, observation.get("format"))],
             "metadata": {
                 "coordinate_space": "point_px",
                 "image_size": {"w": size["w"], "h": size["h"]},

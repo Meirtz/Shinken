@@ -131,6 +131,14 @@ This gives Shinken four distinct action classes:
   resource attachment. These use the artifact/file-transfer channel, not the low-latency GUI action
   path.
 
+**v0.0.1 scope (settled 2026-06, D2):** CLI/code actions and file transfer are **not** ACI wire verbs
+in v0.0.1 — they ride the substrate's own channel (the OSWorld controller's `/execute`, `docker
+cp`/`exec`, the inject transport; the SDK's `put_file`/`get_file` are substrate-side, not wire
+messages). Typed `exec`/`put_file`/`get_file`/`launch` wire verbs are deferred post-v0.0.1, added
+behind the code-as-action capability class when a Workload must do setup/scoring purely through the
+ACI. Likewise `element_ref` resolution is **SDK-side** in v0.0.1 (resolved from the last structured
+observation to a `point_px`); guest-side over-the-wire resolution is the #96 backend ladder (D3).
+
 The Action Gateway (or the Phase-0 gateway shim) owns capability decisions before an action reaches
 `shinkend`. `shinkend` executes only validated actions inside the Sandbox and reports typed
 acknowledgements/observations back into the event stream. This preserves a simple invariant:
@@ -165,9 +173,15 @@ differentiator), not a prerequisite for the first GUI agent.
 
 ```
 screenshot(scope=screen|active_window|window:<id>, max_long_edge?) -> image
-start_screencast(scope=screen|active_window|window:<id>, fps=0.1..30, max_long_edge?) -> stream
+start_screencast(scope=screen|active_window|window:<id>, fps=0.1..30, max_long_edge?, resume_stream?) -> stream
 stop_screencast(stream)
 ```
+
+`resume_stream` is the reconnect contract (#56): if the runtime still holds that logical stream's
+state, pushed frames keep the SAME `stream` id and `seq` continues where it left off — the seq gap
+counts frames the runtime emitted but the client never received; capture pauses while no connection
+holds the stream, so use the `ConnectionError` window for temporal accounting. Otherwise a fresh
+stream starts (new id, seq 0), so a consumer always learns whether continuity was lost.
 
 - **macOS:** ScreenCaptureKit (`SCScreenshotManager` for stills incl. occluded per-window; `SCStream` for video).
 - **Windows:** Windows.Graphics.Capture (WGC) — the only API doing per-window **and** occluded/background, for both stills and video.

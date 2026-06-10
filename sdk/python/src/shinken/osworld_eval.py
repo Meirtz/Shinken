@@ -44,12 +44,20 @@ class ChatModelAgent:
     """OpenAI-compatible *vision* chat client → raw text. K2.6 is OpenAI-compatible. Key/URL/
     model come from the environment; nothing is hardcoded or logged."""
 
+    #: Default output budget. Reasoning models (K2.6) spend a large share of tokens on
+    #: hidden `reasoning_content` BEFORE emitting the action block, so 1024 truncates the
+    #: action away — 4096 leaves room. Override with SHK_SMOKE_MODEL_MAX_TOKENS.
+    _DEFAULT_MAX_TOKENS = 4096
+
     def __init__(self, base_url: str, api_key: str, model: str, timeout: float = 120.0):
         self._base_url, self._api_key, self._model, self._timeout = (
             base_url,
             api_key,
             model,
             timeout,
+        )
+        self._max_tokens = int(
+            os.environ.get("SHK_SMOKE_MODEL_MAX_TOKENS", self._DEFAULT_MAX_TOKENS)
         )
 
     @classmethod
@@ -82,7 +90,7 @@ class ChatModelAgent:
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": content},
                 ],
-                "max_tokens": 1024,
+                "max_tokens": self._max_tokens,
                 "temperature": 0.0,
             }
         ).encode()

@@ -57,6 +57,12 @@ class InjectionTarget:
     ssh_key: str | None = None
     # osworld controller
     controller_url: str | None = None
+    # extra environment exported to the started shinkend (besides SHINKEND_ADDR/TOKEN).
+    # Use this to pin the guest display and FORCE a real GUI backend: setting
+    # ``SHINKEND_EXECUTOR=x11_xtest`` makes shinkend refuse to start without a reachable X
+    # display, so a misconfigured guest fails the readiness poll loudly instead of silently
+    # binding the no-op virtual backend and scoring every task 0 (see make_x11_target).
+    env: dict[str, str] = field(default_factory=dict)
     extra: dict = field(default_factory=dict)
 
 
@@ -124,11 +130,14 @@ def _gen_token() -> str:
 
 
 def _start_command(target: InjectionTarget, args: list[str] | None) -> str:
-    """Shell snippet that starts shinkend bound for reachability (0.0.0.0 + token when set)."""
+    """Shell snippet that starts shinkend bound for reachability (0.0.0.0 + token when set),
+    exporting any ``target.env`` (e.g. DISPLAY, SHINKEND_EXECUTOR) ahead of the binary."""
     host = "0.0.0.0" if target.token else "127.0.0.1"
     env = f"SHINKEND_ADDR={shlex.quote(f'{host}:{target.port}')}"
     if target.token:
         env += f" SHINKEND_TOKEN={shlex.quote(target.token)}"
+    for k, v in (target.env or {}).items():
+        env += f" {k}={shlex.quote(str(v))}"
     # Quote each arg: these are argv entries, not a shell fragment — an unquoted value with
     # a space/quote/`;`/`$()` would otherwise be re-interpreted by the bash/sh that runs it.
     quoted_args = " ".join(shlex.quote(a) for a in (args or []))
@@ -143,6 +152,17 @@ def _nohup_bg(start_cmd: str) -> str:
 
 def _addr(target: InjectionTarget) -> str:
     return target.reachable_addr or f"{target.host}:{target.port}"
+
+
+def pin_x11_display(target: InjectionTarget, display: str = ":0") -> InjectionTarget:
+    """Force the injected shinkend onto the X11 backend at ``display``: sets
+    ``SHINKEND_EXECUTOR=x11_xtest`` (so a missing/unreachable display makes shinkend exit at
+    startup → the readiness poll raises, instead of silently binding the no-op virtual
+    backend) and ``DISPLAY`` if the caller has not already set them. Returns ``target`` for
+    chaining. Use for any GUI-actuation injection (e.g. an OSWorld VM)."""
+    target.env.setdefault("DISPLAY", display)
+    target.env.setdefault("SHINKEND_EXECUTOR", "x11_xtest")
+    return target
 
 
 class DockerExecInjector:

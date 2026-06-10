@@ -27,6 +27,20 @@ def test_screenshot_returns_png(mock_shinkend):
         shot = env.screenshot()
         assert shot["png"][:8] == b"\x89PNG\r\n\x1a\n"
         assert shot["w"] == 1 and shot["h"] == 1
+        # Default codec is the lossless PNG; `bytes` aliases `png`.
+        assert shot["format"] == "png"
+        assert shot["bytes"] == shot["png"]
+
+
+def test_screenshot_format_and_quality_travel_the_wire(mock_shinkend):
+    with shinken.connect(mock_shinkend) as env:
+        shot = env.screenshot(format="jpeg", quality=70)
+        # The mock echoes the requested codec, proving `format`/`quality` reached shinkend.
+        assert shot["format"] == "jpeg"
+        assert "bytes" in shot
+        # The 'png' back-compat alias must be ABSENT for non-PNG codecs: legacy readers
+        # fail loudly instead of mislabeling JPEG bytes as PNG.
+        assert "png" not in shot
 
 
 def test_target_builder():

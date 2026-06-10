@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use crate::executor::{ActionSpec, Executor};
+use crate::executor::{ActionSpec, EncodeOpts, Executor, ImageFormat, DEFAULT_JPEG_QUALITY};
 use crate::protocol::{self, Message};
 
 /// Constant-time byte-string equality for bearer-token comparison (#135), so token auth
@@ -27,14 +27,25 @@ fn ct_eq(a: &[u8], b: &[u8]) -> bool {
 /// A screencast the runtime should start streaming (see [`StreamCtl`]).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScreencastSpec {
-    /// Stream id (the `start_screencast` call_id); tags every pushed frame.
+    /// Stream id (the `start_screencast` call_id, or the resumed logical stream id);
+    /// tags every pushed frame.
     pub stream_id: String,
     /// Target frame rate, clamped to a sane range at parse time.
     pub fps: f64,
     /// Cap each frame's longer edge (px) to save bandwidth; `None` = full resolution.
     pub max_long_edge: Option<u32>,
+    /// Wire codec for each frame (`png` lossless / `jpeg` bandwidth lever).
+    pub format: ImageFormat,
+    /// JPEG quality 1–100 (ignored for PNG).
+    pub quality: u8,
     /// Capture region: `screen`, `active_window`, or `window:<id>`.
     pub scope: String,
+    /// First frame index; nonzero only when the serve loop resumed a logical stream.
+    pub start_seq: u64,
+    /// Client-requested logical stream to continue (#56). Resolved against the
+    /// server-side stream registry by the serve loop (main.rs) — never here, so the
+    /// [`Session`] stays a pure state machine.
+    pub resume_stream: Option<String>,
 }
 
 /// A side effect on the connection's frame stream, returned alongside a reply.
@@ -263,19 +274,54 @@ fn dispatch_action(
             0,
         );
     }
+    // Resolve the wire codec + quality for the verbs that consume them (same verb gating
+    // as the scope check above — an invalid `format` on e.g. `stop_screencast` must not
+    // nack the stop). Quality is REJECTED outside the schema's 1–100, not silently
+    // clamped: the runtime must not accept what the published contract rejects.
+    let is_capture = matches!(spec.verb.as_str(), "screenshot" | "start_screencast");
+    let (format, quality) = if is_capture {
+        let format = match ImageFormat::parse(spec.format.as_deref()) {
+            Ok(f) => f,
+            Err(e) => return (ack(call_id, false, Some(e.to_string())), StreamCtl::None, 0),
+        };
+        let quality = match spec.quality {
+            None => DEFAULT_JPEG_QUALITY,
+            Some(q) if (1..=100).contains(&q) => q,
+            Some(q) => {
+                return (
+                    ack(
+                        call_id,
+                        false,
+                        Some(format!("quality out of range 1-100: {q}")),
+                    ),
+                    StreamCtl::None,
+                    0,
+                )
+            }
+        };
+        (format, quality)
+    } else {
+        (ImageFormat::Png, DEFAULT_JPEG_QUALITY) // unused by non-capture verbs
+    };
     match spec.verb.as_str() {
         "screenshot" => {
-            let msg = match exec.capture(&scope, clamp_long_edge(spec.max_long_edge)) {
+            let opts = EncodeOpts {
+                max_long_edge: clamp_long_edge(spec.max_long_edge),
+                format,
+                quality,
+            };
+            let msg = match exec.capture(&scope, opts) {
                 Ok(img) => Message::Observation {
                     obs_id: format!("obs-{call_id}"),
                     cause: Some(call_id.to_string()),
                     stream: None,
                     seq: None,
                     image: Some(protocol::ImageRef {
-                        data: img.png_base64,
+                        data: img.data_base64,
                         w: img.w,
                         h: img.h,
                         scope,
+                        format: img.format.as_str().to_string(),
                     }),
                 },
                 Err(e) => ack(call_id, false, Some(e.to_string())),
@@ -291,7 +337,11 @@ fn dispatch_action(
                 // desktop can't pin OUTBOUND_CAP × multi-MB frames in the writer queue.
                 max_long_edge: clamp_long_edge(spec.max_long_edge)
                     .or(Some(protocol::MAX_LONG_EDGE)),
+                format,
+                quality,
                 scope,
+                start_seq: 0,
+                resume_stream: spec.resume_stream,
             };
             (ack(call_id, true, None), StreamCtl::Start(cast), 0)
         }
@@ -443,6 +493,29 @@ mod tests {
     }
 
     #[test]
+    fn format_and_quality_are_gated_to_capture_verbs() {
+        let mut s = session(None);
+        s.on_text(HELLO);
+        // Invalid codec on a capture verb → nack before any capture.
+        let step = s.on_text(
+            r#"{"type":"action","call_id":"c1","action":{"verb":"screenshot","format":"webp"}}"#,
+        );
+        assert!(step.reply.unwrap().contains("unsupported image format"));
+        // Out-of-range quality is REJECTED (schema: 1–100), not clamped.
+        let step = s.on_text(
+            r#"{"type":"action","call_id":"c2","action":{"verb":"screenshot","format":"jpeg","quality":0}}"#,
+        );
+        assert!(step.reply.unwrap().contains("quality out of range"));
+        // An invalid format on a NON-capture verb must not nack it: the stop (and its
+        // StreamCtl) still happens — same gating as the scope check.
+        let step = s.on_text(
+            r#"{"type":"action","call_id":"c3","action":{"verb":"stop_screencast","format":"webp"}}"#,
+        );
+        assert!(step.reply.unwrap().contains("\"ok\":true"));
+        assert!(matches!(step.stream, StreamCtl::Stop));
+    }
+
+    #[test]
     fn wait_action_acks_with_a_bounded_delay() {
         let mut s = session(None);
         s.on_text(HELLO);
@@ -508,6 +581,27 @@ mod tests {
                 assert_eq!(spec.fps, 12.0);
                 assert_eq!(spec.max_long_edge, Some(640));
                 assert_eq!(spec.scope, "active_window");
+                assert_eq!(spec.start_seq, 0); // fresh stream until main.rs resumes one
+                assert_eq!(spec.resume_stream, None);
+            }
+            other => panic!("expected Start, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn start_screencast_passes_resume_stream_through() {
+        let mut s = session(None);
+        s.on_text(HELLO);
+        // The Session must NOT resolve the resume itself (it has no registry) — it
+        // forwards the requested id on the spec for the serve loop to resolve.
+        let step = s.on_text(
+            r#"{"type":"action","call_id":"sc9","action":{"verb":"start_screencast","resume_stream":"sc1"}}"#,
+        );
+        match step.stream {
+            StreamCtl::Start(spec) => {
+                assert_eq!(spec.stream_id, "sc9");
+                assert_eq!(spec.start_seq, 0);
+                assert_eq!(spec.resume_stream.as_deref(), Some("sc1"));
             }
             other => panic!("expected Start, got {other:?}"),
         }

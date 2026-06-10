@@ -84,7 +84,7 @@
         "tree": { "enum": ["full", "diff"] },
         "elements": { "type": "array", "items": { "$ref": "#/$defs/Element" } },
         "delta": { "type": "object", "properties": { "added": { "type": "array", "items": { "$ref": "#/$defs/Element" } }, "removed": { "type": "array", "items": { "type": "string" } }, "changed": { "type": "array", "items": { "$ref": "#/$defs/Element" } } } },
-        "image": { "type": "object", "required": ["ref", "w", "h"], "properties": { "ref": { "type": "string" }, "w": { "type": "integer" }, "h": { "type": "integer" }, "scope": { "$ref": "#/$defs/Scope" } } }
+        "image": { "type": "object", "required": ["ref", "w", "h"], "properties": { "ref": { "type": "string" }, "w": { "type": "integer" }, "h": { "type": "integer" }, "scope": { "$ref": "#/$defs/Scope" }, "format": { "enum": ["png", "jpeg"], "description": "codec of `ref` bytes; defaults to png when absent" } } }
       },
       "allOf": [
         { "if": { "required": ["stream"] }, "then": { "required": ["stream", "seq", "image"] } },
@@ -104,7 +104,10 @@
         "ms": { "type": "integer", "minimum": 0 },
         "scope": { "$ref": "#/$defs/Scope" },
         "fps": { "type": "number", "minimum": 0.1, "maximum": 30, "description": "start_screencast target frame rate (frames/sec), matching runtime clamp bounds" },
-        "max_long_edge": { "type": "integer", "minimum": 1, "description": "downscale cap (px) for screencast/screenshot frames" }
+        "max_long_edge": { "type": "integer", "minimum": 1, "description": "downscale cap (px) for screencast/screenshot frames" },
+        "format": { "enum": ["png", "jpeg"], "description": "wire codec for screenshot/start_screencast frames: png (default, lossless) or jpeg (bandwidth lever); omitted = png" },
+        "quality": { "type": "integer", "minimum": 1, "maximum": 100, "description": "jpeg quality 1-100 (ignored for png); omitted = runtime default" },
+        "resume_stream": { "type": "string", "description": "on start_screencast, asks the runtime to continue the named logical stream: if the runtime still holds that stream's state, pushed frames carry the SAME `stream` id and `seq` continues from where it left off (the frame gap is detectable from the first frame); otherwise a fresh stream starts (new id, seq 0) and the client learns continuity was lost" }
       },
       "allOf": [
         { "if": { "required": ["verb"], "properties": { "verb": { "enum": ["click", "double_click", "right_click", "move", "scroll"] } } }, "then": { "required": ["target"] } },

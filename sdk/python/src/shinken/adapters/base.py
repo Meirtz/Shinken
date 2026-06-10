@@ -56,23 +56,36 @@ def point_norm(x: object, y: object) -> dict:
     return {"kind": "point_norm", "x": float(x), "y": float(y)}
 
 
-def screenshot_image_block(png: bytes) -> dict:
-    """PNG bytes → a base64 image content block — the shape both Anthropic and OpenAI
-    use to carry a screenshot back to the model."""
+def _media_type(format: str | None) -> str:
+    """Observation ``format`` → MIME type. Defaults to PNG (the wire default); JPEG is
+    the bandwidth lever. The label must track the actual codec — sending JPEG bytes
+    labeled image/png corrupts the model's decode."""
+    return "image/jpeg" if format in ("jpeg", "jpg") else "image/png"
+
+
+def screenshot_image_block(data: bytes, format: str | None = None) -> dict:
+    """Encoded image bytes → a base64 image content block — the shape both Anthropic and
+    OpenAI use to carry a screenshot back to the model. ``format`` is the observation's
+    codec (``png`` default / ``jpeg``)."""
     return {
         "type": "image",
         "source": {
             "type": "base64",
-            "media_type": "image/png",
-            "data": base64.b64encode(png).decode("ascii"),
+            "media_type": _media_type(format),
+            "data": base64.b64encode(data).decode("ascii"),
         },
     }
 
 
-def data_uri_png(png: bytes) -> str:
-    """PNG bytes → a ``data:image/png;base64,…`` URI — the shape OpenAI's
+def data_uri(data: bytes, format: str | None = None) -> str:
+    """Encoded image bytes → a ``data:image/…;base64,…`` URI — the shape OpenAI's
     ``computer_call_output`` uses to carry a screenshot back to the model."""
-    return "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+    return f"data:{_media_type(format)};base64," + base64.b64encode(data).decode("ascii")
+
+
+def data_uri_png(png: bytes) -> str:
+    """Back-compat alias of :func:`data_uri` for PNG bytes."""
+    return data_uri(png, "png")
 
 
 def image_size(observation: dict) -> dict:

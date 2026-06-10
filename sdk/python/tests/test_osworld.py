@@ -186,3 +186,15 @@ def test_pyautogui_normalized_coords_scale_to_pixels(mock_shinkend):
         assert (clicks[-1]["x"], clicks[-1]["y"]) == (300, 400)
     finally:
         env.close()
+
+
+def test_first_str_arg_handles_triple_quoted_strings():
+    # K2.6 emits typewrite("""cmd""") — triple quotes must extract the body, not "".
+    from shinken.osworld import _first_str_arg
+
+    assert _first_str_arg('pyautogui.typewrite("""echo hi > /tmp/x""")', "(?:write|typewrite)") == (
+        "echo hi > /tmp/x"
+    )
+    assert _first_str_arg("pyautogui.write('''a;b''')", "(?:write|typewrite)") == "a;b"
+    # single/double still work, and apostrophes inside survive
+    assert _first_str_arg('pyautogui.write("don\'t")', "(?:write|typewrite)") == "don't"

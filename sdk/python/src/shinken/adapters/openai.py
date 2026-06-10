@@ -10,7 +10,7 @@ https://platform.openai.com/docs/guides/tools-computer-use
 
 from __future__ import annotations
 
-from .base import AdapterError, data_uri_png, point_px
+from .base import AdapterError, data_uri, point_px
 
 #: OpenAI button values that ACI v0 can model (others → structured AdapterError).
 _BUTTON_VERB = {"left": "click", "right": "right_click"}
@@ -111,12 +111,15 @@ class OpenAIComputerUseAdapter:
         acknowledged_safety_checks: list | None = None,
     ) -> dict:
         """A Shinken screenshot observation → an OpenAI ``computer_call_output``."""
-        png = observation.get("png")
-        if not png:
-            raise AdapterError("screenshot", "observation has no PNG bytes")
+        data = observation.get("bytes") or observation.get("png")
+        if not data:
+            raise AdapterError("screenshot", "observation has no image bytes")
         out: dict = {
             "type": "computer_call_output",
-            "output": {"type": "computer_screenshot", "image_url": data_uri_png(png)},
+            "output": {
+                "type": "computer_screenshot",
+                "image_url": data_uri(data, observation.get("format")),
+            },
         }
         if call_id is not None:
             out["call_id"] = call_id

@@ -108,6 +108,7 @@ def test_cli_injects_via_user_chosen_method(monkeypatch):
             binary=binary,
             method=method,
             remote_bin=target.remote_bin,
+            env=dict(target.env),
         )
         return "ACTUATOR"
 
@@ -124,6 +125,7 @@ def test_cli_injects_via_user_chosen_method(monkeypatch):
         inject_ssh_key=None,
         inject_controller_url=None,
         inject_remote_bin="/tmp/shinkend",
+        inject_display=":0",
         shk_addr="x",
     )
     assert osw._build_shinken_actuator(args) == "ACTUATOR"
@@ -133,6 +135,8 @@ def test_cli_injects_via_user_chosen_method(monkeypatch):
         "binary": "/b/shinkend",
         "method": "docker",
         "remote_bin": "/tmp/shinkend",
+        # the X11 pin reached the injection target (fail-loud on a missing display)
+        "env": {"DISPLAY": ":0", "SHINKEND_EXECUTOR": "x11_xtest"},
     }
 
 
@@ -192,3 +196,48 @@ def test_run_episode_tolerates_unactuatable_action_without_crashing():
     agent = oe.ScriptedAgent(["```python\npyautogui.click(1, 2)\n```", "```DONE```"])
     res = oe.run_episode(_Env(), agent, _Boom(), "t", max_steps=5)
     assert res["terminal"] == "DONE" and res["steps"] >= 1  # survived the bad action
+
+
+def test_parity_warnings_flag_deviations_from_upstream_defaults():
+    ns = argparse.Namespace(max_steps=15, pause=0.0, observation="a11y_tree")
+    assert osw._parity_warnings(ns) == []  # all at upstream defaults → no warnings
+    ns2 = argparse.Namespace(max_steps=30, pause=2.0, observation="screenshot")
+    warns = osw._parity_warnings(ns2)
+    assert any("max_steps=30" in w for w in warns)
+    assert any("sleep_after_execution=2.0" in w for w in warns)
+    assert any("observation='screenshot'" in w for w in warns)
+
+
+def test_emit_result_writes_out_file(tmp_path, capsys):
+    out = tmp_path / "result.json"
+    osw._emit_result({"task": "t", "passed": True, "score": 1.0}, str(out))
+    import json as _json
+
+    written = _json.loads(out.read_text())
+    assert written["task"] == "t" and written["passed"] is True
+    assert '"passed": true' in capsys.readouterr().out  # also printed to stdout
+
+
+def test_run_episode_propagates_sandbox_death_not_skip():
+    # Infrastructure death must NOT be recorded as a skipped action + scored 0 (#56).
+    from shinken.errors import SandboxDied
+
+    class _Dead:
+        def step(self, action, pause=0.0):
+            raise ConnectionError("websocket closed")
+
+        def close(self):
+            pass
+
+    class _Env:
+        def _get_obs(self):
+            return {"screenshot": None, "accessibility_tree": None}
+
+        def evaluate(self):
+            return 0.0
+
+    agent = oe.ScriptedAgent(["```python\npyautogui.click(1, 2)\n```", "```DONE```"])
+    import pytest as _pytest
+
+    with _pytest.raises(SandboxDied):
+        oe.run_episode(_Env(), agent, _Dead(), "t", max_steps=5)

@@ -67,6 +67,10 @@ export interface Action {
   scope?: "screen" | "window" | "region" | "active_window" | `window:${string}`;
   fps?: number;
   max_long_edge?: number;
+  /** Wire codec for screenshot/start_screencast frames; omitted = png (lossless). */
+  format?: "png" | "jpeg";
+  /** JPEG quality 1-100 (ignored for png). */
+  quality?: number;
 }
 
 export interface CoordinateSpace {
@@ -91,6 +95,8 @@ export interface ImageRef {
   w: number;
   h: number;
   scope?: "screen" | "window" | "region";
+  /** Codec of `ref` bytes; absent = png. */
+  format?: "png" | "jpeg";
 }
 
 export interface ObservationDelta {

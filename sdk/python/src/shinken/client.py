@@ -139,6 +139,10 @@ class AsyncSandbox:
         self.capabilities = capabilities
         self.platform_name = platform
         self._seq = 0
+        # Per-instance call-id salt (#56): start_screencast call_ids seed the runtime's
+        # SERVER-WIDE stream resume registry, so two SDK clients on one shinkend must
+        # not mint colliding ids — deterministic c1/c2/... would.
+        self._id_prefix = uuid.uuid4().hex[:6]
         # Count of successfully-acked ACI actions this session. Read as a delta around a
         # task's run() to give the eval harness a real step count (#86/#87) without
         # coupling to any backend — every dispatched action flows through act().
@@ -170,6 +174,11 @@ class AsyncSandbox:
         # Approval handler for risky ("ask") capabilities (#7): (verb, cap, reason) -> bool.
         # None means risky steps are denied by default.
         self._on_ask = on_ask
+        # First-class capability/permission decision log (#83/E4): every gateway grant,
+        # ask-resolution, and denial is appended here as a typed event, so a run can show
+        # which boundary powers it exercised and how each was resolved (the audit surface
+        # the eval/trajectory layers read).
+        self._capability_events: list[dict] = []
         # Demux state. A single background reader task consumes every inbound frame
         # and routes it: RPC replies to their pending future (by call_id, or `cause`
         # for a one-shot observation), `pong` to the next ping waiter, and unsolicited
@@ -180,10 +189,21 @@ class AsyncSandbox:
         self._reader: asyncio.Task | None = None
         self._rpc_timeout = 30.0  # per-RPC reply deadline (#142); async callers never hang
         self._stream_scope = "screen"  # capture region of the active screencast (#143)
+        # Logical stream id of the active screencast (#56): seeded with the resumed id
+        # or the start_screencast call_id, then updated from each frame's `stream`
+        # field, which is authoritative (a resume may have fallen back to a fresh id).
+        # What a caller passes to resume_screencast() on a NEW session after a
+        # mid-stream ConnectionError.
+        self._active_stream: str | None = None
+        # Capture params of the last started screencast (#56): a resume continues
+        # stream identity + seq only — the runtime does not remember fps/scope/
+        # max_long_edge — so a same-session resume reuses these instead of silently
+        # resetting to defaults.
+        self._last_screencast_params: dict | None = None
 
     def _next_id(self) -> str:
         self._seq += 1
-        return f"c{self._seq}"
+        return f"c{self._id_prefix}-{self._seq}"
 
     def _start_reader(self) -> None:
         self._reader = asyncio.ensure_future(self._read_loop())
@@ -324,28 +344,49 @@ class AsyncSandbox:
         """Number of ACI actions successfully dispatched (and acked) this session."""
         return self._action_count
 
+    def _record_decision(
+        self, capability: str, subject: str, decision: str, granted: bool, reason: str | None
+    ) -> None:
+        """Append one capability/permission decision event (#83/E4). ``decision`` is the
+        gateway verdict (``allow``/``ask``/``deny``); ``granted`` is whether the action was
+        ultimately permitted (an ``ask`` resolves to granted or not via ``on_ask``)."""
+        self._capability_events.append(
+            {
+                "type": "capability",
+                "capability": capability,
+                "subject": subject,
+                "decision": decision,
+                "granted": granted,
+                "reason": reason,
+                "ts": time.time(),
+            }
+        )
+
     def _gate(self, verb: str) -> None:
         """Action Gateway check (#84/#7): when enforcing, decide allow / deny / **ask**
-        before dispatch — so a denied or unapproved verb never reaches shinkend. A
-        capability valued ``"ask"`` is *risky*: it pauses for approval via the ``on_ask``
-        handler (default: deny). GUI input passes when input_automation is granted (the
-        default)."""
+        before dispatch — so a denied or unapproved verb never reaches shinkend, and record
+        the decision as a capability event (#83). A capability valued ``"ask"`` is *risky*:
+        it pauses for approval via the ``on_ask`` handler (default: deny). GUI input passes
+        when input_automation is granted (the default)."""
         if not self._enforce:
             return
         decision, cap, reason = decide_action(verb, self.sandbox_capabilities)
         if decision == "allow":
+            self._record_decision(cap, verb, "allow", True, None)
             return
         if decision == "ask":
             granted = bool(self._on_ask(verb, cap, reason)) if self._on_ask else False
+            self._record_decision(cap, verb, "ask", granted, None if granted else reason)
             if not granted:
                 raise CapabilityDenied(f"{verb}: approval denied ({cap})")
             return
+        self._record_decision(cap, verb, "deny", False, reason)
         raise CapabilityDenied(f"{verb}: {reason}")
 
     def gate_capability(self, cap_name: str, label: str) -> None:
         """Gateway check for a *named* capability (e.g. ``a11y`` for structured
-        observation, #145) — allow / deny / ask with the same recording semantics as
-        :meth:`_gate` does for verbs. No-op unless enforcing."""
+        observation, #145) — allow / deny / ask, each recorded as a capability event (#83),
+        with the same semantics as :meth:`_gate` does for verbs. No-op unless enforcing."""
         if not self._enforce:
             return
         val = self.sandbox_capabilities.get(cap_name, False)
@@ -353,12 +394,17 @@ class AsyncSandbox:
             granted = (
                 bool(self._on_ask(label, cap_name, "requires approval")) if self._on_ask else False
             )
+            self._record_decision(
+                cap_name, label, "ask", granted, None if granted else "requires approval"
+            )
             if not granted:
                 raise CapabilityDenied(f"{label}: approval denied ({cap_name})")
             return
         if val:
+            self._record_decision(cap_name, label, "allow", True, None)
             return
         reason = f"capability '{cap_name}' not granted"
+        self._record_decision(cap_name, label, "deny", False, reason)
         raise CapabilityDenied(f"{label}: {reason}")
 
     async def act(self, verb: str, target: dict | None = None, **kwargs: Any) -> dict:
@@ -468,18 +514,45 @@ class AsyncSandbox:
     ):
         return await self.act("scroll", _target(target, x, y), dy=dy)
 
-    async def screenshot(self, scope: str = "screen") -> dict:
-        """Capture pixels on demand. Returns {'png': bytes, 'w': int, 'h': int}."""
+    async def screenshot(
+        self,
+        scope: str = "screen",
+        *,
+        format: str | None = None,
+        quality: int | None = None,
+    ) -> dict:
+        """Capture pixels on demand.
+
+        ``format`` selects the wire codec: ``None``/``"png"`` (lossless default) or
+        ``"jpeg"`` (the bandwidth lever — a 1080p desktop is ~1.8 MB as PNG vs ~0.1 MB as
+        quality-80 JPEG). ``quality`` (1–100) tunes JPEG; ignored for PNG.
+
+        Returns ``{'bytes', 'format', 'w', 'h'}`` — ``bytes`` is the raw encoded image and
+        ``format`` says which codec. When the codec is PNG, ``'png'`` is kept as a
+        back-compatible alias of ``bytes``; it is ABSENT for other codecs, so legacy
+        code blindly reading ``shot['png']`` fails loudly rather than mislabeling JPEG
+        bytes as PNG."""
         self._gate("screenshot")
         call_id = self._next_id()
-        reply = await self._rpc(
-            {"type": "action", "call_id": call_id, "action": {"verb": "screenshot", "scope": scope}}
-        )
+        action: dict = {"verb": "screenshot", "scope": scope}
+        if format is not None:
+            action["format"] = format
+        if quality is not None:
+            action["quality"] = quality
+        reply = await self._rpc({"type": "action", "call_id": call_id, "action": action})
         if reply.get("type") != "observation":
             raise RuntimeError(reply.get("error", "screenshot failed"))
         img = reply.get("image") or {}
-        png = base64.b64decode(img.get("ref", ""))
-        return {"png": png, "w": img.get("w"), "h": img.get("h")}
+        raw = base64.b64decode(img.get("ref", ""))
+        out = {
+            "bytes": raw,
+            "format": img.get("format", "png"),
+            "w": img.get("w"),
+            "h": img.get("h"),
+        }
+        if out["format"] == "png":
+            out["png"] = raw  # back-compat alias, only when it really is PNG
+        return out
 
     async def type_text(self, text: str):
         return await self.act("type_text", text=text)
@@ -488,12 +561,26 @@ class AsyncSandbox:
         return await self.act("key", keys=keys)
 
     async def astart_screencast(
-        self, fps: float = 5.0, max_long_edge: int | None = None, scope: str | None = None
+        self,
+        fps: float = 5.0,
+        max_long_edge: int | None = None,
+        scope: str | None = None,
+        resume_stream: str | None = None,
+        format: str | None = None,
+        quality: int | None = None,
     ) -> str:
-        """Start a server-pushed screencast; returns its stream id. Frames arrive
-        asynchronously and are read with :meth:`next_frame`. ``max_long_edge`` caps
-        each frame's longer edge (px) to save bandwidth; ``scope`` selects the capture
-        region (``screen``, ``active_window``, or ``window:<id>``)."""
+        """Start a server-pushed screencast; returns the requested stream id. Frames
+        arrive asynchronously and are read with :meth:`next_frame`. ``max_long_edge``
+        caps each frame's longer edge (px) to save bandwidth; ``scope`` selects the
+        capture region (``screen``, ``active_window``, or ``window:<id>``); ``format``
+        (``png`` default / ``jpeg``) + ``quality`` pick the per-frame codec — ``jpeg`` is
+        the high-fps bandwidth lever.
+
+        ``resume_stream`` asks the runtime to continue that logical stream (#56): if
+        the runtime still holds its state, frames keep the SAME ``stream`` id and
+        ``seq`` continues where it left off; otherwise a fresh stream starts (new id,
+        seq 0). The ack carries no stream identity — the first frame's ``stream``/
+        ``seq`` are authoritative for which of the two happened."""
         self._gate("start_screencast")
         self._clear_frames()
         # Remember the requested capture region so recorded frames carry the true
@@ -504,11 +591,81 @@ class AsyncSandbox:
             action["max_long_edge"] = max_long_edge
         if scope is not None:
             action["scope"] = scope
+        if resume_stream is not None:
+            action["resume_stream"] = resume_stream
+        if format is not None:
+            action["format"] = format
+        if quality is not None:
+            action["quality"] = quality
         call_id = self._next_id()
         reply = await self._rpc({"type": "action", "call_id": call_id, "action": action})
         if not reply.get("ok"):
             raise RuntimeError(reply.get("error", "start_screencast failed"))
-        return call_id
+        # Remember the capture params for a same-session resume (#56): resume
+        # continues stream IDENTITY + SEQ only, never the capture parameters.
+        self._last_screencast_params = {
+            "fps": fps,
+            "max_long_edge": max_long_edge,
+            "scope": scope,
+            "format": format,
+            "quality": quality,
+        }
+        self._active_stream = resume_stream or call_id
+        return self._active_stream
+
+    @property
+    def active_stream(self) -> str | None:
+        """The logical screencast stream id observed on frames — pass this to
+        :meth:`aresume_screencast` after a drop. Updated from each frame's ``stream``
+        field, which is authoritative: after a resume that fell back to a fresh
+        stream, this is the LIVE id, not the requested dead one."""
+        return self._active_stream
+
+    async def aresume_screencast(
+        self,
+        stream_id: str,
+        fps: float | None = None,
+        max_long_edge: int | None = None,
+        scope: str | None = None,
+        format: str | None = None,
+        quality: int | None = None,
+    ) -> str:
+        """Resume the logical screencast ``stream_id`` (#56) — typically after
+        :meth:`next_frame` raised :class:`ConnectionError` and the caller reconnected
+        with a fresh session.
+
+        Resume continues stream IDENTITY + SEQ only — the runtime does not remember
+        capture parameters. Params left as ``None`` reuse the ones this Sandbox
+        started the stream with; on a NEW connection the caller must re-pass ALL the
+        original capture parameters (including ``format``/``quality`` — else a JPEG
+        stream silently resumes as the PNG default, ~20× larger frames) or accept the
+        standard defaults (fps=5.0, full resolution, ``screen`` scope, ``png``).
+
+        Read the first frame to learn the outcome: ``stream`` == ``stream_id`` means
+        seq continued — the seq gap counts frames the runtime emitted but the client
+        never received; capture pauses while no connection holds the stream, so use
+        the :class:`ConnectionError` window for temporal accounting. A different
+        ``stream`` means the runtime had dropped the state and a fresh stream
+        started at seq 0."""
+        remembered = self._last_screencast_params or {}
+        if fps is None:
+            fps = remembered.get("fps", 5.0)
+        if max_long_edge is None:
+            max_long_edge = remembered.get("max_long_edge")
+        if scope is None:
+            scope = remembered.get("scope")
+        if format is None:
+            format = remembered.get("format")
+        if quality is None:
+            quality = remembered.get("quality")
+        return await self.astart_screencast(
+            fps,
+            max_long_edge=max_long_edge,
+            scope=scope,
+            resume_stream=stream_id,
+            format=format,
+            quality=quality,
+        )
 
     async def astop_screencast(self) -> None:
         """Ask the runtime to stop streaming frames."""
@@ -525,8 +682,9 @@ class AsyncSandbox:
         self._push_frame(_STREAM_END)
 
     async def next_frame(self, timeout: float | None = None) -> dict | None:
-        """Await the next screencast frame as {'png', 'w', 'h', 'seq', 'stream'},
-        or None if the stream ended cleanly or `timeout` seconds elapsed with no frame.
+        """Await the next screencast frame as ``{'bytes', 'format', 'w', 'h', 'seq',
+        'stream'}`` (``'png'`` aliases ``bytes`` only when the codec really is PNG), or
+        None if the stream ended cleanly or `timeout` seconds elapsed with no frame.
         Raises :class:`ConnectionError` if the connection dropped mid-stream, so silent
         truncation is distinguishable from a normal end."""
         try:
@@ -541,15 +699,23 @@ class AsyncSandbox:
             return None
         if item is _STREAM_LOST:
             raise ConnectionError("connection lost mid-screencast")
+        # The frame's `stream` is authoritative (#56): adopt it, so after a resume
+        # that fell back to a fresh stream the recorded id is the LIVE one and the
+        # next resume targets a stream the runtime actually holds.
+        self._active_stream = item.get("stream") or self._active_stream
         img = item.get("image") or {}
-        png = base64.b64decode(img.get("ref", ""))
-        return {
-            "png": png,
+        raw = base64.b64decode(img.get("ref", ""))
+        frame = {
+            "bytes": raw,
+            "format": img.get("format", "png"),
             "w": img.get("w"),
             "h": img.get("h"),
             "seq": item.get("seq"),
             "stream": item.get("stream"),
         }
+        if frame["format"] == "png":
+            frame["png"] = raw  # back-compat alias, only when it really is PNG
+        return frame
 
     def _artifact_store(self) -> LocalArtifactStore:
         if self._artifacts is None:
@@ -610,13 +776,22 @@ class AsyncSandbox:
 
     def _gate_file(self, direction: str, sandbox_path: str) -> str:
         """Capability gate for file transfer (#85). When enforcing, deny if ``fs_scope``
-        is not granted; returns the effective scope string."""
+        is not granted (recorded as a capability event, #83); returns the effective scope."""
         scope = self.sandbox_capabilities.get("fs_scope", "session")
         if self._enforce:
             allowed, cap, reason = check_file_transfer(direction, self.sandbox_capabilities)
             if not allowed:
+                self._record_decision(cap, direction, "deny", False, reason)
                 raise CapabilityDenied(f"{direction}: {reason}")
+            self._record_decision(cap, direction, "allow", True, None)
         return str(scope)
+
+    @property
+    def capability_events(self) -> list[dict]:
+        """The capability/permission decisions recorded this session (#83/E4) — a copy, in
+        order. Empty unless ``enforce_capabilities`` is on. Each event is
+        ``{type:"capability", capability, subject, decision, granted, reason, ts}``."""
+        return list(self._capability_events)
 
     def put_file(self, local_path: str, sandbox_path: str) -> dict:
         """Copy a host file into the sandbox, hash it, and record the transfer (#85).
@@ -725,6 +900,47 @@ class _BackgroundLoop:
         self._thread.join(timeout=5)
 
 
+class SharedLoop:
+    """One background event-loop thread that MANY sync :class:`Sandbox` sessions share.
+
+    By default each :func:`connect` spins up its own loop thread — right for one session,
+    but a process holding N sessions then pays a thread per session (measured ~7 MB + an
+    OS thread each; see docs/engineering/streaming-bandwidth.md). Pass one ``SharedLoop``
+    to several ``connect(..., loop=…)`` calls and they all multiplex onto this single
+    thread::
+
+        with shinken.SharedLoop() as loop:
+            envs = [shinken.connect(a, token=t, loop=loop) for a, t in endpoints]
+            ...
+            for env in envs:
+                env.close()   # closes the session; the shared loop stays up
+
+    Closing a Sandbox that uses a shared loop never stops the loop — the ``SharedLoop``
+    owns its thread and stops it on ``close()`` / context-manager exit.
+
+    This is deliberately just a resource handle, not an orchestration surface: fan-out,
+    batching, and failure policy belong to the caller (or the async core —
+    ``aconnect()`` + ``asyncio.gather`` on your own loop is the canonical way to drive
+    many sandboxes concurrently)."""
+
+    def __init__(self) -> None:
+        self._bg = _BackgroundLoop()
+        self._closed = False
+
+    def close(self) -> None:
+        """Stop the shared loop thread. Close the Sandboxes using it first. Idempotent."""
+        if self._closed:
+            return
+        self._closed = True
+        self._bg.stop()
+
+    def __enter__(self) -> SharedLoop:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
+
+
 class _Screencast:
     """Synchronous, bounded iterator over screencast frames; stops the stream on exit.
 
@@ -738,11 +954,14 @@ class _Screencast:
     def __init__(
         self,
         sandbox: Sandbox,
-        fps: float,
+        fps: float | None,
         timeout: float | None,
         limit: int | None,
         max_long_edge: int | None,
         scope: str | None,
+        resume_stream: str | None = None,
+        format: str | None = None,
+        quality: int | None = None,
     ) -> None:
         self._sb = sandbox
         self._fps = fps
@@ -750,13 +969,37 @@ class _Screencast:
         self._limit = limit
         self._max_long_edge = max_long_edge
         self._scope = scope
+        self._resume_stream = resume_stream
+        self._format = format
+        self._quality = quality
         self._count = 0
         self._started = False
 
     def __enter__(self) -> _Screencast:
-        self._sb._loop.run(
-            self._sb._inner.astart_screencast(self._fps, self._max_long_edge, self._scope)
-        )
+        # A resume routes through aresume_screencast so params left as None reuse
+        # the ones this Sandbox started the stream with (#56) — resume continues
+        # stream identity + seq only, never the capture parameters.
+        if self._resume_stream is not None:
+            self._sb._loop.run(
+                self._sb._inner.aresume_screencast(
+                    self._resume_stream,
+                    self._fps,
+                    self._max_long_edge,
+                    self._scope,
+                    format=self._format,
+                    quality=self._quality,
+                )
+            )
+        else:
+            self._sb._loop.run(
+                self._sb._inner.astart_screencast(
+                    self._fps,
+                    self._max_long_edge,
+                    self._scope,
+                    format=self._format,
+                    quality=self._quality,
+                )
+            )
         self._started = True
         return self
 
@@ -782,9 +1025,14 @@ class _Screencast:
 class Sandbox:
     """Synchronous session facade — the elegant one-liner API."""
 
-    def __init__(self, inner: AsyncSandbox, loop: _BackgroundLoop) -> None:
+    def __init__(
+        self, inner: AsyncSandbox, loop: _BackgroundLoop, *, owns_loop: bool = True
+    ) -> None:
         self._inner = inner
         self._loop = loop
+        # False when the loop is a caller-provided SharedLoop: closing this Sandbox must
+        # not stop a loop other sessions are still multiplexed on.
+        self._owns_loop = owns_loop
         self._closed = False
         self._elements: dict[str, dict] = {}  # ref -> Element, from the last observe(structured)
         self._last_structured: list[dict] = []  # last full element list, for observe_diff (#4)
@@ -802,6 +1050,20 @@ class Sandbox:
         """The session capability envelope (what this Sandbox is permitted to do —
         reference semantics for the local gateway shim)."""
         return self._inner.sandbox_capabilities
+
+    @property
+    def capability_events(self) -> list[dict]:
+        """Capability/permission decisions recorded this session (#83/E4) — grants, ask
+        resolutions, and denials made by the local gateway, in order. Empty unless
+        ``enforce_capabilities`` is on. An eval/trajectory layer reads this as the run's
+        first-class permission audit."""
+        return self._inner.capability_events
+
+    def gate_capability(self, cap_name: str, label: str) -> None:
+        """Run a named-capability gateway check (allow/ask/deny), recording the decision —
+        synchronous, no wire I/O. Raises :class:`~shinken.gateway.CapabilityDenied` if denied
+        or an ask is not approved."""
+        self._inner.gate_capability(cap_name, label)
 
     def ping(self) -> float:
         return self._loop.run(self._inner.ping())
@@ -847,8 +1109,10 @@ class Sandbox:
     ):
         return self._loop.run(self._inner.scroll(target, x=x, y=y, dy=dy))
 
-    def screenshot(self, scope: str = "screen") -> dict:
-        return self._loop.run(self._inner.screenshot(scope))
+    def screenshot(
+        self, scope: str = "screen", *, format: str | None = None, quality: int | None = None
+    ) -> dict:
+        return self._loop.run(self._inner.screenshot(scope, format=format, quality=quality))
 
     def observe(self, structured: bool = False, source: Any = None) -> dict:
         """Observe the desktop. ``structured=True`` captures the accessibility tree as
@@ -938,20 +1202,76 @@ class Sandbox:
         limit: int | None = None,
         max_long_edge: int | None = None,
         scope: str | None = None,
+        format: str | None = None,
+        quality: int | None = None,
     ) -> _Screencast:
         """Stream the screen in real time as a context manager yielding frames::
 
             with env.screencast(fps=10, limit=30, max_long_edge=720) as frames:
                 for frame in frames:
-                    ...  # frame: {'png', 'w', 'h', 'seq', 'stream'}
+                    ...  # frame: {'bytes', 'format', 'w', 'h', 'seq', 'stream'}
 
         Frames identical to the previous one are suppressed server-side, so an idle
         screen yields nothing until it changes. ``timeout`` bounds the wait per frame
         (None blocks indefinitely); ``limit`` caps the number of frames;
         ``max_long_edge`` downscales each frame to save bandwidth; ``scope`` selects
-        the region (``screen``, ``active_window``, ``window:<id>``).
+        the region (``screen``, ``active_window``, ``window:<id>``); ``format``
+        (``png``/``jpeg``) + ``quality`` pick the per-frame codec.
         """
-        return _Screencast(self, fps, timeout, limit, max_long_edge, scope)
+        return _Screencast(
+            self, fps, timeout, limit, max_long_edge, scope, format=format, quality=quality
+        )
+
+    @property
+    def active_stream(self) -> str | None:
+        """The logical screencast stream id observed on frames — pass this to
+        :meth:`resume_screencast` after a drop. Updated from each frame's ``stream``
+        field, which is authoritative: after a resume that fell back to a fresh
+        stream, this is the LIVE id, not the requested dead one."""
+        return self._inner.active_stream
+
+    def resume_screencast(
+        self,
+        stream_id: str,
+        fps: float | None = None,
+        *,
+        timeout: float | None = 30.0,
+        limit: int | None = None,
+        max_long_edge: int | None = None,
+        scope: str | None = None,
+        format: str | None = None,
+        quality: int | None = None,
+    ) -> _Screencast:
+        """Resume the logical screencast ``stream_id`` (#56), as the same
+        frame-iterating context manager :meth:`screencast` returns.
+
+        Resume continues stream IDENTITY + SEQ only — the runtime does not remember
+        capture parameters. Params left as ``None`` reuse the ones this Sandbox
+        started the stream with; on a NEW connection the caller must re-pass ALL the
+        original capture parameters (including ``format``/``quality`` — else a JPEG
+        stream silently resumes as the PNG default) or accept the standard defaults
+        (fps=5.0, full resolution, ``screen`` scope, ``png``).
+
+        The recovery flow: iterating a screencast raises :class:`ConnectionError`
+        when the connection drops mid-stream; the caller reconnects (a NEW
+        ``connect()``) and resumes the old stream id there. The first frame tells the
+        outcome — ``stream`` == ``stream_id`` means ``seq`` continued: the seq gap
+        counts frames the runtime emitted but the client never received; capture
+        pauses while no connection holds the stream, so use the
+        :class:`ConnectionError` window for temporal accounting. A different
+        ``stream`` means the runtime no longer held the state and a fresh stream
+        started at seq 0."""
+        return _Screencast(
+            self,
+            fps,
+            timeout,
+            limit,
+            max_long_edge,
+            scope,
+            stream_id,
+            format=format,
+            quality=quality,
+        )
 
     def _set_guest_transport(self, transport: Any) -> None:
         """Attach a guest-boundary transfer backend (provider-supplied, #154)."""
@@ -991,7 +1311,8 @@ class Sandbox:
         self._closed = True
         with contextlib.suppress(Exception):
             self._loop.run(self._inner.close())
-        self._loop.stop()
+        if self._owns_loop:
+            self._loop.stop()
 
     def __enter__(self) -> Sandbox:
         return self
@@ -1007,6 +1328,7 @@ def connect(
     enforce_capabilities: bool | None = None,
     artifact_root: str | None = None,
     on_ask: Callable[[str, str | None, str], bool] | None = None,
+    loop: SharedLoop | None = None,
 ) -> Sandbox:
     """Connect to a running ``shinkend`` and complete the ACI handshake (blocking).
 
@@ -1016,10 +1338,17 @@ def connect(
     it never reaches shinkend), and a capability valued ``"ask"`` pauses for approval via
     ``on_ask`` (#7). This shim is a *client-side reference* boundary, not a security
     guarantee — a direct WebSocket client bypasses it; true enforcement is the server-side
-    Action Gateway (D6)."""
-    loop = _BackgroundLoop()
+    Action Gateway (D6).
+
+    ``loop`` multiplexes this session onto a caller-owned :class:`SharedLoop` instead of
+    spawning a dedicated background thread — pass the same one to every ``connect`` when
+    a single process holds many sessions (closing such a Sandbox leaves the shared loop
+    running). For CONCURRENT fan-out across many sandboxes, the async core is the native
+    surface: ``aconnect()`` + ``asyncio.gather`` on your own event loop."""
+    owns_loop = loop is None
+    bg = _BackgroundLoop() if loop is None else loop._bg
     try:
-        inner = loop.run(
+        inner = bg.run(
             aconnect(
                 addr,
                 token=token,
@@ -1030,6 +1359,7 @@ def connect(
             )
         )
     except Exception:
-        loop.stop()
+        if owns_loop:
+            bg.stop()  # never tear down a caller-owned shared loop on one failed dial
         raise
-    return Sandbox(inner, loop)
+    return Sandbox(inner, bg, owns_loop=owns_loop)
