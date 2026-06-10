@@ -1,0 +1,31 @@
+# Spike #3 (CRIU memory tier) — derived image: the standard Linux Sandbox image plus CRIU.
+#
+# The base image's CMD boots the desktop via start.sh as user `shinken`; this spike image
+# instead idles (CMD sleep infinity) and lets the probe runner drive the lifecycle through
+# `docker exec`:
+#   - the DONOR container starts the desktop tree under one setsid parent
+#     (desktop-tree.sh) and `criu dump --tree`s it;
+#   - a RESTORE-TARGET container starts NOTHING and only runs `criu restore`
+#     (the fork-shaped case: fresh container, same image, resume from memory image).
+#
+# CRIU needs root and CAP_SYS_ADMIN/CAP_CHECKPOINT_RESTORE etc.; the probe runs the
+# container --privileged. That is a LATENCY measurement rig, not a security posture —
+# see REPORT.md.
+#
+# Build (from repo root, after building images/linux/Dockerfile):
+#   docker build -f spikes/criu-memory-tier/Dockerfile.criu -t shinken/sandbox-criu .
+FROM shinken/sandbox-linux
+
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        criu python3-pip procps psmisc \
+    && pip install --no-cache-dir --break-system-packages "websockets>=13" \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY spikes/criu-memory-tier/desktop-tree.sh /usr/local/bin/desktop-tree.sh
+RUN chmod +x /usr/local/bin/desktop-tree.sh
+
+# Idle by default; probes exec into the container. --init is required at run time so
+# PID 1 reaps the tree that `criu dump` kills (a zombie would keep its PID and collide
+# with the in-place restore).
+CMD ["sleep", "infinity"]

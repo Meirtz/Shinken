@@ -149,13 +149,39 @@ impl Default for EncodeOpts {
     }
 }
 
-/// A captured frame: base64-encoded image bytes, the codec they are in, and pixel dims.
+/// A captured frame: raw encoded image bytes, the codec they are in, and pixel dims.
+/// Bytes stay raw end-to-end; the TEXT wire path base64-encodes at the protocol
+/// boundary ([`CapturedImage::to_base64`]), the binary path sends them verbatim.
 #[derive(Debug, Clone)]
 pub struct CapturedImage {
-    pub data_base64: String,
+    pub data: Vec<u8>,
     pub format: ImageFormat,
     pub w: u16,
     pub h: u16,
+}
+
+impl CapturedImage {
+    /// Base64 of the encoded image bytes — only for the legacy base64-in-JSON path.
+    pub fn to_base64(&self) -> String {
+        B64.encode(&self.data)
+    }
+}
+
+/// Guest-side readiness, answered by the `ready` query (schema `Query.q`): whether
+/// the runtime can usefully serve observations RIGHT NOW. Computed in microseconds
+/// (a few sampled root pixels via 1×1 GetImage), so a client can poll it at 10 ms
+/// granularity during boot instead of pulling and decoding full screenshots.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Readiness {
+    /// The one bit a readiness poll needs: observations of a live desktop will work.
+    pub ready: bool,
+    /// Whether the X11 display connection is established (false while the lazy
+    /// backend is still retrying `$DISPLAY` during desktop boot).
+    pub x11_up: bool,
+    /// Whether sampled root-window pixels are non-black (the desktop has painted).
+    /// `None` when the backend has no display to sample (virtual/pyautogui) or X11
+    /// is not up yet.
+    pub root_nonblack: Option<bool>,
 }
 
 /// Executes typed actions against a guest. Backends are swappable per OS.
@@ -199,6 +225,142 @@ pub trait Executor: Send + Sync {
     /// capture is nacked loudly instead of acked and then silently dying.
     fn supports_raw_capture(&self) -> bool {
         false
+    }
+    /// Begin damage-driven change tracking for FULL-SCREEN capture: returns the
+    /// current damage cursor, or `None` when unavailable (backend without XDamage,
+    /// extension missing, or `SHINKEND_DAMAGE=off`) — callers then poll-capture
+    /// every tick as before.
+    fn damage_cursor(&self) -> Option<u64> {
+        None
+    }
+    /// What changed on the root window strictly after `cursor`: `(new cursor,
+    /// verdict)`. `None` mirrors [`Executor::damage_cursor`]'s unavailability.
+    fn damage_since(&self, _cursor: u64) -> Option<(u64, DamageSince)> {
+        None
+    }
+    /// Capture a sub-rectangle of the FULL SCREEN as raw RGB8 (no downscale) — the
+    /// damage-driven delta path fetches only the damaged region with this. Default:
+    /// unsupported.
+    fn capture_raw_region(&self, _rect: DamageRect) -> Result<Vec<u8>> {
+        bail!(
+            "region capture not supported by the {} backend",
+            self.backend()
+        )
+    }
+
+    /// Cheap guest-side readiness (the `ready` query). Default suits a no-display
+    /// backend: serving as soon as the listener is up, nothing to sample.
+    fn readiness(&self) -> Readiness {
+        Readiness {
+            ready: true,
+            x11_up: false,
+            root_nonblack: None,
+        }
+    }
+}
+
+// ---- XDamage-driven change tracking ----
+
+/// A damage bounding rectangle `(x, y, w, h)` in root-window pixels.
+pub type DamageRect = (u32, u32, u32, u32);
+
+/// Union of two damage rects (bounding box).
+pub fn union_rect(a: DamageRect, b: DamageRect) -> DamageRect {
+    let x0 = a.0.min(b.0);
+    let y0 = a.1.min(b.1);
+    let x1 = (a.0 + a.2).max(b.0 + b.2);
+    let y1 = (a.1 + a.3).max(b.1 + b.3);
+    (x0, y0, x1 - x0, y1 - y0)
+}
+
+/// Clamp a damage rect to `(w, h)`; `None` if nothing remains on-screen.
+pub fn clamp_rect(r: DamageRect, w: u16, h: u16) -> Option<DamageRect> {
+    let (w, h) = (w as u32, h as u32);
+    let x0 = r.0.min(w);
+    let y0 = r.1.min(h);
+    let x1 = (r.0 + r.2).min(w);
+    let y1 = (r.1 + r.3).min(h);
+    if x1 > x0 && y1 > y0 {
+        Some((x0, y0, x1 - x0, y1 - y0))
+    } else {
+        None
+    }
+}
+
+/// What changed since a damage cursor.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DamageSince {
+    /// Nothing — the screen is byte-identical to the cursor's point in time, so a
+    /// capture tick can skip the GetImage entirely (true idle-zero).
+    Clean,
+    /// Everything since the cursor fits this bounding region (root coords).
+    Region(DamageRect),
+    /// Unknown extent (cursor older than the retained log, or the tracker hit an
+    /// error) — treat as full-frame damage. Always the SAFE answer.
+    Full,
+}
+
+/// Bounded epoch log of damage regions — the pure bookkeeping behind the X-backed
+/// tracker, factored out so the cursor semantics are unit-testable without X.
+///
+/// Each `record` is one batch of damage (epoch += 1, bounding rect retained); a
+/// consumer holds a cursor (the last epoch it has fully captured) and asks
+/// [`DamageLog::since`] what happened after it. Multiple consumers (one per
+/// screencast) can hold independent cursors against the one log. The ring is
+/// bounded; a cursor that falls off the retained window gets `Full` — correctness
+/// degrades to a full capture, never to a missed change.
+#[derive(Debug, Default)]
+pub struct DamageLog {
+    epoch: u64,
+    /// Epochs at or below this have been dropped from the ring.
+    base: u64,
+    ring: std::collections::VecDeque<(u64, DamageRect)>,
+}
+
+/// Retained damage epochs. At 30 fps a consumer is at most ~1 tick behind, so 256
+/// gives orders of magnitude of slack for MAX_SCREENCASTS consumers while bounding
+/// memory at a few KB.
+const DAMAGE_RING_MAX: usize = 256;
+
+impl DamageLog {
+    /// Record one batch of damage; returns the new epoch.
+    pub fn record(&mut self, rect: DamageRect) -> u64 {
+        self.epoch += 1;
+        self.ring.push_back((self.epoch, rect));
+        if self.ring.len() > DAMAGE_RING_MAX {
+            if let Some((evicted, _)) = self.ring.pop_front() {
+                self.base = evicted;
+            }
+        }
+        self.epoch
+    }
+
+    /// The current epoch (a fresh consumer's starting cursor).
+    pub fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    /// What changed strictly after `cursor`.
+    pub fn since(&self, cursor: u64) -> DamageSince {
+        if cursor >= self.epoch {
+            return DamageSince::Clean;
+        }
+        if cursor < self.base {
+            return DamageSince::Full;
+        }
+        let mut acc: Option<DamageRect> = None;
+        for (e, r) in &self.ring {
+            if *e > cursor {
+                acc = Some(match acc {
+                    Some(a) => union_rect(a, *r),
+                    None => *r,
+                });
+            }
+        }
+        match acc {
+            Some(r) => DamageSince::Region(r),
+            None => DamageSince::Clean,
+        }
     }
 }
 
@@ -300,7 +462,7 @@ fn encode_frame(rgb: &[u8], w: u16, h: u16, opts: EncodeOpts) -> Result<Captured
         ImageFormat::Jpeg => encode_jpeg(&rgb, w, h, opts.quality)?,
     };
     Ok(CapturedImage {
-        data_base64: B64.encode(bytes),
+        data: bytes,
         format: opts.format,
         w,
         h,
@@ -328,14 +490,22 @@ pub const KEYFRAME_INTERVAL: u64 = 30;
 /// One changed tile's rect `(x, y, w, h)` in the delivered resolution.
 pub type TileRect = (u32, u32, u16, u16);
 
-/// A changed tile, encoded for the wire.
+/// A changed tile, encoded for the wire (raw codec bytes; base64 only on the legacy
+/// text path, via [`EncodedTile::to_base64`]).
 #[derive(Debug, Clone)]
 pub struct EncodedTile {
     pub x: u32,
     pub y: u32,
     pub w: u16,
     pub h: u16,
-    pub data_base64: String,
+    pub data: Vec<u8>,
+}
+
+impl EncodedTile {
+    /// Base64 of the tile's encoded bytes — only for the legacy base64-in-JSON path.
+    pub fn to_base64(&self) -> String {
+        B64.encode(&self.data)
+    }
 }
 
 /// Compare two equal-sized RGB8 frames tile-by-tile and return the rects of the tiles
@@ -429,7 +599,7 @@ pub fn encode_tiles(
                 y: rect.1,
                 w: tw,
                 h: th,
-                data_base64: B64.encode(bytes),
+                data: bytes,
             })
         })
         .collect()
@@ -493,6 +663,38 @@ impl DeltaState {
         self.prev = Some((rgb, w, h));
         self.since_key = if was_key { 0 } else { self.since_key + 1 };
     }
+
+    /// The committed baseline's dimensions, if any — the damage-driven loop region-
+    /// captures only when the baseline matches the live screen geometry.
+    pub fn baseline_dims(&self) -> Option<(u16, u16)> {
+        self.prev.as_ref().map(|(_, w, h)| (*w, *h))
+    }
+
+    /// Compose the CURRENT full frame from the committed baseline plus freshly
+    /// captured pixels for `rect` (XDamage said only `rect` changed): clone the
+    /// baseline and patch the rectangle in. `pixels` is `rect.2 * rect.3 * 3` RGB8
+    /// bytes. `None` when there is no baseline, the rect overflows it, or the pixel
+    /// buffer doesn't match — callers then fall back to a full capture.
+    pub fn compose_partial(&self, rect: DamageRect, pixels: &[u8]) -> Option<(Vec<u8>, u16, u16)> {
+        let (base, w, h) = self.prev.as_ref()?;
+        let (rx, ry, rw, rh) = (
+            rect.0 as usize,
+            rect.1 as usize,
+            rect.2 as usize,
+            rect.3 as usize,
+        );
+        let (wu, hu) = (*w as usize, *h as usize);
+        if rx + rw > wu || ry + rh > hu || pixels.len() != rw * rh * 3 {
+            return None;
+        }
+        let mut frame = base.clone();
+        for row in 0..rh {
+            let dst = ((ry + row) * wu + rx) * 3;
+            let src = row * rw * 3;
+            frame[dst..dst + rw * 3].copy_from_slice(&pixels[src..src + rw * 3]);
+        }
+        Some((frame, *w, *h))
+    }
 }
 
 const EXECUTOR_ENV: &str = "SHINKEND_EXECUTOR";
@@ -550,12 +752,27 @@ fn build_executor(choice: BackendChoice) -> Result<Arc<dyn Executor>> {
             }
         },
         BackendChoice::X11Xtest => {
-            let x = X11Executor::connect().context("SHINKEND_EXECUTOR=x11_xtest")?;
-            eprintln!(
-                "shinkend: action backend = x11/xtest ({}x{})",
-                x.width, x.height
-            );
-            Ok(Arc::new(x))
+            // Explicit X11 is LAZY: shinkend must be exec'd before the desktop so the
+            // ACI listener is accepting within milliseconds of container start; the
+            // X11 connection is owned here (retry with short backoff) instead of a
+            // shell poll loop gating the listener behind Xvfb (the boot-waterfall
+            // finding, S8). The `ready` query reports x11_up=false until it lands.
+            let lazy = Arc::new(LazyX11Executor::default());
+            match lazy.try_connect() {
+                Ok(x) => eprintln!(
+                    "shinkend: action backend = x11/xtest ({}x{})",
+                    x.width, x.height
+                ),
+                Err(e) => {
+                    eprintln!(
+                        "shinkend: action backend = x11/xtest (display not up yet: {e}; \
+                         retrying in the background)"
+                    );
+                    let retry = lazy.clone();
+                    std::thread::spawn(move || retry.retry_until_connected());
+                }
+            }
+            Ok(lazy)
         }
         BackendChoice::Virtual => {
             eprintln!("shinkend: action backend = virtual (configured)");
@@ -587,6 +804,119 @@ fn scroll_steps(px: f64) -> u32 {
     ((px.abs() / SCROLL_PX_PER_STEP).ceil() as u32).clamp(1, SCROLL_MAX_STEPS)
 }
 
+/// Env knob for XDamage-driven capture: `off`/`0`/`false` disables it (capture
+/// loops then poll-capture every tick); anything else / absent keeps it on when
+/// the display advertises DAMAGE.
+const DAMAGE_ENV: &str = "SHINKEND_DAMAGE";
+
+fn damage_disabled_by_env() -> bool {
+    matches!(
+        std::env::var(DAMAGE_ENV).as_deref().map(str::trim),
+        Ok("off") | Ok("0") | Ok("false") | Ok("OFF")
+    )
+}
+
+/// XDamage event accumulator: a DEDICATED X connection (so event reads never
+/// contend with the action/capture connection's request/reply traffic) with one
+/// Damage object on the root window at `DELTA_RECTANGLES` report level. Every
+/// [`DamageTracker::poll`] drains the pending DamageNotify events, records their
+/// union into the [`DamageLog`], and `damage_subtract`s the server-side region so
+/// future drawing reports fresh rectangles. Damage to any window propagates to its
+/// ancestors, so the root's region covers the whole visible desktop.
+struct DamageTracker {
+    conn: x11rb::rust_connection::RustConnection,
+    damage: u32,
+    log: DamageLog,
+    /// A poll error (lost X connection) latches the tracker broken: every
+    /// subsequent answer is `Full`, degrading to capture-every-tick, never to a
+    /// missed change.
+    broken: bool,
+}
+
+impl DamageTracker {
+    fn connect() -> Result<Self> {
+        use x11rb::connection::RequestConnection as _;
+        use x11rb::protocol::damage::ConnectionExt as _;
+        let (conn, screen_num) = x11rb::connect(None).context("connect damage display")?;
+        conn.extension_information(x11rb::protocol::damage::X11_EXTENSION_NAME)?
+            .context("X server does not advertise the DAMAGE extension")?;
+        conn.damage_query_version(1, 1)?.reply()?;
+        let root = conn.setup().roots[screen_num].root;
+        let damage = conn.generate_id()?;
+        conn.damage_create(
+            damage,
+            root,
+            x11rb::protocol::damage::ReportLevel::DELTA_RECTANGLES,
+        )?;
+        conn.flush()?;
+        Ok(Self {
+            conn,
+            damage,
+            log: DamageLog::default(),
+            broken: false,
+        })
+    }
+
+    /// Drain pending damage events into the log; on any X error, latch broken.
+    fn poll(&mut self) {
+        use x11rb::protocol::damage::ConnectionExt as _;
+        use x11rb::protocol::Event;
+        if self.broken {
+            return;
+        }
+        let mut acc: Option<DamageRect> = None;
+        loop {
+            match self.conn.poll_for_event() {
+                Ok(Some(Event::DamageNotify(n))) => {
+                    let r = (
+                        n.area.x.max(0) as u32,
+                        n.area.y.max(0) as u32,
+                        n.area.width as u32,
+                        n.area.height as u32,
+                    );
+                    acc = Some(match acc {
+                        Some(a) => union_rect(a, r),
+                        None => r,
+                    });
+                }
+                Ok(Some(_)) => {}
+                Ok(None) => break,
+                Err(_) => {
+                    self.broken = true;
+                    return;
+                }
+            }
+        }
+        if let Some(r) = acc {
+            // Empty the server-side region so the same pixels re-damaged later
+            // produce fresh DELTA_RECTANGLES events. An event already in flight is
+            // simply read next poll — a duplicate (over-)report, never a loss.
+            let ok = self
+                .conn
+                .damage_subtract(self.damage, x11rb::NONE, x11rb::NONE)
+                .is_ok()
+                && self.conn.flush().is_ok();
+            if !ok {
+                self.broken = true;
+            }
+            self.log.record(r);
+        }
+    }
+
+    fn cursor(&mut self) -> u64 {
+        self.poll();
+        self.log.epoch()
+    }
+
+    fn since(&mut self, cursor: u64) -> (u64, DamageSince) {
+        self.poll();
+        if self.broken {
+            return (self.log.epoch(), DamageSince::Full);
+        }
+        (self.log.epoch(), self.log.since(cursor))
+    }
+}
+
 /// X11 backend: synthetic pointer + keyboard input via the XTEST extension.
 pub struct X11Executor {
     conn: Mutex<x11rb::rust_connection::RustConnection>,
@@ -595,6 +925,9 @@ pub struct X11Executor {
     height: u16,
     /// keysym -> (keycode, needs_shift), built from the server's keyboard mapping.
     keymap: HashMap<u32, (u8, bool)>,
+    /// XDamage change tracker (own X connection), when the display supports it and
+    /// `SHINKEND_DAMAGE` doesn't disable it. `None` → capture loops poll every tick.
+    damage: Option<Mutex<DamageTracker>>,
 }
 
 impl X11Executor {
@@ -631,13 +964,59 @@ impl X11Executor {
                 }
             }
         }
+        // XDamage tracker (own connection). Failure is never fatal: the capture
+        // loops just keep poll-capturing every tick.
+        let damage = if damage_disabled_by_env() {
+            eprintln!("shinkend: damage tracking = off ({DAMAGE_ENV})");
+            None
+        } else {
+            match DamageTracker::connect() {
+                Ok(t) => {
+                    eprintln!("shinkend: damage tracking = on (X DAMAGE, root window)");
+                    Some(Mutex::new(t))
+                }
+                Err(e) => {
+                    eprintln!("shinkend: damage tracking = off ({e}); polling every tick");
+                    None
+                }
+            }
+        };
         Ok(Self {
             conn: Mutex::new(conn),
             root,
             width,
             height,
             keymap,
+            damage,
         })
+    }
+
+    /// Whether the desktop has painted: sample a handful of root-window pixels with
+    /// 1×1 GetImage round trips (microseconds over the local socket — never a full
+    /// frame). Non-black anywhere ⇒ painted. The freshly-created Xvfb root is all
+    /// black until the WM/`xsetroot` paints it, so this flips exactly when a
+    /// screenshot would stop being useless.
+    fn sample_root_nonblack(&self) -> Result<bool> {
+        const POINTS: [(f64, f64); 5] = [
+            (0.5, 0.5),
+            (0.25, 0.25),
+            (0.75, 0.25),
+            (0.25, 0.75),
+            (0.75, 0.75),
+        ];
+        let conn = self.conn.lock().expect("x11 conn lock");
+        for (fx, fy) in POINTS {
+            let x = ((self.width.saturating_sub(1)) as f64 * fx) as i16;
+            let y = ((self.height.saturating_sub(1)) as f64 * fy) as i16;
+            let reply = conn
+                .get_image(XImageFormat::Z_PIXMAP, self.root, x, y, 1, 1, !0)?
+                .reply()?;
+            // One Z_PIXMAP pixel is BGR[X]; any non-zero color byte means painted.
+            if reply.data.iter().take(3).any(|&b| b != 0) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// Resolve a [`Scope`] to captured RGB8 + dimensions.
@@ -684,11 +1063,24 @@ impl X11Executor {
 
     /// Grab a drawable's `w`x`h` region as RGB8 (X delivers BGR[X]; reorder for PNG).
     fn capture_drawable(&self, drawable: Window, w: u16, h: u16) -> Result<(Vec<u8>, u16, u16)> {
+        self.capture_drawable_at(drawable, 0, 0, w, h)
+    }
+
+    /// Grab a `w`x`h` region of a drawable at offset `(x, y)` as RGB8 — the
+    /// damage-driven delta path fetches only the damaged rectangle this way.
+    fn capture_drawable_at(
+        &self,
+        drawable: Window,
+        x: i16,
+        y: i16,
+        w: u16,
+        h: u16,
+    ) -> Result<(Vec<u8>, u16, u16)> {
         let (wu, hu) = (w as usize, h as usize);
         ensure!(wu * hu > 0, "zero-sized capture region");
         let reply = {
             let conn = self.conn.lock().expect("x11 conn lock");
-            let cookie = conn.get_image(XImageFormat::Z_PIXMAP, drawable, 0, 0, w, h, !0)?;
+            let cookie = conn.get_image(XImageFormat::Z_PIXMAP, drawable, x, y, w, h, !0)?;
             cookie.reply()?
         };
         let bpp = reply.data.len() / (wu * hu);
@@ -934,6 +1326,40 @@ impl Executor for X11Executor {
         true
     }
 
+    fn damage_cursor(&self) -> Option<u64> {
+        self.damage
+            .as_ref()
+            .map(|t| t.lock().expect("damage lock").cursor())
+    }
+
+    fn damage_since(&self, cursor: u64) -> Option<(u64, DamageSince)> {
+        self.damage
+            .as_ref()
+            .map(|t| t.lock().expect("damage lock").since(cursor))
+    }
+
+    fn capture_raw_region(&self, rect: DamageRect) -> Result<Vec<u8>> {
+        let rect = clamp_rect(rect, self.width, self.height)
+            .context("damage region entirely off-screen")?;
+        let (rgb, _, _) = self.capture_drawable_at(
+            self.root,
+            rect.0 as i16,
+            rect.1 as i16,
+            rect.2 as u16,
+            rect.3 as u16,
+        )?;
+        Ok(rgb)
+    }
+
+    fn readiness(&self) -> Readiness {
+        let nonblack = self.sample_root_nonblack().unwrap_or(false);
+        Readiness {
+            ready: nonblack,
+            x11_up: true,
+            root_nonblack: Some(nonblack),
+        }
+    }
+
     fn execute(&self, a: &ActionSpec) -> Result<String> {
         match a.verb.as_str() {
             "move" => {
@@ -1014,6 +1440,145 @@ impl Executor for X11Executor {
     }
 }
 
+/// X11 backend that owns its own display-readiness: connects to `$DISPLAY` lazily,
+/// retrying with short backoff, so shinkend can be exec'd BEFORE the desktop and
+/// have the ACI listener accepting within milliseconds of container start (the S8
+/// boot-waterfall fix). Until the connection lands, `readiness()` honestly reports
+/// `x11_up: false` and actions/captures fail with the connect error; the moment
+/// Xvfb is up, the next attempt (background retry or any incoming call) promotes
+/// the wrapped [`X11Executor`] and everything behaves as if connected at startup.
+/// The held connection is also SELF-HEALING: a readiness sample that fails at the
+/// connection level (root GetImage cannot otherwise fail) drops the dead connection
+/// so the next call dials a fresh one — surviving an X server restart.
+#[derive(Default)]
+pub struct LazyX11Executor {
+    inner: std::sync::RwLock<Option<Arc<X11Executor>>>,
+}
+
+/// First retry delay; doubles up to [`LAZY_X11_RETRY_MAX`]. Short enough that the
+/// guest is observed ready within ~10 ms of the desktop painting.
+const LAZY_X11_RETRY_START: std::time::Duration = std::time::Duration::from_millis(10);
+const LAZY_X11_RETRY_MAX: std::time::Duration = std::time::Duration::from_millis(200);
+
+impl LazyX11Executor {
+    fn connected(&self) -> Option<Arc<X11Executor>> {
+        self.inner
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Drop a dead connection so the next call reconnects (X server restarted).
+    fn disconnect(&self) {
+        *self
+            .inner
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+    }
+
+    /// Connect now if not already connected. Cheap to call repeatedly: a missing
+    /// display socket fails in microseconds, and success persists until the
+    /// connection is observed dead.
+    pub fn try_connect(&self) -> Result<Arc<X11Executor>> {
+        if let Some(x) = self.connected() {
+            return Ok(x);
+        }
+        let x = Arc::new(X11Executor::connect()?);
+        let mut slot = self
+            .inner
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // A concurrent connect may have won the race; either connection works.
+        Ok(slot.get_or_insert_with(|| x).clone())
+    }
+
+    /// Block (on a dedicated thread) until the display connection lands, with
+    /// exponential backoff from [`LAZY_X11_RETRY_START`]. Never gives up: the
+    /// container's lifetime is bounded by its supervisor, and `readiness()` keeps
+    /// reporting `x11_up: false` honestly the whole time.
+    pub fn retry_until_connected(&self) {
+        let mut delay = LAZY_X11_RETRY_START;
+        loop {
+            match self.try_connect() {
+                Ok(x) => {
+                    eprintln!("shinkend: X11 display connected ({}x{})", x.width, x.height);
+                    return;
+                }
+                Err(_) => {
+                    std::thread::sleep(delay);
+                    delay = (delay * 2).min(LAZY_X11_RETRY_MAX);
+                }
+            }
+        }
+    }
+}
+
+impl Executor for LazyX11Executor {
+    fn backend(&self) -> &'static str {
+        "x11/xtest"
+    }
+
+    fn execute(&self, a: &ActionSpec) -> Result<String> {
+        self.try_connect()
+            .context("X11 display not available yet")?
+            .execute(a)
+    }
+
+    fn screen_size(&self) -> (u16, u16) {
+        // Before the display lands there is no real geometry; the trait default is
+        // the documented fallback (clients should gate on the `ready` query first).
+        self.connected()
+            .map_or((1280, 800), |x| Executor::screen_size(x.as_ref()))
+    }
+
+    fn screenshot(&self) -> Result<CapturedImage> {
+        self.try_connect()
+            .context("X11 display not available yet")?
+            .screenshot()
+    }
+
+    fn capture(&self, scope: &str, opts: EncodeOpts) -> Result<CapturedImage> {
+        self.try_connect()
+            .context("X11 display not available yet")?
+            .capture(scope, opts)
+    }
+
+    fn capture_raw(&self, scope: &str, max_long_edge: Option<u32>) -> Result<(Vec<u8>, u16, u16)> {
+        self.try_connect()
+            .context("X11 display not available yet")?
+            .capture_raw(scope, max_long_edge)
+    }
+
+    fn supports_raw_capture(&self) -> bool {
+        true // the eventual X11 backend supports raw capture
+    }
+
+    fn readiness(&self) -> Readiness {
+        let not_up = Readiness {
+            ready: false,
+            x11_up: false,
+            root_nonblack: None,
+        };
+        let Ok(x) = self.try_connect() else {
+            return not_up;
+        };
+        match x.sample_root_nonblack() {
+            Ok(nonblack) => Readiness {
+                ready: nonblack,
+                x11_up: true,
+                root_nonblack: Some(nonblack),
+            },
+            Err(_) => {
+                // Root GetImage cannot fail on a live connection — the held one is
+                // dead (X server restarted). Drop it so the next call reconnects,
+                // and report honestly that X is not up RIGHT NOW.
+                self.disconnect();
+                not_up
+            }
+        }
+    }
+}
+
 /// No-op backend that records executed verbs — used when no display is available
 /// and in tests.
 #[derive(Default)]
@@ -1042,7 +1607,7 @@ impl Executor for VirtualExecutor {
         let rgb: Vec<u8> = (0..2u8 * 2 * 3).map(|i| n.wrapping_add(i)).collect();
         let png = encode_png(&rgb, 2, 2)?;
         Ok(CapturedImage {
-            data_base64: B64.encode(png),
+            data: png,
             format: ImageFormat::Png,
             w: 2,
             h: 2,
@@ -1094,6 +1659,33 @@ mod tests {
         assert_eq!(norm_to_px(0.5, 0.5, 800, 600).unwrap(), (400, 300));
         assert!(norm_to_px(1.5, 0.5, 800, 600).is_err()); // x > 1
         assert!(norm_to_px(0.5, -0.1, 800, 600).is_err()); // y < 0
+    }
+
+    /// A no-display backend is ready as soon as the listener is (nothing to sample).
+    #[test]
+    fn virtual_readiness_is_immediately_ready_with_no_display() {
+        let r = VirtualExecutor::default().readiness();
+        assert!(r.ready);
+        assert!(!r.x11_up);
+        assert_eq!(r.root_nonblack, None);
+    }
+
+    /// The lazy X11 backend must be HONEST either way: not yet connected ⇒ not ready,
+    /// nothing sampled; connected ⇒ x11_up with a real sampled answer. (Whether a
+    /// display exists depends on the test host, so assert the invariant, not one side.)
+    #[test]
+    fn lazy_x11_readiness_invariants() {
+        let lazy = LazyX11Executor::default();
+        let r = lazy.readiness();
+        if r.x11_up {
+            assert!(r.root_nonblack.is_some());
+            assert_eq!(r.ready, r.root_nonblack == Some(true));
+        } else {
+            assert!(!r.ready);
+            assert_eq!(r.root_nonblack, None);
+        }
+        // And the wrapper still advertises raw capture for the eventual backend.
+        assert!(lazy.supports_raw_capture());
     }
 
     #[test]
@@ -1232,16 +1824,16 @@ mod tests {
         assert_eq!(png.format, ImageFormat::Png);
         assert_eq!(jpeg.format, ImageFormat::Jpeg);
         assert_eq!((jpeg.w, jpeg.h), (w, h));
-        // base64 inflates both equally; comparing encoded lengths is a fair size proxy.
         assert!(
-            jpeg.data_base64.len() < png.data_base64.len(),
+            jpeg.data.len() < png.data.len(),
             "jpeg ({}) should be smaller than png ({})",
-            jpeg.data_base64.len(),
-            png.data_base64.len()
+            jpeg.data.len(),
+            png.data.len()
         );
         // JPEG bytes start with the SOI marker 0xFFD8.
-        let bytes = B64.decode(&jpeg.data_base64).unwrap();
-        assert_eq!(&bytes[..2], &[0xFF, 0xD8]);
+        assert_eq!(&jpeg.data[..2], &[0xFF, 0xD8]);
+        // The text-path base64 round-trips to the same raw bytes.
+        assert_eq!(B64.decode(jpeg.to_base64()).unwrap(), jpeg.data);
     }
 
     #[test]
@@ -1352,11 +1944,12 @@ mod tests {
             (tiles[0].x, tiles[0].y, tiles[0].w, tiles[0].h),
             (64, 64, 36, 6)
         );
-        let bytes = B64.decode(&tiles[0].data_base64).unwrap();
-        let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+        let decoder = png::Decoder::new(std::io::Cursor::new(tiles[0].data.clone()));
         let reader = decoder.read_info().unwrap();
         assert_eq!(reader.info().width, 36);
         assert_eq!(reader.info().height, 6);
+        // The text-path base64 round-trips to the same raw bytes.
+        assert_eq!(B64.decode(tiles[0].to_base64()).unwrap(), tiles[0].data);
         // JPEG tiles use the existing encoder (SOI marker).
         let jt = encode_tiles(
             &rgb,
@@ -1370,8 +1963,7 @@ mod tests {
             },
         )
         .unwrap();
-        let jbytes = B64.decode(&jt[1].data_base64).unwrap();
-        assert_eq!(&jbytes[..2], &[0xFF, 0xD8]);
+        assert_eq!(&jt[1].data[..2], &[0xFF, 0xD8]);
     }
 
     #[test]
@@ -1383,10 +1975,10 @@ mod tests {
         let full = encode_frame(&rgb, w, h, EncodeOpts::default()).unwrap();
         let tiles = encode_tiles(&rgb, w, h, &[(0, 0, 64, 64)], EncodeOpts::default()).unwrap();
         assert!(
-            tiles[0].data_base64.len() < full.data_base64.len() / 2,
+            tiles[0].data.len() < full.data.len() / 2,
             "tile ({}) should be far smaller than the full frame ({})",
-            tiles[0].data_base64.len(),
-            full.data_base64.len()
+            tiles[0].data.len(),
+            full.data.len()
         );
     }
 
@@ -1456,6 +2048,101 @@ mod tests {
             state.tick(&changed, w, h, opts).unwrap(),
             DeltaFrame::Tiles(_)
         ));
+    }
+
+    // ---- XDamage-driven capture (change-proportional pipeline, half B) ----
+
+    #[test]
+    fn rect_union_and_clamp() {
+        assert_eq!(union_rect((0, 0, 10, 10), (5, 5, 10, 10)), (0, 0, 15, 15));
+        assert_eq!(union_rect((20, 30, 4, 4), (0, 0, 2, 2)), (0, 0, 24, 34));
+        // clamp keeps the on-screen part, drops fully off-screen rects
+        assert_eq!(
+            clamp_rect((10, 10, 100, 100), 50, 40),
+            Some((10, 10, 40, 30))
+        );
+        assert_eq!(clamp_rect((0, 0, 10, 10), 50, 40), Some((0, 0, 10, 10)));
+        assert_eq!(clamp_rect((60, 0, 10, 10), 50, 40), None);
+        assert_eq!(clamp_rect((0, 40, 10, 10), 50, 40), None);
+    }
+
+    #[test]
+    fn damage_log_cursor_semantics() {
+        let mut log = DamageLog::default();
+        let c0 = log.epoch();
+        assert_eq!(log.since(c0), DamageSince::Clean, "fresh log is clean");
+
+        let c1 = log.record((10, 10, 5, 5));
+        assert_eq!(log.since(c0), DamageSince::Region((10, 10, 5, 5)));
+        assert_eq!(log.since(c1), DamageSince::Clean, "cursor at head is clean");
+
+        let c2 = log.record((30, 2, 4, 4));
+        // an older cursor sees the union of everything after it
+        assert_eq!(log.since(c0), DamageSince::Region((10, 2, 24, 13)));
+        assert_eq!(log.since(c1), DamageSince::Region((30, 2, 4, 4)));
+        assert_eq!(log.since(c2), DamageSince::Clean);
+        // a future/garbage cursor (>= epoch) reads clean, never panics
+        assert_eq!(log.since(c2 + 100), DamageSince::Clean);
+    }
+
+    #[test]
+    fn damage_log_overflow_degrades_to_full_never_misses() {
+        let mut log = DamageLog::default();
+        let stale = log.epoch();
+        for i in 0..(DAMAGE_RING_MAX as u32 + 10) {
+            log.record((i, 0, 1, 1));
+        }
+        // the stale cursor fell off the ring: the answer must be Full (capture
+        // everything), never Clean (silently miss a change)
+        assert_eq!(log.since(stale), DamageSince::Full);
+        // a recent cursor still gets a precise region
+        let recent = log.epoch();
+        log.record((7, 7, 3, 3));
+        assert_eq!(log.since(recent), DamageSince::Region((7, 7, 3, 3)));
+    }
+
+    #[test]
+    fn compose_partial_patches_the_baseline() {
+        let (w, h) = (8u16, 6u16);
+        let base = vec![1u8; w as usize * h as usize * 3];
+        let mut st = DeltaState::default();
+        assert!(
+            st.compose_partial((0, 0, 2, 2), &[9u8; 12]).is_none(),
+            "no baseline yet"
+        );
+        assert_eq!(st.baseline_dims(), None);
+        st.commit(base.clone(), w, h, true);
+        assert_eq!(st.baseline_dims(), Some((w, h)));
+
+        // patch a 2x2 region at (3, 1)
+        let pixels = vec![9u8; 2 * 2 * 3];
+        let (frame, fw, fh) = st.compose_partial((3, 1, 2, 2), &pixels).unwrap();
+        assert_eq!((fw, fh), (w, h));
+        let mut expect = base.clone();
+        for row in 1..3usize {
+            for col in 3..5usize {
+                let i = (row * w as usize + col) * 3;
+                expect[i..i + 3].copy_from_slice(&[9, 9, 9]);
+            }
+        }
+        assert_eq!(frame, expect);
+
+        // overflowing rect or wrong buffer size → None (caller falls back to full)
+        assert!(st.compose_partial((7, 5, 2, 2), &[0u8; 12]).is_none());
+        assert!(st.compose_partial((0, 0, 2, 2), &[0u8; 11]).is_none());
+    }
+
+    #[test]
+    fn damage_env_parsing() {
+        // (reads the real env var; only assert the default-off spellings)
+        for v in ["off", "0", "false", "OFF"] {
+            std::env::set_var(DAMAGE_ENV, v);
+            assert!(damage_disabled_by_env(), "{v:?} must disable damage");
+        }
+        std::env::set_var(DAMAGE_ENV, "on");
+        assert!(!damage_disabled_by_env());
+        std::env::remove_var(DAMAGE_ENV);
+        assert!(!damage_disabled_by_env(), "absent env keeps damage on");
     }
 
     #[test]

@@ -131,10 +131,36 @@ class Capabilities:
     # Image codecs the runtime can encode. Defaults to png-only: a welcome from a
     # pre-negotiation runtime omits the field, and those only ever encoded PNG.
     image_formats: list[str] = field(default_factory=lambda: ["png"])
+    # Whether the runtime can deliver image observations as binary WebSocket frames
+    # (u32 LE header_len | JSON header | raw codec payload) when the client opts in
+    # via hello.accept.binary_frames. False on welcomes from pre-binary runtimes.
+    binary_frames: bool = False
 
 
 def _to_uri(addr: str) -> str:
     return addr if addr.startswith("ws://") or addr.startswith("wss://") else f"ws://{addr}"
+
+
+def _image_bytes(obj: dict) -> bytes:
+    """Raw encoded bytes of one image/tile dict: the binary path's ``data`` verbatim
+    (already raw codec bytes), else the text path's base64 ``ref`` decoded."""
+    data = obj.get("data")
+    if data is not None:
+        return bytes(data)
+    return base64.b64decode(obj.get("ref", ""))
+
+
+def _frame_resident_bytes(item: object) -> int:
+    """Resident payload size of one queued stream frame, for the frame-budget
+    accounting: raw payload ``bytes`` on the binary path (``data``), the queued
+    base64 string on the text path (``ref``) — image plus any tiles."""
+    if not isinstance(item, dict):
+        return 0
+    img = item.get("image") or {}
+    size = len(img.get("data") or img.get("ref") or "")
+    for tile in item.get("tiles") or []:
+        size += len(tile.get("data") or tile.get("ref") or "")
+    return size
 
 
 def _target(target: Any, x: float | None, y: float | None) -> dict | None:
@@ -176,9 +202,40 @@ def _parse_welcome(welcome: dict) -> tuple[Capabilities, str]:
             observation_types=caps.get("observation_types", []),
             max_long_edge=caps.get("max_long_edge"),
             image_formats=caps.get("image_formats") or ["png"],
+            binary_frames=bool(caps.get("binary_frames", False)),
         ),
         (welcome.get("server") or {}).get("platform", "linux"),
     )
+
+
+def _parse_binary_frame(raw: bytes) -> dict:
+    """Parse one binary media frame — ``u32 LE header_len | JSON header | payload`` —
+    into the SAME message-dict shape the JSON path produces, except that the image /
+    tile payloads arrive as raw ``bytes`` under ``"data"`` instead of base64 under
+    ``"ref"``. The header is small (a few hundred bytes), so this replaces the
+    megabyte ``json.loads`` + ``b64decode`` of the text path with one JSON parse of
+    the header and one slice per payload."""
+    if len(raw) < 4:
+        raise ValueError("binary frame shorter than its 4-byte header length")
+    header_len = int.from_bytes(raw[:4], "little")
+    base = 4 + header_len
+    if base > len(raw):
+        raise ValueError(f"binary frame header_len {header_len} exceeds frame size {len(raw)}")
+    msg = json.loads(raw[4:base].decode("utf-8"))
+    payload_len = len(raw) - base
+
+    def _slice(off: int, ln: int) -> bytes:
+        if off < 0 or ln < 0 or off + ln > payload_len:
+            raise ValueError(f"payload slice ({off}, {ln}) outside payload of {payload_len}")
+        return raw[base + off : base + off + ln]
+
+    img = msg.get("image")
+    if img is not None:
+        img["data"] = _slice(img.pop("off", 0), img.pop("len", payload_len))
+    for tile in msg.get("tiles") or []:
+        tile["data"] = _slice(tile.pop("off"), tile.pop("len"))
+    msg["wire_len"] = len(raw)
+    return msg
 
 
 class AsyncSandbox:
@@ -275,7 +332,17 @@ class AsyncSandbox:
         try:
             async for raw in self._ws:
                 try:
-                    self._dispatch(json.loads(raw))
+                    # Binary media frames (negotiated via hello.accept.binary_frames)
+                    # carry raw image bytes after a small JSON header; everything else
+                    # is a JSON text message. wire_len records the on-the-wire size of
+                    # observations so bandwidth accounting can use real numbers.
+                    if isinstance(raw, bytes | bytearray):
+                        msg = _parse_binary_frame(bytes(raw))
+                    else:
+                        msg = json.loads(raw)
+                        if msg.get("type") == "observation":
+                            msg["wire_len"] = len(raw)
+                    self._dispatch(msg)
                 except Exception:
                     # one malformed frame must not kill the reader — but make it visible
                     _log.debug("dropping malformed/undispatchable frame", exc_info=True)
@@ -349,8 +416,7 @@ class AsyncSandbox:
         if item is _STREAM_END or item is _STREAM_LOST:
             return  # sentinels are never accounted and never evicted by the budget
         state = self._loop_budget_state()
-        img = (item.get("image") or {}) if isinstance(item, dict) else {}
-        size = len(img.get("ref") or "")  # resident payload: the queued base64 string
+        size = _frame_resident_bytes(item)
         self._queued_bytes.append(size)
         state["used"] += size
         state["frames"] += 1
@@ -670,12 +736,16 @@ class AsyncSandbox:
         if reply.get("type") != "observation":
             raise RuntimeError(reply.get("error", "screenshot failed"))
         img = reply.get("image") or {}
-        raw = base64.b64decode(img.get("ref", ""))
+        raw = _image_bytes(img)  # binary-path raw bytes, or text-path base64 decoded
         out = {
             "bytes": raw,
             "format": img.get("format", "png"),
             "w": img.get("w"),
             "h": img.get("h"),
+            # On-the-wire size of the observation that carried this image (binary
+            # frame or JSON text), for bandwidth accounting. None on mocked replies
+            # injected without a transport.
+            "wire_len": reply.get("wire_len"),
         }
         if out["format"] == "png":
             out["png"] = raw  # back-compat alias, only when it really is PNG
@@ -866,15 +936,16 @@ class AsyncSandbox:
                         "y": t.get("y"),
                         "w": t.get("w"),
                         "h": t.get("h"),
-                        "bytes": base64.b64decode(t.get("ref", "")),
+                        "bytes": _image_bytes(t),
                     }
                     for t in tiles
                 ],
                 "seq": item.get("seq"),
                 "stream": item.get("stream"),
+                "wire_len": item.get("wire_len"),
             }
         img = item.get("image") or {}
-        raw = base64.b64decode(img.get("ref", ""))
+        raw = _image_bytes(img)  # binary-path raw bytes, or text-path base64 decoded
         frame = {
             "bytes": raw,
             "format": img.get("format", "png"),
@@ -882,6 +953,7 @@ class AsyncSandbox:
             "h": img.get("h"),
             "seq": item.get("seq"),
             "stream": item.get("stream"),
+            "wire_len": item.get("wire_len"),
         }
         if frame["format"] == "png":
             frame["png"] = raw  # back-compat alias, only when it really is PNG
@@ -1024,8 +1096,17 @@ async def aconnect(
     artifact_root: str | None = None,
     on_ask: Callable[[str, str | None, str], bool] | None = None,
     ping_jitter: float = 0.0,
+    binary_frames: bool = True,
 ) -> AsyncSandbox:
     """Open an async session and complete the ACI handshake.
+
+    ``binary_frames`` (default on) offers binary media framing in the hello
+    (``accept.binary_frames``): a runtime that advertises ``capabilities.binary_frames``
+    then delivers image observations as binary WebSocket frames (raw codec bytes after
+    a small JSON header — no base64 inflation, no megabyte JSON parse) and the SDK
+    returns the exact same frame/screenshot dicts to callers. A pre-binary runtime
+    ignores the offer and keeps text frames, so this is always safe to leave on; pass
+    ``False`` to pin the legacy base64-in-JSON path (e.g. for A/B measurements).
 
     ``ping_jitter`` decorrelates keepalive phases across a fleet: the websockets library
     pings every 20 s *from the moment of connect*, so N sessions dialed together ping in
@@ -1039,6 +1120,8 @@ async def aconnect(
         ws_kwargs["ping_interval"] = _PING_INTERVAL + random.uniform(0.0, ping_jitter)
     ws = await _ws_connect(_to_uri(addr), **ws_kwargs)
     hello: dict = {"type": "hello", "v": 0, "client": _CLIENT}
+    if binary_frames:
+        hello["accept"] = {"binary_frames": True}
     if token:
         hello["token"] = token
     try:
@@ -1551,8 +1634,12 @@ def connect(
     on_ask: Callable[[str, str | None, str], bool] | None = None,
     loop: SharedLoop | None = None,
     ping_jitter: float = 0.0,
+    binary_frames: bool = True,
 ) -> Sandbox:
     """Connect to a running ``shinkend`` and complete the ACI handshake (blocking).
+
+    ``binary_frames`` (default on) negotiates binary media framing — see
+    :func:`aconnect`; the returned frames/screenshots keep the exact same dict shape.
 
     ``sandbox_capabilities`` overrides the session's v0 capability envelope.
     ``enforce_capabilities`` controls the local Action Gateway shim (#84/#161): when on,
@@ -1582,6 +1669,7 @@ def connect(
                 artifact_root=artifact_root,
                 on_ask=on_ask,
                 ping_jitter=ping_jitter,
+                binary_frames=binary_frames,
             )
         )
     except Exception:

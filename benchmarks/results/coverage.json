@@ -1,0 +1,224 @@
+{
+  "commit": "23eed91f81b3cd1d6e63709e026b7454cea1bce4",
+  "date": "2026-06-11",
+  "host": "darwin arm64 (Apple Silicon), rustc 1.96.0",
+  "rust": {
+    "tool": "cargo-llvm-cov 0.8.7 (LLVM source-based coverage)",
+    "command": "cargo llvm-cov --all-targets --summary-only --json (shinkend/)",
+    "tests_passed": 74,
+    "total_line_pct": 77.96,
+    "total_region_pct": 77.23,
+    "total_function_pct": 77.15,
+    "lines_covered": 1998,
+    "lines_total": 2563,
+    "per_module": {
+      "connection.rs": {
+        "line_pct": 92.49,
+        "region_pct": 92.96,
+        "function_pct": 93.02,
+        "lines_covered": 419,
+        "lines_total": 453
+      },
+      "executor.rs": {
+        "line_pct": 63.27,
+        "region_pct": 61.76,
+        "function_pct": 65.71,
+        "lines_covered": 572,
+        "lines_total": 904
+      },
+      "main.rs": {
+        "line_pct": 82.72,
+        "region_pct": 87.19,
+        "function_pct": 82.67,
+        "lines_covered": 723,
+        "lines_total": 874
+      },
+      "protocol.rs": {
+        "line_pct": 92.06,
+        "region_pct": 90.78,
+        "function_pct": 90.32,
+        "lines_covered": 197,
+        "lines_total": 214
+      },
+      "pyautogui.rs": {
+        "line_pct": 73.73,
+        "region_pct": 82.51,
+        "function_pct": 53.85,
+        "lines_covered": 87,
+        "lines_total": 118
+      }
+    },
+    "note": "Unit/contract tests only (macOS host): live X11 capture/input paths in executor.rs and pyautogui.rs run only in the Linux Xvfb/Docker CI smokes, which are not instrumented here."
+  },
+  "python": {
+    "tool": "pytest-cov 7.1.0 / coverage.py (python 3.13.9)",
+    "command": "PYTHONPATH=src python -m pytest -q --cov=shinken (sdk/python/)",
+    "tests_passed": 472,
+    "total_line_pct": 87.08,
+    "lines_covered": 2818,
+    "lines_total": 3236,
+    "per_module": {
+      "__init__.py": {
+        "line_pct": 100.0,
+        "lines_covered": 7,
+        "lines_total": 7
+      },
+      "__main__.py": {
+        "line_pct": 0.0,
+        "lines_covered": 0,
+        "lines_total": 2
+      },
+      "a11y.py": {
+        "line_pct": 66.87,
+        "lines_covered": 109,
+        "lines_total": 163
+      },
+      "adapters/__init__.py": {
+        "line_pct": 100.0,
+        "lines_covered": 5,
+        "lines_total": 5
+      },
+      "adapters/anthropic.py": {
+        "line_pct": 94.03,
+        "lines_covered": 63,
+        "lines_total": 67
+      },
+      "adapters/base.py": {
+        "line_pct": 93.94,
+        "lines_covered": 31,
+        "lines_total": 33
+      },
+      "adapters/kimi.py": {
+        "line_pct": 95.96,
+        "lines_covered": 95,
+        "lines_total": 99
+      },
+      "adapters/openai.py": {
+        "line_pct": 97.33,
+        "lines_covered": 73,
+        "lines_total": 75
+      },
+      "artifacts.py": {
+        "line_pct": 93.51,
+        "lines_covered": 72,
+        "lines_total": 77
+      },
+      "cdp.py": {
+        "line_pct": 81.1,
+        "lines_covered": 103,
+        "lines_total": 127
+      },
+      "cli.py": {
+        "line_pct": 100.0,
+        "lines_covered": 26,
+        "lines_total": 26
+      },
+      "client.py": {
+        "line_pct": 90.76,
+        "lines_covered": 648,
+        "lines_total": 714
+      },
+      "dialect.py": {
+        "line_pct": 97.89,
+        "lines_covered": 93,
+        "lines_total": 95
+      },
+      "egress.py": {
+        "line_pct": 96.55,
+        "lines_covered": 28,
+        "lines_total": 29
+      },
+      "errors.py": {
+        "line_pct": 97.56,
+        "lines_covered": 40,
+        "lines_total": 41
+      },
+      "eval.py": {
+        "line_pct": 91.34,
+        "lines_covered": 211,
+        "lines_total": 231
+      },
+      "gateway.py": {
+        "line_pct": 100.0,
+        "lines_covered": 23,
+        "lines_total": 23
+      },
+      "inject.py": {
+        "line_pct": 88.12,
+        "lines_covered": 141,
+        "lines_total": 160
+      },
+      "operator.py": {
+        "line_pct": 87.88,
+        "lines_covered": 58,
+        "lines_total": 66
+      },
+      "osworld.py": {
+        "line_pct": 89.54,
+        "lines_covered": 214,
+        "lines_total": 239
+      },
+      "osworld_eval.py": {
+        "line_pct": 81.25,
+        "lines_covered": 117,
+        "lines_total": 144
+      },
+      "protocol.py": {
+        "line_pct": 83.33,
+        "lines_covered": 15,
+        "lines_total": 18
+      },
+      "providers/__init__.py": {
+        "line_pct": 100.0,
+        "lines_covered": 30,
+        "lines_total": 30
+      },
+      "providers/base.py": {
+        "line_pct": 93.75,
+        "lines_covered": 90,
+        "lines_total": 96
+      },
+      "providers/docker.py": {
+        "line_pct": 76.17,
+        "lines_covered": 227,
+        "lines_total": 298
+      },
+      "providers/external.py": {
+        "line_pct": 100.0,
+        "lines_covered": 17,
+        "lines_total": 17
+      },
+      "runtime/__init__.py": {
+        "line_pct": 100.0,
+        "lines_covered": 26,
+        "lines_total": 26
+      },
+      "runtime/loop.py": {
+        "line_pct": 93.02,
+        "lines_covered": 40,
+        "lines_total": 43
+      },
+      "runtime/trajectory.py": {
+        "line_pct": 100.0,
+        "lines_covered": 35,
+        "lines_total": 35
+      },
+      "runtime/workloads.py": {
+        "line_pct": 100.0,
+        "lines_covered": 29,
+        "lines_total": 29
+      },
+      "scorer_proc.py": {
+        "line_pct": 65.89,
+        "lines_covered": 85,
+        "lines_total": 129
+      },
+      "smoke.py": {
+        "line_pct": 72.83,
+        "lines_covered": 67,
+        "lines_total": 92
+      }
+    },
+    "note": "Statement coverage over the mock-shinkend test suite (tests/conftest.py); Docker provider + live-sandbox branches in providers/docker.py, smoke.py and scorer subprocess internals execute only in live smokes."
+  }
+}

@@ -49,6 +49,10 @@ pub struct ScreencastSpec {
     /// Dirty-tile delta mode (B2): push only changed 64px tiles plus periodic full
     /// keyframes instead of full frames.
     pub delta: bool,
+    /// Negotiated binary media framing for this session (`hello.accept.binary_frames`):
+    /// frames go out as one WS Binary message (`u32 LE header_len | JSON header | raw
+    /// payload`) instead of base64-in-JSON text. See `protocol::binary_image_frame`.
+    pub binary: bool,
 }
 
 /// A side effect on the connection's frame stream, returned alongside a reply.
@@ -61,9 +65,28 @@ pub enum StreamCtl {
     Stop,
 }
 
+/// One outbound reply: JSON text for control messages, or a binary media frame
+/// (`u32 LE header_len | JSON header | raw payload`) on a binary-negotiated session.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Reply {
+    Text(String),
+    Binary(Vec<u8>),
+}
+
+#[cfg(test)]
+impl Reply {
+    /// Unwrap the text reply (tests only; panics on a binary one).
+    fn into_text(self) -> String {
+        match self {
+            Reply::Text(t) => t,
+            Reply::Binary(_) => panic!("expected a text reply, got a binary frame"),
+        }
+    }
+}
+
 /// What to do after handling one inbound message.
 pub struct Step {
-    pub reply: Option<String>,
+    pub reply: Option<Reply>,
     pub close: bool,
     pub stream: StreamCtl,
     /// Bounded async delay (ms) the serve loop sleeps before sending this reply — the
@@ -73,16 +96,11 @@ pub struct Step {
 
 impl Step {
     fn reply(msg: &Message) -> Self {
-        Step {
-            reply: Some(encode(msg)),
-            close: false,
-            stream: StreamCtl::None,
-            delay_ms: 0,
-        }
+        Step::text(encode(msg))
     }
     fn text(text: String) -> Self {
         Step {
-            reply: Some(text),
+            reply: Some(Reply::Text(text)),
             close: false,
             stream: StreamCtl::None,
             delay_ms: 0,
@@ -98,7 +116,7 @@ impl Step {
     }
     fn close(text: String) -> Self {
         Step {
-            reply: Some(text),
+            reply: Some(Reply::Text(text)),
             close: true,
             stream: StreamCtl::None,
             delay_ms: 0,
@@ -111,6 +129,9 @@ pub struct Session {
     authed: bool,
     token: Option<String>,
     exec: Arc<dyn Executor>,
+    /// Binary media framing negotiated by this session's `hello.accept.binary_frames`.
+    /// Off by default — an old client that never asked keeps base64-in-JSON frames.
+    binary: bool,
 }
 
 impl Session {
@@ -119,6 +140,7 @@ impl Session {
             authed: false,
             token,
             exec,
+            binary: false,
         }
     }
 
@@ -146,7 +168,9 @@ impl Session {
 
     fn on_handshake(&mut self, msg: Message) -> Step {
         match msg {
-            Message::Hello { v, token, .. } => {
+            Message::Hello {
+                v, token, accept, ..
+            } => {
                 if v != 0 {
                     return Step::close(protocol::error_result_text(
                         "?",
@@ -164,6 +188,16 @@ impl Session {
                         ));
                     }
                 }
+                // Binary media framing is strictly opt-in (#binary-frames): only a
+                // hello whose `accept.binary_frames` is exactly `true` switches this
+                // session's image observations to binary WS messages. Anything else
+                // (absent accept, other types) keeps the base64-in-JSON text frames,
+                // so a pre-binary client is never handed bytes it can't parse.
+                self.binary = accept
+                    .as_ref()
+                    .and_then(|a| a.get("binary_frames"))
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false);
                 self.authed = true;
                 Step::reply(&protocol::welcome())
             }
@@ -181,9 +215,9 @@ impl Session {
             }
             Message::Action { call_id, action } => {
                 let (reply, stream, delay_ms) =
-                    dispatch_action(&call_id, action, self.exec.as_ref());
+                    dispatch_action(&call_id, action, self.exec.as_ref(), self.binary);
                 Step {
-                    reply: Some(encode(&reply)),
+                    reply: Some(reply),
                     close: false,
                     stream,
                     delay_ms,
@@ -193,6 +227,12 @@ impl Session {
             Message::Query { call_id, q } if q == "screen_size" => {
                 let (w, h) = self.exec.screen_size();
                 Step::reply(&protocol::screen_size_result(&call_id, w, h))
+            }
+            // Guest-side readiness (S8): microseconds (sampled root pixels), so boot
+            // polls don't pull/decode full screenshots. Runs on the serve loop's
+            // blocking thread like every other executor call.
+            Message::Query { call_id, q } if q == "ready" => {
+                Step::reply(&protocol::ready_result(&call_id, self.exec.readiness()))
             }
             other => match protocol::respond(other) {
                 Some(r) => Step::reply(&r),
@@ -241,15 +281,17 @@ fn clamp_long_edge(m: Option<u32>) -> Option<u32> {
 /// Maximum a `wait` action will sleep (ms) — bounds a client from parking a connection.
 const MAX_WAIT_MS: u64 = 10_000;
 
-/// Run one `action`. `screenshot` → one-shot `observation`; `start_screencast`/
-/// `stop_screencast` → `ack` plus a [`StreamCtl`]; `wait` → `ack` plus a bounded delay
-/// (ms) the serve loop sleeps before replying; every other verb → `ack`. The third tuple
-/// element is that delay (0 for everything but `wait`).
+/// Run one `action`. `screenshot` → one-shot `observation` (a binary frame on a
+/// binary-negotiated session); `start_screencast`/`stop_screencast` → `ack` plus a
+/// [`StreamCtl`]; `wait` → `ack` plus a bounded delay (ms) the serve loop sleeps before
+/// replying; every other verb → `ack`. The third tuple element is that delay (0 for
+/// everything but `wait`).
 fn dispatch_action(
     call_id: &str,
     action: serde_json::Value,
     exec: &dyn Executor,
-) -> (Message, StreamCtl, u64) {
+    binary: bool,
+) -> (Reply, StreamCtl, u64) {
     let spec = match serde_json::from_value::<ActionSpec>(action) {
         Ok(s) => s,
         Err(e) => {
@@ -313,24 +355,40 @@ fn dispatch_action(
                 format,
                 quality,
             };
-            let msg = match exec.capture(&scope, opts) {
-                Ok(img) => Message::Observation {
+            let reply = match exec.capture(&scope, opts) {
+                // A binary-negotiated session gets the image as one WS Binary message
+                // (raw codec bytes after the JSON header — no base64, no megabyte JSON
+                // string); everyone else keeps the base64-in-JSON observation.
+                Ok(img) if binary => Reply::Binary(protocol::binary_image_frame(
+                    &format!("obs-{call_id}"),
+                    Some(call_id),
+                    None,
+                    None,
+                    protocol::BinaryImageMeta {
+                        w: img.w,
+                        h: img.h,
+                        scope: &scope,
+                        format: img.format.as_str(),
+                    },
+                    &img.data,
+                )),
+                Ok(img) => Reply::Text(encode(&Message::Observation {
                     obs_id: format!("obs-{call_id}"),
                     cause: Some(call_id.to_string()),
                     stream: None,
                     seq: None,
                     image: Some(protocol::ImageRef {
-                        data: img.data_base64,
+                        data: img.to_base64(),
                         w: img.w,
                         h: img.h,
                         scope,
                         format: img.format.as_str().to_string(),
                     }),
                     tiles: None,
-                },
+                })),
                 Err(e) => ack(call_id, false, Some(e.to_string())),
             };
-            (msg, StreamCtl::None, 0)
+            (reply, StreamCtl::None, 0)
         }
         "start_screencast" => {
             let fps = spec.fps.unwrap_or(FPS_DEFAULT).clamp(FPS_MIN, FPS_MAX);
@@ -364,6 +422,7 @@ fn dispatch_action(
                 start_seq: 0,
                 resume_stream: spec.resume_stream,
                 delta,
+                binary,
             };
             (ack(call_id, true, None), StreamCtl::Start(cast), 0)
         }
@@ -382,12 +441,12 @@ fn dispatch_action(
     }
 }
 
-fn ack(call_id: &str, ok: bool, error: Option<String>) -> Message {
-    Message::Ack {
+fn ack(call_id: &str, ok: bool, error: Option<String>) -> Reply {
+    Reply::Text(encode(&Message::Ack {
         call_id: call_id.to_string(),
         ok,
         error,
-    }
+    }))
 }
 
 #[cfg(test)]
@@ -425,9 +484,36 @@ mod tests {
         let reply = s
             .on_text(r#"{"type":"query","call_id":"c1","q":"screen_size"}"#)
             .reply
-            .unwrap();
+            .unwrap()
+            .into_text();
         // reflects the executor's geometry, not the 1280x800 stub (#138)
         assert!(reply.contains("\"w\":640") && reply.contains("\"h\":480"));
+    }
+
+    /// The `ready` query (S8) answers from the live executor's readiness probe. The
+    /// virtual backend has no display: ready immediately, x11_up=false, nothing sampled.
+    #[test]
+    fn ready_query_reports_guest_readiness() {
+        let mut s = session(None);
+        s.on_text(HELLO);
+        let reply = s
+            .on_text(r#"{"type":"query","call_id":"r1","q":"ready"}"#)
+            .reply
+            .unwrap()
+            .into_text();
+        let v: serde_json::Value = serde_json::from_str(&reply).unwrap();
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["value"]["ready"], true);
+        assert_eq!(v["value"]["x11_up"], false);
+        assert!(v["value"]["root_nonblack"].is_null());
+    }
+
+    /// `ready`, like every query, must not be answerable before the handshake.
+    #[test]
+    fn ready_query_requires_auth() {
+        let mut s = session(Some("secret"));
+        let step = s.on_text(r#"{"type":"query","call_id":"r1","q":"ready"}"#);
+        assert!(step.close && !s.is_authenticated());
     }
 
     #[test]
@@ -443,7 +529,11 @@ mod tests {
         let mut s = session(None);
         let step = s.on_text(HELLO);
         assert!(!step.close && s.is_authenticated());
-        assert!(step.reply.unwrap().contains("\"type\":\"welcome\""));
+        assert!(step
+            .reply
+            .unwrap()
+            .into_text()
+            .contains("\"type\":\"welcome\""));
     }
 
     #[test]
@@ -510,7 +600,7 @@ mod tests {
         let step = s.on_text(
             r#"{"type":"action","call_id":"c1","action":{"verb":"screenshot","scope":"bogus"}}"#,
         );
-        let reply = step.reply.unwrap();
+        let reply = step.reply.unwrap().into_text();
         assert!(reply.contains("\"ok\":false") && reply.contains("invalid capture scope"));
     }
 
@@ -522,18 +612,26 @@ mod tests {
         let step = s.on_text(
             r#"{"type":"action","call_id":"c1","action":{"verb":"screenshot","format":"webp"}}"#,
         );
-        assert!(step.reply.unwrap().contains("unsupported image format"));
+        assert!(step
+            .reply
+            .unwrap()
+            .into_text()
+            .contains("unsupported image format"));
         // Out-of-range quality is REJECTED (schema: 1–100), not clamped.
         let step = s.on_text(
             r#"{"type":"action","call_id":"c2","action":{"verb":"screenshot","format":"jpeg","quality":0}}"#,
         );
-        assert!(step.reply.unwrap().contains("quality out of range"));
+        assert!(step
+            .reply
+            .unwrap()
+            .into_text()
+            .contains("quality out of range"));
         // An invalid format on a NON-capture verb must not nack it: the stop (and its
         // StreamCtl) still happens — same gating as the scope check.
         let step = s.on_text(
             r#"{"type":"action","call_id":"c3","action":{"verb":"stop_screencast","format":"webp"}}"#,
         );
-        assert!(step.reply.unwrap().contains("\"ok\":true"));
+        assert!(step.reply.unwrap().into_text().contains("\"ok\":true"));
         assert!(matches!(step.stream, StreamCtl::Stop));
     }
 
@@ -544,7 +642,7 @@ mod tests {
         let step =
             s.on_text(r#"{"type":"action","call_id":"c1","action":{"verb":"wait","ms":500}}"#);
         assert_eq!(step.delay_ms, 500); // serve loop sleeps this before the ack (#140)
-        assert!(step.reply.unwrap().contains("\"ok\":true"));
+        assert!(step.reply.unwrap().into_text().contains("\"ok\":true"));
         // an absurd wait is clamped to MAX_WAIT_MS, not honored verbatim
         let big =
             s.on_text(r#"{"type":"action","call_id":"c2","action":{"verb":"wait","ms":99999999}}"#);
@@ -559,7 +657,11 @@ mod tests {
         let step = s.on_text(
             r#"{"type":"action","call_id":"c2","action":{"verb":"screenshot","scope":"window:0x1a"}}"#,
         );
-        assert!(!step.reply.unwrap().contains("invalid capture scope"));
+        assert!(!step
+            .reply
+            .unwrap()
+            .into_text()
+            .contains("invalid capture scope"));
     }
 
     #[test]
@@ -567,7 +669,11 @@ mod tests {
         let mut s = session(None);
         let step = s.on_text(r#"{"type":"hello","v":1,"client":{"name":"t","version":"0"}}"#);
         assert!(step.close && !s.is_authenticated());
-        assert!(step.reply.unwrap().contains("unsupported ACI version"));
+        assert!(step
+            .reply
+            .unwrap()
+            .into_text()
+            .contains("unsupported ACI version"));
     }
 
     #[test]
@@ -577,7 +683,7 @@ mod tests {
         let step = s.on_text(
             r#"{"type":"action","call_id":"c1","action":{"verb":"click","target":{"kind":"point_px","x":1,"y":2}}}"#,
         );
-        assert!(step.reply.unwrap().contains("\"type\":\"ack\""));
+        assert!(step.reply.unwrap().into_text().contains("\"type\":\"ack\""));
     }
 
     #[test]
@@ -586,7 +692,11 @@ mod tests {
         s.on_text(HELLO);
         let step = s.on_text(HELLO);
         assert!(!step.close);
-        assert!(step.reply.unwrap().contains("already authenticated"));
+        assert!(step
+            .reply
+            .unwrap()
+            .into_text()
+            .contains("already authenticated"));
     }
 
     #[test]
@@ -596,7 +706,7 @@ mod tests {
         let step = s.on_text(
             r#"{"type":"action","call_id":"sc1","action":{"verb":"start_screencast","fps":12,"max_long_edge":640,"scope":"active_window"}}"#,
         );
-        assert!(step.reply.unwrap().contains("\"type\":\"ack\""));
+        assert!(step.reply.unwrap().into_text().contains("\"type\":\"ack\""));
         match step.stream {
             StreamCtl::Start(spec) => {
                 assert_eq!(spec.stream_id, "sc1");
@@ -636,7 +746,7 @@ mod tests {
         let step = s.on_text(
             r#"{"type":"action","call_id":"sc1","action":{"verb":"start_screencast","delta":true}}"#,
         );
-        assert!(step.reply.unwrap().contains("\"ok\":true"));
+        assert!(step.reply.unwrap().into_text().contains("\"ok\":true"));
         match step.stream {
             StreamCtl::Start(spec) => assert!(spec.delta),
             other => panic!("expected Start, got {other:?}"),
@@ -659,7 +769,7 @@ mod tests {
         let step = s.on_text(
             r#"{"type":"action","call_id":"sc1","action":{"verb":"start_screencast","delta":true}}"#,
         );
-        let reply = step.reply.unwrap();
+        let reply = step.reply.unwrap().into_text();
         assert!(reply.contains("\"ok\":false") && reply.contains("delta screencast not supported"));
         assert_eq!(step.stream, StreamCtl::None);
     }
@@ -683,7 +793,7 @@ mod tests {
         s.on_text(HELLO);
         let step =
             s.on_text(r#"{"type":"action","call_id":"sc2","action":{"verb":"stop_screencast"}}"#);
-        assert!(step.reply.unwrap().contains("\"ok\":true"));
+        assert!(step.reply.unwrap().into_text().contains("\"ok\":true"));
         assert_eq!(step.stream, StreamCtl::Stop);
     }
 }

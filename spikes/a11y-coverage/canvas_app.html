@@ -1,0 +1,126 @@
+<!doctype html>
+<!-- Canvas-UI sample for the Shinken a11y-coverage spike (#2 / E5).
+
+     The ENTIRE interactive UI here is drawn into one <canvas> with the 2D context:
+     two text fields, a checkbox, two buttons, and a click counter, with click
+     regions hit-tested in JS. Nothing is DOM- or ARIA-backed, on purpose — this is
+     the honest "canvas app" shape (games, design tools, Flutter-web/CanvasKit
+     default, custom editors) whose structured-observation coverage the spike
+     measures. Self-contained: no network, no external assets.
+
+     The spike loads it kiosk-fullscreen, so page coordinates == screen coordinates
+     and run.sh can click the drawn "Sign in" button at a known position. Any click
+     repaints (counter increments), guaranteeing a pixel-level change the structured
+     tree cannot see. -->
+<html>
+<head>
+<meta charset="utf-8">
+<title>Canvas UI</title>
+<style>html,body{margin:0;height:100%;overflow:hidden}canvas{display:block}</style>
+</head>
+<body>
+<canvas id="app"></canvas>
+<script>
+"use strict";
+const cv = document.getElementById("app");
+const cx = cv.getContext("2d");
+const state = { user: "", pass: "", remember: false, clicks: 0, focus: null, status: "" };
+
+// Fixed layout, CSS px (== screen px in the spike's kiosk window).
+// 5 interactive, canvas-drawn controls: user, pass, remember, signin, clear.
+const R = {
+  user:     [40, 130, 360, 40],
+  pass:     [40, 210, 360, 40],
+  remember: [40, 274, 22, 22],
+  signin:   [40, 330, 160, 56],   // click target for the blind-spot probe: (120, 358)
+  clear:    [220, 330, 160, 56],
+};
+
+function field(r, text, key) {
+  cx.fillStyle = "#ffffff";
+  cx.fillRect(...r);
+  cx.lineWidth = state.focus === key ? 2 : 1;
+  cx.strokeStyle = state.focus === key ? "#2f6fed" : "#9aa6b2";
+  cx.strokeRect(...r);
+  cx.fillStyle = "#1b2733";
+  cx.font = "15px sans-serif";
+  cx.fillText(text, r[0] + 10, r[1] + 26);
+}
+
+function button(r, label, bg, fg) {
+  cx.fillStyle = bg;
+  cx.fillRect(...r);
+  cx.fillStyle = fg;
+  cx.font = "bold 16px sans-serif";
+  cx.fillText(label, r[0] + (r[2] - cx.measureText(label).width) / 2, r[1] + 35);
+}
+
+function draw() {
+  cv.width = window.innerWidth;
+  cv.height = window.innerHeight;
+  cx.fillStyle = "#f4f6f8";
+  cx.fillRect(0, 0, cv.width, cv.height);
+  cx.fillStyle = "#1b2733";
+  cx.font = "bold 28px sans-serif";
+  cx.fillText("Canvas Account", 40, 70);
+  cx.font = "14px sans-serif";
+  cx.fillText("Username", 40, 120);
+  field(R.user, state.user, "user");
+  cx.fillStyle = "#1b2733";
+  cx.font = "14px sans-serif";
+  cx.fillText("Password", 40, 200);
+  field(R.pass, "*".repeat(state.pass.length), "pass");
+  cx.fillStyle = "#ffffff";
+  cx.fillRect(...R.remember);
+  cx.strokeStyle = "#9aa6b2";
+  cx.lineWidth = 1;
+  cx.strokeRect(...R.remember);
+  if (state.remember) {
+    cx.strokeStyle = "#2f6fed";
+    cx.lineWidth = 3;
+    cx.beginPath();
+    cx.moveTo(R.remember[0] + 4, R.remember[1] + 11);
+    cx.lineTo(R.remember[0] + 9, R.remember[1] + 17);
+    cx.lineTo(R.remember[0] + 18, R.remember[1] + 5);
+    cx.stroke();
+  }
+  cx.fillStyle = "#1b2733";
+  cx.font = "14px sans-serif";
+  cx.fillText("Remember me", 72, 291);
+  button(R.signin, "Sign in", "#2f6fed", "#ffffff");
+  button(R.clear, "Clear", "#dfe5ec", "#1b2733");
+  cx.fillStyle = "#5b6770";
+  cx.font = "13px sans-serif";
+  cx.fillText(
+    "clicks: " + state.clicks + "   remember: " + (state.remember ? "on" : "off") +
+      (state.status ? "   " + state.status : ""),
+    40, 430);
+}
+
+function hit(r, x, y) {
+  return x >= r[0] && x <= r[0] + r[2] && y >= r[1] && y <= r[1] + r[3];
+}
+
+cv.addEventListener("mousedown", (ev) => {
+  const x = ev.offsetX, y = ev.offsetY;
+  state.clicks += 1;             // every click repaints -> pixels change
+  state.focus = null;
+  if (hit(R.user, x, y)) state.focus = "user";
+  else if (hit(R.pass, x, y)) state.focus = "pass";
+  else if (hit(R.remember, x, y)) state.remember = !state.remember;
+  else if (hit(R.signin, x, y)) state.status = "signed in as '" + state.user + "'";
+  else if (hit(R.clear, x, y)) { state.user = ""; state.pass = ""; state.remember = false; state.status = ""; }
+  draw();
+});
+
+window.addEventListener("keydown", (ev) => {
+  if (!state.focus || ev.key.length !== 1) return;
+  state[state.focus === "user" ? "user" : "pass"] += ev.key;
+  draw();
+});
+
+window.addEventListener("resize", draw);
+draw();
+</script>
+</body>
+</html>

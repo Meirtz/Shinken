@@ -18,14 +18,23 @@ Run:  python benchmarks/bench_fanout.py
 
 from __future__ import annotations
 
-import base64
 import concurrent.futures
 import os
 import subprocess
 import sys
 import threading
 
-from _common import GEOMETRY, IMAGE, PALETTE, new_axes, now_ms, save_plot, summarize, write_result
+from _common import (
+    image_bytes,
+    GEOMETRY,
+    IMAGE,
+    PALETTE,
+    new_axes,
+    now_ms,
+    save_plot,
+    summarize,
+    write_result,
+)
 
 NS = [int(n) for n in os.environ.get("SHINKEN_BENCH_NS", "1,2,4,8,16,32,64").split(",")]
 ROUNDS = 10
@@ -46,7 +55,7 @@ def _observe(env) -> tuple[float, int]:
     t0 = now_ms()
     reply = env.act("screenshot", format="jpeg", quality=80, max_long_edge=1024)
     ms = now_ms() - t0
-    raw = base64.b64decode((reply.get("image") or {}).get("ref", ""))
+    raw = image_bytes(reply)
     return ms, len(raw)
 
 
@@ -64,12 +73,23 @@ def run() -> dict:
         loop = shinken.SharedLoop()
         try:
             t0 = now_ms()
-            with concurrent.futures.ThreadPoolExecutor(max_workers=BOOT_WORKERS) as pool:
-                handles = list(
-                    pool.map(
-                        lambda _i: provider.create(SandboxSpec(screen_geometry=GEOMETRY)), range(n)
-                    )
-                )
+
+            def _boot_one(_i):
+                # Per-slot tolerance: a boot that exhausts the provider's own flake
+                # retries drops THIS replica instead of killing the whole tier
+                # (recorded as boot_infra_failures, mirroring bench_fork).
+                try:
+                    return provider.create(SandboxSpec(screen_geometry=GEOMETRY))
+                except Exception as exc:
+                    print(f"n={n}: boot slot {_i} infra_failure: {exc}", flush=True)
+                    return None
+
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=BOOT_WORKERS
+            ) as pool:
+                booted = list(pool.map(_boot_one, range(n)))
+            handles = [h for h in booted if h is not None]
+            boot_failures = n - len(handles)
             boot_wall_ms = now_ms() - t0
 
             t0 = now_ms()
@@ -109,14 +129,20 @@ def run() -> dict:
             tiers.append(
                 {
                     "n": n,
+                    "materialized": len(handles),
+                    "boot_infra_failures": boot_failures,
                     "boot_wall_ms": round(boot_wall_ms, 1),
                     "connect_wall_ms": round(connect_wall_ms, 1),
                     "proc_rss_mib": _proc_rss_mib(),
                     "threads": threading.active_count(),
                     "loop_threads": 1,  # SharedLoop: all N sessions on one loop thread
-                    "guest_rss_total_mib": round(sum(guest_rss) / 2**20, 1) if guest_rss else None,
+                    "guest_rss_total_mib": round(sum(guest_rss) / 2**20, 1)
+                    if guest_rss
+                    else None,
                     "guest_rss_per_sandbox_mib": (
-                        round(sum(guest_rss) / len(guest_rss) / 2**20, 1) if guest_rss else None
+                        round(sum(guest_rss) / len(guest_rss) / 2**20, 1)
+                        if guest_rss
+                        else None
                     ),
                 }
             )
@@ -132,7 +158,9 @@ def run() -> dict:
                 except Exception:
                     pass
             loop.close()
-            with concurrent.futures.ThreadPoolExecutor(max_workers=BOOT_WORKERS) as pool:
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=BOOT_WORKERS
+            ) as pool:
                 list(pool.map(provider.destroy, handles))
     return {
         "ns": NS,
@@ -162,15 +190,25 @@ def plot(payload: dict) -> None:
     p50 = [pct(per_n[n], 0.50) for n in ns]
     p90 = [pct(per_n[n], 0.90) for n in ns]
     wall = [
-        summarize([r["observe_wall_ms"] for r in d["rounds"] if r["n"] == n]).get("p50", 0.0)
+        summarize([r["observe_wall_ms"] for r in d["rounds"] if r["n"] == n]).get(
+            "p50", 0.0
+        )
         for n in ns
     ]
     click = [
-        summarize([r["click_wall_ms"] for r in d["rounds"] if r["n"] == n]).get("p50", 0.0)
+        summarize([r["click_wall_ms"] for r in d["rounds"] if r["n"] == n]).get(
+            "p50", 0.0
+        )
         for n in ns
     ]
     ax1.fill_between(
-        ns, p10, p90, color=PALETTE["async"], alpha=0.15, lw=0, label="per-sandbox observe p10–p90"
+        ns,
+        p10,
+        p90,
+        color=PALETTE["async"],
+        alpha=0.15,
+        lw=0,
+        label="per-sandbox observe p10–p90",
     )
     ax1.plot(ns, p50, "^--", color=PALETTE["async"], label="per-sandbox observe p50")
     ax1.plot(ns, wall, "o-", color=PALETTE["shared"], label="observe round wall p50")
@@ -238,11 +276,15 @@ def main() -> int:
     payload["summary"] = [
         {
             "n": n,
-            "observe_ms": summarize([o["ms"] for o in d["observations"] if o["n"] == n]),
+            "observe_ms": summarize(
+                [o["ms"] for o in d["observations"] if o["n"] == n]
+            ),
             "observe_wall_ms": summarize(
                 [r["observe_wall_ms"] for r in d["rounds"] if r["n"] == n]
             ),
-            "click_wall_ms": summarize([r["click_wall_ms"] for r in d["rounds"] if r["n"] == n]),
+            "click_wall_ms": summarize(
+                [r["click_wall_ms"] for r in d["rounds"] if r["n"] == n]
+            ),
             **{
                 k: t[k]
                 for t in d["tiers"]

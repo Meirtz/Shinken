@@ -26,6 +26,7 @@ import platform
 import statistics
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -72,7 +73,9 @@ def env_meta() -> dict[str, Any]:
     leaking anything host-private beyond hardware model and tool versions."""
     meta: dict[str, Any] = {
         "generated_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "git_commit": _cmd(["git", "-C", str(REPO_ROOT), "rev-parse", "--short", "HEAD"]),
+        "git_commit": _cmd(
+            ["git", "-C", str(REPO_ROOT), "rev-parse", "--short", "HEAD"]
+        ),
         "python": platform.python_version(),
         "host_os": f"{platform.system()} {platform.release()}",
         "host_arch": platform.machine(),
@@ -86,7 +89,16 @@ def env_meta() -> dict[str, Any]:
         ver = _cmd(["sw_vers", "-productVersion"])
         if ver:
             meta["host_os"] = f"macOS {ver}"
-    meta["docker_server"] = _cmd(["docker", "version", "--format", "{{.Server.Version}}"])
+    meta["docker_server"] = _cmd(
+        ["docker", "version", "--format", "{{.Server.Version}}"]
+    )
+    # Honesty marker: any non-suite containers running on the same daemon when the suite
+    # finished. Byte numbers are robust to host contention; latency numbers less so.
+    meta["concurrent_containers"] = [
+        n
+        for n in _cmd(["docker", "ps", "--format", "{{.Names}}"]).splitlines()
+        if n and not n.startswith("shinken-bench")
+    ]
     meta["image"] = IMAGE
     meta["image_arch"] = _cmd(
         ["docker", "image", "inspect", IMAGE, "--format", "{{.Os}}/{{.Architecture}}"]
@@ -107,10 +119,26 @@ def boot(image: str = IMAGE, geometry: str = GEOMETRY):
     return provider, handle, env
 
 
-def fill_xterm(env, lines: int = 40) -> None:
+def fill_xterm(env, lines: int = 40, settle_timeout: float = 15.0) -> None:
     """Put realistic text content on the desktop: focus the xterm the image boots
     (80x24 at +20+20) and fill it, so codec benchmarks see a real UI frame rather
-    than a near-empty desktop."""
+    than a near-empty desktop.
+
+    The guest-side ready signal fires when the root is painted (S8), which can be
+    a few hundred ms BEFORE the xterm maps — so first probe the desktop: click +
+    keystroke, and require the frame to change before trusting the xterm with the
+    real fill command (otherwise the content scenario would silently be empty)."""
+    deadline = time.time() + settle_timeout
+    last = env.screenshot()["png"]
+    while time.time() < deadline:
+        env.click(x=120, y=120)
+        env.type_text("true")
+        env.key("Return")
+        time.sleep(0.3)
+        cur = env.screenshot()["png"]
+        if cur != last:  # the probe (or the xterm mapping) painted — it is live
+            break
+        last = cur
     env.click(x=120, y=120)
     cmd = (
         f"for i in $(seq 1 {lines}); do "
@@ -120,6 +148,117 @@ def fill_xterm(env, lines: int = 40) -> None:
     env.type_text(cmd)
     env.key("Return")
     time.sleep(1.5)  # let the shell paint
+
+
+def _value_noise(rng, w: int, h: int, cells: int):
+    """One octave of smooth value noise: a seeded random lattice, bilinearly
+    interpolated (with smoothstep easing) up to w x h."""
+    import numpy as np
+
+    lat = rng.random((cells + 1, cells + 1))
+    gy = np.linspace(0, cells, h, endpoint=False)
+    gx = np.linspace(0, cells, w, endpoint=False)
+    y0 = np.floor(gy).astype(int)
+    x0 = np.floor(gx).astype(int)
+    ty = gy - y0
+    tx = gx - x0
+    ty = (ty * ty * (3 - 2 * ty))[:, None]  # smoothstep
+    tx = (tx * tx * (3 - 2 * tx))[None, :]
+    a = lat[np.ix_(y0, x0)]
+    b = lat[np.ix_(y0, x0 + 1)]
+    c = lat[np.ix_(y0 + 1, x0)]
+    d = lat[np.ix_(y0 + 1, x0 + 1)]
+    return a * (1 - tx) * (1 - ty) + b * tx * (1 - ty) + c * (1 - tx) * ty + d * tx * ty
+
+
+def synth_photo_ppm(w: int, h: int, seed: int = 42) -> bytes:
+    """A deterministic, procedurally generated frame with NATURAL-IMAGE statistics
+    (the photographic operating point the xterm scenarios cannot reach), as binary
+    PPM (P6): multi-octave value noise (Perlin-style fBm) drives both luminance and
+    a slowly varying hue field, broad sinusoidal gradients add large-scale structure,
+    and Gaussian grain emulates sensor noise. Everything derives from the fixed seed,
+    so the frame is byte-identical across runs — fully reproducible with no binary
+    asset (and no photo licensing) in the repo. At 1280x800 the frame PNG-encodes to
+    ~2 MiB while JPEG q80 lands near 110 KiB — the same compression class as a real
+    content-rich desktop (see docs/engineering/streaming-bandwidth.md B1). numpy is
+    already a host dependency (matplotlib requires it)."""
+    import numpy as np
+
+    rng = np.random.default_rng(seed)
+    fbm = np.zeros((h, w))
+    total = 0.0
+    for cells, amp in [
+        (3, 1.0),
+        (6, 0.5),
+        (12, 0.25),
+        (24, 0.125),
+        (48, 0.0625),
+        (96, 0.03125),
+    ]:
+        fbm += amp * _value_noise(rng, w, h, cells)
+        total += amp
+    fbm /= total
+    hue = (_value_noise(rng, w, h, 4) + 0.4 * _value_noise(rng, w, h, 16)) / 1.4
+    yy = np.linspace(0, 1, h)[:, None]
+    xx = np.linspace(0, 1, w)[None, :]
+    lum = (
+        70
+        + 130 * fbm
+        + 35 * np.sin(2.2 * np.pi * yy + 1.0)
+        + 20 * np.sin(1.7 * np.pi * xx)
+    )
+    sat = 60 * (0.4 + 0.6 * fbm)
+    img = np.stack(
+        [lum + sat * np.sin(2 * np.pi * hue + phase) for phase in (0.0, 2.1, 4.2)],
+        axis=-1,
+    )
+    img += rng.normal(0.0, 6.0, img.shape)  # sensor-like grain
+    pixels = np.clip(img, 0, 255).astype(np.uint8)
+    return b"P6\n%d %d\n255\n" % (w, h) + pixels.tobytes()
+
+
+# A 1280x800 frame of photographic content PNG-encodes to ~2 MiB; the sparse default
+# desktop is ~65 KiB. Anything above this threshold proves the photo is actually painted.
+PHOTO_MIN_PNG_BYTES = 800 * 1024
+
+
+def show_photo(env, timeout_s: float = 30.0) -> int:
+    """Paint the deterministic photographic frame across the WHOLE screen: generate it
+    host-side (synth_photo_ppm), ``put_file`` it into the guest, then drive the booted
+    xterm to ``xloadimage -onroot`` it onto the root window and unmap the xterm itself,
+    leaving 100% photographic pixels. Verifies the paint actually happened by polling a
+    native PNG screenshot until its size is in the natural-image class (>
+    PHOTO_MIN_PNG_BYTES) — never trusts the keystrokes blindly. Returns the verified
+    PNG byte size."""
+    w, h = (int(v) for v in GEOMETRY.split("x")[:2])
+    fd, tmp = tempfile.mkstemp(suffix=".ppm")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(synth_photo_ppm(w, h))
+        # mkstemp creates 0600 and `docker cp` preserves mode + maps ownership to root;
+        # the guest desktop runs as user `shinken`, so make the file world-readable.
+        os.chmod(tmp, 0o644)
+        env.put_file(tmp, "/tmp/photo.ppm")
+    finally:
+        os.unlink(tmp)
+    env.click(x=120, y=120)  # focus the xterm the image boots (80x24 at +20+20)
+    env.type_text(
+        "xloadimage -onroot -quiet /tmp/photo.ppm && xdotool getactivewindow windowunmap"
+    )
+    env.key("Return")
+    deadline = time.time() + timeout_s
+    last = 0
+    while time.time() < deadline:
+        reply = env.act("screenshot", scope="screen")
+        last = len(image_bytes(reply))
+        if last > PHOTO_MIN_PNG_BYTES:
+            return last
+        time.sleep(0.5)
+    raise RuntimeError(
+        f"photo scenario never painted: native PNG stayed at {last} bytes "
+        f"(< {PHOTO_MIN_PNG_BYTES}) after {timeout_s}s — is xloadimage in the image? "
+        "(rebuild shinken/sandbox-linux from this checkout)"
+    )
 
 
 def summarize(values: list[float]) -> dict[str, float]:
@@ -185,7 +324,9 @@ def style() -> None:
     )
 
 
-def new_axes(ncols: int = 1, *, height: float = 4.2, width: float = 6.4, nrows: int = 1):
+def new_axes(
+    ncols: int = 1, *, height: float = 4.2, width: float = 6.4, nrows: int = 1
+):
     """Consistent matplotlib axes for every suite figure."""
     style()
     import matplotlib.pyplot as plt
@@ -203,6 +344,20 @@ def save_plot(fig, suite: str) -> Path:
     fig.savefig(out, bbox_inches="tight")
     print(f"wrote {out.relative_to(REPO_ROOT)}")
     return out
+
+
+def image_bytes(reply_or_image: dict) -> bytes:
+    """Raw encoded bytes of an observation's image, on EITHER wire surface: the
+    binary path carries raw bytes (``data``/``bytes``), the text path a base64
+    ``ref``. Accepts the full observation reply or the image dict itself."""
+    import base64 as _b64
+
+    img = reply_or_image.get("image") or reply_or_image
+    for key in ("data", "bytes"):
+        raw = img.get(key)
+        if raw is not None:
+            return bytes(raw)
+    return _b64.b64decode(img.get("ref", ""))
 
 
 def now_ms() -> float:

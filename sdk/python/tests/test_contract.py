@@ -38,6 +38,9 @@ def _act(verb, **kw):
         _act("start_screencast", fps=10, delta=True),
         _act("start_screencast", fps=10, delta=False),
         _act("stop_screencast"),
+        # guest-side readiness query (S8): the cheap boot-time poll
+        {"type": "query", "call_id": "q1", "q": "ready"},
+        {"type": "query", "call_id": "q1", "q": "platform"},
         _act("screenshot", scope="active_window"),
         _act("screenshot", scope="window:0x1f"),
         _act("screenshot", format="jpeg", quality=50),
@@ -91,6 +94,8 @@ def test_aci_wire_vocab_validates(msg):
     "msg",
     [
         _act("teleport"),
+        # the query vocabulary is a closed enum — drift fails loudly
+        {"type": "query", "call_id": "q1", "q": "healthz"},
         _act("screenshot", scope="window:bad"),
         _act("start_screencast", resume_stream=7),  # must be a stream id string
         # codec contract: enum is exactly png|jpeg; quality bounded 1-100 (the runtime
@@ -154,6 +159,123 @@ def test_aci_wire_vocab_validates(msg):
 def test_aci_invalid_rejected(msg):
     with pytest.raises(jsonschema.ValidationError):
         protocol.validate(msg)
+
+
+# --- binary media framing contract ---
+# The binary frame's JSON header is a $def (NOT a top-level text message): validate
+# header instances against $defs.BinaryFrameHeader directly, so the Rust emitter and
+# the SDK parser share one published shape.
+
+
+def _validate_binary_header(header):
+    schema = dict(protocol.aci_schema())
+    jsonschema.validate(header, {"$ref": "#/$defs/BinaryFrameHeader", "$defs": schema["$defs"]})
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        # one-shot screenshot: cause, image with off/len
+        {
+            "type": "observation",
+            "obs_id": "obs-c1",
+            "cause": "c1",
+            "image": {"off": 0, "len": 1234, "w": 8, "h": 8, "scope": "screen", "format": "jpeg"},
+        },
+        # stream keyframe
+        {
+            "type": "observation",
+            "obs_id": "s-0",
+            "stream": "s",
+            "seq": 0,
+            "image": {"off": 0, "len": 9, "w": 8, "h": 8},
+        },
+        # dirty-tile frame: contiguous off/len per tile
+        {
+            "type": "observation",
+            "obs_id": "s-1",
+            "stream": "s",
+            "seq": 1,
+            "tiles": [
+                {"x": 0, "y": 0, "w": 64, "h": 64, "off": 0, "len": 900},
+                {"x": 64, "y": 64, "w": 36, "h": 6, "off": 900, "len": 120},
+            ],
+        },
+    ],
+)
+def test_binary_frame_header_validates(header):
+    _validate_binary_header(header)
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        # a base64 ref does not belong in a binary header
+        {
+            "type": "observation",
+            "obs_id": "o",
+            "stream": "s",
+            "seq": 0,
+            "image": {"ref": "x", "w": 8, "h": 8},
+        },
+        # a binary tile requires off/len, admits nothing else
+        {
+            "type": "observation",
+            "obs_id": "o",
+            "stream": "s",
+            "seq": 0,
+            "tiles": [{"x": 0, "y": 0, "w": 64, "h": 64}],
+        },
+        # tiles INSTEAD of image — never both
+        {
+            "type": "observation",
+            "obs_id": "o",
+            "stream": "s",
+            "seq": 0,
+            "image": {"off": 0, "len": 1, "w": 8, "h": 8},
+            "tiles": [{"x": 0, "y": 0, "w": 64, "h": 64, "off": 0, "len": 1}],
+        },
+        # a stream frame still requires seq
+        {
+            "type": "observation",
+            "obs_id": "o",
+            "stream": "s",
+            "image": {"off": 0, "len": 1, "w": 8, "h": 8},
+        },
+    ],
+)
+def test_binary_frame_header_invalid_rejected(header):
+    with pytest.raises(jsonschema.ValidationError):
+        _validate_binary_header(header)
+
+
+def test_binary_negotiation_fields_validate():
+    # hello offering binary framing
+    protocol.validate(
+        {
+            "type": "hello",
+            "v": 0,
+            "client": {"name": "x", "version": "0"},
+            "accept": {"binary_frames": True},
+        }
+    )
+    # welcome advertising it
+    protocol.validate(
+        {
+            "type": "welcome",
+            "v": 0,
+            "server": {"name": "shinkend", "version": "0", "platform": "linux"},
+            "capabilities": {
+                "schema_version": 0,
+                "verbs": ["click"],
+                "targets": ["point_px"],
+                "observation_types": ["screenshot"],
+                "max_long_edge": 2576,
+                "image_formats": ["png", "jpeg"],
+                "binary_frames": True,
+            },
+        }
+    )
 
 
 # --- verifier receipt contract ---

@@ -1,6 +1,6 @@
 {
-  "_about": "First-party a11y-coverage + tree-diff evidence for Shinken spike #2 (E5). Reproduce: bash spikes/a11y-coverage/run.sh",
-  "image": "shinken/sandbox-a11y (FROM shinken/sandbox-linux + chromium + gnome-text-editor + qtbase5-examples)",
+  "_about": "First-party a11y-coverage + tree-diff evidence for Shinken spike #2 (E5), including the canvas and Electron rows. Reproduce: bash spikes/a11y-coverage/run.sh",
+  "image": "shinken/sandbox-a11y (FROM shinken/sandbox-linux + chromium + gnome-text-editor + qtbase5-examples + npm-installed Electron)",
   "atspi_coverage": {
     "per_app": {
       "zenity": {
@@ -237,5 +237,231 @@
       "unchanged": 103
     },
     "screenshot_png_bytes": 76517
+  },
+  "atspi_desktop_apps": {
+    "_what": "application names on the AT-SPI bus after all surfaces are up (who registers at all; xterm never does)",
+    "apps": [
+      "calculator",
+      "zenity",
+      "Chromium",
+      "gnome-text-editor",
+      "Chromium",
+      "electron"
+    ]
+  },
+  "canvas": {
+    "_how": "self-contained canvas_app.html \u2014 5 interactive controls (2 text fields, checkbox, 2 buttons) drawn entirely inside one <canvas> via the 2D context, click regions hit-tested in JS, no DOM/ARIA fallback \u2014 loaded in chromium --kiosk --remote-debugging-port=9223",
+    "cdp": {
+      "source": "cdp",
+      "available": true,
+      "node_count": 2,
+      "coverage": {
+        "nodes": 2,
+        "named": 1,
+        "pct_named": 0.5,
+        "roled": 2,
+        "pct_roled": 1.0,
+        "with_bbox": 2,
+        "pct_bbox": 1.0,
+        "actionable": 0,
+        "pct_actionable": 0.0,
+        "addressable": 0,
+        "pct_addressable": 0.0,
+        "max_depth": 2
+      },
+      "sample_elements": [
+        {
+          "ref": "e0",
+          "role": "RootWebArea",
+          "name": "Canvas UI",
+          "bbox": [
+            0,
+            0,
+            1280,
+            800
+          ],
+          "provenance": {
+            "ax_node_id": "1",
+            "backend_dom_node_id": 1
+          }
+        }
+      ],
+      "_note": "node_count=2 is the whole tree: the RootWebArea plus one UNNAMED 'Canvas' element (bbox 0,0,1280,800) \u2014 none of the 5 interactive controls drawn inside the canvas exist in any structured form. cdp_smoke's sample filter (named + bbox) keeps only the root."
+    },
+    "blind_spot": {
+      "drawn_interactive_controls": 5,
+      "click": "Sign in (canvas-drawn button @120,358)",
+      "pixels_changed": true,
+      "screenshot_png_bytes_before": 43577,
+      "screenshot_png_bytes_after": 45477,
+      "ax_nodes_before": 2,
+      "ax_nodes_after": 2,
+      "ax_diff": {
+        "added": 0,
+        "removed": 0,
+        "changed": 0,
+        "unchanged": 2
+      },
+      "ax_diff_bytes": 38,
+      "ax_full_bytes": 333
+    }
+  },
+  "electron": {
+    "_how": "Electron 35.7.5 (prebuilt linux binary via npm at image build), one BrowserWindow loading the same labeled form as the chromium row; launched with --no-sandbox --disable-gpu --force-renderer-accessibility --remote-debugging-port=9224; registers on AT-SPI as 'electron'",
+    "atspi": {
+      "nodes": 31,
+      "named": 18,
+      "pct_named": 0.5806,
+      "roled": 31,
+      "pct_roled": 1.0,
+      "with_bbox": 27,
+      "pct_bbox": 0.871,
+      "actionable": 10,
+      "pct_actionable": 0.3226,
+      "addressable": 10,
+      "pct_addressable": 0.3226,
+      "max_depth": 13
+    },
+    "cdp": {
+      "source": "cdp",
+      "available": true,
+      "node_count": 22,
+      "coverage": {
+        "nodes": 22,
+        "named": 12,
+        "pct_named": 0.5455,
+        "roled": 22,
+        "pct_roled": 1.0,
+        "with_bbox": 15,
+        "pct_bbox": 0.6818,
+        "actionable": 5,
+        "pct_actionable": 0.2273,
+        "addressable": 5,
+        "pct_addressable": 0.2273,
+        "max_depth": 5
+      },
+      "sample_elements": [
+        {
+          "ref": "e0",
+          "role": "RootWebArea",
+          "name": "Electron Form",
+          "bbox": [
+            0,
+            0,
+            900,
+            673
+          ],
+          "provenance": {
+            "ax_node_id": "13",
+            "backend_dom_node_id": 13
+          }
+        },
+        {
+          "ref": "e1",
+          "role": "heading",
+          "name": "Account",
+          "bbox": [
+            8,
+            21,
+            884,
+            38
+          ],
+          "provenance": {
+            "ax_node_id": "19",
+            "backend_dom_node_id": 19
+          }
+        },
+        {
+          "ref": "e2",
+          "role": "StaticText",
+          "name": "Account",
+          "bbox": [
+            8,
+            21,
+            145,
+            38
+          ],
+          "provenance": {
+            "ax_node_id": "1",
+            "backend_dom_node_id": 1
+          }
+        },
+        {
+          "ref": "e6",
+          "role": "StaticText",
+          "name": "Username",
+          "bbox": [
+            8,
+            81,
+            81,
+            19
+          ],
+          "provenance": {
+            "ax_node_id": "4",
+            "backend_dom_node_id": 4
+          }
+        },
+        {
+          "ref": "e8",
+          "role": "textbox",
+          "name": "Username",
+          "bbox": [
+            94,
+            81,
+            179,
+            21
+          ],
+          "provenance": {
+            "ax_node_id": "22",
+            "backend_dom_node_id": 22
+          }
+        },
+        {
+          "ref": "e11",
+          "role": "StaticText",
+          "name": "Password",
+          "bbox": [
+            278,
+            81,
+            74,
+            19
+          ],
+          "provenance": {
+            "ax_node_id": "7",
+            "backend_dom_node_id": 7
+          }
+        },
+        {
+          "ref": "e13",
+          "role": "textbox",
+          "name": "Password",
+          "bbox": [
+            358,
+            81,
+            179,
+            21
+          ],
+          "provenance": {
+            "ax_node_id": "25",
+            "backend_dom_node_id": 25
+          }
+        },
+        {
+          "ref": "e15",
+          "role": "checkbox",
+          "name": " Remember me",
+          "bbox": [
+            546,
+            83,
+            13,
+            13
+          ],
+          "provenance": {
+            "ax_node_id": "28",
+            "backend_dom_node_id": 28
+          }
+        }
+      ]
+    }
   }
 }

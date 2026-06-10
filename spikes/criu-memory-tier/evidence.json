@@ -1,0 +1,288 @@
+{
+ "spike": "criu-memory-tier",
+ "generated_utc": "2026-06-10T20:19:34Z",
+ "meta": {
+  "criu": "3.17.1",
+  "glibc": "2.36",
+  "kernel": "6.12.76-linuxkit",
+  "arch": "aarch64",
+  "docker_commit_golden_s": 0.92,
+  "images": {
+   "shinken/sandbox-criu-golden:latest": "c06fed5f979b",
+   "shinken/sandbox-criu:latest": "a8e6654d873e",
+   "shinken/sandbox-linux:latest": "4c6a43d29961"
+  }
+ },
+ "probe1_kernel_criu_check": {
+  "kernel": "6.12.76-linuxkit",
+  "config": [
+   "CONFIG_NAMESPACES=y",
+   "CONFIG_PID_NS=y",
+   "CONFIG_CHECKPOINT_RESTORE=y",
+   "CONFIG_MEMBARRIER=y",
+   "CONFIG_RSEQ=y",
+   "# CONFIG_USERFAULTFD is not set",
+   "CONFIG_UNIX_DIAG=y",
+   "CONFIG_INET_DIAG=y",
+   "CONFIG_NETLINK_DIAG=y",
+   "CONFIG_PROC_CHILDREN=y"
+  ],
+  "criu_check_exit": 0,
+  "criu_check_extra_exit": 1,
+  "criu_check_tail": "Looks good.",
+  "criu_check_extra_warnings": [
+   "Error (criu/util.c:642): exited, status=1",
+   "Error (criu/util.c:642): exited, status=1",
+   "Error (criu/libnetlink.c:54): -95 reported by netlink: Operation not supported",
+   "Error (criu/net.c:3741): Unable to create a veth pair: -95",
+   "Warn  (criu/net.c:3767): NSID isn't reported for network links",
+   "Warn  (criu/kerndat.c:1132): Can't keep kdat cache on non-tempfs",
+   "Warn  (criu/cr-check.c:813): Dirty tracking is OFF. Memory snapshot will not work.",
+   "Warn  (criu/cr-check.c:1242): Do not have API to map vDSO - will use mremap() to restore vDSO",
+   "Error (criu/cr-check.c:1208): UFFD is not supported",
+   "Error (criu/cr-check.c:1208): UFFD is not supported"
+  ]
+ },
+ "probe2_trivial_trees": [
+  {
+   "target": "/probe/p_loop.sh",
+   "dump_exit": 0,
+   "dump_ms": 38,
+   "restore_exit": 0,
+   "restore_ms": 32,
+   "resumed_execution": true
+  },
+  {
+   "target": "python3 /probe/p_pty.py",
+   "dump_exit": 0,
+   "dump_ms": 39,
+   "restore_exit": 0,
+   "restore_ms": 34,
+   "resumed_execution": true
+  },
+  {
+   "target": "python3 /probe/p_sock.py",
+   "dump_exit": 0,
+   "dump_ms": 47,
+   "restore_exit": 0,
+   "restore_ms": 35,
+   "resumed_execution": true
+  }
+ ],
+ "probe3_desktop_tree": {
+  "donor_dump_and_inplace_restore": {
+   "tree_pid": 14,
+   "pre_dump_probe": {
+    "ws_ready_ms": 2115.5,
+    "screenshot_ms": 7.1,
+    "png_bytes": 16617,
+    "ok": true
+   },
+   "dump_exit": 0,
+   "dump_ms": 75,
+   "image_kb": 33900,
+   "restore_inplace_exit": 0,
+   "restore_inplace_ms": 37,
+   "post_restore_probe": {
+    "ws_ready_ms": 1.2,
+    "screenshot_ms": 8.9,
+    "png_bytes": 27381,
+    "ok": true
+   }
+  },
+  "fresh_container_staged_files": {
+   "restore_exit": 0,
+   "restore_ms": 43,
+   "probe": {
+    "ws_ready_ms": 1.6,
+    "screenshot_ms": 10.2,
+    "png_bytes": 27381,
+    "ok": true
+   }
+  },
+  "fresh_container_committed_image": {
+   "restore_exit": 0,
+   "restore_ms": 42,
+   "probe": {
+    "ws_ready_ms": 1.3,
+    "screenshot_ms": 9.2,
+    "png_bytes": 27381,
+    "ok": true
+   }
+  }
+ },
+ "probe4_fork_latency": {
+  "datapoints": [
+   {
+    "rep": 0,
+    "create_ms": 163.1,
+    "restore_ms": 47,
+    "restore_exit": 0,
+    "ws_ready_ms": 1.6,
+    "screenshot_ms": 9.0,
+    "png_bytes": 27381,
+    "ok": true,
+    "total_ms": 367.8
+   },
+   {
+    "rep": 1,
+    "create_ms": 110.2,
+    "restore_ms": 46,
+    "restore_exit": 0,
+    "ws_ready_ms": 1.2,
+    "screenshot_ms": 8.0,
+    "png_bytes": 27381,
+    "ok": true,
+    "total_ms": 305.9
+   },
+   {
+    "rep": 2,
+    "create_ms": 113.5,
+    "restore_ms": 36,
+    "restore_exit": 0,
+    "ws_ready_ms": 1.2,
+    "screenshot_ms": 8.6,
+    "png_bytes": 27381,
+    "ok": true,
+    "total_ms": 297.8
+   },
+   {
+    "rep": 3,
+    "create_ms": 117.9,
+    "restore_ms": 42,
+    "restore_exit": 0,
+    "ws_ready_ms": 1.1,
+    "screenshot_ms": 8.3,
+    "png_bytes": 27381,
+    "ok": true,
+    "total_ms": 321.6
+   },
+   {
+    "rep": 4,
+    "create_ms": 111.0,
+    "restore_ms": 35,
+    "restore_exit": 0,
+    "ws_ready_ms": 1.2,
+    "screenshot_ms": 8.7,
+    "png_bytes": 27381,
+    "ok": true,
+    "total_ms": 293.1
+   },
+   {
+    "rep": 5,
+    "create_ms": 104.7,
+    "restore_ms": 31,
+    "restore_exit": 0,
+    "ws_ready_ms": 1.2,
+    "screenshot_ms": 8.2,
+    "png_bytes": 27381,
+    "ok": true,
+    "total_ms": 276.7
+   },
+   {
+    "rep": 6,
+    "create_ms": 111.9,
+    "restore_ms": 41,
+    "restore_exit": 0,
+    "ws_ready_ms": 1.2,
+    "screenshot_ms": 8.8,
+    "png_bytes": 27381,
+    "ok": true,
+    "total_ms": 323.9
+   },
+   {
+    "rep": 7,
+    "create_ms": 113.8,
+    "restore_ms": 34,
+    "restore_exit": 0,
+    "ws_ready_ms": 1.2,
+    "screenshot_ms": 8.5,
+    "png_bytes": 27381,
+    "ok": true,
+    "total_ms": 301.8
+   },
+   {
+    "rep": 8,
+    "create_ms": 107.8,
+    "restore_ms": 44,
+    "restore_exit": 0,
+    "ws_ready_ms": 1.1,
+    "screenshot_ms": 8.4,
+    "png_bytes": 27381,
+    "ok": true,
+    "total_ms": 298.3
+   },
+   {
+    "rep": 9,
+    "create_ms": 114.8,
+    "restore_ms": 43,
+    "restore_exit": 0,
+    "ws_ready_ms": 1.1,
+    "screenshot_ms": 8.4,
+    "png_bytes": 27381,
+    "ok": true,
+    "total_ms": 307.4
+   },
+   {
+    "rep": 10,
+    "create_ms": 106.7,
+    "restore_ms": 35,
+    "restore_exit": 0,
+    "ws_ready_ms": 1.2,
+    "screenshot_ms": 8.1,
+    "png_bytes": 27381,
+    "ok": true,
+    "total_ms": 298.7
+   },
+   {
+    "rep": 11,
+    "create_ms": 101.8,
+    "restore_ms": 40,
+    "restore_exit": 0,
+    "ws_ready_ms": 1.2,
+    "screenshot_ms": 8.1,
+    "png_bytes": 27381,
+    "ok": true,
+    "total_ms": 288.5
+   }
+  ],
+  "ok_reps": 12,
+  "summary": {
+   "create_ms": {
+    "n": 12,
+    "min": 101.8,
+    "p50": 111.5,
+    "mean": 114.8,
+    "max": 163.1
+   },
+   "restore_ms": {
+    "n": 12,
+    "min": 31,
+    "p50": 40.5,
+    "mean": 39.5,
+    "max": 47
+   },
+   "ws_ready_ms": {
+    "n": 12,
+    "min": 1.1,
+    "p50": 1.2,
+    "mean": 1.2,
+    "max": 1.6
+   },
+   "screenshot_ms": {
+    "n": 12,
+    "min": 8.0,
+    "p50": 8.4,
+    "mean": 8.4,
+    "max": 9.0
+   },
+   "total_ms": {
+    "n": 12,
+    "min": 276.7,
+    "p50": 300.2,
+    "mean": 306.8,
+    "max": 367.8
+   }
+  }
+ }
+}

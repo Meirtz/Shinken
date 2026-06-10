@@ -25,8 +25,16 @@ use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
-use connection::{ScreencastSpec, Session, StreamCtl};
+use connection::{Reply, ScreencastSpec, Session, StreamCtl};
 use executor::Executor;
+
+/// Map a session [`Reply`] onto the WebSocket message kind it travels as.
+fn ws_reply(reply: Reply) -> WsMessage {
+    match reply {
+        Reply::Text(t) => WsMessage::Text(t),
+        Reply::Binary(b) => WsMessage::Binary(b),
+    }
+}
 
 const DEFAULT_ADDR: &str = "127.0.0.1:8765";
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -423,7 +431,7 @@ async fn serve(
                                     generation,
                                 ));
                                 if let Some(reply) = step.reply {
-                                    if out.send(WsMessage::Text(reply)).await.is_err() {
+                                    if out.send(ws_reply(reply)).await.is_err() {
                                         break Ok(());
                                     }
                                 }
@@ -453,14 +461,14 @@ async fn serve(
                             h.abort();
                         }
                         if let Some(reply) = step.reply {
-                            if out.send(WsMessage::Text(reply)).await.is_err() {
+                            if out.send(ws_reply(reply)).await.is_err() {
                                 break Ok(());
                             }
                         }
                     }
                     StreamCtl::None => {
                         if let Some(reply) = step.reply {
-                            if out.send(WsMessage::Text(reply)).await.is_err() {
+                            if out.send(ws_reply(reply)).await.is_err() {
                                 break Ok(());
                             }
                         }
@@ -523,41 +531,59 @@ fn spawn_screencast(
         let scope = spec.scope.clone();
         let mut seq: u64 = spec.start_seq;
         let mut last_hash: Option<u64> = None;
+        // XDamage-driven capture (root window → full-screen scope only): when the
+        // executor tracks damage, a tick with no accumulated damage captures
+        // NOTHING — idle costs ~zero guest CPU instead of a full GetImage+encode.
+        // `pending` accumulates damage across ticks whose frame was not delivered
+        // (dropped on a full writer queue), so a change can never be skipped.
+        let mut cursor = if spec.scope == "screen" {
+            exec.damage_cursor()
+        } else {
+            None
+        };
+        let mut pending = PendingDamage::Full; // first tick always captures
         loop {
             tick.tick().await;
             // Capture off the runtime's worker threads — X11 GetImage is blocking. Awaiting
             // the blocking task here serializes captures: at most one is in flight per
             // screencast, and MissedTickBehavior::Skip drops ticks that arrive while busy,
             // so slow capture can't pile up blocking tasks/buffers behind the X11 mutex (#137).
-            let exec = exec.clone();
-            let scope = scope.clone();
-            let img = match tokio::task::spawn_blocking(move || exec.capture(&scope, encode_opts))
-                .await
-            {
-                Ok(Ok(img)) => img,
+            let exec2 = exec.clone();
+            let scope2 = scope.clone();
+            let (cur, pend) = (cursor, pending);
+            let step = tokio::task::spawn_blocking(move || {
+                let (ncur, pend) = advance_damage(exec2.as_ref(), cur, pend);
+                if pend == PendingDamage::Clean {
+                    return Ok((ncur, pend, None)); // damage says: nothing changed
+                }
+                exec2
+                    .capture(&scope2, encode_opts)
+                    .map(|img| (ncur, pend, Some(img)))
+            })
+            .await;
+            let (ncur, pend, img) = match step {
+                Ok(Ok(t)) => t,
                 _ => break, // capture failed or the blocking pool is gone
             };
+            cursor = ncur;
+            pending = pend;
             // Keep the resume entry alive on EVERY capture tick, before any
             // suppression/delivery decision: idle-suppressed and dropped-on-full
             // frames never `record`, and a healthy stream over a static screen must
             // not lose resumability after STREAM_RESUME_TTL.
             streams.touch(&spec.stream_id, generation);
-            let hash = fnv1a(img.data_base64.as_bytes());
+            let Some(img) = img else {
+                continue; // clean tick — nothing was captured
+            };
+            // Idle suppression hashes the RAW encoded bytes — no base64 detour.
+            let hash = fnv1a(&img.data);
             if last_hash == Some(hash) {
-                continue; // unchanged frame — skip
+                // The screen matches the delivered frame: the pending damage was
+                // visually a no-op (e.g. redraw with identical pixels) — clear it.
+                pending = PendingDamage::Clean;
+                continue;
             }
-            let frame = protocol::stream_frame(
-                &spec.stream_id,
-                seq,
-                protocol::ImageRef {
-                    data: img.data_base64,
-                    w: img.w,
-                    h: img.h,
-                    scope: spec.scope.clone(),
-                    format: img.format.as_str().to_string(),
-                },
-            );
-            let Ok(text) = serde_json::to_string(&frame) else {
+            let Some(msg) = full_frame_msg(&spec, seq, &img) else {
                 break;
             };
             // Drop the frame if the client is behind (bounded memory); a live preview
@@ -565,17 +591,64 @@ fn spawn_screencast(
             // Commit last_hash/seq ONLY on a successful send: a frame dropped on Full
             // must be re-attempted next tick, else idle-suppression would treat the
             // never-delivered change as "already sent" and leave the view stale forever.
-            match out.try_send(WsMessage::Text(text)) {
+            match out.try_send(msg) {
                 Ok(()) => {
                     last_hash = Some(hash);
                     seq += 1;
                     streams.record(&spec.stream_id, seq, generation);
+                    pending = PendingDamage::Clean; // this capture is delivered
                 }
                 Err(mpsc::error::TrySendError::Full(_)) => continue,
                 Err(mpsc::error::TrySendError::Closed(_)) => break,
             }
         }
     })
+}
+
+/// Damage accumulated across capture ticks that have not yet resulted in a
+/// DELIVERED frame. Distinct from [`executor::DamageSince`] (one query's verdict):
+/// this is the loop-side accumulator that survives dropped/suppressed ticks.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum PendingDamage {
+    /// The screen matches the last delivered/verified state — skip capture.
+    Clean,
+    /// Everything since then fits this bounding region (root coordinates).
+    Region(executor::DamageRect),
+    /// Unknown extent (no damage tracking, stale cursor, tracker error) — capture
+    /// the full frame. Always the safe answer.
+    Full,
+}
+
+impl PendingDamage {
+    fn merge(self, verdict: executor::DamageSince) -> PendingDamage {
+        use executor::DamageSince as V;
+        match (self, verdict) {
+            (p, V::Clean) => p,
+            (PendingDamage::Full, _) | (_, V::Full) => PendingDamage::Full,
+            (PendingDamage::Clean, V::Region(r)) => PendingDamage::Region(r),
+            (PendingDamage::Region(a), V::Region(b)) => {
+                PendingDamage::Region(executor::union_rect(a, b))
+            }
+        }
+    }
+}
+
+/// Advance the damage cursor one tick: poll the executor's tracker (if any) and
+/// fold the verdict into the loop's pending accumulator. Without tracking
+/// (`cursor` None or the backend stopped answering) the result is always `Full` —
+/// the pre-damage poll-capture behavior.
+fn advance_damage(
+    exec: &dyn Executor,
+    cursor: Option<u64>,
+    pending: PendingDamage,
+) -> (Option<u64>, PendingDamage) {
+    match cursor {
+        Some(c) => match exec.damage_since(c) {
+            Some((nc, v)) => (Some(nc), pending.merge(v)),
+            None => (None, PendingDamage::Full),
+        },
+        None => (None, PendingDamage::Full),
+    }
 }
 
 /// The dirty-tile delta variant of [`spawn_screencast`] (B2): capture RAW pixels
@@ -611,6 +684,22 @@ fn spawn_delta_screencast(
         let scope = spec.scope.clone();
         let mut seq: u64 = spec.start_seq;
         let mut state = DeltaState::default();
+        // XDamage-driven capture: a clean tick captures NOTHING; a damaged tick
+        // GetImages only the damage-bounding region and composes it onto the
+        // committed baseline before the (unchanged) tile diff/encode machinery.
+        // Region capture is sound only when the delivered frame is the live screen
+        // 1:1 — full-screen scope AND no active downscale — otherwise damage still
+        // drives the idle-skip but a damaged tick falls back to full capture.
+        let mut cursor = if spec.scope == "screen" {
+            exec.damage_cursor()
+        } else {
+            None
+        };
+        let region_ok = spec.scope == "screen" && {
+            let (sw, sh) = exec.screen_size();
+            max_long_edge.is_none_or(|m| u32::from(sw.max(sh)) <= m)
+        };
+        let mut pending = PendingDamage::Full; // first tick: full keyframe capture
         loop {
             tick.tick().await;
             // Capture + diff + encode all run off the runtime's worker threads (X11
@@ -620,13 +709,18 @@ fn spawn_delta_screencast(
             let exec2 = exec.clone();
             let scope2 = scope.clone();
             let st = state;
+            let (cur, pend) = (cursor, pending);
             let (st, outcome) = match tokio::task::spawn_blocking(move || {
-                let outcome = exec2
-                    .capture_raw(&scope2, max_long_edge)
-                    .and_then(|(rgb, w, h)| {
-                        let frame = st.tick(&rgb, w, h, encode_opts)?;
-                        Ok((frame, rgb, w, h))
-                    });
+                let (ncur, pend) = advance_damage(exec2.as_ref(), cur, pend);
+                if pend == PendingDamage::Clean {
+                    return (st, Ok((ncur, pend, None))); // idle — capture nothing
+                }
+                let captured =
+                    delta_capture(exec2.as_ref(), &scope2, max_long_edge, &st, pend, region_ok);
+                let outcome = captured.and_then(|(rgb, w, h)| {
+                    let frame = st.tick(&rgb, w, h, encode_opts)?;
+                    Ok((ncur, pend, Some((frame, rgb, w, h))))
+                });
                 (st, outcome)
             })
             .await
@@ -635,64 +729,158 @@ fn spawn_delta_screencast(
                 Err(_) => break, // the blocking pool is gone
             };
             state = st;
-            let Ok((frame, rgb, w, h)) = outcome else {
+            let Ok((ncur, pend, item)) = outcome else {
                 break; // capture or encode failed
             };
+            cursor = ncur;
+            pending = pend;
             // Keep the resume entry alive on EVERY capture tick (see the full-frame
             // loop): suppressed/dropped frames never `record`.
             streams.touch(&spec.stream_id, generation);
-            let (msg, was_key) = match frame {
-                DeltaFrame::Unchanged => continue, // idle suppression — no message
-                DeltaFrame::Key(img) => (
-                    protocol::stream_frame(
-                        &spec.stream_id,
-                        seq,
-                        protocol::ImageRef {
-                            data: img.data_base64,
-                            w: img.w,
-                            h: img.h,
-                            scope: spec.scope.clone(),
-                            format: img.format.as_str().to_string(),
-                        },
-                    ),
-                    true,
-                ),
-                DeltaFrame::Tiles(tiles) => (
-                    protocol::stream_tiles_frame(
-                        &spec.stream_id,
-                        seq,
-                        tiles
-                            .into_iter()
-                            .map(|t| protocol::TileRef {
-                                x: t.x,
-                                y: t.y,
-                                w: t.w,
-                                h: t.h,
-                                data: t.data_base64,
-                            })
-                            .collect(),
-                    ),
-                    false,
-                ),
+            let Some((frame, rgb, w, h)) = item else {
+                continue; // clean tick — nothing was captured
             };
-            let Ok(text) = serde_json::to_string(&msg) else {
-                break;
+            let (msg, was_key) = match frame {
+                DeltaFrame::Unchanged => {
+                    // The composed/captured frame equals the baseline: the pending
+                    // damage was visually a no-op — clear it (idle suppression).
+                    pending = PendingDamage::Clean;
+                    continue;
+                }
+                DeltaFrame::Key(img) => {
+                    let Some(msg) = full_frame_msg(&spec, seq, &img) else {
+                        break;
+                    };
+                    (msg, true)
+                }
+                DeltaFrame::Tiles(tiles) => {
+                    let Some(msg) = tiles_frame_msg(&spec, seq, &tiles) else {
+                        break;
+                    };
+                    (msg, false)
+                }
             };
             // Commit the baseline/cadence/seq ONLY on a successful send (mirrors the
             // full-frame loop's last_hash semantics): a frame dropped on Full must be
             // re-diffed against the SAME baseline next tick, or its tiles would be
             // treated as already delivered and the client's view would stay stale.
-            match out.try_send(WsMessage::Text(text)) {
+            match out.try_send(msg) {
                 Ok(()) => {
                     state.commit(rgb, w, h, was_key);
                     seq += 1;
                     streams.record(&spec.stream_id, seq, generation);
+                    pending = PendingDamage::Clean; // this capture is delivered
                 }
                 Err(mpsc::error::TrySendError::Full(_)) => continue,
                 Err(mpsc::error::TrySendError::Closed(_)) => break,
             }
         }
     })
+}
+
+/// One damaged delta tick's capture: region-capture + compose when damage bounds
+/// the change and the baseline matches the live screen 1:1 (`region_ok`), full
+/// `capture_raw` otherwise. Any region-path failure (rect off-screen after a
+/// resize, geometry drift) falls back to the full capture rather than erroring.
+fn delta_capture(
+    exec: &dyn Executor,
+    scope: &str,
+    max_long_edge: Option<u32>,
+    st: &executor::DeltaState,
+    pending: PendingDamage,
+    region_ok: bool,
+) -> Result<(Vec<u8>, u16, u16)> {
+    if let (PendingDamage::Region(r), true) = (pending, region_ok) {
+        if let Some((bw, bh)) = st.baseline_dims() {
+            if let Some(rect) = executor::clamp_rect(r, bw, bh) {
+                if let Ok(pixels) = exec.capture_raw_region(rect) {
+                    if let Some(frame) = st.compose_partial(rect, &pixels) {
+                        return Ok(frame);
+                    }
+                }
+            }
+        }
+    }
+    exec.capture_raw(scope, max_long_edge)
+}
+
+/// Build one full-image screencast frame in the stream's negotiated wire form:
+/// a binary WS message (raw codec bytes after the JSON header) on a binary session,
+/// the legacy base64-in-JSON text observation otherwise. `None` = encoding failed
+/// (the loop breaks, matching the old serde failure path).
+fn full_frame_msg(
+    spec: &ScreencastSpec,
+    seq: u64,
+    img: &executor::CapturedImage,
+) -> Option<WsMessage> {
+    if spec.binary {
+        return Some(WsMessage::Binary(protocol::binary_image_frame(
+            &format!("{}-{seq}", spec.stream_id),
+            None,
+            Some(&spec.stream_id),
+            Some(seq),
+            protocol::BinaryImageMeta {
+                w: img.w,
+                h: img.h,
+                scope: &spec.scope,
+                format: img.format.as_str(),
+            },
+            &img.data,
+        )));
+    }
+    let frame = protocol::stream_frame(
+        &spec.stream_id,
+        seq,
+        protocol::ImageRef {
+            data: img.to_base64(),
+            w: img.w,
+            h: img.h,
+            scope: spec.scope.clone(),
+            format: img.format.as_str().to_string(),
+        },
+    );
+    serde_json::to_string(&frame).ok().map(WsMessage::Text)
+}
+
+/// Build one dirty-tile screencast frame in the stream's negotiated wire form
+/// (see [`full_frame_msg`]).
+fn tiles_frame_msg(
+    spec: &ScreencastSpec,
+    seq: u64,
+    tiles: &[executor::EncodedTile],
+) -> Option<WsMessage> {
+    if spec.binary {
+        let refs: Vec<protocol::BinaryTileRef<'_>> = tiles
+            .iter()
+            .map(|t| protocol::BinaryTileRef {
+                x: t.x,
+                y: t.y,
+                w: t.w,
+                h: t.h,
+                data: &t.data,
+            })
+            .collect();
+        return Some(WsMessage::Binary(protocol::binary_tiles_frame(
+            &spec.stream_id,
+            seq,
+            &refs,
+        )));
+    }
+    let msg = protocol::stream_tiles_frame(
+        &spec.stream_id,
+        seq,
+        tiles
+            .iter()
+            .map(|t| protocol::TileRef {
+                x: t.x,
+                y: t.y,
+                w: t.w,
+                h: t.h,
+                data: t.to_base64(),
+            })
+            .collect(),
+    );
+    serde_json::to_string(&msg).ok().map(WsMessage::Text)
 }
 
 /// FNV-1a 64-bit hash — used to detect unchanged frames cheaply.
@@ -876,7 +1064,7 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(20)); // slow capture
                 self.inflight.fetch_sub(1, Ordering::SeqCst);
                 Ok(CapturedImage {
-                    data_base64: format!("f{n}"),
+                    data: format!("f{n}").into_bytes(),
                     format: ImageFormat::Png,
                     w: 1,
                     h: 1,
@@ -897,6 +1085,7 @@ mod tests {
             start_seq: 0,
             resume_stream: None,
             delta: false,
+            binary: false,
         };
         let handle = spawn_screencast(
             exec.clone(),
@@ -1007,6 +1196,7 @@ mod tests {
             start_seq: 0,
             resume_stream: None,
             delta: true,
+            binary: false,
         };
         let handle = spawn_screencast(
             Arc::new(StaticExec),
@@ -1031,6 +1221,492 @@ mod tests {
                 .is_err(),
             "a static screen must be idle-suppressed after the keyframe"
         );
+        handle.abort();
+    }
+
+    const HELLO_BINARY: &str = r#"{"type":"hello","v":0,"client":{"name":"t","version":"0"},"accept":{"binary_frames":true}}"#;
+
+    /// Split one binary media frame into (header JSON, payload bytes).
+    fn split_binary(frame: &[u8]) -> (serde_json::Value, &[u8]) {
+        let hlen = u32::from_le_bytes(frame[..4].try_into().unwrap()) as usize;
+        let header: serde_json::Value = serde_json::from_slice(&frame[4..4 + hlen]).unwrap();
+        (header, &frame[4 + hlen..])
+    }
+
+    /// End-to-end binary negotiation: a hello with `accept.binary_frames` gets a
+    /// welcome advertising the capability, a one-shot screenshot as a WS Binary
+    /// message (header carries off/len, payload is the verbatim codec bytes), and
+    /// screencast frames as WS Binary with advancing seq.
+    #[tokio::test]
+    async fn binary_session_gets_binary_screenshot_and_screencast() {
+        let addr = spawn_server().await;
+        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}"))
+            .await
+            .unwrap();
+        ws.send(WsMessage::Text(HELLO_BINARY.into())).await.unwrap();
+        let welcome = text(&mut ws).await;
+        assert!(welcome.contains("\"binary_frames\":true"));
+
+        // One-shot screenshot → one WS Binary frame answering the call_id via `cause`.
+        ws.send(WsMessage::Text(
+            r#"{"type":"action","call_id":"shot1","action":{"verb":"screenshot"}}"#.into(),
+        ))
+        .await
+        .unwrap();
+        let frame = tokio::time::timeout(Duration::from_secs(3), ws.next())
+            .await
+            .expect("frame within 3s")
+            .unwrap()
+            .unwrap();
+        let WsMessage::Binary(bytes) = frame else {
+            panic!("expected a binary screenshot frame, got {frame:?}");
+        };
+        let (header, payload) = split_binary(&bytes);
+        assert_eq!(header["type"], "observation");
+        assert_eq!(header["cause"], "shot1");
+        assert_eq!(header["image"]["off"], 0);
+        assert_eq!(header["image"]["len"], payload.len());
+        assert_eq!(header["image"]["format"], "png");
+        // VirtualExecutor encodes a real PNG — check the signature travelled raw.
+        assert_eq!(&payload[..4], b"\x89PNG");
+
+        // Screencast frames arrive as WS Binary with stream id + advancing seq.
+        ws.send(WsMessage::Text(
+            r#"{"type":"action","call_id":"sc1","action":{"verb":"start_screencast","fps":50}}"#
+                .into(),
+        ))
+        .await
+        .unwrap();
+        let ack = text(&mut ws).await;
+        assert!(ack.contains("\"type\":\"ack\"") && ack.contains("\"ok\":true"));
+        for want_seq in 0..3u64 {
+            let frame = tokio::time::timeout(Duration::from_secs(3), ws.next())
+                .await
+                .expect("frame within 3s")
+                .unwrap()
+                .unwrap();
+            let WsMessage::Binary(bytes) = frame else {
+                panic!("expected a binary screencast frame, got {frame:?}");
+            };
+            let (header, payload) = split_binary(&bytes);
+            assert_eq!(header["stream"], "sc1");
+            assert_eq!(header["seq"], want_seq);
+            assert_eq!(header["image"]["len"], payload.len());
+        }
+    }
+
+    /// A binary-negotiated DELTA stream pushes the keyframe and the tile frames as
+    /// WS Binary; tile off/len index contiguous payload slices.
+    #[tokio::test]
+    async fn binary_delta_screencast_sends_binary_tiles() {
+        let addr = spawn_server().await;
+        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}"))
+            .await
+            .unwrap();
+        ws.send(WsMessage::Text(HELLO_BINARY.into())).await.unwrap();
+        let _ = text(&mut ws).await; // welcome
+        ws.send(WsMessage::Text(
+            r#"{"type":"action","call_id":"d1","action":{"verb":"start_screencast","fps":30,"delta":true}}"#
+                .into(),
+        ))
+        .await
+        .unwrap();
+        let _ = text(&mut ws).await; // ack
+        let mut frames = Vec::new();
+        while frames.len() < 3 {
+            let msg = tokio::time::timeout(Duration::from_secs(3), ws.next())
+                .await
+                .expect("frame within 3s")
+                .unwrap()
+                .unwrap();
+            if let WsMessage::Binary(b) = msg {
+                frames.push(b);
+            }
+        }
+        // frame 0: keyframe (image), frames 1..: tiles
+        let (h0, p0) = split_binary(&frames[0]);
+        assert_eq!(h0["seq"], 0);
+        assert_eq!(h0["image"]["len"], p0.len());
+        for (i, frame) in frames[1..].iter().enumerate() {
+            let (h, p) = split_binary(frame);
+            assert_eq!(h["seq"], (i + 1) as u64);
+            assert!(h.get("image").is_none(), "tile frame carries no image");
+            let tiles = h["tiles"].as_array().unwrap();
+            assert_eq!(tiles.len(), 1, "the 2x2 virtual frame is one edge tile");
+            assert_eq!(tiles[0]["off"], 0);
+            assert_eq!(tiles[0]["len"], p.len());
+        }
+    }
+
+    /// A client that does NOT opt in keeps the legacy text frames — even though the
+    /// runtime advertises binary_frames (old-client back-compat).
+    #[tokio::test]
+    async fn non_binary_session_keeps_text_frames() {
+        let addr = spawn_server().await;
+        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}"))
+            .await
+            .unwrap();
+        ws.send(WsMessage::Text(HELLO.into())).await.unwrap();
+        let _ = text(&mut ws).await; // welcome
+        ws.send(WsMessage::Text(
+            r#"{"type":"action","call_id":"shot1","action":{"verb":"screenshot"}}"#.into(),
+        ))
+        .await
+        .unwrap();
+        let obs = text(&mut ws).await; // a TEXT observation with base64 ref
+        let v: serde_json::Value = serde_json::from_str(&obs).unwrap();
+        assert_eq!(v["type"], "observation");
+        assert!(v["image"]["ref"].is_string(), "text path keeps base64 ref");
+    }
+
+    // ---- XDamage-driven capture (change-proportional pipeline, half B) ----
+
+    #[test]
+    fn pending_damage_merge_accumulates() {
+        use executor::DamageSince as V;
+        let r1 = (0, 0, 10, 10);
+        let r2 = (20, 20, 5, 5);
+        assert_eq!(PendingDamage::Clean.merge(V::Clean), PendingDamage::Clean);
+        assert_eq!(
+            PendingDamage::Clean.merge(V::Region(r1)),
+            PendingDamage::Region(r1)
+        );
+        assert_eq!(
+            PendingDamage::Region(r1).merge(V::Region(r2)),
+            PendingDamage::Region((0, 0, 25, 25))
+        );
+        // Full is sticky in both directions, and Clean never downgrades pending
+        assert_eq!(
+            PendingDamage::Full.merge(V::Region(r1)),
+            PendingDamage::Full
+        );
+        assert_eq!(
+            PendingDamage::Region(r1).merge(V::Full),
+            PendingDamage::Full
+        );
+        assert_eq!(
+            PendingDamage::Region(r1).merge(V::Clean),
+            PendingDamage::Region(r1)
+        );
+    }
+
+    /// A damage-capable backend over a scriptable screen: full-frame raw capture,
+    /// region capture, and a damage log the test pokes. Counts captures so tests
+    /// can prove idle ticks capture NOTHING and damaged ticks fetch only a region.
+    struct DamageExec {
+        w: u16,
+        h: u16,
+        screen: Mutex<Vec<u8>>,
+        log: Mutex<executor::DamageLog>,
+        full_captures: std::sync::atomic::AtomicUsize,
+        region_captures: std::sync::atomic::AtomicUsize,
+    }
+
+    impl DamageExec {
+        fn new(w: u16, h: u16) -> Self {
+            Self {
+                w,
+                h,
+                screen: Mutex::new(vec![0u8; w as usize * h as usize * 3]),
+                log: Mutex::new(executor::DamageLog::default()),
+                full_captures: Default::default(),
+                region_captures: Default::default(),
+            }
+        }
+
+        /// Paint a rect and record the matching damage, like a real X server would.
+        fn paint(&self, rect: executor::DamageRect, value: u8) {
+            let mut screen = self.screen.lock().unwrap();
+            for row in rect.1..rect.1 + rect.3 {
+                for col in rect.0..rect.0 + rect.2 {
+                    let i = ((row * self.w as u32 + col) * 3) as usize;
+                    screen[i..i + 3].copy_from_slice(&[value, value, value]);
+                }
+            }
+            self.log.lock().unwrap().record(rect);
+        }
+    }
+
+    impl Executor for DamageExec {
+        fn execute(&self, _: &executor::ActionSpec) -> anyhow::Result<String> {
+            Ok(String::new())
+        }
+        fn backend(&self) -> &'static str {
+            "damage-test"
+        }
+        fn screen_size(&self) -> (u16, u16) {
+            (self.w, self.h)
+        }
+        fn capture_raw(&self, _: &str, _: Option<u32>) -> anyhow::Result<(Vec<u8>, u16, u16)> {
+            self.full_captures
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok((self.screen.lock().unwrap().clone(), self.w, self.h))
+        }
+        fn supports_raw_capture(&self) -> bool {
+            true
+        }
+        fn damage_cursor(&self) -> Option<u64> {
+            Some(self.log.lock().unwrap().epoch())
+        }
+        fn damage_since(&self, cursor: u64) -> Option<(u64, executor::DamageSince)> {
+            let log = self.log.lock().unwrap();
+            Some((log.epoch(), log.since(cursor)))
+        }
+        fn capture_raw_region(&self, rect: executor::DamageRect) -> anyhow::Result<Vec<u8>> {
+            self.region_captures
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let screen = self.screen.lock().unwrap();
+            let mut out = Vec::with_capacity((rect.2 * rect.3 * 3) as usize);
+            for row in rect.1..rect.1 + rect.3 {
+                let start = ((row * self.w as u32 + rect.0) * 3) as usize;
+                out.extend_from_slice(&screen[start..start + (rect.2 * 3) as usize]);
+            }
+            Ok(out)
+        }
+    }
+
+    /// delta_capture: a damaged tick with a usable baseline fetches ONLY the region
+    /// and composes it onto the baseline; Full / no-baseline ticks capture the
+    /// whole frame.
+    #[test]
+    fn delta_capture_region_path_composes_without_full_capture() {
+        use executor::DeltaState;
+        let exec = DamageExec::new(128, 64);
+        let mut st = DeltaState::default();
+
+        // no baseline yet → full capture even for a Region verdict
+        let (rgb, w, h) = delta_capture(
+            &exec,
+            "screen",
+            None,
+            &st,
+            PendingDamage::Region((0, 0, 4, 4)),
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            exec.full_captures.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+        st.commit(rgb, w, h, true);
+
+        // paint a region; Region verdict + baseline → region capture only
+        exec.paint((10, 10, 6, 6), 200);
+        let (frame, _, _) = delta_capture(
+            &exec,
+            "screen",
+            None,
+            &st,
+            PendingDamage::Region((10, 10, 6, 6)),
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            exec.full_captures.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "region path must not full-capture"
+        );
+        assert_eq!(
+            exec.region_captures
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+        // the composed frame equals the live screen
+        assert_eq!(frame, *exec.screen.lock().unwrap());
+
+        // region_ok=false (e.g. active downscale) falls back to full capture
+        let _ = delta_capture(
+            &exec,
+            "screen",
+            Some(32),
+            &st,
+            PendingDamage::Region((0, 0, 2, 2)),
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            exec.full_captures.load(std::sync::atomic::Ordering::SeqCst),
+            2
+        );
+    }
+
+    /// End-to-end idle-zero: a delta screencast over a damage-tracking backend with
+    /// NO damage captures nothing after the first keyframe — zero GetImage work,
+    /// not merely zero bytes. Painting damage wakes it up with a tile frame fetched
+    /// via region capture.
+    #[tokio::test]
+    async fn damage_driven_delta_screencast_skips_capture_when_idle() {
+        let exec = Arc::new(DamageExec::new(128, 64));
+        let (out, mut rx) = mpsc::channel::<WsMessage>(8);
+        let permit = Arc::new(Semaphore::new(1)).try_acquire_owned().unwrap();
+        let spec = ScreencastSpec {
+            stream_id: "dmg".into(),
+            fps: 30.0,
+            max_long_edge: None,
+            format: executor::ImageFormat::Png,
+            quality: executor::DEFAULT_JPEG_QUALITY,
+            scope: "screen".into(),
+            start_seq: 0,
+            resume_stream: None,
+            delta: true,
+            binary: false,
+        };
+        let handle = spawn_screencast(
+            exec.clone(),
+            out,
+            spec,
+            permit,
+            Arc::new(StreamRegistry::default()),
+            0,
+        );
+        // keyframe arrives (the first tick is always a full capture)
+        let first = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+            .await
+            .expect("keyframe within 3s")
+            .expect("channel open");
+        let v: serde_json::Value = serde_json::from_str(&first.into_text().unwrap()).unwrap();
+        assert_eq!(v["seq"], 0);
+        assert!(v["image"]["ref"].is_string());
+        let full_after_key = exec.full_captures.load(std::sync::atomic::Ordering::SeqCst);
+
+        // idle: many ticks pass — no messages AND no further captures of any kind
+        assert!(
+            tokio::time::timeout(Duration::from_millis(400), rx.recv())
+                .await
+                .is_err(),
+            "idle ticks must emit nothing"
+        );
+        assert_eq!(
+            exec.full_captures.load(std::sync::atomic::Ordering::SeqCst),
+            full_after_key,
+            "idle ticks must not full-capture"
+        );
+        assert_eq!(
+            exec.region_captures
+                .load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "idle ticks must not region-capture"
+        );
+
+        // damage wakes it: one tile frame, fetched via the region path
+        exec.paint((64, 0, 8, 8), 99);
+        let frame = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+            .await
+            .expect("tile frame within 3s")
+            .expect("channel open");
+        let v: serde_json::Value = serde_json::from_str(&frame.into_text().unwrap()).unwrap();
+        assert_eq!(v["seq"], 1);
+        assert!(v.get("image").is_none(), "damage wake must be a tile frame");
+        assert!(v["tiles"].as_array().is_some_and(|t| !t.is_empty()));
+        assert!(
+            exec.region_captures
+                .load(std::sync::atomic::Ordering::SeqCst)
+                >= 1,
+            "the wake capture must use the damaged region"
+        );
+        assert_eq!(
+            exec.full_captures.load(std::sync::atomic::Ordering::SeqCst),
+            full_after_key,
+            "the wake capture must not be a full GetImage"
+        );
+        handle.abort();
+    }
+
+    /// The FULL-FRAME loop also goes idle-zero under damage tracking: after the
+    /// first frame, clean ticks skip the capture entirely.
+    #[tokio::test]
+    async fn damage_driven_full_screencast_skips_capture_when_idle() {
+        // full-frame loop uses exec.capture() — route it through capture_raw counts
+        struct FullExec(DamageExec);
+        impl Executor for FullExec {
+            fn execute(&self, a: &executor::ActionSpec) -> anyhow::Result<String> {
+                self.0.execute(a)
+            }
+            fn backend(&self) -> &'static str {
+                "damage-test-full"
+            }
+            fn capture(
+                &self,
+                scope: &str,
+                opts: executor::EncodeOpts,
+            ) -> anyhow::Result<executor::CapturedImage> {
+                let (rgb, w, h) = self.0.capture_raw(scope, opts.max_long_edge)?;
+                let mut out = Vec::new();
+                {
+                    let mut enc = png::Encoder::new(&mut out, w as u32, h as u32);
+                    enc.set_color(png::ColorType::Rgb);
+                    enc.set_depth(png::BitDepth::Eight);
+                    let mut writer = enc.write_header()?;
+                    writer.write_image_data(&rgb)?;
+                    writer.finish()?;
+                }
+                Ok(executor::CapturedImage {
+                    data: out,
+                    format: executor::ImageFormat::Png,
+                    w,
+                    h,
+                })
+            }
+            fn damage_cursor(&self) -> Option<u64> {
+                self.0.damage_cursor()
+            }
+            fn damage_since(&self, cursor: u64) -> Option<(u64, executor::DamageSince)> {
+                self.0.damage_since(cursor)
+            }
+        }
+
+        let exec = Arc::new(FullExec(DamageExec::new(32, 16)));
+        let (out, mut rx) = mpsc::channel::<WsMessage>(8);
+        let permit = Arc::new(Semaphore::new(1)).try_acquire_owned().unwrap();
+        let spec = ScreencastSpec {
+            stream_id: "dmgf".into(),
+            fps: 30.0,
+            max_long_edge: None,
+            format: executor::ImageFormat::Png,
+            quality: executor::DEFAULT_JPEG_QUALITY,
+            scope: "screen".into(),
+            start_seq: 0,
+            resume_stream: None,
+            delta: false,
+            binary: false,
+        };
+        let handle = spawn_screencast(
+            exec.clone(),
+            out,
+            spec,
+            permit,
+            Arc::new(StreamRegistry::default()),
+            0,
+        );
+        let first = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+            .await
+            .expect("first frame within 3s")
+            .expect("channel open");
+        assert!(first.into_text().unwrap().contains("\"seq\":0"));
+        let captures = exec
+            .0
+            .full_captures
+            .load(std::sync::atomic::Ordering::SeqCst);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(400), rx.recv())
+                .await
+                .is_err(),
+            "idle ticks must emit nothing"
+        );
+        assert_eq!(
+            exec.0
+                .full_captures
+                .load(std::sync::atomic::Ordering::SeqCst),
+            captures,
+            "idle ticks must capture nothing (damage says clean)"
+        );
+        // damage wakes the loop: a fresh full frame with seq 1
+        exec.0.paint((1, 1, 4, 4), 77);
+        let frame = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+            .await
+            .expect("frame after damage")
+            .expect("channel open");
+        assert!(frame.into_text().unwrap().contains("\"seq\":1"));
         handle.abort();
     }
 

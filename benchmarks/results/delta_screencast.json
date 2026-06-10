@@ -1,8 +1,8 @@
 {
   "suite": "delta_screencast",
   "meta": {
-    "generated_utc": "2026-06-10T17:59:51Z",
-    "git_commit": "ec2aacb",
+    "generated_utc": "2026-06-10T21:55:08Z",
+    "git_commit": "5905354",
     "python": "3.13.9",
     "host_os": "macOS 26.5.1",
     "host_arch": "arm64",
@@ -10,6 +10,7 @@
     "host_cores": "14",
     "host_mem_gib": 48.0,
     "docker_server": "29.4.3",
+    "concurrent_containers": [],
     "image": "shinken/sandbox-linux",
     "image_arch": "linux/arm64",
     "screen_geometry": "1280x800x24"
@@ -20,3086 +21,608 @@
     "delta-png",
     "delta-jpeg-q80"
   ],
+  "wires": [
+    "binary",
+    "text"
+  ],
   "fps": 10.0,
   "frames_per_mode": 80,
   "type_chars_per_s": 12.5,
   "idle_window_s": 3.0,
+  "reconstruction": {
+    "checked": true,
+    "frames": 2,
+    "tiles_applied": 8,
+    "seq_gaps": 0,
+    "identical": true
+  },
   "datapoints": [
     {
       "mode": "full-png",
+      "wire": "binary",
       "phase": "typing",
       "seq": 0,
       "kind": "full",
       "n_tiles": null,
-      "bytes": 26679,
-      "t_rel_s": 0.01
+      "bytes": 18594,
+      "wire_bytes": 18751,
+      "t_rel_s": 0.045
     },
     {
       "mode": "full-png",
+      "wire": "binary",
       "phase": "typing",
       "seq": 1,
       "kind": "full",
       "n_tiles": null,
-      "bytes": 26713,
-      "t_rel_s": 0.118
+      "bytes": 26587,
+      "wire_bytes": 26744,
+      "t_rel_s": 0.11
     },
     {
       "mode": "full-png",
-      "phase": "typing",
-      "seq": 2,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 26742,
-      "t_rel_s": 0.218
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 3,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 26769,
-      "t_rel_s": 0.317
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 4,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 26803,
-      "t_rel_s": 0.417
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 5,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 26809,
-      "t_rel_s": 0.519
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 6,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 26838,
-      "t_rel_s": 0.617
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 7,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 26910,
-      "t_rel_s": 0.716
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 8,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 26947,
-      "t_rel_s": 0.816
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 9,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 26986,
-      "t_rel_s": 0.911
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 10,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 26997,
-      "t_rel_s": 1.015
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 11,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 27035,
-      "t_rel_s": 1.116
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 12,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 27076,
-      "t_rel_s": 1.214
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 13,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 27155,
-      "t_rel_s": 1.316
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 14,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 27182,
-      "t_rel_s": 1.416
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 15,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 27185,
-      "t_rel_s": 1.519
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 16,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 27211,
-      "t_rel_s": 1.615
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 17,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 27236,
-      "t_rel_s": 1.716
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 18,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 27271,
-      "t_rel_s": 1.813
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 19,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 27307,
-      "t_rel_s": 1.911
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 20,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 27346,
-      "t_rel_s": 2.016
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 21,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 27377,
-      "t_rel_s": 2.116
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 22,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 27414,
-      "t_rel_s": 2.214
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 23,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 27419,
-      "t_rel_s": 2.316
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 24,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 27449,
-      "t_rel_s": 2.418
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 25,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 27485,
-      "t_rel_s": 2.513
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 26,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 27553,
-      "t_rel_s": 2.615
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 27,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 27582,
-      "t_rel_s": 2.714
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 28,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 27611,
-      "t_rel_s": 2.821
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 29,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 27631,
-      "t_rel_s": 2.914
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 30,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 27668,
-      "t_rel_s": 3.016
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 31,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 27705,
-      "t_rel_s": 3.12
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 32,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 27772,
-      "t_rel_s": 3.215
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 33,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 27776,
-      "t_rel_s": 3.315
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 34,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 27805,
-      "t_rel_s": 3.42
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 35,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 27844,
-      "t_rel_s": 3.519
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 36,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 27885,
-      "t_rel_s": 3.617
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 37,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 27926,
-      "t_rel_s": 3.716
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 38,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 27991,
-      "t_rel_s": 3.812
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 39,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 28021,
-      "t_rel_s": 3.913
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 40,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 28051,
-      "t_rel_s": 4.016
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 41,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 28082,
-      "t_rel_s": 4.113
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 42,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 28121,
-      "t_rel_s": 4.218
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 43,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 28134,
-      "t_rel_s": 4.315
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 44,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 28206,
-      "t_rel_s": 4.414
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 45,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 28237,
-      "t_rel_s": 4.515
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 46,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 28272,
-      "t_rel_s": 4.617
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 47,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 28278,
-      "t_rel_s": 4.716
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 48,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 28307,
-      "t_rel_s": 4.812
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 49,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 28338,
-      "t_rel_s": 4.913
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 50,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 28396,
-      "t_rel_s": 5.012
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 51,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 28433,
-      "t_rel_s": 5.116
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 52,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 28472,
-      "t_rel_s": 5.215
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 53,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 28479,
-      "t_rel_s": 5.315
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 54,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 28501,
-      "t_rel_s": 5.414
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 55,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 28536,
-      "t_rel_s": 5.51
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 56,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 28606,
-      "t_rel_s": 5.613
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 57,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 28645,
-      "t_rel_s": 5.712
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 58,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 28680,
-      "t_rel_s": 5.816
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 59,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 28720,
-      "t_rel_s": 5.919
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 60,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 28736,
-      "t_rel_s": 6.016
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 61,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 28771,
-      "t_rel_s": 6.113
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 62,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 28843,
-      "t_rel_s": 6.215
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 63,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 28881,
-      "t_rel_s": 6.318
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 64,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 28914,
-      "t_rel_s": 6.412
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 65,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 28940,
-      "t_rel_s": 6.518
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 66,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 28929,
-      "t_rel_s": 6.615
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 67,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 28952,
-      "t_rel_s": 6.715
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 68,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 29038,
-      "t_rel_s": 6.814
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 69,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 29069,
-      "t_rel_s": 6.915
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 70,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 29107,
-      "t_rel_s": 7.017
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 71,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 29118,
-      "t_rel_s": 7.114
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 72,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 29143,
-      "t_rel_s": 7.221
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 73,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 29178,
-      "t_rel_s": 7.316
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 74,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 29242,
-      "t_rel_s": 7.414
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 75,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 29282,
-      "t_rel_s": 7.516
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 76,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 29292,
-      "t_rel_s": 7.617
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 77,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 29331,
-      "t_rel_s": 7.713
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 78,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 29371,
-      "t_rel_s": 7.815
-    },
-    {
-      "mode": "full-png",
-      "phase": "typing",
-      "seq": 79,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 29415,
-      "t_rel_s": 7.914
-    },
-    {
-      "mode": "full-png",
+      "wire": "binary",
       "phase": "idle",
       "seq": 0,
       "kind": "full",
       "n_tiles": null,
-      "bytes": 30190,
-      "t_rel_s": 0.017
+      "bytes": 26587,
+      "wire_bytes": 26746,
+      "t_rel_s": 0.016
     },
     {
       "mode": "full-jpeg-q80",
+      "wire": "binary",
       "phase": "typing",
       "seq": 0,
       "kind": "full",
       "n_tiles": null,
-      "bytes": 29041,
-      "t_rel_s": 0.043
+      "bytes": 22783,
+      "wire_bytes": 22943,
+      "t_rel_s": 0.047
     },
     {
       "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 1,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 29223,
-      "t_rel_s": 0.122
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 2,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 29332,
-      "t_rel_s": 0.223
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 3,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 29374,
-      "t_rel_s": 0.328
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 4,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 29275,
-      "t_rel_s": 0.43
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 5,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 29477,
-      "t_rel_s": 0.523
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 6,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 29502,
-      "t_rel_s": 0.624
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 7,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 29581,
-      "t_rel_s": 0.724
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 8,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 29622,
-      "t_rel_s": 0.828
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 9,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 29696,
-      "t_rel_s": 0.927
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 10,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 29752,
-      "t_rel_s": 1.018
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 11,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 29670,
-      "t_rel_s": 1.12
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 12,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 29860,
-      "t_rel_s": 1.219
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 13,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 29911,
-      "t_rel_s": 1.317
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 14,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 30060,
-      "t_rel_s": 1.421
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 15,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 30076,
-      "t_rel_s": 1.525
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 16,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 30042,
-      "t_rel_s": 1.626
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 17,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 30260,
-      "t_rel_s": 1.726
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 18,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 30279,
-      "t_rel_s": 1.825
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 19,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 30239,
-      "t_rel_s": 1.923
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 20,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 30458,
-      "t_rel_s": 2.023
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 21,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 30470,
-      "t_rel_s": 2.126
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 22,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 30509,
-      "t_rel_s": 2.229
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 23,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 30469,
-      "t_rel_s": 2.318
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 24,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 30699,
-      "t_rel_s": 2.424
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 25,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 30776,
-      "t_rel_s": 2.523
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 26,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 30862,
-      "t_rel_s": 2.626
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 27,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 30929,
-      "t_rel_s": 2.724
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 28,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 30793,
-      "t_rel_s": 2.828
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 29,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 30972,
-      "t_rel_s": 2.925
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 30,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 31051,
-      "t_rel_s": 3.025
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 31,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 31182,
-      "t_rel_s": 3.125
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 32,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 31111,
-      "t_rel_s": 3.226
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 33,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 31276,
-      "t_rel_s": 3.328
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 34,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 31251,
-      "t_rel_s": 3.424
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 35,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 31271,
-      "t_rel_s": 3.526
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 36,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 31346,
-      "t_rel_s": 3.633
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 37,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 31495,
-      "t_rel_s": 3.726
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 38,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 31652,
-      "t_rel_s": 3.825
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 39,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 31585,
-      "t_rel_s": 3.922
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 40,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 31809,
-      "t_rel_s": 4.02
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 41,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 31876,
-      "t_rel_s": 4.127
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 42,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 31850,
-      "t_rel_s": 4.227
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 43,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 31804,
-      "t_rel_s": 4.321
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 44,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 32061,
-      "t_rel_s": 4.426
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 45,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 31968,
-      "t_rel_s": 4.523
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 46,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 32042,
-      "t_rel_s": 4.624
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 47,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 32115,
-      "t_rel_s": 4.725
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 48,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 32332,
-      "t_rel_s": 4.822
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 49,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 32191,
-      "t_rel_s": 4.925
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 50,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 32344,
-      "t_rel_s": 5.024
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 51,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 32573,
-      "t_rel_s": 5.126
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 52,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 32436,
-      "t_rel_s": 5.222
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 53,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 32603,
-      "t_rel_s": 5.325
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 54,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 32577,
-      "t_rel_s": 5.424
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 55,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 32650,
-      "t_rel_s": 5.52
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 56,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 32887,
-      "t_rel_s": 5.616
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 57,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 32918,
-      "t_rel_s": 5.721
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 58,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 32895,
-      "t_rel_s": 5.82
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 59,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 33050,
-      "t_rel_s": 5.916
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 60,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 32968,
-      "t_rel_s": 6.019
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 61,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 33022,
-      "t_rel_s": 6.119
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 62,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 33098,
-      "t_rel_s": 6.217
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 63,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 33285,
-      "t_rel_s": 6.318
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 64,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 33359,
-      "t_rel_s": 6.417
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 65,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 33430,
-      "t_rel_s": 6.525
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 66,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 33296,
-      "t_rel_s": 6.614
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 67,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 33299,
-      "t_rel_s": 6.716
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 68,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 33455,
-      "t_rel_s": 6.818
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 69,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 33512,
-      "t_rel_s": 6.925
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 70,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 33615,
-      "t_rel_s": 7.018
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 71,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 33647,
-      "t_rel_s": 7.123
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 72,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 33753,
-      "t_rel_s": 7.225
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 73,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 33927,
-      "t_rel_s": 7.325
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 74,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 33863,
-      "t_rel_s": 7.426
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 75,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 34011,
-      "t_rel_s": 7.515
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 76,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 33984,
-      "t_rel_s": 7.618
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 77,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 34204,
-      "t_rel_s": 7.723
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 78,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 34128,
-      "t_rel_s": 7.824
-    },
-    {
-      "mode": "full-jpeg-q80",
-      "phase": "typing",
-      "seq": 79,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 34323,
-      "t_rel_s": 7.927
-    },
-    {
-      "mode": "full-jpeg-q80",
+      "wire": "binary",
       "phase": "idle",
       "seq": 0,
       "kind": "full",
       "n_tiles": null,
-      "bytes": 35284,
-      "t_rel_s": 0.022
+      "bytes": 22783,
+      "wire_bytes": 22943,
+      "t_rel_s": 0.023
     },
     {
       "mode": "delta-png",
+      "wire": "binary",
       "phase": "typing",
       "seq": 0,
       "kind": "full",
       "n_tiles": null,
-      "bytes": 33737,
-      "t_rel_s": 0.043
+      "bytes": 26587,
+      "wire_bytes": 26746,
+      "t_rel_s": 0.047
     },
     {
       "mode": "delta-png",
-      "phase": "typing",
-      "seq": 1,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1510,
-      "t_rel_s": 0.114
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 2,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1529,
-      "t_rel_s": 0.217
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 3,
-      "kind": "tiles",
-      "n_tiles": 4,
-      "bytes": 2949,
-      "t_rel_s": 0.319
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 4,
-      "kind": "tiles",
-      "n_tiles": 4,
-      "bytes": 2966,
-      "t_rel_s": 0.421
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 5,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1406,
-      "t_rel_s": 0.517
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 6,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1459,
-      "t_rel_s": 0.614
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 7,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1498,
-      "t_rel_s": 0.717
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 8,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1526,
-      "t_rel_s": 0.818
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 9,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1548,
-      "t_rel_s": 0.916
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 10,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1548,
-      "t_rel_s": 1.016
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 11,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1571,
-      "t_rel_s": 1.119
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 12,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1593,
-      "t_rel_s": 1.214
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 13,
-      "kind": "tiles",
-      "n_tiles": 4,
-      "bytes": 2676,
-      "t_rel_s": 1.313
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 14,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1094,
-      "t_rel_s": 1.414
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 15,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1095,
-      "t_rel_s": 1.518
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 16,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1137,
-      "t_rel_s": 1.618
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 17,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1158,
-      "t_rel_s": 1.717
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 18,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1186,
-      "t_rel_s": 1.816
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 19,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1186,
-      "t_rel_s": 1.913
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 20,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1237,
-      "t_rel_s": 2.012
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 21,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1264,
-      "t_rel_s": 2.113
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 22,
-      "kind": "tiles",
-      "n_tiles": 4,
-      "bytes": 2164,
-      "t_rel_s": 2.218
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 23,
-      "kind": "tiles",
-      "n_tiles": 4,
-      "bytes": 2168,
-      "t_rel_s": 2.312
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 24,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 937,
-      "t_rel_s": 2.412
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 25,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 984,
-      "t_rel_s": 2.511
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 26,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1021,
-      "t_rel_s": 2.612
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 27,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1047,
-      "t_rel_s": 2.713
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 28,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1075,
-      "t_rel_s": 2.82
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 29,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1098,
-      "t_rel_s": 2.918
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 30,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 34726,
-      "t_rel_s": 3.02
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 31,
-      "kind": "tiles",
-      "n_tiles": 4,
-      "bytes": 2040,
-      "t_rel_s": 3.113
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 32,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 924,
-      "t_rel_s": 3.217
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 33,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 924,
-      "t_rel_s": 3.316
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 34,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 965,
-      "t_rel_s": 3.419
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 35,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 983,
-      "t_rel_s": 3.516
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 36,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1009,
-      "t_rel_s": 3.617
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 37,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1062,
-      "t_rel_s": 3.719
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 38,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1100,
-      "t_rel_s": 3.817
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 39,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1122,
-      "t_rel_s": 3.916
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 40,
-      "kind": "tiles",
-      "n_tiles": 4,
-      "bytes": 2016,
-      "t_rel_s": 4.014
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 41,
-      "kind": "tiles",
-      "n_tiles": 4,
-      "bytes": 2036,
-      "t_rel_s": 4.115
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 42,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 931,
-      "t_rel_s": 4.221
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 43,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 933,
-      "t_rel_s": 4.315
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 44,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 990,
-      "t_rel_s": 4.416
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 45,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1019,
-      "t_rel_s": 4.514
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 46,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1050,
-      "t_rel_s": 4.621
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 47,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1050,
-      "t_rel_s": 4.716
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 48,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1083,
-      "t_rel_s": 4.816
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 49,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1103,
-      "t_rel_s": 4.913
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 50,
-      "kind": "tiles",
-      "n_tiles": 4,
-      "bytes": 1973,
-      "t_rel_s": 5.015
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 51,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 890,
-      "t_rel_s": 5.117
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 52,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 919,
-      "t_rel_s": 5.22
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 53,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 920,
-      "t_rel_s": 5.321
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 54,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 955,
-      "t_rel_s": 5.419
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 55,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 976,
-      "t_rel_s": 5.519
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 56,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1037,
-      "t_rel_s": 5.612
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 57,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1055,
-      "t_rel_s": 5.718
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 58,
-      "kind": "tiles",
-      "n_tiles": 4,
-      "bytes": 2032,
-      "t_rel_s": 5.821
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 59,
-      "kind": "tiles",
-      "n_tiles": 4,
-      "bytes": 2035,
-      "t_rel_s": 5.914
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 60,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 35794,
-      "t_rel_s": 6.016
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 61,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 995,
-      "t_rel_s": 6.116
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 62,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1022,
-      "t_rel_s": 6.215
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 63,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1064,
-      "t_rel_s": 6.314
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 64,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1084,
-      "t_rel_s": 6.416
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 65,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1105,
-      "t_rel_s": 6.519
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 66,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1105,
-      "t_rel_s": 6.617
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 67,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1124,
-      "t_rel_s": 6.713
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 68,
-      "kind": "tiles",
-      "n_tiles": 3,
-      "bytes": 1589,
-      "t_rel_s": 6.817
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 69,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 523,
-      "t_rel_s": 6.916
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 70,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 543,
-      "t_rel_s": 7.019
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 71,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 543,
-      "t_rel_s": 7.121
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 72,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1010,
-      "t_rel_s": 7.221
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 73,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 1027,
-      "t_rel_s": 7.317
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 74,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 491,
-      "t_rel_s": 7.419
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 75,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 511,
-      "t_rel_s": 7.515
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 76,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 528,
-      "t_rel_s": 7.619
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 77,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 548,
-      "t_rel_s": 7.716
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 78,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 567,
-      "t_rel_s": 7.818
-    },
-    {
-      "mode": "delta-png",
-      "phase": "typing",
-      "seq": 79,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 579,
-      "t_rel_s": 7.916
-    },
-    {
-      "mode": "delta-png",
+      "wire": "binary",
       "phase": "idle",
       "seq": 0,
       "kind": "full",
       "n_tiles": null,
-      "bytes": 37211,
+      "bytes": 26587,
+      "wire_bytes": 26748,
       "t_rel_s": 0.018
     },
     {
       "mode": "delta-jpeg-q80",
+      "wire": "binary",
       "phase": "typing",
       "seq": 0,
       "kind": "full",
       "n_tiles": null,
-      "bytes": 41628,
+      "bytes": 22783,
+      "wire_bytes": 22945,
       "t_rel_s": 0.043
     },
     {
       "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 1,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 2010,
-      "t_rel_s": 0.116
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 2,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 2075,
-      "t_rel_s": 0.212
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 3,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 3998,
-      "t_rel_s": 0.319
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 4,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 3988,
-      "t_rel_s": 0.418
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 5,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1937,
-      "t_rel_s": 0.519
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 6,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 2051,
-      "t_rel_s": 0.615
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 7,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 2047,
-      "t_rel_s": 0.715
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 8,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 2133,
-      "t_rel_s": 0.819
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 9,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 2209,
-      "t_rel_s": 0.916
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 10,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 2255,
-      "t_rel_s": 1.02
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 11,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 2279,
-      "t_rel_s": 1.119
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 12,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 2373,
-      "t_rel_s": 1.217
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 13,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 3832,
-      "t_rel_s": 1.315
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 14,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1441,
-      "t_rel_s": 1.416
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 15,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1497,
-      "t_rel_s": 1.517
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 16,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1589,
-      "t_rel_s": 1.615
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 17,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1666,
-      "t_rel_s": 1.72
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 18,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1698,
-      "t_rel_s": 1.82
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 19,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1774,
-      "t_rel_s": 1.916
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 20,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1941,
-      "t_rel_s": 2.015
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 21,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1915,
-      "t_rel_s": 2.12
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 22,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 3035,
-      "t_rel_s": 2.219
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 23,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 3076,
-      "t_rel_s": 2.314
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 24,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1275,
-      "t_rel_s": 2.417
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 25,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1247,
-      "t_rel_s": 2.518
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 26,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1442,
-      "t_rel_s": 2.62
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 27,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1513,
-      "t_rel_s": 2.72
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 28,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1480,
-      "t_rel_s": 2.82
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 29,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1598,
-      "t_rel_s": 2.917
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 30,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 43629,
-      "t_rel_s": 3.031
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 31,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 2754,
-      "t_rel_s": 3.121
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 32,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 2734,
-      "t_rel_s": 3.213
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 33,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1251,
-      "t_rel_s": 3.315
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 34,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1347,
-      "t_rel_s": 3.42
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 35,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1333,
-      "t_rel_s": 3.524
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 36,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1438,
-      "t_rel_s": 3.616
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 37,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1519,
-      "t_rel_s": 3.72
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 38,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1570,
-      "t_rel_s": 3.815
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 39,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1677,
-      "t_rel_s": 3.921
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 40,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 2758,
-      "t_rel_s": 4.018
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 41,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 2826,
-      "t_rel_s": 4.12
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 42,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1174,
-      "t_rel_s": 4.216
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 43,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1251,
-      "t_rel_s": 4.315
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 44,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1346,
-      "t_rel_s": 4.419
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 45,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1394,
-      "t_rel_s": 4.517
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 46,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1504,
-      "t_rel_s": 4.618
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 47,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1549,
-      "t_rel_s": 4.718
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 48,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1644,
-      "t_rel_s": 4.817
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 49,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1620,
-      "t_rel_s": 4.919
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 50,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 2748,
-      "t_rel_s": 5.018
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 51,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 2886,
-      "t_rel_s": 5.116
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 52,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1257,
-      "t_rel_s": 5.221
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 53,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1332,
-      "t_rel_s": 5.318
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 54,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1435,
-      "t_rel_s": 5.415
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 55,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1477,
-      "t_rel_s": 5.516
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 56,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1475,
-      "t_rel_s": 5.615
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 57,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1662,
-      "t_rel_s": 5.719
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 58,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 2761,
-      "t_rel_s": 5.817
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 59,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 2736,
-      "t_rel_s": 5.916
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 60,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 45708,
-      "t_rel_s": 6.031
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 61,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1251,
-      "t_rel_s": 6.109
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 62,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1332,
-      "t_rel_s": 6.219
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 63,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1413,
-      "t_rel_s": 6.313
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 64,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1496,
-      "t_rel_s": 6.416
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 65,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1567,
-      "t_rel_s": 6.516
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 66,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1493,
-      "t_rel_s": 6.615
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 67,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 1529,
-      "t_rel_s": 6.72
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 68,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 3745,
-      "t_rel_s": 6.818
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 69,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 2296,
-      "t_rel_s": 6.913
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 70,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 2348,
-      "t_rel_s": 7.016
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 71,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 2355,
-      "t_rel_s": 7.112
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 72,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 4828,
-      "t_rel_s": 7.22
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 73,
-      "kind": "tiles",
-      "n_tiles": 2,
-      "bytes": 4839,
-      "t_rel_s": 7.316
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 74,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 2545,
-      "t_rel_s": 7.415
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 75,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 2566,
-      "t_rel_s": 7.515
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 76,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 2573,
-      "t_rel_s": 7.616
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 77,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 2648,
-      "t_rel_s": 7.715
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 78,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 2695,
-      "t_rel_s": 7.819
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "phase": "typing",
-      "seq": 79,
-      "kind": "tiles",
-      "n_tiles": 1,
-      "bytes": 2736,
-      "t_rel_s": 7.917
-    },
-    {
-      "mode": "delta-jpeg-q80",
+      "wire": "binary",
       "phase": "idle",
       "seq": 0,
       "kind": "full",
       "n_tiles": null,
-      "bytes": 48050,
-      "t_rel_s": 0.03
+      "bytes": 22783,
+      "wire_bytes": 22945,
+      "t_rel_s": 0.026
+    },
+    {
+      "mode": "full-png",
+      "wire": "text",
+      "phase": "typing",
+      "seq": 0,
+      "kind": "full",
+      "n_tiles": null,
+      "bytes": 26587,
+      "wire_bytes": 35594,
+      "t_rel_s": 0.02
+    },
+    {
+      "mode": "full-png",
+      "wire": "text",
+      "phase": "idle",
+      "seq": 0,
+      "kind": "full",
+      "n_tiles": null,
+      "bytes": 26587,
+      "wire_bytes": 35594,
+      "t_rel_s": 0.015
+    },
+    {
+      "mode": "full-jpeg-q80",
+      "wire": "text",
+      "phase": "typing",
+      "seq": 0,
+      "kind": "full",
+      "n_tiles": null,
+      "bytes": 22783,
+      "wire_bytes": 30523,
+      "t_rel_s": 0.043
+    },
+    {
+      "mode": "full-jpeg-q80",
+      "wire": "text",
+      "phase": "idle",
+      "seq": 0,
+      "kind": "full",
+      "n_tiles": null,
+      "bytes": 22783,
+      "wire_bytes": 30523,
+      "t_rel_s": 0.023
+    },
+    {
+      "mode": "delta-png",
+      "wire": "text",
+      "phase": "typing",
+      "seq": 0,
+      "kind": "full",
+      "n_tiles": null,
+      "bytes": 26587,
+      "wire_bytes": 35594,
+      "t_rel_s": 0.048
+    },
+    {
+      "mode": "delta-png",
+      "wire": "text",
+      "phase": "idle",
+      "seq": 0,
+      "kind": "full",
+      "n_tiles": null,
+      "bytes": 26587,
+      "wire_bytes": 35596,
+      "t_rel_s": 0.017
+    },
+    {
+      "mode": "delta-jpeg-q80",
+      "wire": "text",
+      "phase": "typing",
+      "seq": 0,
+      "kind": "full",
+      "n_tiles": null,
+      "bytes": 22783,
+      "wire_bytes": 30525,
+      "t_rel_s": 0.042
+    },
+    {
+      "mode": "delta-jpeg-q80",
+      "wire": "text",
+      "phase": "idle",
+      "seq": 0,
+      "kind": "full",
+      "n_tiles": null,
+      "bytes": 22783,
+      "wire_bytes": 30525,
+      "t_rel_s": 0.024
     }
   ],
   "summary": [
     {
       "mode": "full-png",
+      "wire": "binary",
       "phase": "typing",
-      "frames": 80,
-      "keyframes": 80,
+      "frames": 2,
+      "keyframes": 2,
       "tile_frames": 0,
-      "total_bytes": 2242157,
+      "total_bytes": 45181,
+      "total_wire_bytes": 45495,
       "bytes_per_frame": {
-        "n": 80,
-        "min": 26679.0,
-        "p50": 28051.0,
-        "mean": 28026.963,
-        "p90": 29118.0,
-        "p99": 29371.0,
-        "max": 29415.0
+        "n": 2,
+        "min": 18594.0,
+        "p50": 18594.0,
+        "mean": 22590.5,
+        "max": 26587.0
+      },
+      "wire_bytes_per_frame": {
+        "n": 2,
+        "min": 18751.0,
+        "p50": 18751.0,
+        "mean": 22747.5,
+        "max": 26744.0
       },
       "tiles_per_frame": {}
     },
     {
       "mode": "full-png",
+      "wire": "binary",
       "phase": "idle",
       "frames": 1,
       "keyframes": 1,
       "tile_frames": 0,
-      "total_bytes": 30190,
+      "total_bytes": 26587,
+      "total_wire_bytes": 26746,
       "bytes_per_frame": {
         "n": 1,
-        "min": 30190.0,
-        "p50": 30190.0,
-        "mean": 30190.0,
-        "p90": 30190.0,
-        "p99": 30190.0,
-        "max": 30190.0
+        "min": 26587.0,
+        "p50": 26587.0,
+        "mean": 26587.0,
+        "max": 26587.0
+      },
+      "wire_bytes_per_frame": {
+        "n": 1,
+        "min": 26746.0,
+        "p50": 26746.0,
+        "mean": 26746.0,
+        "max": 26746.0
+      },
+      "tiles_per_frame": {}
+    },
+    {
+      "mode": "full-png",
+      "wire": "text",
+      "phase": "typing",
+      "frames": 1,
+      "keyframes": 1,
+      "tile_frames": 0,
+      "total_bytes": 26587,
+      "total_wire_bytes": 35594,
+      "bytes_per_frame": {
+        "n": 1,
+        "min": 26587.0,
+        "p50": 26587.0,
+        "mean": 26587.0,
+        "max": 26587.0
+      },
+      "wire_bytes_per_frame": {
+        "n": 1,
+        "min": 35594.0,
+        "p50": 35594.0,
+        "mean": 35594.0,
+        "max": 35594.0
+      },
+      "tiles_per_frame": {}
+    },
+    {
+      "mode": "full-png",
+      "wire": "text",
+      "phase": "idle",
+      "frames": 1,
+      "keyframes": 1,
+      "tile_frames": 0,
+      "total_bytes": 26587,
+      "total_wire_bytes": 35594,
+      "bytes_per_frame": {
+        "n": 1,
+        "min": 26587.0,
+        "p50": 26587.0,
+        "mean": 26587.0,
+        "max": 26587.0
+      },
+      "wire_bytes_per_frame": {
+        "n": 1,
+        "min": 35594.0,
+        "p50": 35594.0,
+        "mean": 35594.0,
+        "max": 35594.0
       },
       "tiles_per_frame": {}
     },
     {
       "mode": "full-jpeg-q80",
+      "wire": "binary",
       "phase": "typing",
-      "frames": 80,
-      "keyframes": 80,
+      "frames": 1,
+      "keyframes": 1,
       "tile_frames": 0,
-      "total_bytes": 2533589,
+      "total_bytes": 22783,
+      "total_wire_bytes": 22943,
       "bytes_per_frame": {
-        "n": 80,
-        "min": 29041.0,
-        "p50": 31804.0,
-        "mean": 31669.862,
-        "p90": 33647.0,
-        "p99": 34204.0,
-        "max": 34323.0
+        "n": 1,
+        "min": 22783.0,
+        "p50": 22783.0,
+        "mean": 22783.0,
+        "max": 22783.0
+      },
+      "wire_bytes_per_frame": {
+        "n": 1,
+        "min": 22943.0,
+        "p50": 22943.0,
+        "mean": 22943.0,
+        "max": 22943.0
       },
       "tiles_per_frame": {}
     },
     {
       "mode": "full-jpeg-q80",
+      "wire": "binary",
       "phase": "idle",
       "frames": 1,
       "keyframes": 1,
       "tile_frames": 0,
-      "total_bytes": 35284,
+      "total_bytes": 22783,
+      "total_wire_bytes": 22943,
       "bytes_per_frame": {
         "n": 1,
-        "min": 35284.0,
-        "p50": 35284.0,
-        "mean": 35284.0,
-        "p90": 35284.0,
-        "p99": 35284.0,
-        "max": 35284.0
+        "min": 22783.0,
+        "p50": 22783.0,
+        "mean": 22783.0,
+        "max": 22783.0
+      },
+      "wire_bytes_per_frame": {
+        "n": 1,
+        "min": 22943.0,
+        "p50": 22943.0,
+        "mean": 22943.0,
+        "max": 22943.0
+      },
+      "tiles_per_frame": {}
+    },
+    {
+      "mode": "full-jpeg-q80",
+      "wire": "text",
+      "phase": "typing",
+      "frames": 1,
+      "keyframes": 1,
+      "tile_frames": 0,
+      "total_bytes": 22783,
+      "total_wire_bytes": 30523,
+      "bytes_per_frame": {
+        "n": 1,
+        "min": 22783.0,
+        "p50": 22783.0,
+        "mean": 22783.0,
+        "max": 22783.0
+      },
+      "wire_bytes_per_frame": {
+        "n": 1,
+        "min": 30523.0,
+        "p50": 30523.0,
+        "mean": 30523.0,
+        "max": 30523.0
+      },
+      "tiles_per_frame": {}
+    },
+    {
+      "mode": "full-jpeg-q80",
+      "wire": "text",
+      "phase": "idle",
+      "frames": 1,
+      "keyframes": 1,
+      "tile_frames": 0,
+      "total_bytes": 22783,
+      "total_wire_bytes": 30523,
+      "bytes_per_frame": {
+        "n": 1,
+        "min": 22783.0,
+        "p50": 22783.0,
+        "mean": 22783.0,
+        "max": 22783.0
+      },
+      "wire_bytes_per_frame": {
+        "n": 1,
+        "min": 30523.0,
+        "p50": 30523.0,
+        "mean": 30523.0,
+        "max": 30523.0
       },
       "tiles_per_frame": {}
     },
     {
       "mode": "delta-png",
+      "wire": "binary",
       "phase": "typing",
-      "frames": 80,
-      "keyframes": 3,
-      "tile_frames": 77,
-      "total_bytes": 198977,
+      "frames": 1,
+      "keyframes": 1,
+      "tile_frames": 0,
+      "total_bytes": 26587,
+      "total_wire_bytes": 26746,
       "bytes_per_frame": {
-        "n": 80,
-        "min": 491.0,
-        "p50": 1094.0,
-        "mean": 2487.213,
-        "p90": 2040.0,
-        "p99": 34726.0,
-        "max": 35794.0
+        "n": 1,
+        "min": 26587.0,
+        "p50": 26587.0,
+        "mean": 26587.0,
+        "max": 26587.0
       },
-      "tiles_per_frame": {
-        "n": 77,
-        "min": 1.0,
-        "p50": 2.0,
-        "mean": 2.182,
-        "p90": 4.0,
-        "p99": 4.0,
-        "max": 4.0
-      }
+      "wire_bytes_per_frame": {
+        "n": 1,
+        "min": 26746.0,
+        "p50": 26746.0,
+        "mean": 26746.0,
+        "max": 26746.0
+      },
+      "tiles_per_frame": {}
     },
     {
       "mode": "delta-png",
+      "wire": "binary",
       "phase": "idle",
       "frames": 1,
       "keyframes": 1,
       "tile_frames": 0,
-      "total_bytes": 37211,
+      "total_bytes": 26587,
+      "total_wire_bytes": 26748,
       "bytes_per_frame": {
         "n": 1,
-        "min": 37211.0,
-        "p50": 37211.0,
-        "mean": 37211.0,
-        "p90": 37211.0,
-        "p99": 37211.0,
-        "max": 37211.0
+        "min": 26587.0,
+        "p50": 26587.0,
+        "mean": 26587.0,
+        "max": 26587.0
+      },
+      "wire_bytes_per_frame": {
+        "n": 1,
+        "min": 26748.0,
+        "p50": 26748.0,
+        "mean": 26748.0,
+        "max": 26748.0
+      },
+      "tiles_per_frame": {}
+    },
+    {
+      "mode": "delta-png",
+      "wire": "text",
+      "phase": "typing",
+      "frames": 1,
+      "keyframes": 1,
+      "tile_frames": 0,
+      "total_bytes": 26587,
+      "total_wire_bytes": 35594,
+      "bytes_per_frame": {
+        "n": 1,
+        "min": 26587.0,
+        "p50": 26587.0,
+        "mean": 26587.0,
+        "max": 26587.0
+      },
+      "wire_bytes_per_frame": {
+        "n": 1,
+        "min": 35594.0,
+        "p50": 35594.0,
+        "mean": 35594.0,
+        "max": 35594.0
+      },
+      "tiles_per_frame": {}
+    },
+    {
+      "mode": "delta-png",
+      "wire": "text",
+      "phase": "idle",
+      "frames": 1,
+      "keyframes": 1,
+      "tile_frames": 0,
+      "total_bytes": 26587,
+      "total_wire_bytes": 35596,
+      "bytes_per_frame": {
+        "n": 1,
+        "min": 26587.0,
+        "p50": 26587.0,
+        "mean": 26587.0,
+        "max": 26587.0
+      },
+      "wire_bytes_per_frame": {
+        "n": 1,
+        "min": 35596.0,
+        "p50": 35596.0,
+        "mean": 35596.0,
+        "max": 35596.0
       },
       "tiles_per_frame": {}
     },
     {
       "mode": "delta-jpeg-q80",
+      "wire": "binary",
       "phase": "typing",
-      "frames": 80,
-      "keyframes": 3,
-      "tile_frames": 77,
-      "total_bytes": 291052,
+      "frames": 1,
+      "keyframes": 1,
+      "tile_frames": 0,
+      "total_bytes": 22783,
+      "total_wire_bytes": 22945,
       "bytes_per_frame": {
-        "n": 80,
-        "min": 1174.0,
-        "p50": 1915.0,
-        "mean": 3638.15,
-        "p90": 3745.0,
-        "p99": 43629.0,
-        "max": 45708.0
+        "n": 1,
+        "min": 22783.0,
+        "p50": 22783.0,
+        "mean": 22783.0,
+        "max": 22783.0
       },
-      "tiles_per_frame": {
-        "n": 77,
-        "min": 1.0,
-        "p50": 1.0,
-        "mean": 1.208,
-        "p90": 2.0,
-        "p99": 2.0,
-        "max": 2.0
-      }
+      "wire_bytes_per_frame": {
+        "n": 1,
+        "min": 22945.0,
+        "p50": 22945.0,
+        "mean": 22945.0,
+        "max": 22945.0
+      },
+      "tiles_per_frame": {}
     },
     {
       "mode": "delta-jpeg-q80",
+      "wire": "binary",
       "phase": "idle",
       "frames": 1,
       "keyframes": 1,
       "tile_frames": 0,
-      "total_bytes": 48050,
+      "total_bytes": 22783,
+      "total_wire_bytes": 22945,
       "bytes_per_frame": {
         "n": 1,
-        "min": 48050.0,
-        "p50": 48050.0,
-        "mean": 48050.0,
-        "p90": 48050.0,
-        "p99": 48050.0,
-        "max": 48050.0
+        "min": 22783.0,
+        "p50": 22783.0,
+        "mean": 22783.0,
+        "max": 22783.0
+      },
+      "wire_bytes_per_frame": {
+        "n": 1,
+        "min": 22945.0,
+        "p50": 22945.0,
+        "mean": 22945.0,
+        "max": 22945.0
+      },
+      "tiles_per_frame": {}
+    },
+    {
+      "mode": "delta-jpeg-q80",
+      "wire": "text",
+      "phase": "typing",
+      "frames": 1,
+      "keyframes": 1,
+      "tile_frames": 0,
+      "total_bytes": 22783,
+      "total_wire_bytes": 30525,
+      "bytes_per_frame": {
+        "n": 1,
+        "min": 22783.0,
+        "p50": 22783.0,
+        "mean": 22783.0,
+        "max": 22783.0
+      },
+      "wire_bytes_per_frame": {
+        "n": 1,
+        "min": 30525.0,
+        "p50": 30525.0,
+        "mean": 30525.0,
+        "max": 30525.0
+      },
+      "tiles_per_frame": {}
+    },
+    {
+      "mode": "delta-jpeg-q80",
+      "wire": "text",
+      "phase": "idle",
+      "frames": 1,
+      "keyframes": 1,
+      "tile_frames": 0,
+      "total_bytes": 22783,
+      "total_wire_bytes": 30525,
+      "bytes_per_frame": {
+        "n": 1,
+        "min": 22783.0,
+        "p50": 22783.0,
+        "mean": 22783.0,
+        "max": 22783.0
+      },
+      "wire_bytes_per_frame": {
+        "n": 1,
+        "min": 30525.0,
+        "p50": 30525.0,
+        "mean": 30525.0,
+        "max": 30525.0
       },
       "tiles_per_frame": {}
     }

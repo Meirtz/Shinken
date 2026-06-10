@@ -1,0 +1,950 @@
+{
+  "suite": "fork_resume_pool",
+  "meta": {
+    "generated_utc": "2026-06-10T22:32:09Z",
+    "git_commit": "ae7e3d2",
+    "python": "3.13.9",
+    "host_os": "macOS 26.5.1",
+    "host_arch": "arm64",
+    "host_cpu": "Apple M4 Pro",
+    "host_cores": "14",
+    "host_mem_gib": 48.0,
+    "docker_server": "29.4.3",
+    "concurrent_containers": [
+      "shinken-local-249aab4216",
+      "cua-bench-sr"
+    ],
+    "image": "shinken/sandbox-linux",
+    "image_arch": "linux/arm64",
+    "screen_geometry": "1280x800x24"
+  },
+  "mode": "pool",
+  "reps": 16,
+  "fanout": [
+    1,
+    2,
+    4,
+    8,
+    16,
+    32
+  ],
+  "contended_host": false,
+  "datapoints": {
+    "cold_boot": [
+      {
+        "rep": 0,
+        "create_ms": 49152.6,
+        "connect_ms": 4.1,
+        "first_obs_ms": 8.9,
+        "total_ms": 49165.6
+      },
+      {
+        "rep": 1,
+        "create_ms": 216.7,
+        "connect_ms": 3.2,
+        "first_obs_ms": 8.9,
+        "total_ms": 228.8
+      },
+      {
+        "rep": 2,
+        "create_ms": 223.2,
+        "connect_ms": 1.5,
+        "first_obs_ms": 8.7,
+        "total_ms": 233.4
+      },
+      {
+        "rep": 3,
+        "create_ms": 192.1,
+        "connect_ms": 1.6,
+        "first_obs_ms": 8.5,
+        "total_ms": 202.1
+      },
+      {
+        "rep": 4,
+        "create_ms": 229.4,
+        "connect_ms": 3.5,
+        "first_obs_ms": 8.8,
+        "total_ms": 241.7
+      },
+      {
+        "rep": 5,
+        "create_ms": 171.6,
+        "connect_ms": 2.6,
+        "first_obs_ms": 8.9,
+        "total_ms": 183.1
+      },
+      {
+        "rep": 6,
+        "create_ms": 197.1,
+        "connect_ms": 2.4,
+        "first_obs_ms": 8.5,
+        "total_ms": 208.0
+      },
+      {
+        "rep": 7,
+        "create_ms": 200.9,
+        "connect_ms": 2.3,
+        "first_obs_ms": 9.1,
+        "total_ms": 212.3
+      },
+      {
+        "rep": 8,
+        "create_ms": 201.3,
+        "connect_ms": 2.7,
+        "first_obs_ms": 9.5,
+        "total_ms": 213.5
+      },
+      {
+        "rep": 9,
+        "create_ms": 187.3,
+        "connect_ms": 2.4,
+        "first_obs_ms": 9.5,
+        "total_ms": 199.3
+      },
+      {
+        "rep": 10,
+        "create_ms": 195.2,
+        "connect_ms": 2.5,
+        "first_obs_ms": 9.2,
+        "total_ms": 206.9
+      },
+      {
+        "rep": 11,
+        "create_ms": 216.3,
+        "connect_ms": 2.5,
+        "first_obs_ms": 22.9,
+        "total_ms": 241.7
+      },
+      {
+        "rep": 12,
+        "create_ms": 214.0,
+        "connect_ms": 3.1,
+        "first_obs_ms": 11.2,
+        "total_ms": 228.3
+      },
+      {
+        "rep": 13,
+        "create_ms": 224.9,
+        "connect_ms": 5.3,
+        "first_obs_ms": 9.0,
+        "total_ms": 239.2
+      },
+      {
+        "rep": 14,
+        "create_ms": 186.2,
+        "connect_ms": 1.8,
+        "first_obs_ms": 8.6,
+        "total_ms": 196.6
+      },
+      {
+        "rep": 15,
+        "create_ms": 214.9,
+        "connect_ms": 4.2,
+        "first_obs_ms": 8.6,
+        "total_ms": 227.7
+      }
+    ],
+    "checkpoint": [
+      {
+        "rep": 0,
+        "checkpoint_ms": 905.9
+      },
+      {
+        "rep": 1,
+        "checkpoint_ms": 838.5
+      },
+      {
+        "rep": 2,
+        "checkpoint_ms": 913.0
+      },
+      {
+        "rep": 3,
+        "checkpoint_ms": 871.5
+      },
+      {
+        "rep": 4,
+        "checkpoint_ms": 827.2
+      },
+      {
+        "rep": 5,
+        "checkpoint_ms": 848.4
+      },
+      {
+        "rep": 6,
+        "checkpoint_ms": 854.1
+      },
+      {
+        "rep": 7,
+        "checkpoint_ms": 853.9
+      },
+      {
+        "rep": 8,
+        "checkpoint_ms": 844.9
+      },
+      {
+        "rep": 9,
+        "checkpoint_ms": 848.6
+      },
+      {
+        "rep": 10,
+        "checkpoint_ms": 850.3
+      },
+      {
+        "rep": 11,
+        "checkpoint_ms": 863.5
+      },
+      {
+        "rep": 12,
+        "checkpoint_ms": 878.1
+      },
+      {
+        "rep": 13,
+        "checkpoint_ms": 868.8
+      },
+      {
+        "rep": 14,
+        "checkpoint_ms": 897.7
+      },
+      {
+        "rep": 15,
+        "checkpoint_ms": 845.1
+      }
+    ],
+    "fork_resume": [
+      {
+        "n": 1,
+        "replica": 0,
+        "resume_ms": 71.4,
+        "connect_ms": 1.6,
+        "first_obs_ms": 9.0,
+        "total_ms": 81.9,
+        "inherited_golden_state": true,
+        "pool_graft": true
+      },
+      {
+        "n": 2,
+        "replica": 0,
+        "resume_ms": 74.1,
+        "connect_ms": 2.8,
+        "first_obs_ms": 8.6,
+        "total_ms": 85.5,
+        "inherited_golden_state": true,
+        "pool_graft": true
+      },
+      {
+        "n": 2,
+        "replica": 1,
+        "resume_ms": 74.4,
+        "connect_ms": 2.5,
+        "first_obs_ms": 8.7,
+        "total_ms": 85.5,
+        "inherited_golden_state": true,
+        "pool_graft": true
+      },
+      {
+        "n": 4,
+        "replica": 0,
+        "resume_ms": 102.0,
+        "connect_ms": 2.4,
+        "first_obs_ms": 10.0,
+        "total_ms": 114.4,
+        "inherited_golden_state": true,
+        "pool_graft": true
+      },
+      {
+        "n": 4,
+        "replica": 1,
+        "resume_ms": 107.3,
+        "connect_ms": 2.7,
+        "first_obs_ms": 8.6,
+        "total_ms": 118.7,
+        "inherited_golden_state": true,
+        "pool_graft": true
+      },
+      {
+        "n": 4,
+        "replica": 2,
+        "resume_ms": 104.5,
+        "connect_ms": 2.8,
+        "first_obs_ms": 10.7,
+        "total_ms": 117.9,
+        "inherited_golden_state": true,
+        "pool_graft": true
+      },
+      {
+        "n": 4,
+        "replica": 3,
+        "resume_ms": 110.0,
+        "connect_ms": 1.7,
+        "first_obs_ms": 10.5,
+        "total_ms": 122.2,
+        "inherited_golden_state": true,
+        "pool_graft": true
+      },
+      {
+        "n": 8,
+        "replica": 0,
+        "resume_ms": 92.4,
+        "connect_ms": 2.8,
+        "first_obs_ms": 12.1,
+        "total_ms": 107.2,
+        "inherited_golden_state": true,
+        "pool_graft": true
+      },
+      {
+        "n": 8,
+        "replica": 1,
+        "resume_ms": 86.6,
+        "connect_ms": 3.9,
+        "first_obs_ms": 12.7,
+        "total_ms": 103.2,
+        "inherited_golden_state": true,
+        "pool_graft": true
+      },
+      {
+        "n": 8,
+        "replica": 2,
+        "resume_ms": 89.9,
+        "connect_ms": 6.5,
+        "first_obs_ms": 21.8,
+        "total_ms": 118.2,
+        "inherited_golden_state": true,
+        "pool_graft": true
+      },
+      {
+        "n": 8,
+        "replica": 3,
+        "resume_ms": 86.6,
+        "connect_ms": 5.0,
+        "first_obs_ms": 12.3,
+        "total_ms": 103.9,
+        "inherited_golden_state": true,
+        "pool_graft": true
+      },
+      {
+        "n": 8,
+        "replica": 4,
+        "resume_ms": 95.0,
+        "connect_ms": 4.5,
+        "first_obs_ms": 18.9,
+        "total_ms": 118.5,
+        "inherited_golden_state": true,
+        "pool_graft": true
+      },
+      {
+        "n": 8,
+        "replica": 5,
+        "resume_ms": 118.0,
+        "connect_ms": 4.1,
+        "first_obs_ms": 15.0,
+        "total_ms": 137.1,
+        "inherited_golden_state": true,
+        "pool_graft": true
+      },
+      {
+        "n": 8,
+        "replica": 6,
+        "resume_ms": 120.7,
+        "connect_ms": 3.5,
+        "first_obs_ms": 19.5,
+        "total_ms": 143.6,
+        "inherited_golden_state": true,
+        "pool_graft": true
+      },
+      {
+        "n": 8,
+        "replica": 7,
+        "resume_ms": 121.3,
+        "connect_ms": 3.4,
+        "first_obs_ms": 19.3,
+        "total_ms": 144.0,
+        "inherited_golden_state": true,
+        "pool_graft": true
+      },
+      {
+        "n": 16,
+        "replica": 0,
+        "resume_ms": 114.9,
+        "connect_ms": 3.8,
+        "first_obs_ms": 9.8,
+        "total_ms": 128.5,
+        "inherited_golden_state": true,
+        "pool_graft": true
+      },
+      {
+        "n": 16,
+        "replica": 1,
+        "resume_ms": 108.6,
+        "connect_ms": 4.9,
+        "first_obs_ms": 14.0,
+        "total_ms": 127.5,
+        "inherited_golden_state": true,
+        "pool_graft": true
+      },
+      {
+        "n": 16,
+        "replica": 2,
+        "resume_ms": 114.5,
+        "connect_ms": 3.4,
+        "first_obs_ms": 10.2,
+        "total_ms": 128.0,
+        "inherited_golden_state": true,
+        "pool_graft": true
+      },
+      {
+        "n": 16,
+        "replica": 3,
+        "resume_ms": 108.2,
+        "connect_ms": 4.3,
+        "first_obs_ms": 14.7,
+        "total_ms": 127.2,
+        "inherited_golden_state": true,
+        "pool_graft": true
+      },
+      {
+        "n": 16,
+        "replica": 4,
+        "resume_ms": 106.7,
+        "connect_ms": 3.8,
+        "first_obs_ms": 12.5,
+        "total_ms": 123.0,
+        "inherited_golden_state": true,
+        "pool_graft": true
+      },
+      {
+        "n": 16,
+        "replica": 5,
+        "resume_ms": 111.7,
+        "connect_ms": 4.3,
+        "first_obs_ms": 11.1,
+        "total_ms": 127.1,
+        "inherited_golden_state": true,
+        "pool_graft": true
+      },
+      {
+        "n": 16,
+        "replica": 6,
+        "resume_ms": 102.9,
+        "connect_ms": 4.6,
+        "first_obs_ms": 9.7,
+        "total_ms": 117.2,
+        "inherited_golden_state": true,
+        "pool_graft": true
+      },
+      {
+        "n": 16,
+        "replica": 7,
+        "resume_ms": 114.4,
+        "connect_ms": 3.5,
+        "first_obs_ms": 18.9,
+        "total_ms": 136.8,
+        "inherited_golden_state": true,
+        "pool_graft": true
+      },
+      {
+        "n": 16,
+        "replica": 8,
+        "resume_ms": 962.0,
+        "connect_ms": 2.8,
+        "first_obs_ms": 10.4,
+        "total_ms": 975.3,
+        "inherited_golden_state": true,
+        "pool_graft": false
+      },
+      {
+        "n": 16,
+        "replica": 9,
+        "resume_ms": 959.7,
+        "connect_ms": 3.6,
+        "first_obs_ms": 11.7,
+        "total_ms": 975.0,
+        "inherited_golden_state": true,
+        "pool_graft": false
+      },
+      {
+        "n": 16,
+        "replica": 10,
+        "resume_ms": 992.6,
+        "connect_ms": 2.8,
+        "first_obs_ms": 13.1,
+        "total_ms": 1008.5,
+        "inherited_golden_state": true,
+        "pool_graft": false
+      },
+      {
+        "n": 16,
+        "replica": 11,
+        "resume_ms": 1053.4,
+        "connect_ms": 4.7,
+        "first_obs_ms": 12.8,
+        "total_ms": 1070.9,
+        "inherited_golden_state": true,
+        "pool_graft": false
+      },
+      {
+        "n": 16,
+        "replica": 12,
+        "resume_ms": 953.8,
+        "connect_ms": 3.2,
+        "first_obs_ms": 26.4,
+        "total_ms": 983.4,
+        "inherited_golden_state": true,
+        "pool_graft": false
+      },
+      {
+        "n": 16,
+        "replica": 13,
+        "resume_ms": 987.1,
+        "connect_ms": 5.0,
+        "first_obs_ms": 11.0,
+        "total_ms": 1003.1,
+        "inherited_golden_state": true,
+        "pool_graft": false
+      },
+      {
+        "n": 16,
+        "replica": 14,
+        "resume_ms": 1015.8,
+        "connect_ms": 7.5,
+        "first_obs_ms": 13.0,
+        "total_ms": 1036.3,
+        "inherited_golden_state": true,
+        "pool_graft": false
+      },
+      {
+        "n": 16,
+        "replica": 15,
+        "resume_ms": 991.1,
+        "connect_ms": 3.4,
+        "first_obs_ms": 14.1,
+        "total_ms": 1008.6,
+        "inherited_golden_state": true,
+        "pool_graft": false
+      },
+      {
+        "n": 32,
+        "replica": 0,
+        "resume_ms": 79.6,
+        "connect_ms": 2.7,
+        "first_obs_ms": 12.0,
+        "total_ms": 94.2,
+        "inherited_golden_state": true,
+        "pool_graft": true
+      },
+      {
+        "n": 32,
+        "replica": 1,
+        "resume_ms": 79.0,
+        "connect_ms": 2.7,
+        "first_obs_ms": 12.2,
+        "total_ms": 93.8,
+        "inherited_golden_state": true,
+        "pool_graft": true
+      },
+      {
+        "n": 32,
+        "replica": 2,
+        "resume_ms": 77.5,
+        "connect_ms": 2.3,
+        "first_obs_ms": 9.9,
+        "total_ms": 89.8,
+        "inherited_golden_state": true,
+        "pool_graft": true
+      },
+      {
+        "n": 32,
+        "replica": 3,
+        "resume_ms": 75.1,
+        "connect_ms": 3.2,
+        "first_obs_ms": 8.4,
+        "total_ms": 86.8,
+        "inherited_golden_state": true,
+        "pool_graft": true
+      },
+      {
+        "n": 32,
+        "replica": 4,
+        "resume_ms": 76.7,
+        "connect_ms": 3.4,
+        "first_obs_ms": 9.6,
+        "total_ms": 89.6,
+        "inherited_golden_state": true,
+        "pool_graft": true
+      },
+      {
+        "n": 32,
+        "replica": 5,
+        "resume_ms": 100.5,
+        "connect_ms": 3.5,
+        "first_obs_ms": 11.4,
+        "total_ms": 115.5,
+        "inherited_golden_state": true,
+        "pool_graft": true
+      },
+      {
+        "n": 32,
+        "replica": 6,
+        "resume_ms": 229.2,
+        "connect_ms": 1.5,
+        "first_obs_ms": 9.2,
+        "total_ms": 239.8,
+        "inherited_golden_state": true,
+        "pool_graft": true
+      },
+      {
+        "n": 32,
+        "replica": 7,
+        "resume_ms": 861.1,
+        "connect_ms": 4.5,
+        "first_obs_ms": 16.7,
+        "total_ms": 882.3,
+        "inherited_golden_state": true,
+        "pool_graft": false
+      },
+      {
+        "n": 32,
+        "replica": 8,
+        "resume_ms": 2203.6,
+        "connect_ms": 9.1,
+        "first_obs_ms": 11.4,
+        "total_ms": 2224.1,
+        "inherited_golden_state": true,
+        "pool_graft": false
+      },
+      {
+        "n": 32,
+        "replica": 9,
+        "resume_ms": 1719.4,
+        "connect_ms": 7.0,
+        "first_obs_ms": 12.5,
+        "total_ms": 1738.9,
+        "inherited_golden_state": true,
+        "pool_graft": false
+      },
+      {
+        "n": 32,
+        "replica": 10,
+        "resume_ms": 2222.2,
+        "connect_ms": 5.8,
+        "first_obs_ms": 11.0,
+        "total_ms": 2239.1,
+        "inherited_golden_state": true,
+        "pool_graft": false
+      },
+      {
+        "n": 32,
+        "replica": 11,
+        "resume_ms": 1433.0,
+        "connect_ms": 3.5,
+        "first_obs_ms": 15.0,
+        "total_ms": 1451.5,
+        "inherited_golden_state": true,
+        "pool_graft": false
+      },
+      {
+        "n": 32,
+        "replica": 12,
+        "resume_ms": 1464.6,
+        "connect_ms": 12.0,
+        "first_obs_ms": 10.7,
+        "total_ms": 1487.2,
+        "inherited_golden_state": true,
+        "pool_graft": false
+      },
+      {
+        "n": 32,
+        "replica": 13,
+        "resume_ms": 1730.6,
+        "connect_ms": 6.4,
+        "first_obs_ms": 14.7,
+        "total_ms": 1751.7,
+        "inherited_golden_state": true,
+        "pool_graft": false
+      },
+      {
+        "n": 32,
+        "replica": 14,
+        "resume_ms": 1934.6,
+        "connect_ms": 10.4,
+        "first_obs_ms": 16.2,
+        "total_ms": 1961.3,
+        "inherited_golden_state": true,
+        "pool_graft": false
+      },
+      {
+        "n": 32,
+        "replica": 15,
+        "resume_ms": 1667.7,
+        "connect_ms": 7.0,
+        "first_obs_ms": 11.0,
+        "total_ms": 1685.6,
+        "inherited_golden_state": true,
+        "pool_graft": false
+      },
+      {
+        "n": 32,
+        "replica": 16,
+        "resume_ms": 2200.9,
+        "connect_ms": 11.0,
+        "first_obs_ms": 20.1,
+        "total_ms": 2232.0,
+        "inherited_golden_state": true,
+        "pool_graft": false
+      },
+      {
+        "n": 32,
+        "replica": 17,
+        "resume_ms": 1781.4,
+        "connect_ms": 5.8,
+        "first_obs_ms": 12.0,
+        "total_ms": 1799.3,
+        "inherited_golden_state": true,
+        "pool_graft": false
+      },
+      {
+        "n": 32,
+        "replica": 18,
+        "resume_ms": 2143.3,
+        "connect_ms": 3.3,
+        "first_obs_ms": 17.1,
+        "total_ms": 2163.8,
+        "inherited_golden_state": true,
+        "pool_graft": false
+      },
+      {
+        "n": 32,
+        "replica": 19,
+        "resume_ms": 1832.4,
+        "connect_ms": 7.2,
+        "first_obs_ms": 12.9,
+        "total_ms": 1852.6,
+        "inherited_golden_state": true,
+        "pool_graft": false
+      },
+      {
+        "n": 32,
+        "replica": 20,
+        "resume_ms": 2074.7,
+        "connect_ms": 3.9,
+        "first_obs_ms": 13.2,
+        "total_ms": 2091.9,
+        "inherited_golden_state": true,
+        "pool_graft": false
+      },
+      {
+        "n": 32,
+        "replica": 21,
+        "resume_ms": 1785.0,
+        "connect_ms": 4.4,
+        "first_obs_ms": 12.7,
+        "total_ms": 1802.2,
+        "inherited_golden_state": true,
+        "pool_graft": false
+      },
+      {
+        "n": 32,
+        "replica": 22,
+        "resume_ms": 1449.4,
+        "connect_ms": 6.1,
+        "first_obs_ms": 13.5,
+        "total_ms": 1469.0,
+        "inherited_golden_state": true,
+        "pool_graft": false
+      },
+      {
+        "n": 32,
+        "replica": 23,
+        "resume_ms": 1548.4,
+        "connect_ms": 7.3,
+        "first_obs_ms": 12.8,
+        "total_ms": 1568.5,
+        "inherited_golden_state": true,
+        "pool_graft": false
+      },
+      {
+        "n": 32,
+        "replica": 24,
+        "resume_ms": 2002.6,
+        "connect_ms": 8.8,
+        "first_obs_ms": 14.1,
+        "total_ms": 2025.6,
+        "inherited_golden_state": true,
+        "pool_graft": false
+      },
+      {
+        "n": 32,
+        "replica": 25,
+        "resume_ms": 2103.1,
+        "connect_ms": 8.0,
+        "first_obs_ms": 12.2,
+        "total_ms": 2123.3,
+        "inherited_golden_state": true,
+        "pool_graft": false
+      },
+      {
+        "n": 32,
+        "replica": 26,
+        "resume_ms": 1930.9,
+        "connect_ms": 11.0,
+        "first_obs_ms": 12.8,
+        "total_ms": 1954.8,
+        "inherited_golden_state": true,
+        "pool_graft": false
+      },
+      {
+        "n": 32,
+        "replica": 27,
+        "resume_ms": 1970.8,
+        "connect_ms": 11.1,
+        "first_obs_ms": 14.1,
+        "total_ms": 1996.0,
+        "inherited_golden_state": true,
+        "pool_graft": false
+      },
+      {
+        "n": 32,
+        "replica": 28,
+        "resume_ms": 1537.7,
+        "connect_ms": 8.0,
+        "first_obs_ms": 13.3,
+        "total_ms": 1559.0,
+        "inherited_golden_state": true,
+        "pool_graft": false
+      },
+      {
+        "n": 32,
+        "replica": 29,
+        "resume_ms": 2046.6,
+        "connect_ms": 4.0,
+        "first_obs_ms": 14.3,
+        "total_ms": 2065.0,
+        "inherited_golden_state": true,
+        "pool_graft": false
+      },
+      {
+        "n": 32,
+        "replica": 30,
+        "resume_ms": 1981.2,
+        "connect_ms": 7.8,
+        "first_obs_ms": 21.6,
+        "total_ms": 2010.6,
+        "inherited_golden_state": true,
+        "pool_graft": false
+      },
+      {
+        "n": 32,
+        "replica": 31,
+        "resume_ms": 1659.8,
+        "connect_ms": 5.2,
+        "first_obs_ms": 14.4,
+        "total_ms": 1679.4,
+        "inherited_golden_state": true,
+        "pool_graft": false
+      }
+    ],
+    "fanout_walls": [
+      {
+        "n": 1,
+        "wall_ms": 346.5,
+        "wall_per_replica_ms": 346.5,
+        "all_inherited": true,
+        "pool_grafts": 1,
+        "infra_failures": 0,
+        "pool_at_start": 5
+      },
+      {
+        "n": 2,
+        "wall_ms": 454.9,
+        "wall_per_replica_ms": 227.4,
+        "all_inherited": true,
+        "pool_grafts": 2,
+        "infra_failures": 0,
+        "pool_at_start": 4
+      },
+      {
+        "n": 4,
+        "wall_ms": 665.4,
+        "wall_per_replica_ms": 166.4,
+        "all_inherited": true,
+        "pool_grafts": 4,
+        "infra_failures": 0,
+        "pool_at_start": 4
+      },
+      {
+        "n": 8,
+        "wall_ms": 1023.8,
+        "wall_per_replica_ms": 128.0,
+        "all_inherited": true,
+        "pool_grafts": 8,
+        "infra_failures": 0,
+        "pool_at_start": 8
+      },
+      {
+        "n": 16,
+        "wall_ms": 1967.2,
+        "wall_per_replica_ms": 122.9,
+        "all_inherited": true,
+        "pool_grafts": 8,
+        "infra_failures": 0,
+        "pool_at_start": 8
+      },
+      {
+        "n": 32,
+        "wall_ms": 4115.6,
+        "wall_per_replica_ms": 128.6,
+        "all_inherited": true,
+        "pool_grafts": 7,
+        "infra_failures": 0,
+        "pool_at_start": 6
+      }
+    ]
+  },
+  "pool": {
+    "k": 8,
+    "claim_timeout_s": 0.25
+  },
+  "summary": {
+    "cold_boot_total_ms": {
+      "n": 16,
+      "min": 183.1,
+      "p50": 227.7,
+      "mean": 3276.762,
+      "max": 49165.6
+    },
+    "checkpoint_ms": {
+      "n": 16,
+      "min": 827.2,
+      "p50": 854.1,
+      "mean": 863.094,
+      "max": 913.0
+    },
+    "fork_total_ms": {
+      "n": 63,
+      "min": 81.9,
+      "p50": 975.0,
+      "mean": 911.149,
+      "max": 2239.1,
+      "p90": 2065.0
+    },
+    "replicas_verified": 63,
+    "replicas_total": 63,
+    "infra_failures": 0,
+    "pool_graft_total_ms": {
+      "n": 30,
+      "min": 81.9,
+      "p50": 117.9,
+      "mean": 117.553,
+      "max": 239.8,
+      "p90": 137.1
+    },
+    "classic_fallback_total_ms": {
+      "n": 33,
+      "min": 882.3,
+      "p50": 1738.9,
+      "mean": 1632.6,
+      "max": 2239.1,
+      "p90": 2163.8
+    },
+    "pool_hit_rate": 0.476
+  }
+}

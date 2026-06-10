@@ -3,17 +3,23 @@
 from __future__ import annotations
 
 import contextlib
+import fnmatch
 import json
 import os
+import queue
 import re
 import secrets
+import shutil
 import socket
 import struct
 import subprocess
+import tempfile
+import threading
 import time
 import uuid
 import zlib
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 from ..artifacts import ArtifactRef, FileScopeError, HashMismatch, sha256_file
@@ -91,6 +97,9 @@ class DockerLocalProvider(SandboxProvider):
         name_prefix: str = "shinken-local",
         startup_timeout: float = 45.0,
         network_mode: str = "bridge",
+        warm_pool_size: int = 0,
+        warm_pool_spec: SandboxSpec | None = None,
+        warm_pool_claim_timeout: float = 0.0,
     ) -> None:
         self.image = image
         self.docker_bin = docker_bin
@@ -115,6 +124,31 @@ class DockerLocalProvider(SandboxProvider):
         # restore()/fork() can rebuild geometry + resource limits instead of silently
         # reverting to defaults. Also the reclamation set for cleanup_snapshots().
         self._snapshots: dict[str, SandboxSpec] = {}
+        # Warm-pool state graft (opt-in, S8): keep `warm_pool_size` pre-booted BASE-image
+        # containers ready (replenished by a background thread), and serve restore()/
+        # fork() by claiming one and grafting the snapshot's filesystem delta onto it —
+        # skipping the cold boot entirely. Files-only semantics, the SAME state tier as
+        # `docker commit`: running processes are NOT restored, deletions/changes are the
+        # `docker diff` set captured at snapshot time, and live runtime state
+        # (/run, /dev, X sockets/locks) is deliberately excluded from the graft so the
+        # warm container's own daemons keep their footing. A snapshot without a captured
+        # delta (or with a spec the pool can't match) falls back to the classic
+        # boot-from-committed-image path.
+        self._deltas: dict[str, dict[str, Any]] = {}
+        self._delta_dir: Path | None = None
+        self._pool: queue.Queue[SandboxHandle] | None = None
+        self._pool_target = max(0, int(warm_pool_size))
+        self._pool_spec = warm_pool_spec or SandboxSpec()
+        self._pool_claim_timeout = warm_pool_claim_timeout
+        self._pool_stop = threading.Event()
+        self._pool_thread: threading.Thread | None = None
+        if self._pool_target > 0:
+            self._delta_dir = Path(tempfile.mkdtemp(prefix="shinken-deltas-"))
+            self._pool = queue.Queue()
+            self._pool_thread = threading.Thread(
+                target=self._replenish_pool, name="shinken-warm-pool", daemon=True
+            )
+            self._pool_thread.start()
 
     def connect(self, handle: SandboxHandle):
         """Connect, then wire file transfer through the **actual guest** filesystem via
@@ -126,12 +160,34 @@ class DockerLocalProvider(SandboxProvider):
             env._set_guest_transport(DockerGuestTransport(str(container_id), self.docker_bin))
         return env
 
+    # `_free_port` probes a port and closes it before `docker run` binds it — an
+    # unavoidable TOCTOU window. Under concurrent create() bursts two sandboxes can race
+    # for the same port; retry with a fresh port instead of failing the whole create.
+    _PORT_RACE_MARKERS = ("port is already allocated", "address already in use")
+    _CREATE_ATTEMPTS = 3
+
     def create(self, spec: SandboxSpec | None = None) -> SandboxHandle:
         spec = (
             replace(spec, image=spec.image or self.image)
             if spec is not None
             else SandboxSpec(image=self.image)
         )
+        for attempt in range(self._CREATE_ATTEMPTS):
+            try:
+                return self._create_once(spec)
+            except ProviderError as exc:
+                msg = str(exc).lower()
+                lost_race = any(m in msg for m in self._PORT_RACE_MARKERS)
+                # The documented residual ~1%-of-boots readiness flake (x11_up but the
+                # root never paints before the deadline; benchmarks.md §9 caveat 5):
+                # _create_once already destroyed the container, so one bounded retry
+                # with a fresh container is safe and keeps large-N boot runs alive.
+                boot_flake = "timed out waiting for ready sandbox" in msg
+                if not (lost_race or boot_flake) or attempt == self._CREATE_ATTEMPTS - 1:
+                    raise
+        raise AssertionError("unreachable")  # pragma: no cover
+
+    def _create_once(self, spec: SandboxSpec) -> SandboxHandle:
         token = secrets.token_hex(16)
         port = _free_port(self.host)
         name = f"{self.name_prefix}-{uuid.uuid4().hex[:10]}"
@@ -157,6 +213,13 @@ class DockerLocalProvider(SandboxProvider):
             "-e",
             f"SCREEN_GEOMETRY={spec.screen_geometry}",
         ]
+        # Caller-supplied guest env (SandboxSpec.extra_env), e.g. SHINKEND_DAMAGE=off.
+        # Provider-reserved names stay authoritative: they are set above and the LAST
+        # -e wins in docker, so reserved keys are skipped here instead of trusted.
+        for key, value in (spec.extra_env or {}).items():
+            if key in ("SHINKEND_TOKEN", "SCREEN_GEOMETRY"):
+                continue
+            cmd += ["-e", f"{key}={value}"]
         # Publish the shinkend port only when the guest has a network; --network none is
         # incompatible with -p (and leaves the guest unreachable by the WS transport).
         if self.network_mode != "none":
@@ -253,21 +316,77 @@ class DockerLocalProvider(SandboxProvider):
             detail="OOMKilled" if oom else None,
         )
 
+    # Readiness poll cadence (S8): 15 ms — fine enough that the SDK observes the guest
+    # ready within ~one desktop paint, vs the legacy 200 ms loop whose every poll also
+    # opened a fresh WS, pulled+decoded a FULL screenshot PNG in pure Python, and shelled
+    # out to a blocking `docker stats` (seconds per poll).
+    _READY_POLL_S = 0.015
+
     def _wait_ready(self, handle: SandboxHandle) -> None:
+        """Block until the sandbox is usable — the cheap, push-shaped way (S8).
+
+        Phase 1: connect-with-retry at ~15 ms granularity until ONE WebSocket session
+        completes the ACI handshake (shinkend now listens within milliseconds of
+        container start; the desktop boots behind it). Phase 2: poll the guest-side
+        ``ready`` query on that SAME connection — answered in microseconds inside the
+        guest from sampled root pixels. No full-PNG pulls, no host-side PNG decode, no
+        ``docker stats`` on this hot path (``_container_rss`` remains for explicit
+        ``health()`` calls only). A runtime that predates the ``ready`` query gets a
+        same-connection screenshot probe at the legacy 200 ms cadence."""
         deadline = time.monotonic() + self.startup_timeout
+        last_error: Exception | None = None
+        env = None
+        try:
+            while env is None:
+                if time.monotonic() >= deadline:
+                    raise ProviderError(
+                        f"timed out waiting for ready sandbox {handle.addr}: {last_error}"
+                    )
+                try:
+                    env = self.connect(handle)
+                except Exception as exc:  # not listening yet / proxy up before guest
+                    last_error = exc
+                    time.sleep(self._READY_POLL_S)
+            while time.monotonic() < deadline:
+                try:
+                    value = env.query("ready")
+                except RuntimeError as exc:
+                    if "unknown query" not in str(exc):
+                        raise
+                    # Old runtime: same-connection screenshot probe (still no fresh
+                    # WS per poll and no `docker stats`).
+                    self._legacy_ready_poll(env, handle, deadline)
+                    return
+                if isinstance(value, dict) and value.get("ready"):
+                    return
+                last_error = ProviderError(f"guest not ready: {value}")
+                time.sleep(self._READY_POLL_S)
+            raise ProviderError(f"timed out waiting for ready sandbox {handle.addr}: {last_error}")
+        finally:
+            if env is not None:
+                env.close()
+
+    def _legacy_ready_poll(self, env: Any, handle: SandboxHandle, deadline: float) -> None:
+        """Readiness for a runtime without the ``ready`` query: poll a screenshot on the
+        already-open session until it decodes non-black (or is undecodable — treated as
+        ready, matching the legacy ``health()`` semantics)."""
         last_error: Exception | None = None
         while time.monotonic() < deadline:
             try:
-                health = self.health(handle)
-                if health.ready:
+                shot = env.screenshot()
+                if _png_has_non_black_pixel(shot["png"]) is not False:
                     return
-                last_error = ProviderError(health.detail)
+                last_error = ProviderError("screenshot is all black")
             except Exception as exc:
                 last_error = exc
             time.sleep(0.2)
         raise ProviderError(f"timed out waiting for ready sandbox {handle.addr}: {last_error}")
 
     def health(self, handle: SandboxHandle) -> SandboxHealth:
+        """Rich, EXPLICIT diagnostic: round-trip, full screenshot (+ host-side non-black
+        decode) and container RSS via ``docker stats``. Deliberately heavyweight —
+        seconds per call — and therefore no longer used by the boot readiness path
+        (see :meth:`_wait_ready`, which polls the guest-side ``ready`` query instead)."""
         started = time.perf_counter()
         try:
             env = self.connect(handle)
@@ -362,19 +481,36 @@ class DockerLocalProvider(SandboxProvider):
 
     def snapshot(self, handle: SandboxHandle, name: str | None = None) -> str:
         """Disk snapshot via `docker commit` → a tagged image id (snapshot_kind=disk).
-        Records the originating spec so restore()/fork() preserve geometry + limits."""
+        Records the originating spec so restore()/fork() preserve geometry + limits.
+        When the warm pool is enabled, also captures the snapshot's filesystem delta
+        (``docker diff`` + a tar of the added/changed paths) so restore() can graft it
+        onto a pre-booted container instead of cold-booting the committed image."""
         tag = f"shinken-snap:{name or uuid.uuid4().hex[:12]}"
-        commit = [self.docker_bin, "commit", self._container_of(handle), tag]
+        cid = self._container_of(handle)
+        commit = [self.docker_bin, "commit", cid, tag]
         _run(commit, timeout=self.startup_timeout)
         self._snapshots[tag] = self._spec_from_handle(handle)
+        if self._pool is not None:
+            try:
+                self._deltas[tag] = self._capture_delta(cid, tag)
+            except ProviderError:
+                # No delta -> this snapshot simply restores via the classic path.
+                self._deltas.pop(tag, None)
         return tag
 
     def restore(self, snapshot_id: str) -> SandboxHandle:
         """Launch a fresh sandbox from a snapshot image (or a checkpoint id) — a new live
         container off the committed filesystem layer, at the geometry/limits captured when
-        the snapshot was taken (not provider defaults)."""
+        the snapshot was taken (not provider defaults). With the warm pool enabled and a
+        captured delta available, restore instead claims a pre-booted container and
+        grafts the delta onto it (files-only, same tier as `docker commit`) — falling
+        back to the classic cold boot when the pool is empty or incompatible."""
         image = self._checkpoints.get(snapshot_id, {}).get("snapshot_id", snapshot_id)
         spec = self._snapshots.get(image)
+        if self._pool is not None:
+            handle = self._restore_from_pool(image, spec)
+            if handle is not None:
+                return handle
         spec = replace(spec, image=image) if spec is not None else SandboxSpec(image=image)
         return self.create(spec)
 
@@ -390,6 +526,10 @@ class DockerLocalProvider(SandboxProvider):
             timeout=30,
         )
         self._snapshots.pop(image, None)
+        delta = self._deltas.pop(image, None)
+        if delta and delta.get("tar"):
+            with contextlib.suppress(OSError):
+                os.remove(delta["tar"])
 
     def cleanup_snapshots(self) -> int:
         """Reclaim every snapshot image this provider committed (`docker rmi`). Returns the
@@ -455,6 +595,221 @@ class DockerLocalProvider(SandboxProvider):
             return 0
         _run([self.docker_bin, "rm", "-f", *ids], timeout=30.0)
         return len(ids)
+
+    # --- warm-pool state graft (opt-in, S8) -------------------------------------------
+    # fork→usable without a cold boot: pre-booted base-image containers + the snapshot's
+    # filesystem delta applied in place. SEMANTIC LIMITS (documented, on purpose):
+    # files only — exactly the state tier `docker commit` already captures (no process/
+    # memory state; that is the CRIU tier); the delta is the `docker diff` set at
+    # snapshot time, applied as tar-extract (adds/changes, as root) + rm (deletions),
+    # which is the operational equivalent of applying the commit layer's .wh. whiteouts;
+    # live runtime state (/run, /var/run, /dev, X sockets/locks, /proc, /sys) is
+    # excluded so the warm container's own daemons keep their footing; and a graft onto
+    # a container whose processes are concurrently writing the same paths is
+    # last-writer-wins. Pool sizing: each warm container costs one cold boot (paid in
+    # the background) and one idle desktop's RSS; bursts beyond the pool fall back to
+    # the classic cold path.
+
+    _GRAFT_EXCLUDES = (
+        "/tmp/.X11-unix*",
+        "/tmp/.X*-lock",
+        "/run/*",
+        "/var/run/*",
+        "/dev/*",
+        "/proc/*",
+        "/sys/*",
+    )
+
+    @classmethod
+    def _graft_excluded(cls, path: str) -> bool:
+        return any(fnmatch.fnmatch(path, pat) for pat in cls._GRAFT_EXCLUDES)
+
+    def _capture_delta(self, cid: str, tag: str) -> dict[str, Any]:
+        """Record the live container's filesystem delta vs its base image, right after
+        `docker commit`: `docker diff` enumerates added (A) / changed (C) / deleted (D)
+        paths, the A/C set is tarred OUT of the container (one `docker exec tar`), and
+        the D set is kept as a deletion list. Equivalent to extracting the commit
+        layer's tar (whiteout files included) but without serializing the whole image
+        through `docker save`. Window caveat: the container keeps running between the
+        commit and this capture, so a concurrently-written file may differ from the
+        committed layer by that sliver."""
+        diff = _run([self.docker_bin, "diff", cid], timeout=self.startup_timeout)
+        adds: list[str] = []
+        deletions: list[str] = []
+        for line in diff.stdout.splitlines():
+            parts = line.split(None, 1)
+            if len(parts) != 2:
+                continue
+            kind, path = parts
+            if self._graft_excluded(path):
+                continue
+            if kind == "D":
+                deletions.append(path)
+            elif kind in ("A", "C"):
+                adds.append(path)
+        tar_path: str | None = None
+        if adds:
+            assert self._delta_dir is not None
+            tar_path = str(self._delta_dir / f"{tag.split(':', 1)[-1]}.tar")
+            # --no-recursion: docker diff already lists every changed path individually,
+            # so directory entries must not drag their unchanged children along.
+            with open(tar_path, "wb") as out:
+                proc = subprocess.run(
+                    [
+                        self.docker_bin,
+                        "exec",
+                        "-i",
+                        cid,
+                        "tar",
+                        "-cf",
+                        "-",
+                        "--no-recursion",
+                        "-C",
+                        "/",
+                        "-T",
+                        "-",
+                    ],
+                    input="\n".join(p.lstrip("/") for p in adds).encode(),
+                    stdout=out,
+                    stderr=subprocess.PIPE,
+                    timeout=self.startup_timeout,
+                )
+            if proc.returncode != 0:
+                with contextlib.suppress(OSError):
+                    os.remove(tar_path)
+                err = proc.stderr.decode(errors="replace").strip()
+                raise ProviderError(f"delta capture failed for {tag}: {err}")
+        return {"tar": tar_path, "deletions": deletions}
+
+    def _pool_compatible(self, spec: SandboxSpec | None) -> bool:
+        """A warm container can only impersonate a snapshot whose originating spec
+        matches the pool's (same base image, geometry and resource limits) — anything
+        else falls back to the classic restore path rather than mislead."""
+        if spec is None:
+            return False
+        pool = self._pool_spec
+        return (
+            (spec.image or self.image) == (pool.image or self.image)
+            and spec.screen_geometry == pool.screen_geometry
+            and spec.memory == pool.memory
+            and spec.cpus == pool.cpus
+            and spec.pids_limit == pool.pids_limit
+            and spec.shm_size == pool.shm_size
+        )
+
+    def _restore_from_pool(self, image: str, spec: SandboxSpec | None) -> SandboxHandle | None:
+        """Claim a warm container and graft `image`'s delta onto it. Returns None when
+        the pool path does not apply (no delta captured, incompatible spec, or pool
+        empty past the claim timeout) — the caller falls back to the classic boot."""
+        delta = self._deltas.get(image)
+        if delta is None or self._pool is None or not self._pool_compatible(spec):
+            return None
+        try:
+            if self._pool_claim_timeout > 0:
+                handle = self._pool.get(timeout=self._pool_claim_timeout)
+            else:
+                handle = self._pool.get_nowait()
+        except queue.Empty:
+            return None
+        try:
+            cid = self._container_of(handle)
+            if delta["deletions"]:
+                _run(
+                    [
+                        self.docker_bin,
+                        "exec",
+                        "-u",
+                        "0",
+                        cid,
+                        "rm",
+                        "-rf",
+                        "--",
+                        *delta["deletions"],
+                    ],
+                    timeout=self.startup_timeout,
+                )
+            if delta["tar"]:
+                with open(delta["tar"], "rb") as tar_in:
+                    proc = subprocess.run(
+                        [
+                            self.docker_bin,
+                            "exec",
+                            "-i",
+                            "-u",
+                            "0",
+                            cid,
+                            "tar",
+                            "-xpf",
+                            "-",
+                            "-C",
+                            "/",
+                        ],
+                        stdin=tar_in,
+                        capture_output=True,
+                        timeout=self.startup_timeout,
+                    )
+                if proc.returncode != 0:
+                    raise ProviderError(
+                        f"delta graft failed: {proc.stderr.decode(errors='replace').strip()}"
+                    )
+            # Readiness barrier: the warm container was ready when pooled and the graft
+            # restarts nothing, so this is one fast guest-side `ready` round trip.
+            self._wait_ready(handle)
+        except Exception:
+            self.destroy(handle)
+            raise
+        handle.metadata["image"] = image  # restored-state lineage, like the classic path
+        handle.metadata["pool_graft"] = True
+        return handle
+
+    def _replenish_pool(self) -> None:
+        """Background thread: keep the pool at its target size by cold-booting base
+        containers (each fully readiness-gated before it is claimable)."""
+        assert self._pool is not None
+        while not self._pool_stop.is_set():
+            if self._pool.qsize() >= self._pool_target:
+                self._pool_stop.wait(0.05)
+                continue
+            try:
+                handle = self.create(replace(self._pool_spec))
+            except Exception:
+                self._pool_stop.wait(0.5)  # daemon hiccup — retry, don't spin
+                continue
+            if self._pool_stop.is_set():
+                with contextlib.suppress(Exception):
+                    self.destroy(handle)
+                return
+            self._pool.put(handle)
+
+    def warm_pool_available(self) -> int:
+        """How many pre-booted warm containers are claimable right now (0 when the
+        pool is disabled). Lets a caller distinguish steady-state pool service from
+        exhaustion fallback when interpreting fork latencies."""
+        return self._pool.qsize() if self._pool is not None else 0
+
+    def shutdown_pool(self) -> int:
+        """Stop replenishment and destroy every unclaimed warm container. Returns the
+        count destroyed. Idempotent; also reclaims the cached delta tars."""
+        if self._pool is None:
+            return 0
+        self._pool_stop.set()
+        if self._pool_thread is not None:
+            self._pool_thread.join(timeout=self.startup_timeout + 5)
+        drained = 0
+        while True:
+            try:
+                handle = self._pool.get_nowait()
+            except queue.Empty:
+                break
+            with contextlib.suppress(Exception):
+                self.destroy(handle)
+            drained += 1
+        if self._delta_dir is not None:
+            shutil.rmtree(self._delta_dir, ignore_errors=True)
+            self._delta_dir = None
+        self._deltas.clear()
+        self._pool = None
+        return drained
 
     def _container_rss(self, handle: SandboxHandle) -> int | None:
         try:

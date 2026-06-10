@@ -71,6 +71,10 @@ class SandboxSpec:
     pids_limit: int | None = None
     shm_size: str | None = None
     screen_geometry: str = "1280x800x24"
+    # Extra guest environment variables (e.g. ``SHINKEND_DAMAGE=off`` to A/B the
+    # damage-driven capture path). Provider-reserved names (``SHINKEND_TOKEN``,
+    # ``SCREEN_GEOMETRY``) cannot be overridden through this.
+    extra_env: dict[str, str] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

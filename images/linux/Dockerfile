@@ -36,7 +36,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 python3-gi gir1.2-atspi-2.0 \
         zenity \
         xterm \
+        xloadimage \
     && rm -rf /var/lib/apt/lists/*
+# xloadimage: tiny X11 image viewer (~0.7 MB installed, zero new deps on this base) used
+# by the codec-ladder "photo" benchmark scenario to paint a procedurally generated
+# photographic frame onto the root window (benchmarks/bench_codec_ladder.py). feh was
+# rejected: on bookworm it drags in imlib2 -> ghostscript (9 packages, tens of MB).
 
 COPY --from=build /src/shinkend/target/release/shinkend /usr/local/bin/shinkend
 COPY images/linux/start.sh /usr/local/bin/start.sh

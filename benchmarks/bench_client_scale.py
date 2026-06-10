@@ -45,7 +45,15 @@ import subprocess
 import sys
 import threading
 
-from _common import PALETTE, new_axes, now_ms, save_plot, summarize, write_result
+from _common import (
+    image_bytes,
+    PALETTE,
+    new_axes,
+    now_ms,
+    save_plot,
+    summarize,
+    write_result,
+)
 
 NS = [int(n) for n in os.environ.get("SHINKEN_BENCH_NS", "16,64,256,1024").split(",")]
 ROUNDS = int(os.environ.get("SHINKEN_BENCH_ROUNDS", "10"))
@@ -71,6 +79,7 @@ def _raise_nofile(target: int = 16384) -> None:
 
 # ---------------------------------------------------------------- mock servers
 # Top-level (spawn-picklable). Each worker owns one asyncio loop serving k ports.
+
 
 def _server_worker(q: "mp.Queue[list[str]]", n_ports: int) -> None:
     _raise_nofile()
@@ -117,7 +126,9 @@ def _server_worker(q: "mp.Queue[list[str]]", n_ports: int) -> None:
                     head, tail = templates.get(key) or templates[(80, 1024)]
                     await ws.send(head + cid + tail)
                 else:
-                    await ws.send(json.dumps({"type": "ack", "call_id": cid, "ok": True}))
+                    await ws.send(
+                        json.dumps({"type": "ack", "call_id": cid, "ok": True})
+                    )
 
     async def boot() -> None:
         import socket
@@ -154,6 +165,7 @@ def _start_servers(total: int) -> tuple[list[str], list[mp.Process]]:
 
 # ---------------------------------------------------------------- measurement
 
+
 def _proc_rss_mib() -> float:
     out = subprocess.run(
         ["ps", "-o", "rss=", "-p", str(os.getpid())], capture_output=True, text=True
@@ -176,7 +188,7 @@ async def _observe(session, quality: int, edge: int | None) -> tuple[float, int]
     t0 = now_ms()
     reply = await session.act("screenshot", **kwargs)
     ms = now_ms() - t0
-    raw = base64.b64decode((reply.get("image") or {}).get("ref", ""))
+    raw = image_bytes(reply)
     return ms, len(raw)
 
 
@@ -235,7 +247,9 @@ async def _async_block(addrs: list[str]) -> tuple[list[dict], list[dict], list[d
                         "connect_wall_ms": round(connect_wall, 1),
                         "observe_ms": summarize(lats),
                         "agg_frames_per_s": round(len(lats) / tier_wall_s, 1),
-                        "agg_decoded_mbps": round(total_bytes * 8 / 2**20 / tier_wall_s, 1),
+                        "agg_decoded_mbps": round(
+                            total_bytes * 8 / 2**20 / tier_wall_s, 1
+                        ),
                         "proc_rss_mib": _proc_rss_mib(),
                         "threads": threading.active_count(),
                         "client_cpu_cores": round(cpu_cores, 2),
@@ -243,7 +257,13 @@ async def _async_block(addrs: list[str]) -> tuple[list[dict], list[dict], list[d
                 )
                 # reservoir for CDF plotting: every k-th latency, capped at 300
                 step = max(1, len(lats) // 300)
-                lat_samples.append({"n": n, "payload": label, "ms": [round(v, 3) for v in lats[::step]][:300]})
+                lat_samples.append(
+                    {
+                        "n": n,
+                        "payload": label,
+                        "ms": [round(v, 3) for v in lats[::step]][:300],
+                    }
+                )
                 print(
                     f"async n={n:4d} {label:9s}: round p50 "
                     f"{summarize([r['wall_ms'] for r in rounds if r['n'] == n and r['payload'] == label])['p50']:7.1f} ms, "
@@ -307,7 +327,9 @@ def _thread_model_block(addrs: list[str]) -> list[dict]:
 
     def loop_threads() -> int:
         return sum(
-            1 for t in threading.enumerate() if t.name == "shinken-loop" and t.is_alive()
+            1
+            for t in threading.enumerate()
+            if t.name == "shinken-loop" and t.is_alive()
         )
 
     shared_ns = [n for n in (256, 1024) if n <= len(addrs)] or [len(addrs)]
@@ -369,7 +391,9 @@ def run() -> dict:
     return {
         "ns": NS,
         "rounds_per_tier": ROUNDS,
-        "payloads_kib": {label: round(b / 1024, 1) for (_, _), (label, b) in PAYLOADS.items()},
+        "payloads_kib": {
+            label: round(b / 1024, 1) for (_, _), (label, b) in PAYLOADS.items()
+        },
         "server_workers": SERVER_WORKERS,
         "observations_measured": observations,
         "datapoints": {
@@ -411,39 +435,81 @@ def plot(payload: dict) -> None:
     for label in labels:
         color, marker = pstyle[label]
         per_n = [
-            sorted(r["wall_ms"] for r in d["rounds"] if r["n"] == n and r["payload"] == label)
+            sorted(
+                r["wall_ms"]
+                for r in d["rounds"]
+                if r["n"] == n and r["payload"] == label
+            )
             for n in ns
         ]
         p50s = [w[len(w) // 2] for w in per_n]
-        ax_a.fill_between(ns, [w[0] for w in per_n], [w[-1] for w in per_n], color=color, alpha=0.18, lw=0)
-        ax_a.plot(ns, p50s, marker=marker, color=color,
-                  label=f"{label} ({payload['payloads_kib'][label]:g} KiB)")
+        ax_a.fill_between(
+            ns,
+            [w[0] for w in per_n],
+            [w[-1] for w in per_n],
+            color=color,
+            alpha=0.18,
+            lw=0,
+        )
+        ax_a.plot(
+            ns,
+            p50s,
+            marker=marker,
+            color=color,
+            label=f"{label} ({payload['payloads_kib'][label]:g} KiB)",
+        )
     log_axis(ax_a, "x", ns)
     log_axis(ax_a, "y", [4, 16, 64, 256, 1024], base=4)
     ax_a.set_xlabel("concurrent sessions N (one process, one event loop)")
     ax_a.set_ylabel("observe-all round wall (ms, log)")
     ax_a.set_title("Observe-all round wall vs N")
     ax_a.legend(loc="upper left")
-    ax_a.text(0.97, 0.04, f"band = min–max of {payload['rounds_per_tier']} rounds",
-              transform=ax_a.transAxes, ha="right", va="bottom", fontsize=10, color=PALETTE["neutral"])
+    ax_a.text(
+        0.97,
+        0.04,
+        f"band = min–max of {payload['rounds_per_tier']} rounds",
+        transform=ax_a.transAxes,
+        ha="right",
+        va="bottom",
+        fontsize=10,
+        color=PALETTE["neutral"],
+    )
 
     # (b) aggregate decoded throughput vs N, y from 0, sustained point annotated
     for label in labels:
         color, marker = pstyle[label]
         tput = [
-            next(t["agg_decoded_mbps"] for t in d["tiers"] if t["n"] == n and t["payload"] == label)
+            next(
+                t["agg_decoded_mbps"]
+                for t in d["tiers"]
+                if t["n"] == n and t["payload"] == label
+            )
             for n in ns
         ]
-        ax_b.plot(ns, tput, marker=marker, color=color,
-                  label=f"{label} ({payload['payloads_kib'][label]:g} KiB)")
+        ax_b.plot(
+            ns,
+            tput,
+            marker=marker,
+            color=color,
+            label=f"{label} ({payload['payloads_kib'][label]:g} KiB)",
+        )
     s = d["sustained"]
-    ax_b.plot([s["n"]], [s["sustained_decoded_mbps"]], "*", color=PALETTE["accent"],
-              markersize=15, zorder=5)
+    ax_b.plot(
+        [s["n"]],
+        [s["sustained_decoded_mbps"]],
+        "*",
+        color=PALETTE["accent"],
+        markersize=15,
+        zorder=5,
+    )
     ax_b.annotate(
         f"{s['sustained_decoded_mbps']:.0f} Mbps sustained {s['window_s']:.0f} s",
         xy=(s["n"], s["sustained_decoded_mbps"]),
-        xytext=(0.42, 0.55), textcoords="axes fraction",
-        ha="center", fontsize=10, color=PALETTE["accent"],
+        xytext=(0.42, 0.55),
+        textcoords="axes fraction",
+        ha="center",
+        fontsize=10,
+        color=PALETTE["accent"],
         arrowprops=dict(arrowstyle="->", color=PALETTE["accent"], lw=1.0),
     )
     log_axis(ax_b, "x", ns)
@@ -456,8 +522,14 @@ def plot(payload: dict) -> None:
     # (c) thread cost of holding N sessions
     tm = d["thread_model"]
     async_ns = sorted({t["n"] for t in d["tiers"]})
-    ax_c.plot(async_ns, [1] * len(async_ns), "--", marker="^", color=PALETTE["async"],
-              label="async core (1 loop thread)")
+    ax_c.plot(
+        async_ns,
+        [1] * len(async_ns),
+        "--",
+        marker="^",
+        color=PALETTE["async"],
+        label="async core (1 loop thread)",
+    )
     for mode, color, marker, lbl in (
         ("shared_loop", PALETTE["shared"], "s", "SharedLoop (1 thread total)"),
         ("sync_facade", PALETTE["sync"], "o", "sync facade (1 thread/session)"),
@@ -465,13 +537,20 @@ def plot(payload: dict) -> None:
         xs = [r["n"] for r in tm if r["mode"] == mode]
         ys = [r["loop_threads"] for r in tm if r["mode"] == mode]
         ax_c.plot(xs, ys, marker=marker, color=color, label=lbl)
-    sync_pts = sorted((r["n"], r["loop_threads"]) for r in tm if r["mode"] == "sync_facade")
+    sync_pts = sorted(
+        (r["n"], r["loop_threads"]) for r in tm if r["mode"] == "sync_facade"
+    )
     if sync_pts:
         ax_c.annotate(
             "sync facade intentionally not run at 1024\n"
             "(1024 OS threads is the anti-pattern\nthis design retires)",
-            xy=sync_pts[-1], xytext=(0.97, 0.30), textcoords="axes fraction",
-            ha="right", va="center", fontsize=10, color=PALETTE["sync"],
+            xy=sync_pts[-1],
+            xytext=(0.97, 0.30),
+            textcoords="axes fraction",
+            ha="right",
+            va="center",
+            fontsize=10,
+            color=PALETTE["sync"],
             arrowprops=dict(arrowstyle="->", color=PALETTE["sync"], lw=1.0),
         )
     log_axis(ax_c, "x", async_ns)
@@ -486,15 +565,25 @@ def plot(payload: dict) -> None:
     for label in labels:
         color, marker = pstyle[label]
         samples = next(
-            (sorted(ls["ms"]) for ls in d["latency_samples"]
-             if ls["n"] == n_max and ls["payload"] == label),
+            (
+                sorted(ls["ms"])
+                for ls in d["latency_samples"]
+                if ls["n"] == n_max and ls["payload"] == label
+            ),
             None,
         )
         if not samples:
             continue
         frac = [(i + 1) / len(samples) for i in range(len(samples))]
-        ax_d.plot(samples, frac, color=color, marker=marker, markevery=max(1, len(samples) // 10),
-                  markersize=5, label=f"{label} ({payload['payloads_kib'][label]:g} KiB)")
+        ax_d.plot(
+            samples,
+            frac,
+            color=color,
+            marker=marker,
+            markevery=max(1, len(samples) // 10),
+            markersize=5,
+            label=f"{label} ({payload['payloads_kib'][label]:g} KiB)",
+        )
     ax_d.set_xlim(left=0)
     ax_d.set_ylim(0, 1.02)
     ax_d.set_xlabel(f"per-observation latency at N={n_max} (ms)")
@@ -503,11 +592,16 @@ def plot(payload: dict) -> None:
     ax_d.legend(loc="lower right")
 
     fig.text(
-        0.5, -0.005,
-        "sessions terminate on out-of-process mock shinkend servers — real ACI handshake, "
+        0.5,
+        -0.005,
+        "sessions terminate on out-of-process synthetic ACI peers — real handshake, "
         "WebSocket transport, and SDK; synthetic frame payloads sized to measured codec "
         "operating points (client plane only)",
-        ha="center", va="top", fontsize=10, color=PALETTE["neutral"], style="italic",
+        ha="center",
+        va="top",
+        fontsize=10,
+        color=PALETTE["neutral"],
+        style="italic",
     )
     save_plot(fig, "client_scale")
 

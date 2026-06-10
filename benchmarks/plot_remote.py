@@ -209,37 +209,46 @@ def a11y_coverage():
     # ever drops the entry.
     xterm = apps.get("xterm", {}).get("pct_addressable", 0.0)
     cdp = ev["cdp_coverage"]["coverage"]["pct_addressable"]
+    electron_atspi = ev["electron"]["atspi"]["pct_addressable"]
+    electron_cdp = ev["electron"]["cdp"]["coverage"]["pct_addressable"]
+    canvas_cdp = ev["canvas"]["cdp"]["coverage"]["pct_addressable"]
     items = [
         ("calculator\n(Qt/AT-SPI)", apps["calculator"]["pct_addressable"]),
+        ("electron app\n(AT-SPI, forced)", electron_atspi),
         ("chromium page\n(CDP)", cdp),
+        ("electron page\n(CDP)", electron_cdp),
         ("zenity\n(GTK dialog)", apps["zenity"]["pct_addressable"]),
-        ("gnome-text-editor\n(GTK4)", apps["gnome-text-editor"]["pct_addressable"]),
+        ("gnome-text-\neditor (GTK4)", apps["gnome-text-editor"]["pct_addressable"]),
         ("xterm\n(X11 terminal)", xterm),
+        ("canvas-UI page\n(CDP)", canvas_cdp),
     ]
-    fig, ax = new_axes(height=4.0)
+    fig, ax = new_axes(height=4.0, width=8.8)
     # one neutral hue, shaded by coverage: the codec palette stays reserved for
     # codec semantics, and bar heights + labels carry the comparison
     colors = ["#34495e" if v >= 0.5 else ("#5d6d7e" if v >= 0.2 else "#aeb6bf") for _, v in items]
     bars = ax.bar([k for k, _ in items], [v for _, v in items], color=colors)
     for b, (name, v) in zip(bars, items):
-        if name.startswith("chromium"):
-            ax.text(
-                b.get_x() + b.get_width() / 2,
-                v + 0.03,
-                "0.23 of all nodes\n1.00 of labeled controls",
-                ha="center",
-                fontsize=8.5,
-            )
-        else:
-            ax.text(b.get_x() + b.get_width() / 2, v + 0.02, f"{v:.2f}", ha="center", fontsize=9)
-    ax.tick_params(axis="x", labelsize=9)
+        ax.text(b.get_x() + b.get_width() / 2, v + 0.02, f"{v:.2f}", ha="center", fontsize=9)
+    # the canvas zero is a measurement, not a gap: 5 drawn controls, none in the tree
+    ax.annotate(
+        "5 interactive controls drawn\nin-canvas; tree = 2 nodes,\n0 actionable (measured)",
+        xy=(6.85, 0.085),
+        xytext=(5.85, 0.33),
+        fontsize=8,
+        color=PALETTE["neutral"],
+        ha="center",
+        arrowprops=dict(arrowstyle="->", color=PALETTE["neutral"], lw=0.8),
+    )
+    ax.tick_params(axis="x", labelsize=8.5)
     ax.set_ylabel("fraction addressable")
     ax.set_ylim(0, 1.0)
     ax.set_title("Accessibility-tree coverage by app surface")
     ax.text(
         0.98,
         0.95,
-        "addressable = roled + bbox + actionable\none-off a11y-coverage spike (E5/#2), Linux/X11 image",
+        "addressable = roled + bbox + actionable\n"
+        "CDP page rows: 0.23 of all nodes but 1.00 of labeled controls\n"
+        "one-off a11y-coverage spike (E5/#2), Linux/X11 image",
         transform=ax.transAxes,
         ha="right",
         va="top",

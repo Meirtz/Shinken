@@ -9,8 +9,9 @@ Docker disk-tier checkpoint/fork/resume + `run_eval_forked`, a local capability-
 and a Python SDK, all under live CI. The **structured/a11y thesis (D3), production permission
 enforcement, `.skn` recording/playback, the control plane, and cross-platform are designed-only
 and not yet built**. The a11y-coverage spike (#2) has been **measured (E5) — verdict: hybrid
-per-window structured + pixel fallback, so D3's structured-default stays Provisional** (canvas/
-games/Electron still unmeasured, and the guest-runtime observation engine is unbuilt).
+per-window structured + pixel fallback, so D3's structured-default stays Provisional** (canvas is a
+measured zero with a change-blind diff, Electron is measured on both CDP and forced AT-SPI;
+games/native-GL still unmeasured, and the guest-runtime observation engine is unbuilt).
 **[`docs/engineering/status.md`](docs/engineering/status.md) is the authoritative built-vs-designed map — read it before
 trusting present-tense claims in the vision docs. This file's status summary must track
 status.md; reconcile both when either changes.**
@@ -58,12 +59,19 @@ committed is world-readable.
 ## Status & next steps
 
 **Built & proven (Linux/X11):** M0 transport/auth + M1 act-and-observe are done — pointer+keyboard
-actions, screenshot, real-time screencast (server-push) with idle-suppression + downscale, and
-focused-window/`window:<id>` capture, all with live Xvfb/Docker CI smokes. **Docker disk-tier
+actions, screenshot, real-time screencast (server-push) with idle-suppression + downscale,
+focused-window/`window:<id>` capture, **binary WS media frames** (negotiated; wire −25%,
+client-plane ceiling ~2.1×), and **XDamage event-driven capture** (idle ticks capture nothing —
+~0 guest CPU; damaged ticks fetch only the damaged region), all with live Xvfb/Docker CI smokes. **Docker disk-tier
 checkpoint/fork/resume** (`docker commit`, #209) behind the provider interface, plus
 `eval.run_eval_forked` (golden→fork-N→score, #231), are built; a **local capability-gateway shim**
-(`sdk/python/src/shinken/gateway.py` + tests) is built. The Python SDK (sync facade + reader/demux)
-ships too. `.skn` recording is **not** built (removed/deferred, #216/#217). Full built-vs-designed
+(`sdk/python/src/shinken/gateway.py` + tests) is built. **Push-based boot readiness (S9)** is
+built: the guest-side `ready` query + lazy/self-healing X11 connect in `shinkend` + a 15 ms
+single-connection SDK readiness loop took `provider.create()` from ~7.7 s to ~0.19 s p50, and the
+opt-in **warm-pool fork graft** (pre-booted containers + `docker diff` delta) serves
+restore/fork without the boot (files-only, same tier as `docker commit`) — see
+[docs/engineering/benchmarks.md](docs/engineering/benchmarks.md) §1/§9. The Python SDK
+(sync facade + reader/demux) ships too. `.skn` recording is **not** built (removed/deferred, #216/#217). Full built-vs-designed
 map: **[docs/engineering/status.md](docs/engineering/status.md)**.
 
 The immediate work (per the recalibrated priorities):
@@ -74,13 +82,16 @@ The immediate work (per the recalibrated priorities):
    **trajectory-level `exit_reason`** (documented precedence, `shinken/runtime/trajectory.py`),
    and **subprocess scorer isolation** (T-5, `shinken/scorer_proc.py`) are all built — see
    [docs/engineering/v0.0.1-plan.md](docs/engineering/v0.0.1-plan.md) §6.
-2. **a11y-coverage spike (#2) — MEASURED (E5), verdict in**: strong Qt/AT-SPI (0.87), browser
-   controls via CDP (1.00 of labeled controls; 0.23 of all nodes), weak GTK, absent terminals;
-   tree-diff ~2 KiB vs ~77 KiB screenshot. **D3 stays Provisional — hybrid, not
-   structured-by-default.** Remaining: canvas/games/Electron coverage + the guest-runtime
+2. **a11y-coverage spike (#2) — MEASURED (E5), verdict in**: strong Qt/AT-SPI (0.87),
+   Chromium-family controls via CDP (1.00 of labeled controls; 0.23 of all nodes — browser *and*
+   Electron; Electron also hits 0.32 over forced AT-SPI), weak GTK, absent terminals, **canvas
+   measured at zero** (5 drawn controls → 2 inert AX nodes; a real click changes pixels but the
+   tree diff reports nothing); tree-diff ~2 KiB vs ~77 KiB screenshot. **D3 stays Provisional —
+   hybrid, not structured-by-default.** Remaining: games/native-GL coverage + the guest-runtime
    observation engine; the screenshot baseline still carries v0.0.1 usability.
 3. **Designed-only, not started:** the Capability Manager (production enforcement beyond the local
-   gateway shim), `.skn` recording/playback, the memory (CRIU) + sub-ms CoW fork fast tiers,
+   gateway shim), `.skn` recording/playback, the memory (CRIU) + sub-ms CoW fork fast tiers
+   (CRIU spike now run: POSITIVE, 300 ms fork e2e ~25× — `spikes/criu-memory-tier/`; tier itself unbuilt),
    control plane + concurrency, dual-channel WebRTC/NVENC, cross-platform (mac/Win) + **Wayland**.
 4. **CoW-fork density** and **dual-channel WebRTC latency** remain Phase-1 boundary spikes (D1/D4).
 

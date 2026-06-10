@@ -152,7 +152,7 @@ export class AciClient {
     });
   }
 
-  private async query(q: "platform" | "screen_size"): Promise<unknown> {
+  private async query(q: "platform" | "screen_size" | "ready"): Promise<unknown> {
     const callId = this.nextId();
     const reply = await this.rpc(callId, { type: "query", call_id: callId, q });
     if (reply.type !== "result" || !reply.ok) {
@@ -163,6 +163,13 @@ export class AciClient {
 
   async screenSize(): Promise<{ w: number; h: number }> {
     return (await this.query("screen_size")) as { w: number; h: number };
+  }
+
+  /** Guest-side boot readiness (S8): `{ready, x11_up, root_nonblack}` computed inside
+   *  the guest in microseconds — poll this during boot instead of pulling screenshots.
+   *  Older runtimes answer `unknown query: ready` (an Error here). */
+  async ready(): Promise<{ ready: boolean; x11_up: boolean; root_nonblack: boolean | null }> {
+    return (await this.query("ready")) as { ready: boolean; x11_up: boolean; root_nonblack: boolean | null };
   }
 
   /** Start a server-pushed screencast; returns the stream id (its `start` call_id). */

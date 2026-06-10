@@ -49,6 +49,31 @@ ruff check .
 pytest -q
 ```
 
+## Coverage
+
+Line-coverage snapshots live in [`benchmarks/results/coverage.json`](../../benchmarks/results/coverage.json)
+(totals + per-module, with commit and date); the headline table and the honest-caveats note are in
+[docs/benchmarks/README.md §4b](../benchmarks/README.md). Regenerate with:
+
+```bash
+# Rust (shinkend/) — cargo-llvm-cov, LLVM source-based coverage
+cargo install cargo-llvm-cov --locked   # one-time; also: rustup component add llvm-tools-preview
+cargo llvm-cov --manifest-path shinkend/Cargo.toml --all-targets --summary-only --json \
+  --output-path /tmp/shinken-rustcov.json
+cargo llvm-cov report --manifest-path shinkend/Cargo.toml   # human-readable per-file table
+
+# Python (sdk/python/) — pytest-cov over the same suite `pytest -q` runs
+cd sdk/python
+pip install pytest-cov
+python -m pytest -q --cov=shinken --cov-report=term --cov-report=json:/tmp/shinken-pycov.json
+```
+
+Keep the repo lean: commit only the small `coverage.json` summary, never HTML reports or the
+instrumented `target/` output (both are git-ignored via `target/` and `.coverage`). Remember the
+caveat when reading the numbers: the live X11/Docker smoke paths run uninstrumented, so backend
+modules (`executor.rs`, `pyautogui.rs`, `providers/docker.py`, `smoke.py`, `a11y.py`,
+`scorer_proc.py`) under-report.
+
 ## Current CI Jobs
 
 These jobs describe the **remote equivalent** of the local gate. They are not the pre-public source

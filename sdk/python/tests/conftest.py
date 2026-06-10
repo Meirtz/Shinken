@@ -4,6 +4,7 @@ the Rust binary. It mirrors the M0 message handling in shinkend/src/protocol.rs.
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import functools
 import json
@@ -36,6 +37,15 @@ _MOCK_VERBS = {
 _PNG_1X1 = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAen63NgAAAAASUVORK5CYII="
 )
+_PNG_1X1_BYTES = base64.b64decode(_PNG_1X1)
+
+
+def _binary_frame(header: dict, payloads: list[bytes]) -> bytes:
+    """Assemble one binary media frame the way shinkend does: ``u32 LE header_len |
+    JSON header | concatenated payloads``. The caller's ``header`` already carries
+    the image/tile ``off``/``len`` offsets into the payload area."""
+    head = json.dumps(header).encode("utf-8")
+    return len(head).to_bytes(4, "little") + head + b"".join(payloads)
 
 
 def _free_port() -> int:
@@ -56,6 +66,7 @@ async def _push_frames(
     streams: dict[str, int] | None = None,
     format: str = "png",
     delta: bool = False,
+    binary: bool = False,
 ) -> None:
     """Push server-pushed screencast frames with advancing seq until cancelled. The
     frame's reported width echoes ``max_long_edge`` so a test can confirm the cap
@@ -80,16 +91,21 @@ async def _push_frames(
                 "seq": seq,
             }
             if delta and not first:
-                frame["tiles"] = [{"x": 0, "y": 0, "w": 1, "h": 1, "ref": _PNG_1X1}]
+                if binary:
+                    frame["tiles"] = [
+                        {"x": 0, "y": 0, "w": 1, "h": 1, "off": 0, "len": len(_PNG_1X1_BYTES)}
+                    ]
+                    payload = _binary_frame(frame, [_PNG_1X1_BYTES])
+                else:
+                    frame["tiles"] = [{"x": 0, "y": 0, "w": 1, "h": 1, "ref": _PNG_1X1}]
             else:
-                frame["image"] = {
-                    "ref": _PNG_1X1,
-                    "w": width,
-                    "h": 1,
-                    "scope": scope,
-                    "format": format,
-                }
-            await ws.send(json.dumps(frame))
+                meta = {"w": width, "h": 1, "scope": scope, "format": format}
+                if binary:
+                    frame["image"] = {"off": 0, "len": len(_PNG_1X1_BYTES), **meta}
+                    payload = _binary_frame(frame, [_PNG_1X1_BYTES])
+                else:
+                    frame["image"] = {"ref": _PNG_1X1, **meta}
+            await ws.send(payload if binary else json.dumps(frame))
             first = False
             seq += 1
             if streams is not None:
@@ -128,12 +144,16 @@ def _record(state: dict, action: dict) -> None:
         )
 
 
-async def _handler(ws, streams: dict[str, int] | None = None) -> None:
+async def _handler(ws, streams: dict[str, int] | None = None, support_binary: bool = True) -> None:
     cast: asyncio.Task | None = None
     state = {"typed": "", "keys": [], "clicks": [], "moves": [], "scrolls": [], "casts": []}
     # Resume registry (#56): logical stream id -> next seq. Server-instance scoped
     # (shared across this mock's connections, so a reconnecting client can resume).
     streams = {} if streams is None else streams
+    # Binary media framing, negotiated like the real runtime: on iff the client's
+    # hello carried accept.binary_frames AND this mock advertises the capability
+    # (support_binary=False simulates a pre-binary runtime, which ignores the offer).
+    binary = False
     async for raw in ws:
         msg = json.loads(raw)
         # Validate every inbound frame against the ACI schema, so SDK-emitted wire drift
@@ -173,20 +193,24 @@ async def _handler(ws, streams: dict[str, int] | None = None) -> None:
                 )
                 continue
         if kind == "hello":
+            binary = support_binary and bool((msg.get("accept") or {}).get("binary_frames"))
+            capabilities = {
+                "schema_version": 0,
+                "verbs": sorted(_MOCK_VERBS),
+                "targets": ["point_px", "element_ref"],
+                "observation_types": ["a11y", "screenshot", "screencast"],
+                "max_long_edge": 2576,
+                "image_formats": ["png", "jpeg"],
+            }
+            if support_binary:
+                capabilities["binary_frames"] = True
             await ws.send(
                 json.dumps(
                     {
                         "type": "welcome",
                         "v": 0,
                         "server": {"name": "mock-shinkend", "version": "0", "platform": "linux"},
-                        "capabilities": {
-                            "schema_version": 0,
-                            "verbs": sorted(_MOCK_VERBS),
-                            "targets": ["point_px", "element_ref"],
-                            "observation_types": ["a11y", "screenshot", "screencast"],
-                            "max_long_edge": 2576,
-                            "image_formats": ["png", "jpeg"],
-                        },
+                        "capabilities": capabilities,
                     }
                 )
             )
@@ -211,22 +235,30 @@ async def _handler(ws, streams: dict[str, int] | None = None) -> None:
                 # Echo the requested codec so a test can assert `format` travelled the
                 # wire (the real runtime reports the codec it actually encoded in).
                 fmt = action.get("format") or "png"
-                await ws.send(
-                    json.dumps(
-                        {
-                            "type": "observation",
-                            "obs_id": "o1",
-                            "cause": cid,
-                            "image": {
-                                "ref": _PNG_1X1,
-                                "w": 1,
-                                "h": 1,
-                                "scope": "screen",
-                                "format": fmt,
+                meta = {"w": 1, "h": 1, "scope": "screen", "format": fmt}
+                if binary:
+                    await ws.send(
+                        _binary_frame(
+                            {
+                                "type": "observation",
+                                "obs_id": "o1",
+                                "cause": cid,
+                                "image": {"off": 0, "len": len(_PNG_1X1_BYTES), **meta},
                             },
-                        }
+                            [_PNG_1X1_BYTES],
+                        )
                     )
-                )
+                else:
+                    await ws.send(
+                        json.dumps(
+                            {
+                                "type": "observation",
+                                "obs_id": "o1",
+                                "cause": cid,
+                                "image": {"ref": _PNG_1X1, **meta},
+                            }
+                        )
+                    )
             elif verb == "start_screencast":
                 if cast is not None:
                     cast.cancel()
@@ -253,6 +285,7 @@ async def _handler(ws, streams: dict[str, int] | None = None) -> None:
                         streams,
                         action.get("format") or "png",
                         action.get("delta") or False,
+                        binary,
                     )
                 )
             elif verb == "stop_screencast":
@@ -268,7 +301,7 @@ async def _handler(ws, streams: dict[str, int] | None = None) -> None:
         cast.cancel()
 
 
-def _start_mock_server() -> tuple[str, object, object]:
+def _start_mock_server(support_binary: bool = True) -> tuple[str, object, object]:
     """Start one mock shinkend on its own loop/thread; return (addr, loop, thread)."""
     port = _free_port()
     loop = asyncio.new_event_loop()
@@ -276,7 +309,11 @@ def _start_mock_server() -> tuple[str, object, object]:
     streams: dict[str, int] = {}
 
     async def _boot():
-        return await serve(functools.partial(_handler, streams=streams), "127.0.0.1", port)
+        return await serve(
+            functools.partial(_handler, streams=streams, support_binary=support_binary),
+            "127.0.0.1",
+            port,
+        )
 
     def run() -> None:
         asyncio.set_event_loop(loop)
@@ -296,6 +333,19 @@ def mock_shinkend():
     # tests (fresh per fixture). SDK call_ids are salted per AsyncSandbox instance
     # (c<salt>-<n>), so concurrent clients can't collide as stream ids either.
     addr, loop, thread = _start_mock_server()
+    try:
+        yield addr
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(timeout=2)
+
+
+@pytest.fixture
+def mock_shinkend_text_only():
+    """A mock that simulates a PRE-BINARY runtime: no ``binary_frames`` capability in
+    the welcome, the client's ``accept.binary_frames`` offer is ignored, and every
+    observation stays base64-in-JSON text — the old-server back-compat path."""
+    addr, loop, thread = _start_mock_server(support_binary=False)
     try:
         yield addr
     finally:

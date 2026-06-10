@@ -1,0 +1,69 @@
+# Shinken Linux Sandbox image + the OSWorld guest server, side by side (S7).
+#
+# Head-to-head benchmark variant: the SAME guest desktop (Xvfb + openbox + xterm) runs
+# BOTH agent-facing servers at once —
+#   - shinkend (typed-WS ACI) on :8765, exactly as in images/linux/Dockerfile, and
+#   - OSWorld's Flask/pyautogui server (desktop_env/server/main.py) on :5000, fetched
+#     AT BUILD TIME from the public OSWorld repo (Apache-2.0) at a pinned commit —
+#     no OSWorld code is vendored into this repo.
+# Both servers observe the same display and inject into the same X session, so
+# benchmarks/bench_osworld_loop.py can compare per-step act/observe cost fairly.
+#
+# Build (from repo root; build the base image from THIS checkout first):
+#   docker build -f images/linux/Dockerfile         -t shinken/sandbox-linux .
+#   docker build -f images/linux/Dockerfile.osworld -t shinken/sandbox-linux-osworld .
+# Run (both ports on host loopback):
+#   docker run --rm -p 127.0.0.1:8765:8765 -p 127.0.0.1:5000:5000 \
+#     -e SHINKEND_TOKEN="$(openssl rand -hex 16)" shinken/sandbox-linux-osworld
+#
+# This image is benchmark tooling, not a production artifact: the OSWorld server is
+# unauthenticated arbitrary command execution by design (its /execute endpoint), which
+# is fine for a loopback-published local benchmark container and nothing else.
+
+ARG BASE_IMAGE=shinken/sandbox-linux
+FROM ${BASE_IMAGE}
+
+USER root
+
+# OSWorld @ this commit == the version studied in references/OSWorld (PointerAgent v1.0,
+# 2026-05-21). Pinning the hash keeps the benchmark reproducible: a rebuild always gets
+# byte-identical server code.
+ARG OSWORLD_COMMIT=705623ca18e0055dd995fd5a350d6588cff2caf5
+ARG OSWORLD_RAW=https://raw.githubusercontent.com/xlang-ai/OSWorld
+LABEL org.shinken.osworld_commit=${OSWORLD_COMMIT}
+
+# What main.py's Linux import path + the screenshot/execute endpoints actually need
+# (desktop_env/server/requirements.txt, minus pynput/pygame/pywinauto which main.py
+# never imports on Linux). All arm64-clean:
+#   apt: pyatspi (GObject bindings, not pip-installable), scrot (pyscreeze's CLI
+#        fallback), libxfixes3 (pyxcursor's cursor capture), python-is-python3
+#        (OSWorld's client sends `python -c ...`; Debian only ships `python3`),
+#        python3-tk (mouseinfo, imported by pyautogui, exits without tkinter —
+#        OSWorld's Ubuntu desktop VM ships it).
+#   pip: the requirements.txt pins for everything main.py imports (PyAutoGUI, Pillow,
+#        python3-xlib) + its unpinned deps (flask, requests, numpy, lxml).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl \
+        python3-pip python3-pyatspi python-is-python3 python3-tk \
+        scrot libxfixes3 \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip3 install --break-system-packages --no-cache-dir \
+        python3-xlib==0.15 PyAutoGUI==0.9.54 Pillow==10.1.0 \
+        flask requests numpy lxml
+
+# Fetch exactly the two server files the benchmark exercises, at the pinned commit.
+RUN mkdir -p /opt/osworld-server/screenshots \
+    && curl -fsSL "${OSWORLD_RAW}/${OSWORLD_COMMIT}/desktop_env/server/main.py" \
+        -o /opt/osworld-server/main.py \
+    && curl -fsSL "${OSWORLD_RAW}/${OSWORLD_COMMIT}/desktop_env/server/pyxcursor.py" \
+        -o /opt/osworld-server/pyxcursor.py \
+    && chown -R shinken /opt/osworld-server
+
+COPY images/linux/start-osworld.sh /usr/local/bin/start-osworld.sh
+RUN chmod +x /usr/local/bin/start-osworld.sh
+
+USER shinken
+
+# 8765 = shinkend ACI WebSocket (inherited); 5000 = OSWorld Flask server (its default).
+EXPOSE 8765 5000
+CMD ["/usr/local/bin/start-osworld.sh"]

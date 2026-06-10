@@ -25,7 +25,7 @@
         "type": { "const": "hello" },
         "v": { "const": 0 },
         "client": { "type": "object", "required": ["name", "version"], "properties": { "name": { "type": "string" }, "version": { "type": "string" } } },
-        "accept": { "type": "object", "properties": { "observation_types": { "type": "array", "items": { "$ref": "#/$defs/ObservationType" } } } },
+        "accept": { "type": "object", "properties": { "observation_types": { "type": "array", "items": { "$ref": "#/$defs/ObservationType" } }, "binary_frames": { "type": "boolean", "description": "opt in to binary media framing: when true AND the runtime advertises capabilities.binary_frames, every image-bearing observation arrives as one binary WebSocket message (u32 LE header_len | JSON header per $defs.BinaryFrameHeader | raw codec payload) instead of base64-in-JSON text. Omitted/false keeps text frames." } } },
         "token": { "type": "string", "description": "dev bearer token; required by a token-configured runtime (a non-loopback bind refuses to start without one). The runtime compares it in constant time (#135)." }
       }
     },
@@ -45,7 +45,8 @@
             "targets": { "type": "array", "items": { "$ref": "#/$defs/TargetKind" } },
             "observation_types": { "type": "array", "items": { "$ref": "#/$defs/ObservationType" } },
             "max_long_edge": { "type": "integer", "minimum": 1 },
-            "image_formats": { "type": "array", "items": { "$ref": "#/$defs/ImageFormat" }, "description": "image codecs this runtime can encode; a client must not request a format outside this list. Absent on pre-negotiation welcomes, which a client treats as png-only." }
+            "image_formats": { "type": "array", "items": { "$ref": "#/$defs/ImageFormat" }, "description": "image codecs this runtime can encode; a client must not request a format outside this list. Absent on pre-negotiation welcomes, which a client treats as png-only." },
+            "binary_frames": { "type": "boolean", "description": "whether this runtime can deliver image-bearing observations as binary WebSocket messages when the client opts in via hello.accept.binary_frames (see $defs.BinaryFrameHeader). Absent on pre-binary welcomes, which a client treats as false (text frames only)." }
           }
         }
       }
@@ -55,7 +56,7 @@
     "Query": {
       "type": "object", "additionalProperties": false,
       "required": ["type", "call_id", "q"],
-      "properties": { "type": { "const": "query" }, "call_id": { "type": "string" }, "q": { "enum": ["platform", "screen_size"] } }
+      "properties": { "type": { "const": "query" }, "call_id": { "type": "string" }, "q": { "enum": ["platform", "screen_size", "ready"] } }
     },
     "Result": {
       "type": "object", "additionalProperties": false,
@@ -103,6 +104,48 @@
         "w": { "type": "integer", "minimum": 1 },
         "h": { "type": "integer", "minimum": 1 },
         "ref": { "type": "string", "description": "base64 image of this tile, encoded per the stream's format/quality" }
+      }
+    },
+    "BinaryFrameHeader": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "obs_id"],
+      "description": "NOT a top-level text message (deliberately absent from the oneOf): the JSON header inside a binary WebSocket media frame, sent only on a session that negotiated hello.accept.binary_frames against capabilities.binary_frames. The frame layout is `u32 LE header_len | this header | payload area`; the header mirrors ObservationMsg with every image/tile `ref` (base64 string) replaced by `off`/`len` byte offsets into the payload area (relative to its start, byte 4+header_len of the message). Carries exactly one of `image` or `tiles`.",
+      "properties": {
+        "type": { "const": "observation" },
+        "obs_id": { "type": "string" },
+        "cause": { "type": "string", "description": "action call_id; set on one-shot screenshots, omitted on stream frames" },
+        "stream": { "type": "string" },
+        "seq": { "type": "integer", "minimum": 0 },
+        "image": {
+          "type": "object", "additionalProperties": false,
+          "required": ["off", "len", "w", "h"],
+          "properties": {
+            "off": { "type": "integer", "minimum": 0, "description": "payload byte offset of the image bytes" },
+            "len": { "type": "integer", "minimum": 0, "description": "image byte length" },
+            "w": { "type": "integer" },
+            "h": { "type": "integer" },
+            "scope": { "$ref": "#/$defs/Scope" },
+            "format": { "$ref": "#/$defs/ImageFormat" }
+          }
+        },
+        "tiles": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/BinaryTile" } }
+      },
+      "allOf": [
+        { "if": { "required": ["stream"] }, "then": { "required": ["stream", "seq"], "anyOf": [ { "required": ["image"] }, { "required": ["tiles"] } ] } },
+        { "if": { "required": ["seq"] }, "then": { "required": ["stream"] } },
+        { "if": { "required": ["tiles"] }, "then": { "required": ["stream"], "not": { "required": ["image"] } } }
+      ]
+    },
+    "BinaryTile": {
+      "type": "object", "additionalProperties": false,
+      "required": ["x", "y", "w", "h", "off", "len"],
+      "properties": {
+        "x": { "type": "integer", "minimum": 0 },
+        "y": { "type": "integer", "minimum": 0 },
+        "w": { "type": "integer", "minimum": 1 },
+        "h": { "type": "integer", "minimum": 1 },
+        "off": { "type": "integer", "minimum": 0, "description": "payload byte offset of this tile's bytes (tiles are concatenated in tile order)" },
+        "len": { "type": "integer", "minimum": 0, "description": "tile byte length" }
       }
     },
     "Action": {

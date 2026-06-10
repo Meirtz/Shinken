@@ -1,0 +1,10 @@
+{
+  "name": "shinken-electron-spike",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Minimal Electron surface for the Shinken a11y-coverage spike (#2 / E5)",
+  "main": "main.js",
+  "devDependencies": {
+    "electron": "^35.0.0"
+  }
+}

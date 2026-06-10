@@ -21,8 +21,13 @@ SUITES = {
     "delta_screencast": "bench_delta_screencast",
     "action_latency": "bench_action_latency",
     "fork_resume": "bench_fork",
+    "fork_resume_pool": "bench_fork",
     "local_fanout": "bench_fanout",
     "client_scale": "bench_client_scale",
+    "wire_ceiling": "bench_wire_ceiling",
+    "guest_cpu": "bench_guest_cpu",
+    "osworld_loop": "bench_osworld_loop",
+    "boot_waterfall": "bench_boot_waterfall",
 }
 
 

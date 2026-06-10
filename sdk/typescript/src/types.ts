@@ -122,7 +122,7 @@ export type AciMessage =
   | { type: "welcome"; v: 0; server: ServerInfo; capabilities: Capabilities }
   | { type: "ping"; t?: number }
   | { type: "pong"; t?: number }
-  | { type: "query"; call_id: string; q: "platform" | "screen_size" }
+  | { type: "query"; call_id: string; q: "platform" | "screen_size" | "ready" }
   | { type: "result"; call_id: string; ok: boolean; value?: unknown; error?: string }
   | { type: "action"; call_id: string; action: Action }
   | { type: "ack"; call_id: string; ok: boolean; error?: string }

@@ -91,11 +91,12 @@ implemented + tested on fixtures, awaiting an in-image run with that app present
 |---------------|---------|-------------------|--------|
 | Qt widget toolkit (calculator) | AT-SPI (`atspi`) | high | **measured** — 31 nodes, 100% roled, 93.5% bbox, **87.1% addressable** (the clean structured win) |
 | GTK toolkit (zenity dialog, gnome-text-editor / GTK 4) | AT-SPI (`atspi`) | high → **mixed** | **measured** — 100% roled but **9–10% addressable** (containers/labels dominate; GTK 4 widgets often lack screen bbox) |
-| Chromium / Electron page content | CDP (`cdp`) | high (browser computes full AX tree) | **measured** — 22 page nodes, 100% roled, 68% bbox, stable DOM ids; addressable page-authoring-sensitive (`0.23` here) |
+| Chromium / Electron page content | CDP (`cdp`) | high (browser computes full AX tree) | **measured** (browser AND a real Electron 35 app — identical 22-node shape) — 100% roled, 68% bbox, stable DOM ids; addressable page-authoring-sensitive (`0.23` here) |
+| Electron renderer over AT-SPI | AT-SPI (`atspi`) | medium, launch-gated | **measured** — 31 nodes, **0.32 addressable**, but only under `--force-renderer-accessibility`; without it, expect the Chromium-shell shape below |
 | Chromium **shell** over AT-SPI | AT-SPI (`atspi`) | **low** | **measured** — only 3–5 chrome-shell nodes, **0% addressable**, no page DOM → use CDP for browser content |
 | Terminal (xterm, VTE/X11) | AT-SPI (`atspi`) | **near-zero** | **measured** — **zero** AT-SPI nodes → pixel fallback |
-| Canvas / WebGL page | — (no semantic tree) | **low** | classified → fallback (**unmeasured** in E5) |
-| Custom-rendered / gamelike surface | — | **near-zero** | classified → fallback (**unmeasured** in E5) |
+| Canvas page (2D context) | CDP (`cdp`) | **near-zero** | **measured zero** — 5 drawn controls → 2 inert AX nodes, 0% addressable; a real click changes pixels while the tree diff reports **0 changes** (the blind spot is quantified) |
+| WebGL / custom-rendered / gamelike surface | — | **near-zero** | classified → fallback (**unmeasured** in E5; the canvas row is the measured proxy) |
 
 ## Fallback thresholds (how the router chooses)
 
@@ -112,8 +113,9 @@ Coverage is uneven by design, so the structured path is a *fast path*, not the o
 ## Cost (size / latency / tokens)
 
 `capture_ms` (in `observe_structured`) and the serialized element-list size are the measurement
-vehicles for capture latency and bandwidth; a per-app size/latency/token table across the five
-classes is the remaining sweep (it needs a browser + Electron + canvas app present in the image).
+vehicles for capture latency and bandwidth; the browser, Electron, and canvas surfaces are now in
+the spike image and measured for *coverage* (E5), but the per-app size/latency/**token** table
+across the classes is still the remaining sweep.
 
 **Field priors to fold into the sweep (2026-06, public CUA stacks):** (a) production computer-use
 drivers ship an a11y-first per-window ACI but fall back to pixel clicks on custom-rendered surfaces

@@ -18,10 +18,11 @@ Figures live in [`docs/assets/bench/`](../assets/bench) and regenerate from trac
 
 | artifact | class | what it holds |
 |---|---|---|
-| `benchmarks/results/*.json` | local | 6 suites, ~93k individual datapoints, each JSON carries the host/image fingerprint of its run |
+| `benchmarks/results/*.json` | local | 10 suites (13 tracked result JSONs), ~100k individual datapoints, each carrying the host/image fingerprint of its run |
 | `benchmarks/results/remote/codec_ladder.csv` | remote WAN | 45 cells: format × quality × downscale, one content-rich 1080p frame |
 | `benchmarks/results/remote/fanout_remote.csv` | remote WAN | end-to-end fan-out envelope, N = 4/8/16 real remote sandboxes |
 | `spikes/a11y-coverage/evidence.json` | local spike | accessibility-tree coverage by app surface (E5) |
+| `benchmarks/results/coverage.json` | local | line coverage per module, Rust + Python (§6b) — repro: [testing.md](../engineering/testing.md) |
 
 ---
 
@@ -30,12 +31,13 @@ Figures live in [`docs/assets/bench/`](../assets/bench) and regenerate from trac
 ### 1a. Codec ladder, local — the honest lower bound `[local — rerunnable]`
 
 `format` (PNG/JPEG) × quality {10…95} × `max_long_edge` {1280, 1024, 768, 512} × 5 reps ×
-two content scenarios = 440 datapoints (S1, `bench_codec_ladder.py`). Condensed (mean KiB):
+three content scenarios = 660 datapoints (S1, `bench_codec_ladder.py`). Condensed (mean KiB):
 
 | scenario | PNG @1280 | JPEG q80 | JPEG q50 | JPEG q50 @512 |
 |---|---:|---:|---:|---:|
 | dense text (~95% coverage) | 747 | 553 (1.4×) | 339 (2.2×) | 61 (**12.3×**) |
 | sparse desktop (~15% coverage) | 65 | 86 (**PNG wins**) | 64 (1.0×) | 11 (5.9×) |
+| **photo** (procedural natural image, 100%) | 2258 | 117 (**19.3×**) | 41 (54×) | 9 (**251×**) |
 
 ![codec ladder](../assets/bench/codec_ladder.png)
 
@@ -67,6 +69,29 @@ and stacking downscale-to-model-input-resolution reaches ~131× vs full-res PNG 
 frames.** Single-shot caveat applies to every cell.
 
 ![bandwidth bars](../assets/bench/bandwidth_bars.png)
+
+**Local rerunnable confirmation — procedural photo scenario** `[local — rerunnable]`
+
+The ladder above is a one-off remote measurement of a content-rich browser desktop. The local
+codec-ladder suite ([`benchmarks/bench_codec_ladder.py`](../../benchmarks/bench_codec_ladder.py))
+reproduces its photographic operating point from this repo alone: a **procedurally generated
+natural-image frame** (multi-octave noise + gradients + sensor-like grain, byte-identical from
+a fixed seed — no binary asset, no photo licensing) painted across 100% of the 1280×800 local
+sandbox screen, with the paint verified by screenshot before measuring:
+
+| codec (`photo` scenario, 1280×800 local) | KiB | × vs PNG |
+|---|---|---|
+| PNG (lossless) | 2258.3 | 1.0× |
+| JPEG q80 | 116.7 | **19.3×** |
+| JPEG q50 | 41.5 | 54.4× |
+| JPEG q50 @512 | 9.0 | 251.0× |
+
+JPEG q80's **19.3×** on the local procedural photo confirms the remote **20.7×** as a property
+of natural-image content, not of one particular desktop — and JPEG is again ~2.5× faster than
+PNG end-to-end (23.6 → 9.4 ms loopback p50). Full grid (× quality × downscale × 5 reps, plus
+two text-content scenarios where PNG wins instead) lands in
+[`benchmarks/results/codec_ladder.json`](../../benchmarks/results/codec_ladder.json); the
+narrative read is [`../engineering/benchmarks.md`](../engineering/benchmarks.md) §2.
 
 ### 1c. Lossless dirty-tile delta — the robust stream win `[local — rerunnable]`
 
@@ -118,8 +143,8 @@ VM — exactly the boundary the client-plane rung isolates next.
 
 S6 (`bench_client_scale.py`): one client process, N ∈ {16, 64, 256, **1024**} concurrent
 sessions (`aconnect` + `asyncio.gather`, one event loop, `ping_jitter` engaged at N≥256),
-against mock `shinkend` servers in **separate processes** speaking the real ACI over real
-loopback WebSockets. Frame payloads are synthetic bytes sized to three measured operating
+against **protocol-faithful synthetic ACI peers in separate processes** — real handshake,
+real loopback WebSockets, the real SDK; only the frame payloads are synthetic. Frame payloads are synthetic bytes sized to three measured operating
 points (13 / 48 / 87 KiB ≈ JPEG q50@512 / q80@1024 / q80@1080p). 88,928 measured observations:
 
 | N | payload | observe p50 / p99 | round wall p50 | aggregate ingest | RSS | threads |
@@ -134,7 +159,7 @@ points (13 / 48 / 87 KiB ≈ JPEG q50@512 / q80@1024 / q80@1080p). 88,928 measur
 cores**, observe p99 476 ms, 47 consecutive rounds. The client plane saturates at ~1 Gbps
 decoded ingest per core on this host; it is not the scaling bottleneck.
 
-Thread-model contrast, same mocks: the sync facade spends **one OS thread per session**
+Thread-model contrast, same synthetic peers: the sync facade spends **one OS thread per session**
 (N=256 → 256 threads; 1024 was deliberately not run — that thread model is what this design
 retires), while `SharedLoop` holds 1024 sync sessions and the async core holds 1024 concurrent
 sessions on **one** thread each.
@@ -171,29 +196,56 @@ adds ~33% until binary frames land. The chart marks the one *measured* point at 
 
 The differentiating loop — reach a state once, checkpoint it, mint N live replicas — measured
 on the Docker disk tier (S4, `bench_fork.py`), with **every replica verified to inherit the
-golden state** (a timing row only counts if the fork was real):
+golden state** (a timing row only counts if the fork was real). Post-readiness-fix numbers (S9, push-based
+readiness — see the boot waterfall below; the pre-fix 8.57 s fork p50 is preserved in the
+tracked baseline):
 
 | leg | p50 | n |
 |---|---:|---:|
-| cold boot → usable (create + connect + first obs) | 7.80 s | 16 |
+| cold boot → usable (create + connect + first obs) | **0.196 s** | 16 |
 | checkpoint (`docker commit`, sandbox stays live) | **0.57 s** | 16 |
-| fork → usable (resume + connect + first obs) | 8.57 s | 63 |
+| fork → usable, classic (boot from the committed image) | **0.70 s** | 62 |
+| fork → usable, **warm-pool graft** (S4b, replica available) | **0.100 s** | 32 |
 
-| fan-out from ONE checkpoint | wall-clock | wall / replica | verified |
+| classic fan-out from ONE checkpoint | wall-clock | wall / replica | verified |
 |---:|---:|---:|---|
-| N=1 | 9.60 s | 9.60 s | 1/1 |
-| N=8 | 8.55 s | 1.07 s | 8/8 |
-| N=32 | 11.92 s | **0.37 s** | 32/32 |
+| N=1 | 0.43 s | 0.43 s | 1/1 |
+| N=8 | 1.24 s | 0.155 s | 8/8 |
+| N=16 | 2.07 s | **0.129 s** | 16/16 |
 
-Checkpointing a live sandbox is sub-second and non-disruptive. On the disk tier one fork costs
-about one cold boot (both dominated by `docker run` + desktop readiness) — the fork's value
-here is **state inheritance** (skipping the setup/replay to re-reach a mid-task state), and
-**fan-out wall-clock is nearly flat in N**: 32 verified replicas cost ~11.9 s vs ~9.6 s for
-one — **~26× cheaper per replica**. This is the shape `eval.run_eval_forked` exploits
-(golden → fork-N → score). The designed CRIU/CoW fast tiers (D5, not built) attack the boot
-constant itself.
+Checkpointing a live sandbox is sub-second and non-disruptive. A classic fork is ~0.7 s
+(committed-layer instantiation + desktop bring-up — readiness theater no longer hides it),
+and the opt-in **warm pool** (pre-booted base containers + the checkpoint's `docker diff`
+delta grafted in) brings fork→usable to **~0.1 s** while staying files-only — the same state
+tier as `docker commit`, with bursts beyond the pool degrading gracefully to the classic
+path (recorded per replica). This is the shape `eval.run_eval_forked` exploits
+(golden → fork-N → score). The designed CRIU/CoW fast tiers (D5, not built) add memory/process
+state, which no disk-tier mechanism here captures.
+
+**Memory-tier spike (CRIU) — POSITIVE** `[local spike]`
+([`spikes/criu-memory-tier/`](../../spikes/criu-memory-tier), rerunnable `run.sh`): the full
+desktop process tree (Xvfb + openbox + xterm + `shinkend`, X11 sockets + live TCP listener)
+**dumps in ~60 ms (~34 MB) and restores into a fresh container in ~40 ms** on Docker Desktop
+arm64 (CRIU 3.17.1, kernel 6.12-linuxkit); n=12 fork-shaped reps, donor kept running
+(`--leave-running` = true fork), and a mid-boot dump finished booting after restore
+(checkpoint-anywhere). Its measured 300 ms end-to-end fork was taken against the pre-S9
+readiness path; with S9 the disk tier itself reaches ~0.7 s / ~0.1 s pooled, so the memory
+tier's edge is **what it carries** — live process/memory state (open apps, mid-task
+processes), which no files-only mechanism captures — at a ~40–50 ms restore cost. Caveats in
+the spike report: privileged-container rig (latency evidence, not an isolation posture); no
+SOFT_DIRTY/USERFAULTFD on this kernel.
 
 ![fork and fan-out](../assets/bench/fork_resume.png)
+![warm-pool graft](../assets/bench/fork_resume_pool.png)
+
+**Boot waterfall (S9, `bench_boot_waterfall.py`)** — where the old 8 s went: shinkend used to
+be exec'd behind shell poll loops (listener up at ~5.4 s) and the SDK polled readiness at
+200 ms with a full-PNG pull + pure-Python decode + `docker stats` per poll. Now shinkend
+listens within ~130 ms of `docker run`, answers a guest-side `ready` query from sampled root
+pixels in microseconds, and `provider.create()` returns at **~0.17 s p50** (was 7.7 s) —
+measured before/after on the same host, both runs tracked.
+
+![boot waterfall](../assets/bench/boot_waterfall.png)
 
 ---
 
@@ -205,21 +257,61 @@ the OS accessibility tree — the load-bearing assumption behind a structured-de
 | surface | tree | pct addressable |
 |---|---|---|
 | Qt calculator | AT-SPI | **0.87** |
+| Electron app (renderer, `--force-renderer-accessibility`) | AT-SPI | 0.32 |
 | chromium page | CDP | 0.23 of all nodes — but **1.00 of labeled controls** resolved |
+| Electron page | CDP | 0.23 of all nodes — same shape as chromium, all labeled controls resolved |
 | zenity / gnome-text-editor (GTK) | AT-SPI | 0.10 / 0.09 |
 | xterm | AT-SPI | 0.00 (no tree) |
-| canvas / games / Electron | — | **unmeasured** |
+| canvas-UI page (5 controls drawn in one `<canvas>`) | CDP | **0.00 — measured** (tree = 2 inert nodes) |
+| games / custom-rendered (non-browser) | — | unmeasured (canvas row is the measured proxy) |
 
 Tree-diff bandwidth while typing: diff **2.0 KiB** vs full tree 10.4 KiB vs screenshot
-76.5 KiB. **Verdict: the data supports a *hybrid* per-window structured + pixel fallback, not
-structured-by-default** — strong for Qt and for browser *controls* via CDP, weak for GTK,
-absent for terminals — so D3's structured-default stays Provisional.
+76.5 KiB. The canvas **blind-spot probe** quantifies the other end: clicking a canvas-drawn
+button repaints the screen (PNG hash changes) while the structured diff reports **0 changed
+nodes** — on canvas surfaces the tree is not just sparse, it is silent across real state
+changes. **Verdict: the data supports a *hybrid* per-window structured + pixel fallback, not
+structured-by-default** — strong for Qt and for Chromium-family *controls* via CDP (browser and
+Electron), weak for GTK, absent for terminals and canvas — so D3's structured-default stays
+Provisional.
 
 ![a11y coverage](../assets/bench/a11y_coverage.png)
 
 ---
 
-## 5. Functional gates
+## 5. Head-to-head: per-step loop cost vs OSWorld's guest server `[local — rerunnable]`
+
+The direct measurement behind "successor to OSWorld's server": S7 (`bench_osworld_loop.py`)
+runs **both agent-facing servers in ONE sandbox against the SAME display** — `shinkend`
+(typed-WS ACI) and OSWorld's unmodified `desktop_env/server/main.py` (Flask + pyautogui,
+fetched at image build time from the public OSWorld repo at pinned commit `705623c`, run as
+its VM systemd unit runs it). The OSWorld endpoints are exercised exactly as OSWorld's own
+`DesktopEnv` controller calls them (`POST /execute` with the verbatim pyautogui prefix,
+`GET /screenshot` raw PNG, fresh TCP connection per call); both interfaces are sampled
+sequentially, interleaved, over loopback; a decoded frame-parity check recorded **mean
+per-pixel delta 0.0** between the two servers' captures. N=150 per cell:
+
+| per-step cost, same guest & frames | OSWorld HTTP p50 | ACI p50 | speedup |
+|---|---:|---:|---:|
+| input action (click) | 155.1 ms | 1.21 ms | ~128× |
+| observe (full-screen PNG) | 36.3 ms | 4.62 ms | ~7.9× |
+| **full agent step (act + observe)** | **191.8 ms** | **5.37 ms** | **~36×** |
+
+That is **~5.2 vs ~186 agent steps/s** of pure runtime overhead: OSWorld spawns a fresh
+Python interpreter (re-importing pyautogui, paying its default 0.1 s `PAUSE`) per action and
+re-runs a capture→encode→disk→HTTP cycle per observation, where the ACI holds one persistent
+typed-WS session to a resident runtime. **Bytes/step is honestly mixed**: at default codecs
+OSWorld's harder-compressed PNG is *smaller* on the wire (20.0 vs 90.3 KiB/step — PIL's
+denser deflate beats `shinkend`'s speed-tuned encoder, and the ACI pays ~33% base64/JSON
+framing); the ACI recovers the wire game via the measured levers in §1 (JPEG/downscale to
+~11 KiB, delta stream to ~2.4 KiB/frame), and the default-PNG density gap is documented as an
+open `shinkend` item, not hidden. Methodology + full fairness notes:
+[engineering/benchmarks.md §9](../engineering/benchmarks.md).
+
+![ACI vs OSWorld HTTP loop](../assets/bench/osworld_loop.png)
+
+---
+
+## 6. Functional gates
 
 | gate | result |
 |---|---|
@@ -228,13 +320,68 @@ absent for terminals — so D3's structured-default stays Provisional.
 | E6 off-the-shelf model | ✓ live (K2.6 drives a Docker desktop via one adapter) |
 | E8 runtime state | ✓ live (Docker disk-tier checkpoint → fork → screenshot) |
 | E9 forked eval | ✓ live (3/3 replicas inherit a golden checkpoint) |
-| automated tests | 74 Rust + 472 Python, 9-job CI on every PR |
+| automated tests | 74 Rust + 472 Python, 9-job CI on every PR — line coverage in §6b |
+### 6b. Test coverage (line)
+
+Measured 2026-06-11 on the unit/contract suites (macOS arm64 host; all tests green). Full
+per-module data: [`benchmarks/results/coverage.json`](../../benchmarks/results/coverage.json);
+repro commands: [testing.md](../engineering/testing.md).
+
+| suite | tool | total | best 3 modules | worst 3 modules |
+|---|---|---|---|---|
+| Rust `shinkend` (74 tests) | `cargo-llvm-cov` 0.8.7 | **78.0%** lines (77.2% regions) | `connection.rs` 92.5 · `protocol.rs` 92.1 · `main.rs` 82.7 | `executor.rs` 63.3 · `pyautogui.rs` 73.7 · `main.rs` 82.7 |
+| Python SDK (472 tests) | `pytest-cov` 7.1.0 | **87.1%** statements | `gateway` / `cli` / `runtime/*` 100 · `dialect` 98 · `errors` 98 | `scorer_proc` 65.9 · `a11y` 66.9 · `smoke` 72.8 |
+
+What these numbers do **not** show: the uncovered Rust lines are concentrated in the
+real-display backends — the X11/XCB capture+input paths in `executor.rs` and the subprocess
+side of `pyautogui.rs` — which only execute in the live Linux Xvfb/Docker CI smokes, and those
+smokes run **uninstrumented** (so true exercised-code share is higher than measured, but
+unquantified). Same caveat on the Python side for `providers/docker.py` (live Docker branches),
+`smoke.py` (the live smoke driver), `a11y.py` (AT-SPI needs Linux), and `scorer_proc.py` (the
+scorer child-process body is invisible to in-process coverage). And line coverage says nothing
+about assertion strength or cross-language schema drift — that is what the contract tests and
+the verb traceability below are for.
+
+### 6c. ACI verb → test traceability
+
+All **11 schema verbs** are pinned by two suite-wide agreement tests —
+`protocol.rs::advertised_verbs_match_schema` (runtime advertises exactly the schema enum) and
+`tests/test_contract.py` (the SDK's emitted wire vocabulary validates against the schema; the
+mock runtime in `tests/conftest.py` rejects any verb the real runtime would not accept) — plus
+per-verb evidence in four classes: **contract** (JSON-Schema valid/invalid fixtures), **wire** (SDK↔mock-runtime
+round-trip), **rust** (unit test of the runtime's parse/actuation), **live** (Xvfb/Docker
+smoke on a real display).
+
+| verb | contract (py) | wire (py) | rust unit | live |
+|---|---|---|---|---|
+| `click` | `test_verb_contracts.py` | `test_actions.py` | `pyautogui.rs::builds_pointer_argv_from_point_px`, `connection.rs::action_dispatches_only_after_auth` | `scripts/m1_smoke.py` |
+| `double_click` | `test_verb_contracts.py` | `test_actions.py` | — (shared pointer arm; no dedicated fixture) | — |
+| `right_click` | `test_verb_contracts.py` | — (mapping-only: `test_dialect.py`, adapters) | — (shared pointer arm; no dedicated fixture) | — |
+| `move` | `test_verb_contracts.py` | `test_actions.py` | — (shared pointer arm; no dedicated fixture) | `scripts/m1_smoke.py`, Docker smoke benign action |
+| `scroll` | `test_verb_contracts.py` | `test_actions.py` | `executor.rs::scroll_steps_is_pixel_denominated_and_bounded`, `pyautogui.rs::builds_type_key_scroll_wait_argv` | — |
+| `type_text` | `test_verb_contracts.py` | `test_actions.py` | `pyautogui.rs::builds_type_key_scroll_wait_argv` (+ missing-text rejection) | `scripts/scripted_task_smoke.py` |
+| `key` | `test_verb_contracts.py` | `test_actions.py` | `executor.rs::key_keysym_resolves_function_and_named_keys` | `scripts/m1_smoke.py` |
+| `screenshot` | `test_verb_contracts.py` | `test_actions.py` (PNG + format/quality) | `executor.rs::screenshot_scope_is_accepted`, `connection.rs::format_and_quality_are_gated_to_capture_verbs` | `scripts/m1_smoke.py`, `scripts/window_smoke.py` |
+| `start_screencast` | `test_verb_contracts.py` | `test_screencast.py` (incl. resume/reconnect) | `connection.rs::start_screencast_acks_and_requests_a_stream`, `main.rs::screencast_streams_distinct_frames_then_stops` | `scripts/screencast_smoke.py` |
+| `stop_screencast` | `test_verb_contracts.py` | `test_screencast.py::test_screencast_stop_makes_next_frame_end` | `connection.rs::stop_screencast_acks_and_requests_stop` | `scripts/screencast_smoke.py` |
+| `wait` | `test_verb_contracts.py` | `test_operator.py::test_drive_stops_at_max_steps` | `connection.rs::wait_action_acks_with_a_bounded_delay`, `pyautogui.rs::builds_type_key_scroll_wait_argv` | — |
+
+**Findings (gaps, stated plainly):** (1) **`right_click` has no SDK↔runtime round-trip test**
+— only the schema contract and dialect/adapter *mapping* tests touch it; (2)
+`double_click`/`right_click`/`move` have **no dedicated Rust actuation fixture** — they ride
+the same parameterized pointer arm that `click`'s fixture exercises, so a verb-specific
+regression (e.g. wrong button/click-count argv) would not be caught; (3) `double_click`,
+`right_click`, `scroll`, and `wait` appear in **no live smoke**. Python test paths are under
+`sdk/python/tests/`, Rust tests in `shinkend/src/`.
 
 ## Reproducing
 
 ```sh
 # build the sandbox image FROM THE CHECKOUT UNDER TEST, then run all local suites
 docker build -f images/linux/Dockerfile -t shinken/sandbox-linux .
+# optional, enables the §5 head-to-head: same guest + OSWorld's server (fetched at
+# build time from the public OSWorld repo at a pinned commit; nothing vendored here)
+docker build -f images/linux/Dockerfile.osworld -t shinken/sandbox-linux-osworld .
 make benchmarks                       # ~20-30 min; needs Docker + python3 + matplotlib + websockets
 
 # regenerate every figure from the tracked raw data (no Docker)

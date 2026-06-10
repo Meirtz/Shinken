@@ -37,6 +37,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # SDK's pinned floor from PyPI. This is the spike image only — production keeps its own pin.
 RUN pip install --no-cache-dir --break-system-packages "websockets>=13"
 
+# Electron surface (spike-only). `npm install` pulls the prebuilt Electron binary for the
+# build arch at image-build time, so the spike *run* stays network-free. The chromium
+# install above already provides most of Electron's shared-library closure; the explicit
+# libs below cover the rest of Electron's documented Debian runtime deps.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        nodejs npm ca-certificates \
+        libgtk-3-0 libnotify4 libnss3 libasound2 libgbm1 libsecret-1-0 libxss1 \
+    && rm -rf /var/lib/apt/lists/*
+COPY spikes/a11y-coverage/electron-app /opt/electron-app
+RUN cd /opt/electron-app && npm install --no-audit --no-fund \
+    && chmod -R a+rX /opt/electron-app
+
 # Qt must be told to publish its accessibility tree to AT-SPI.
 ENV QT_ACCESSIBILITY=1 QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1
 

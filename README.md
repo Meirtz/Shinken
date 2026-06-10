@@ -115,24 +115,40 @@ observation (pixels now, hybrid structured designed) → typed action → verifi
 
 ## Measured results
 
-First-party numbers; **~93k tracked datapoints** across six rerunnable local suites plus
+First-party numbers; **~100k tracked datapoints** across ten rerunnable local suites plus
 audited one-off WAN runs. Full tables, provenance, and evidence-class labels:
 [`docs/benchmarks/`](docs/benchmarks/README.md); methodology:
 [`docs/engineering/benchmarks.md`](docs/engineering/benchmarks.md).
 
-**Concurrency — measured to N=1024 on the client plane.** One process drives **64 real Docker
-desktops** (~1,260 observations/s aggregate, 2 OS threads) and **1,024 concurrent live ACI
-sessions on one event-loop thread**, sustaining **2,356 frames/s ≈ 884 Mbps** of decoded
-48 KiB frames for 20 s at ~1 CPU core (mock servers isolate the client plane; payloads sized
-to measured codec operating points).
+**Head-to-head vs OSWorld's guest server — same guest, same display, same frames.** Both
+servers in one sandbox, OSWorld's unmodified Flask/pyautogui server driven exactly as its own
+client drives it (pinned commit, frame parity verified at **0.0 mean pixel delta**): a full
+act-then-observe agent step costs **191.8 ms p50 over OSWorld's HTTP interface vs 5.37 ms over
+the ACI (~36×)** — ~5.2 vs ~186 steps/s of pure runtime overhead. Bytes/step at default codecs
+honestly favors OSWorld (its PIL-encoded PNG is denser than `shinkend`'s speed-tuned encoder);
+the ACI takes the wire game back with the measured JPEG/downscale/delta levers below.
+
+**Concurrency — real sandboxes first, then the client-plane ceiling.** One process drives
+**64 real Docker desktops** (~1,260 observations/s aggregate, 2 OS threads). To measure the
+client plane past one host's guest RAM, the same SDK then holds **1,024 concurrent live ACI
+sessions on one event-loop thread** — real handshake, real WebSockets, protocol-faithful
+loopback peers serving synthetic frames sized to measured codec operating points — sustaining
+**2,356 frames/s ≈ 884 Mbps** of decoded frames for 20 s at ~1 CPU core.
 
 <p align="center"><img src="docs/assets/bench/client_scale.png" width="820"></p>
 
 **Runtime state — the differentiator, measured on the disk tier.** Checkpointing a live
-sandbox takes **~0.57 s** and is non-disruptive; fork fan-out wall-clock is **nearly flat in
-N**: **32 verified replicas of one mid-task state in ~11.9 s — 0.37 s/replica, ~26× cheaper
-than minting them one at a time** (63/63 replicas verified to inherit the golden state). The
-designed CRIU/CoW tiers (not built) attack the boot constant itself.
+sandbox takes **~0.57 s** and is non-disruptive. After the push-based readiness work (S9: guest-side
+`ready` query; `provider.create()` 7.7 s → **~0.2 s** p50), a classic fork→usable is
+**~0.6 s**, and the opt-in **warm-pool graft** (pre-booted containers + the checkpoint's
+filesystem delta) reaches **~0.12 s** — every replica verified to inherit the golden state,
+files-only semantics (the same tier as `docker commit`). The **CRIU memory tier is
+de-risked by a positive spike**: the full desktop tree dumps in ~60 ms and restores into a
+fresh container in ~40 ms — carrying *live process/memory state*, which no files-only
+mechanism can (`spikes/criu-memory-tier/`; privileged rig, latency evidence only). The CoW
+fast tier remains designed.
+
+<p align="center"><img src="docs/assets/bench/boot_waterfall.png" width="820"></p>
 
 **Observation bandwidth — a content-dependent lever, not magic.** On a content-rich 1080p
 frame (remote, WAN): JPEG q80 turns 1804 KiB into 87 KiB (**20.7×**), and downscale stacks to
@@ -141,6 +157,14 @@ default and JPEG/downscale are explicit knobs. During interaction the **lossless
 delta** stream is the robust win: **11.3×** vs full-PNG while typing, zero quality loss, and
 idle costs ~zero. Projected egress at 1024 sandboxes × 1 Hz: ~405 Mbps (JPEG q80@1280) vs
 ~15 Gbps (full-res PNG) — *projection from measured frame sizes, labeled as such*.
+
+Two pipeline mechanisms make the cost **change-proportional end to end**: negotiated
+**binary WS frames** kill the base64+JSON tax (wire −25%; saturated client-plane ceiling
+4,032 → **7,713 frames/s, ~1.9×**), and **XDamage event-driven capture** makes an idle
+streaming sandbox cost **~0 guest CPU** (4.4–8.6% → 0.1–0.6% of a core; typing@30fps 6.4×
+cheaper) — an idle tick captures nothing at all. The remote 20.7× JPEG headline is also now
+**reproducible from this repo alone**: a procedurally generated photographic frame confirms
+**19.3×** locally (no binary assets, seeded).
 
 <p align="center"><img src="docs/assets/bench/bandwidth_bars.png" width="680"></p>
 
@@ -151,7 +175,9 @@ stays provisional (D3) and the shipped design is per-window structured + pixel f
 
 **Functional.** Single-task OSWorld end-to-end gate passed (1 task of the 369-task suite:
 Kimi K2.6 over `shinkend`, official OSWorld evaluator **score 1.0**, 6 steps, 110 s — a full
-conformance sweep has not been run). 74 Rust + 472 Python tests, 9-job CI on every PR.
+conformance sweep has not been run). 98 Rust + 518 Python tests in a 9-job CI; line coverage
+measured (**78% Rust / 87% Python**) with per-verb test traceability; every README snippet is
+itself executed by the test suite.
 
 ## How it compares
 
@@ -177,8 +203,8 @@ numbers behind every "measured" are in [`docs/benchmarks/`](docs/benchmarks/READ
 |---|---|---|
 | ACI v0 (typed actions + observation) | ✅ built | handshake/auth, pointer+keyboard via X11/XTEST, screenshot, real-time screencast (idle-suppress, downscale, reconnect), focused-window capture; 11 verbs, contract-tested |
 | Observation codec | ✅ built + measured | PNG lossless default; JPEG lever **~1–21× content-dependent** (PNG can win; ~131× stacked with downscale on content-rich frames); **lossless dirty-tile delta ~11× on text** |
-| Runtime state | ✅ built + measured | Docker disk-tier **checkpoint / fork / resume** behind a provider interface; `run_eval_forked`; checkpoint ~0.57 s, fan-out nearly flat in N (32 replicas @ 0.37 s/replica) |
-| Concurrency | ✅ built + measured | async core + `SharedLoop`: 64 real sandboxes / **1,024 mock-backed sessions on one loop thread**, ~884 Mbps sustained client ingest; `ping_jitter` fleet decorrelation |
+| Runtime state | ✅ built + measured | Docker disk-tier **checkpoint / fork / resume** behind a provider interface; `run_eval_forked`; checkpoint ~0.57 s; fork→usable ~0.7 s classic / **~0.1 s warm-pool graft** (state-verified); boot→usable ~0.2 s after S9 push-based readiness |
+| Concurrency | ✅ built + measured | async core + `SharedLoop`: **64 real sandboxes** on 2 threads; client plane held to **1,024 live ACI sessions on one loop thread** (~884 Mbps sustained ingest, protocol-faithful synthetic peers); `ping_jitter` fleet decorrelation |
 | Eval | ✅ built | tiny verifier harness, OSWorld-as-a-Workload, typed exit-reason, subprocess scorer isolation; **single-task OSWorld gate passed (score 1.0; no conformance sweep yet)** |
 | SDK + adapters | ✅ built | Python SDK (sync + async), TypeScript SDK, Anthropic/OpenAI/Kimi-VL adapters → canonical ACI |
 | Structured a11y/DOM default (D3) | ⏳ provisional | coverage measured (E5): hybrid per-window structured + pixel fallback, *not* structured-by-default |

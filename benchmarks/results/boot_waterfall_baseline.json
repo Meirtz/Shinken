@@ -1,0 +1,158 @@
+{
+  "suite": "boot_waterfall",
+  "meta": {
+    "generated_utc": "2026-06-10T20:14:12Z",
+    "git_commit": "b8930ad",
+    "python": "3.13.9",
+    "host_os": "macOS 26.5.1",
+    "host_arch": "arm64",
+    "host_cpu": "Apple M4 Pro",
+    "host_cores": "14",
+    "host_mem_gib": 48.0,
+    "docker_server": "29.4.3",
+    "image": "shinken/sandbox-linux",
+    "image_arch": "linux/arm64",
+    "screen_geometry": "1280x800x24"
+  },
+  "reps": 6,
+  "contended_host": true,
+  "datapoints": {
+    "instrumented": [
+      {
+        "rep": 0,
+        "run_accepted_ms": 148.8,
+        "container_started_ms": 65.5,
+        "tcp_accept_ms": 181.9,
+        "ws_handshake_ms": 5412.5,
+        "ready_ms": 9065.4,
+        "ready_mode": "legacy_health_poll",
+        "ready_polls": 2,
+        "first_nonblack_ms": 9069.8
+      },
+      {
+        "rep": 1,
+        "run_accepted_ms": 105.6,
+        "container_started_ms": 42.7,
+        "tcp_accept_ms": 133.3,
+        "ws_handshake_ms": 5372.5,
+        "ready_ms": 8832.7,
+        "ready_mode": "legacy_health_poll",
+        "ready_polls": 2,
+        "first_nonblack_ms": 8839.7
+      },
+      {
+        "rep": 2,
+        "run_accepted_ms": 134.5,
+        "container_started_ms": 65.6,
+        "tcp_accept_ms": 163.6,
+        "ws_handshake_ms": 5380.3,
+        "ready_ms": 9823.4,
+        "ready_mode": "legacy_health_poll",
+        "ready_polls": 2,
+        "first_nonblack_ms": 9828.4
+      },
+      {
+        "rep": 3,
+        "run_accepted_ms": 131.8,
+        "container_started_ms": 51.0,
+        "tcp_accept_ms": 164.7,
+        "ws_handshake_ms": 5433.4,
+        "ready_ms": 9768.9,
+        "ready_mode": "legacy_health_poll",
+        "ready_polls": 2,
+        "first_nonblack_ms": 9778.1
+      },
+      {
+        "rep": 4,
+        "run_accepted_ms": 142.6,
+        "container_started_ms": 72.4,
+        "tcp_accept_ms": 187.2,
+        "ws_handshake_ms": 5470.2,
+        "ready_ms": 9802.2,
+        "ready_mode": "legacy_health_poll",
+        "ready_polls": 2,
+        "first_nonblack_ms": 9814.6
+      },
+      {
+        "rep": 5,
+        "run_accepted_ms": 139.1,
+        "container_started_ms": 68.5,
+        "tcp_accept_ms": 181.7,
+        "ws_handshake_ms": 5458.4,
+        "ready_ms": 9718.5,
+        "ready_mode": "legacy_health_poll",
+        "ready_polls": 2,
+        "first_nonblack_ms": 9721.8
+      }
+    ],
+    "sdk_create": [
+      {
+        "rep": 0,
+        "create_ms": 7740.7,
+        "connect_ms": 2.7,
+        "first_obs_ms": 7.8,
+        "total_ms": 7751.2
+      },
+      {
+        "rep": 1,
+        "create_ms": 7766.9,
+        "connect_ms": 5.2,
+        "first_obs_ms": 9.3,
+        "total_ms": 7781.5
+      },
+      {
+        "rep": 2,
+        "create_ms": 7756.1,
+        "connect_ms": 3.8,
+        "first_obs_ms": 10.3,
+        "total_ms": 7770.2
+      },
+      {
+        "rep": 3,
+        "create_ms": 7713.5,
+        "connect_ms": 4.3,
+        "first_obs_ms": 10.3,
+        "total_ms": 7728.2
+      },
+      {
+        "rep": 4,
+        "create_ms": 7717.5,
+        "connect_ms": 3.7,
+        "first_obs_ms": 8.2,
+        "total_ms": 7729.4
+      },
+      {
+        "rep": 5,
+        "create_ms": 7720.1,
+        "connect_ms": 6.2,
+        "first_obs_ms": 9.4,
+        "total_ms": 7735.7
+      }
+    ]
+  },
+  "summary": {
+    "milestones_p50_ms": {
+      "run_accepted_ms": 134.5,
+      "container_started_ms": 65.5,
+      "ws_handshake_ms": 5412.5,
+      "ready_ms": 9718.5,
+      "first_nonblack_ms": 9721.8
+    },
+    "ready_mode": "legacy_health_poll",
+    "sdk_create_ms": {
+      "n": 6,
+      "min": 7713.5,
+      "p50": 7720.1,
+      "mean": 7735.8,
+      "max": 7766.9
+    },
+    "sdk_total_ms": {
+      "n": 6,
+      "min": 7728.2,
+      "p50": 7735.7,
+      "mean": 7749.367,
+      "max": 7781.5
+    }
+  },
+  "note": "pre-optimization baseline (200 ms health poll + desktop-gated shinkend exec) \u2014 kept tracked so the before/after waterfall stays reproducible"
+}

@@ -277,8 +277,29 @@ content hashes and artifact references.
 ## 7. Handshake & versioning
 
 On connect the client sends `hello{v, client, accept}`; the runtime replies `welcome{server,
-capabilities}` advertising `{schema_version, verbs, targets, observation_types, max_long_edge}`. The
-client uses only advertised capabilities. The ACI is semver-versioned; adapters are version-pinned.
+capabilities}` advertising `{schema_version, verbs, targets, observation_types, max_long_edge,
+image_formats, binary_frames}`. The client uses only advertised capabilities. The ACI is
+semver-versioned; adapters are version-pinned.
+
+### 7.1 Binary media frames (negotiated)
+
+JSON-with-base64 is the wrong carrier for the media hot path: base64 inflates every frame ~33%
+and forces the client to `json.loads` megabyte-class strings (measured to dominate the
+client-plane CPU ceiling — see `docs/engineering/benchmarks.md` §6). A session that opts in via
+`hello.accept.binary_frames` — against a runtime advertising `capabilities.binary_frames` —
+therefore receives every **image-bearing observation** (one-shot screenshots, screencast frames,
+dirty-tile delta frames) as one WebSocket **Binary** message:
+
+```
+u32 LE header_len | JSON header | payload area (raw codec bytes, concatenated)
+```
+
+The header mirrors the `observation` JSON with each image/tile base64 `ref` replaced by
+`off`/`len` byte offsets into the payload area (`schema/aci.schema.json
+$defs.BinaryFrameHeader`). Everything else on the wire — handshake, acks, results, queries,
+structured observations — stays JSON text. The negotiation is strictly opt-in both ways: an old
+client never receives bytes it can't parse, and an old runtime simply ignores the offer (the
+SDK falls back to the text path transparently).
 
 ---
 

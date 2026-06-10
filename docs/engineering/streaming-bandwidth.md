@@ -121,7 +121,8 @@ The full many-sandbox concurrency design (memory governance, lifecycle at scale,
 scheduling, RTT amortization, N=64/256/1024 gates) builds on these numbers:
 [`many-sandbox-concurrency.md`](many-sandbox-concurrency.md).
 
-The dense, scripted LOCAL counterpart of B1/B2/B3 — full codec sweep over two content
-scenarios, per-frame delta traces, latency CDFs, checkpoint/fork/resume timings, and a
-SharedLoop fan-out envelope, with tracked raw datapoints and rerunnable suites under
-`benchmarks/` — is [`benchmarks.md`](benchmarks.md).
+The dense, scripted LOCAL counterpart of B1/B2/B3 — full codec sweep over three content
+scenarios (including a procedurally generated photographic frame that reproduces this
+section's ~20× headline locally: 19.3× at q80), per-frame delta traces, latency CDFs,
+checkpoint/fork/resume timings, and a SharedLoop fan-out envelope, with tracked raw
+datapoints and rerunnable suites under `benchmarks/` — is [`benchmarks.md`](benchmarks.md).
