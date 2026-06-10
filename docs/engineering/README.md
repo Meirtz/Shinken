@@ -16,6 +16,7 @@ aligned with the GitHub milestone and issues.
 - ACI specification used by implementation: [`../design/aci-spec.md`](../design/aci-spec.md)
 - Sandbox/substrate workstream: [`sandbox-workstream.md`](sandbox-workstream.md)
 - Streaming bandwidth measurements: [`streaming-bandwidth.md`](streaming-bandwidth.md)
+- Local benchmark artifact (fork/resume, codec ladder, delta screencast, action latency, fan-out): [`benchmarks.md`](benchmarks.md)
 - Many-sandbox concurrency design (~1024 sandboxes/process): [`many-sandbox-concurrency.md`](many-sandbox-concurrency.md)
 - OSWorld evaluation bring-up: [`osworld-eval.md`](osworld-eval.md)
 - Testing guide: [`testing.md`](testing.md)

@@ -1,0 +1,2726 @@
+{
+  "suite": "local_fanout",
+  "meta": {
+    "generated_utc": "2026-06-10T18:03:11Z",
+    "git_commit": "ec2aacb",
+    "python": "3.13.9",
+    "host_os": "macOS 26.5.1",
+    "host_arch": "arm64",
+    "host_cpu": "Apple M4 Pro",
+    "host_cores": "14",
+    "host_mem_gib": 48.0,
+    "docker_server": "29.4.3",
+    "image": "shinken/sandbox-linux",
+    "image_arch": "linux/arm64",
+    "screen_geometry": "1280x800x24"
+  },
+  "ns": [
+    1,
+    2,
+    4,
+    8,
+    16
+  ],
+  "rounds_per_n": 10,
+  "observe": "screenshot jpeg q80 max_long_edge=1024",
+  "datapoints": {
+    "tiers": [
+      {
+        "n": 1,
+        "boot_wall_ms": 9208.3,
+        "connect_wall_ms": 6.3,
+        "proc_rss_mib": 44.9,
+        "threads": 2,
+        "loop_threads": 1,
+        "guest_rss_total_mib": 39.9,
+        "guest_rss_per_sandbox_mib": 39.9
+      },
+      {
+        "n": 2,
+        "boot_wall_ms": 7814.9,
+        "connect_wall_ms": 5.8,
+        "proc_rss_mib": 58.1,
+        "threads": 2,
+        "loop_threads": 1,
+        "guest_rss_total_mib": 79.9,
+        "guest_rss_per_sandbox_mib": 39.9
+      },
+      {
+        "n": 4,
+        "boot_wall_ms": 7729.9,
+        "connect_wall_ms": 11.1,
+        "proc_rss_mib": 77.0,
+        "threads": 2,
+        "loop_threads": 1,
+        "guest_rss_total_mib": 158.4,
+        "guest_rss_per_sandbox_mib": 39.6
+      },
+      {
+        "n": 8,
+        "boot_wall_ms": 15615.2,
+        "connect_wall_ms": 27.9,
+        "proc_rss_mib": 95.5,
+        "threads": 2,
+        "loop_threads": 1,
+        "guest_rss_total_mib": 335.5,
+        "guest_rss_per_sandbox_mib": 41.9
+      },
+      {
+        "n": 16,
+        "boot_wall_ms": 33556.0,
+        "connect_wall_ms": 34.9,
+        "proc_rss_mib": 129.7,
+        "threads": 2,
+        "loop_threads": 1,
+        "guest_rss_total_mib": 643.2,
+        "guest_rss_per_sandbox_mib": 40.2
+      }
+    ],
+    "rounds": [
+      {
+        "n": 1,
+        "round": 0,
+        "observe_wall_ms": 13.9,
+        "click_wall_ms": 1.7
+      },
+      {
+        "n": 1,
+        "round": 1,
+        "observe_wall_ms": 10.9,
+        "click_wall_ms": 2.5
+      },
+      {
+        "n": 1,
+        "round": 2,
+        "observe_wall_ms": 8.6,
+        "click_wall_ms": 1.1
+      },
+      {
+        "n": 1,
+        "round": 3,
+        "observe_wall_ms": 7.9,
+        "click_wall_ms": 1.1
+      },
+      {
+        "n": 1,
+        "round": 4,
+        "observe_wall_ms": 7.5,
+        "click_wall_ms": 0.9
+      },
+      {
+        "n": 1,
+        "round": 5,
+        "observe_wall_ms": 6.8,
+        "click_wall_ms": 1.1
+      },
+      {
+        "n": 1,
+        "round": 6,
+        "observe_wall_ms": 6.6,
+        "click_wall_ms": 1.0
+      },
+      {
+        "n": 1,
+        "round": 7,
+        "observe_wall_ms": 6.3,
+        "click_wall_ms": 1.0
+      },
+      {
+        "n": 1,
+        "round": 8,
+        "observe_wall_ms": 6.1,
+        "click_wall_ms": 1.0
+      },
+      {
+        "n": 1,
+        "round": 9,
+        "observe_wall_ms": 6.0,
+        "click_wall_ms": 1.0
+      },
+      {
+        "n": 2,
+        "round": 0,
+        "observe_wall_ms": 12.3,
+        "click_wall_ms": 1.5
+      },
+      {
+        "n": 2,
+        "round": 1,
+        "observe_wall_ms": 9.9,
+        "click_wall_ms": 1.1
+      },
+      {
+        "n": 2,
+        "round": 2,
+        "observe_wall_ms": 8.6,
+        "click_wall_ms": 1.0
+      },
+      {
+        "n": 2,
+        "round": 3,
+        "observe_wall_ms": 8.1,
+        "click_wall_ms": 0.9
+      },
+      {
+        "n": 2,
+        "round": 4,
+        "observe_wall_ms": 8.0,
+        "click_wall_ms": 1.2
+      },
+      {
+        "n": 2,
+        "round": 5,
+        "observe_wall_ms": 8.7,
+        "click_wall_ms": 3.0
+      },
+      {
+        "n": 2,
+        "round": 6,
+        "observe_wall_ms": 8.1,
+        "click_wall_ms": 1.2
+      },
+      {
+        "n": 2,
+        "round": 7,
+        "observe_wall_ms": 7.3,
+        "click_wall_ms": 1.2
+      },
+      {
+        "n": 2,
+        "round": 8,
+        "observe_wall_ms": 6.9,
+        "click_wall_ms": 1.2
+      },
+      {
+        "n": 2,
+        "round": 9,
+        "observe_wall_ms": 7.9,
+        "click_wall_ms": 1.2
+      },
+      {
+        "n": 4,
+        "round": 0,
+        "observe_wall_ms": 12.9,
+        "click_wall_ms": 1.9
+      },
+      {
+        "n": 4,
+        "round": 1,
+        "observe_wall_ms": 9.9,
+        "click_wall_ms": 1.2
+      },
+      {
+        "n": 4,
+        "round": 2,
+        "observe_wall_ms": 8.5,
+        "click_wall_ms": 1.1
+      },
+      {
+        "n": 4,
+        "round": 3,
+        "observe_wall_ms": 7.9,
+        "click_wall_ms": 1.5
+      },
+      {
+        "n": 4,
+        "round": 4,
+        "observe_wall_ms": 7.1,
+        "click_wall_ms": 1.4
+      },
+      {
+        "n": 4,
+        "round": 5,
+        "observe_wall_ms": 6.4,
+        "click_wall_ms": 1.1
+      },
+      {
+        "n": 4,
+        "round": 6,
+        "observe_wall_ms": 6.0,
+        "click_wall_ms": 0.9
+      },
+      {
+        "n": 4,
+        "round": 7,
+        "observe_wall_ms": 6.4,
+        "click_wall_ms": 1.4
+      },
+      {
+        "n": 4,
+        "round": 8,
+        "observe_wall_ms": 6.1,
+        "click_wall_ms": 1.0
+      },
+      {
+        "n": 4,
+        "round": 9,
+        "observe_wall_ms": 6.4,
+        "click_wall_ms": 1.3
+      },
+      {
+        "n": 8,
+        "round": 0,
+        "observe_wall_ms": 12.0,
+        "click_wall_ms": 2.1
+      },
+      {
+        "n": 8,
+        "round": 1,
+        "observe_wall_ms": 8.5,
+        "click_wall_ms": 1.3
+      },
+      {
+        "n": 8,
+        "round": 2,
+        "observe_wall_ms": 8.7,
+        "click_wall_ms": 1.4
+      },
+      {
+        "n": 8,
+        "round": 3,
+        "observe_wall_ms": 7.6,
+        "click_wall_ms": 1.3
+      },
+      {
+        "n": 8,
+        "round": 4,
+        "observe_wall_ms": 8.6,
+        "click_wall_ms": 1.7
+      },
+      {
+        "n": 8,
+        "round": 5,
+        "observe_wall_ms": 8.5,
+        "click_wall_ms": 1.4
+      },
+      {
+        "n": 8,
+        "round": 6,
+        "observe_wall_ms": 8.1,
+        "click_wall_ms": 1.3
+      },
+      {
+        "n": 8,
+        "round": 7,
+        "observe_wall_ms": 8.2,
+        "click_wall_ms": 1.2
+      },
+      {
+        "n": 8,
+        "round": 8,
+        "observe_wall_ms": 7.9,
+        "click_wall_ms": 1.2
+      },
+      {
+        "n": 8,
+        "round": 9,
+        "observe_wall_ms": 7.5,
+        "click_wall_ms": 1.3
+      },
+      {
+        "n": 16,
+        "round": 0,
+        "observe_wall_ms": 24.3,
+        "click_wall_ms": 3.5
+      },
+      {
+        "n": 16,
+        "round": 1,
+        "observe_wall_ms": 16.1,
+        "click_wall_ms": 2.0
+      },
+      {
+        "n": 16,
+        "round": 2,
+        "observe_wall_ms": 13.6,
+        "click_wall_ms": 1.8
+      },
+      {
+        "n": 16,
+        "round": 3,
+        "observe_wall_ms": 15.2,
+        "click_wall_ms": 1.9
+      },
+      {
+        "n": 16,
+        "round": 4,
+        "observe_wall_ms": 14.4,
+        "click_wall_ms": 1.9
+      },
+      {
+        "n": 16,
+        "round": 5,
+        "observe_wall_ms": 14.3,
+        "click_wall_ms": 1.8
+      },
+      {
+        "n": 16,
+        "round": 6,
+        "observe_wall_ms": 15.0,
+        "click_wall_ms": 2.1
+      },
+      {
+        "n": 16,
+        "round": 7,
+        "observe_wall_ms": 13.9,
+        "click_wall_ms": 2.1
+      },
+      {
+        "n": 16,
+        "round": 8,
+        "observe_wall_ms": 14.4,
+        "click_wall_ms": 2.0
+      },
+      {
+        "n": 16,
+        "round": 9,
+        "observe_wall_ms": 14.6,
+        "click_wall_ms": 1.8
+      }
+    ],
+    "observations": [
+      {
+        "n": 1,
+        "round": 0,
+        "sandbox": 0,
+        "ms": 13.608,
+        "bytes": 15032
+      },
+      {
+        "n": 1,
+        "round": 1,
+        "sandbox": 0,
+        "ms": 10.677,
+        "bytes": 14865
+      },
+      {
+        "n": 1,
+        "round": 2,
+        "sandbox": 0,
+        "ms": 8.516,
+        "bytes": 14865
+      },
+      {
+        "n": 1,
+        "round": 3,
+        "sandbox": 0,
+        "ms": 7.804,
+        "bytes": 14865
+      },
+      {
+        "n": 1,
+        "round": 4,
+        "sandbox": 0,
+        "ms": 7.421,
+        "bytes": 14865
+      },
+      {
+        "n": 1,
+        "round": 5,
+        "sandbox": 0,
+        "ms": 6.736,
+        "bytes": 14865
+      },
+      {
+        "n": 1,
+        "round": 6,
+        "sandbox": 0,
+        "ms": 6.503,
+        "bytes": 14865
+      },
+      {
+        "n": 1,
+        "round": 7,
+        "sandbox": 0,
+        "ms": 6.223,
+        "bytes": 14865
+      },
+      {
+        "n": 1,
+        "round": 8,
+        "sandbox": 0,
+        "ms": 6.036,
+        "bytes": 14865
+      },
+      {
+        "n": 1,
+        "round": 9,
+        "sandbox": 0,
+        "ms": 5.912,
+        "bytes": 14865
+      },
+      {
+        "n": 2,
+        "round": 0,
+        "sandbox": 0,
+        "ms": 12.006,
+        "bytes": 15032
+      },
+      {
+        "n": 2,
+        "round": 0,
+        "sandbox": 1,
+        "ms": 11.9,
+        "bytes": 15032
+      },
+      {
+        "n": 2,
+        "round": 1,
+        "sandbox": 0,
+        "ms": 9.707,
+        "bytes": 14865
+      },
+      {
+        "n": 2,
+        "round": 1,
+        "sandbox": 1,
+        "ms": 9.751,
+        "bytes": 14865
+      },
+      {
+        "n": 2,
+        "round": 2,
+        "sandbox": 0,
+        "ms": 8.498,
+        "bytes": 14865
+      },
+      {
+        "n": 2,
+        "round": 2,
+        "sandbox": 1,
+        "ms": 8.537,
+        "bytes": 14865
+      },
+      {
+        "n": 2,
+        "round": 3,
+        "sandbox": 0,
+        "ms": 7.941,
+        "bytes": 14865
+      },
+      {
+        "n": 2,
+        "round": 3,
+        "sandbox": 1,
+        "ms": 8.014,
+        "bytes": 14865
+      },
+      {
+        "n": 2,
+        "round": 4,
+        "sandbox": 0,
+        "ms": 7.768,
+        "bytes": 14865
+      },
+      {
+        "n": 2,
+        "round": 4,
+        "sandbox": 1,
+        "ms": 7.907,
+        "bytes": 14865
+      },
+      {
+        "n": 2,
+        "round": 5,
+        "sandbox": 0,
+        "ms": 8.491,
+        "bytes": 14865
+      },
+      {
+        "n": 2,
+        "round": 5,
+        "sandbox": 1,
+        "ms": 8.572,
+        "bytes": 14865
+      },
+      {
+        "n": 2,
+        "round": 6,
+        "sandbox": 0,
+        "ms": 7.372,
+        "bytes": 14865
+      },
+      {
+        "n": 2,
+        "round": 6,
+        "sandbox": 1,
+        "ms": 7.901,
+        "bytes": 14865
+      },
+      {
+        "n": 2,
+        "round": 7,
+        "sandbox": 0,
+        "ms": 7.125,
+        "bytes": 14865
+      },
+      {
+        "n": 2,
+        "round": 7,
+        "sandbox": 1,
+        "ms": 7.221,
+        "bytes": 14865
+      },
+      {
+        "n": 2,
+        "round": 8,
+        "sandbox": 0,
+        "ms": 6.742,
+        "bytes": 14865
+      },
+      {
+        "n": 2,
+        "round": 8,
+        "sandbox": 1,
+        "ms": 6.836,
+        "bytes": 14865
+      },
+      {
+        "n": 2,
+        "round": 9,
+        "sandbox": 0,
+        "ms": 7.701,
+        "bytes": 14865
+      },
+      {
+        "n": 2,
+        "round": 9,
+        "sandbox": 1,
+        "ms": 7.669,
+        "bytes": 14865
+      },
+      {
+        "n": 4,
+        "round": 0,
+        "sandbox": 0,
+        "ms": 12.284,
+        "bytes": 15032
+      },
+      {
+        "n": 4,
+        "round": 0,
+        "sandbox": 1,
+        "ms": 12.305,
+        "bytes": 15032
+      },
+      {
+        "n": 4,
+        "round": 0,
+        "sandbox": 2,
+        "ms": 12.233,
+        "bytes": 15032
+      },
+      {
+        "n": 4,
+        "round": 0,
+        "sandbox": 3,
+        "ms": 12.111,
+        "bytes": 15032
+      },
+      {
+        "n": 4,
+        "round": 1,
+        "sandbox": 0,
+        "ms": 9.761,
+        "bytes": 14865
+      },
+      {
+        "n": 4,
+        "round": 1,
+        "sandbox": 1,
+        "ms": 9.331,
+        "bytes": 14865
+      },
+      {
+        "n": 4,
+        "round": 1,
+        "sandbox": 2,
+        "ms": 9.343,
+        "bytes": 14865
+      },
+      {
+        "n": 4,
+        "round": 1,
+        "sandbox": 3,
+        "ms": 9.616,
+        "bytes": 14865
+      },
+      {
+        "n": 4,
+        "round": 2,
+        "sandbox": 0,
+        "ms": 8.41,
+        "bytes": 14865
+      },
+      {
+        "n": 4,
+        "round": 2,
+        "sandbox": 1,
+        "ms": 8.34,
+        "bytes": 14865
+      },
+      {
+        "n": 4,
+        "round": 2,
+        "sandbox": 2,
+        "ms": 8.207,
+        "bytes": 14865
+      },
+      {
+        "n": 4,
+        "round": 2,
+        "sandbox": 3,
+        "ms": 8.423,
+        "bytes": 14865
+      },
+      {
+        "n": 4,
+        "round": 3,
+        "sandbox": 0,
+        "ms": 7.794,
+        "bytes": 14865
+      },
+      {
+        "n": 4,
+        "round": 3,
+        "sandbox": 1,
+        "ms": 7.645,
+        "bytes": 14865
+      },
+      {
+        "n": 4,
+        "round": 3,
+        "sandbox": 2,
+        "ms": 7.318,
+        "bytes": 14865
+      },
+      {
+        "n": 4,
+        "round": 3,
+        "sandbox": 3,
+        "ms": 7.572,
+        "bytes": 14865
+      },
+      {
+        "n": 4,
+        "round": 4,
+        "sandbox": 0,
+        "ms": 6.952,
+        "bytes": 14865
+      },
+      {
+        "n": 4,
+        "round": 4,
+        "sandbox": 1,
+        "ms": 6.937,
+        "bytes": 14865
+      },
+      {
+        "n": 4,
+        "round": 4,
+        "sandbox": 2,
+        "ms": 6.762,
+        "bytes": 14865
+      },
+      {
+        "n": 4,
+        "round": 4,
+        "sandbox": 3,
+        "ms": 6.904,
+        "bytes": 14865
+      },
+      {
+        "n": 4,
+        "round": 5,
+        "sandbox": 0,
+        "ms": 6.28,
+        "bytes": 14865
+      },
+      {
+        "n": 4,
+        "round": 5,
+        "sandbox": 1,
+        "ms": 6.272,
+        "bytes": 14865
+      },
+      {
+        "n": 4,
+        "round": 5,
+        "sandbox": 2,
+        "ms": 6.105,
+        "bytes": 14865
+      },
+      {
+        "n": 4,
+        "round": 5,
+        "sandbox": 3,
+        "ms": 6.056,
+        "bytes": 14865
+      },
+      {
+        "n": 4,
+        "round": 6,
+        "sandbox": 0,
+        "ms": 5.916,
+        "bytes": 14865
+      },
+      {
+        "n": 4,
+        "round": 6,
+        "sandbox": 1,
+        "ms": 5.922,
+        "bytes": 14865
+      },
+      {
+        "n": 4,
+        "round": 6,
+        "sandbox": 2,
+        "ms": 5.828,
+        "bytes": 14865
+      },
+      {
+        "n": 4,
+        "round": 6,
+        "sandbox": 3,
+        "ms": 5.912,
+        "bytes": 14865
+      },
+      {
+        "n": 4,
+        "round": 7,
+        "sandbox": 0,
+        "ms": 6.208,
+        "bytes": 14865
+      },
+      {
+        "n": 4,
+        "round": 7,
+        "sandbox": 1,
+        "ms": 5.821,
+        "bytes": 14865
+      },
+      {
+        "n": 4,
+        "round": 7,
+        "sandbox": 2,
+        "ms": 6.136,
+        "bytes": 14865
+      },
+      {
+        "n": 4,
+        "round": 7,
+        "sandbox": 3,
+        "ms": 6.284,
+        "bytes": 14865
+      },
+      {
+        "n": 4,
+        "round": 8,
+        "sandbox": 0,
+        "ms": 5.826,
+        "bytes": 14865
+      },
+      {
+        "n": 4,
+        "round": 8,
+        "sandbox": 1,
+        "ms": 5.64,
+        "bytes": 14865
+      },
+      {
+        "n": 4,
+        "round": 8,
+        "sandbox": 2,
+        "ms": 5.889,
+        "bytes": 14865
+      },
+      {
+        "n": 4,
+        "round": 8,
+        "sandbox": 3,
+        "ms": 5.806,
+        "bytes": 14865
+      },
+      {
+        "n": 4,
+        "round": 9,
+        "sandbox": 0,
+        "ms": 6.276,
+        "bytes": 14865
+      },
+      {
+        "n": 4,
+        "round": 9,
+        "sandbox": 1,
+        "ms": 5.622,
+        "bytes": 14865
+      },
+      {
+        "n": 4,
+        "round": 9,
+        "sandbox": 2,
+        "ms": 6.102,
+        "bytes": 14865
+      },
+      {
+        "n": 4,
+        "round": 9,
+        "sandbox": 3,
+        "ms": 6.192,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 0,
+        "sandbox": 0,
+        "ms": 10.812,
+        "bytes": 15032
+      },
+      {
+        "n": 8,
+        "round": 0,
+        "sandbox": 1,
+        "ms": 10.985,
+        "bytes": 15032
+      },
+      {
+        "n": 8,
+        "round": 0,
+        "sandbox": 2,
+        "ms": 10.896,
+        "bytes": 15032
+      },
+      {
+        "n": 8,
+        "round": 0,
+        "sandbox": 3,
+        "ms": 10.589,
+        "bytes": 15032
+      },
+      {
+        "n": 8,
+        "round": 0,
+        "sandbox": 4,
+        "ms": 10.385,
+        "bytes": 15032
+      },
+      {
+        "n": 8,
+        "round": 0,
+        "sandbox": 5,
+        "ms": 10.834,
+        "bytes": 15032
+      },
+      {
+        "n": 8,
+        "round": 0,
+        "sandbox": 6,
+        "ms": 10.868,
+        "bytes": 15032
+      },
+      {
+        "n": 8,
+        "round": 0,
+        "sandbox": 7,
+        "ms": 10.779,
+        "bytes": 15032
+      },
+      {
+        "n": 8,
+        "round": 1,
+        "sandbox": 0,
+        "ms": 7.127,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 1,
+        "sandbox": 1,
+        "ms": 7.564,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 1,
+        "sandbox": 2,
+        "ms": 8.101,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 1,
+        "sandbox": 3,
+        "ms": 8.386,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 1,
+        "sandbox": 4,
+        "ms": 7.554,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 1,
+        "sandbox": 5,
+        "ms": 7.272,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 1,
+        "sandbox": 6,
+        "ms": 8.177,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 1,
+        "sandbox": 7,
+        "ms": 7.711,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 2,
+        "sandbox": 0,
+        "ms": 7.254,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 2,
+        "sandbox": 1,
+        "ms": 7.19,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 2,
+        "sandbox": 2,
+        "ms": 8.599,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 2,
+        "sandbox": 3,
+        "ms": 6.691,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 2,
+        "sandbox": 4,
+        "ms": 7.361,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 2,
+        "sandbox": 5,
+        "ms": 7.431,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 2,
+        "sandbox": 6,
+        "ms": 6.274,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 2,
+        "sandbox": 7,
+        "ms": 7.837,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 3,
+        "sandbox": 0,
+        "ms": 6.866,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 3,
+        "sandbox": 1,
+        "ms": 6.555,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 3,
+        "sandbox": 2,
+        "ms": 7.508,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 3,
+        "sandbox": 3,
+        "ms": 7.141,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 3,
+        "sandbox": 4,
+        "ms": 7.164,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 3,
+        "sandbox": 5,
+        "ms": 6.408,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 3,
+        "sandbox": 6,
+        "ms": 6.715,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 3,
+        "sandbox": 7,
+        "ms": 6.686,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 4,
+        "sandbox": 0,
+        "ms": 7.254,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 4,
+        "sandbox": 1,
+        "ms": 7.167,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 4,
+        "sandbox": 2,
+        "ms": 8.275,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 4,
+        "sandbox": 3,
+        "ms": 8.414,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 4,
+        "sandbox": 4,
+        "ms": 7.795,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 4,
+        "sandbox": 5,
+        "ms": 7.774,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 4,
+        "sandbox": 6,
+        "ms": 7.597,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 4,
+        "sandbox": 7,
+        "ms": 7.906,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 5,
+        "sandbox": 0,
+        "ms": 7.912,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 5,
+        "sandbox": 1,
+        "ms": 8.306,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 5,
+        "sandbox": 2,
+        "ms": 7.765,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 5,
+        "sandbox": 3,
+        "ms": 6.137,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 5,
+        "sandbox": 4,
+        "ms": 8.294,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 5,
+        "sandbox": 5,
+        "ms": 7.401,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 5,
+        "sandbox": 6,
+        "ms": 8.342,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 5,
+        "sandbox": 7,
+        "ms": 6.774,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 6,
+        "sandbox": 0,
+        "ms": 6.174,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 6,
+        "sandbox": 1,
+        "ms": 7.525,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 6,
+        "sandbox": 2,
+        "ms": 6.031,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 6,
+        "sandbox": 3,
+        "ms": 7.856,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 6,
+        "sandbox": 4,
+        "ms": 7.951,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 6,
+        "sandbox": 5,
+        "ms": 6.88,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 6,
+        "sandbox": 6,
+        "ms": 7.666,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 6,
+        "sandbox": 7,
+        "ms": 8.042,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 7,
+        "sandbox": 0,
+        "ms": 7.494,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 7,
+        "sandbox": 1,
+        "ms": 7.606,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 7,
+        "sandbox": 2,
+        "ms": 6.769,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 7,
+        "sandbox": 3,
+        "ms": 6.5,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 7,
+        "sandbox": 4,
+        "ms": 6.971,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 7,
+        "sandbox": 5,
+        "ms": 7.991,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 7,
+        "sandbox": 6,
+        "ms": 7.157,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 7,
+        "sandbox": 7,
+        "ms": 8.022,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 8,
+        "sandbox": 0,
+        "ms": 7.166,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 8,
+        "sandbox": 1,
+        "ms": 7.346,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 8,
+        "sandbox": 2,
+        "ms": 7.701,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 8,
+        "sandbox": 3,
+        "ms": 6.303,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 8,
+        "sandbox": 4,
+        "ms": 6.872,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 8,
+        "sandbox": 5,
+        "ms": 7.241,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 8,
+        "sandbox": 6,
+        "ms": 6.15,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 8,
+        "sandbox": 7,
+        "ms": 7.06,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 9,
+        "sandbox": 0,
+        "ms": 7.402,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 9,
+        "sandbox": 1,
+        "ms": 7.31,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 9,
+        "sandbox": 2,
+        "ms": 7.432,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 9,
+        "sandbox": 3,
+        "ms": 7.185,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 9,
+        "sandbox": 4,
+        "ms": 7.215,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 9,
+        "sandbox": 5,
+        "ms": 6.968,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 9,
+        "sandbox": 6,
+        "ms": 7.034,
+        "bytes": 14865
+      },
+      {
+        "n": 8,
+        "round": 9,
+        "sandbox": 7,
+        "ms": 7.139,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 0,
+        "sandbox": 0,
+        "ms": 15.298,
+        "bytes": 15032
+      },
+      {
+        "n": 16,
+        "round": 0,
+        "sandbox": 1,
+        "ms": 14.531,
+        "bytes": 15032
+      },
+      {
+        "n": 16,
+        "round": 0,
+        "sandbox": 2,
+        "ms": 16.23,
+        "bytes": 15032
+      },
+      {
+        "n": 16,
+        "round": 0,
+        "sandbox": 3,
+        "ms": 15.67,
+        "bytes": 15032
+      },
+      {
+        "n": 16,
+        "round": 0,
+        "sandbox": 4,
+        "ms": 14.451,
+        "bytes": 15032
+      },
+      {
+        "n": 16,
+        "round": 0,
+        "sandbox": 5,
+        "ms": 13.341,
+        "bytes": 15032
+      },
+      {
+        "n": 16,
+        "round": 0,
+        "sandbox": 6,
+        "ms": 14.749,
+        "bytes": 15032
+      },
+      {
+        "n": 16,
+        "round": 0,
+        "sandbox": 7,
+        "ms": 15.629,
+        "bytes": 15032
+      },
+      {
+        "n": 16,
+        "round": 0,
+        "sandbox": 8,
+        "ms": 14.012,
+        "bytes": 15032
+      },
+      {
+        "n": 16,
+        "round": 0,
+        "sandbox": 9,
+        "ms": 16.9,
+        "bytes": 15032
+      },
+      {
+        "n": 16,
+        "round": 0,
+        "sandbox": 10,
+        "ms": 18.354,
+        "bytes": 15032
+      },
+      {
+        "n": 16,
+        "round": 0,
+        "sandbox": 11,
+        "ms": 19.161,
+        "bytes": 15032
+      },
+      {
+        "n": 16,
+        "round": 0,
+        "sandbox": 12,
+        "ms": 16.648,
+        "bytes": 15032
+      },
+      {
+        "n": 16,
+        "round": 0,
+        "sandbox": 13,
+        "ms": 15.639,
+        "bytes": 15032
+      },
+      {
+        "n": 16,
+        "round": 0,
+        "sandbox": 14,
+        "ms": 14.949,
+        "bytes": 15032
+      },
+      {
+        "n": 16,
+        "round": 0,
+        "sandbox": 15,
+        "ms": 16.977,
+        "bytes": 15032
+      },
+      {
+        "n": 16,
+        "round": 1,
+        "sandbox": 0,
+        "ms": 15.013,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 1,
+        "sandbox": 1,
+        "ms": 15.495,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 1,
+        "sandbox": 2,
+        "ms": 15.427,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 1,
+        "sandbox": 3,
+        "ms": 12.576,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 1,
+        "sandbox": 4,
+        "ms": 14.853,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 1,
+        "sandbox": 5,
+        "ms": 15.536,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 1,
+        "sandbox": 6,
+        "ms": 15.676,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 1,
+        "sandbox": 7,
+        "ms": 12.429,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 1,
+        "sandbox": 8,
+        "ms": 14.479,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 1,
+        "sandbox": 9,
+        "ms": 12.157,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 1,
+        "sandbox": 10,
+        "ms": 11.996,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 1,
+        "sandbox": 11,
+        "ms": 12.716,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 1,
+        "sandbox": 12,
+        "ms": 13.761,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 1,
+        "sandbox": 13,
+        "ms": 15.161,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 1,
+        "sandbox": 14,
+        "ms": 15.393,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 1,
+        "sandbox": 15,
+        "ms": 12.429,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 2,
+        "sandbox": 0,
+        "ms": 10.42,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 2,
+        "sandbox": 1,
+        "ms": 10.974,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 2,
+        "sandbox": 2,
+        "ms": 11.007,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 2,
+        "sandbox": 3,
+        "ms": 10.357,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 2,
+        "sandbox": 4,
+        "ms": 9.946,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 2,
+        "sandbox": 5,
+        "ms": 9.706,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 2,
+        "sandbox": 6,
+        "ms": 11.233,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 2,
+        "sandbox": 7,
+        "ms": 9.764,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 2,
+        "sandbox": 8,
+        "ms": 13.29,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 2,
+        "sandbox": 9,
+        "ms": 12.642,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 2,
+        "sandbox": 10,
+        "ms": 10.206,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 2,
+        "sandbox": 11,
+        "ms": 10.475,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 2,
+        "sandbox": 12,
+        "ms": 10.361,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 2,
+        "sandbox": 13,
+        "ms": 11.976,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 2,
+        "sandbox": 14,
+        "ms": 12.313,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 2,
+        "sandbox": 15,
+        "ms": 11.858,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 3,
+        "sandbox": 0,
+        "ms": 11.917,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 3,
+        "sandbox": 1,
+        "ms": 12.794,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 3,
+        "sandbox": 2,
+        "ms": 10.361,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 3,
+        "sandbox": 3,
+        "ms": 10.537,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 3,
+        "sandbox": 4,
+        "ms": 10.389,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 3,
+        "sandbox": 5,
+        "ms": 10.401,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 3,
+        "sandbox": 6,
+        "ms": 10.293,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 3,
+        "sandbox": 7,
+        "ms": 9.076,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 3,
+        "sandbox": 8,
+        "ms": 11.916,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 3,
+        "sandbox": 9,
+        "ms": 10.059,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 3,
+        "sandbox": 10,
+        "ms": 11.703,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 3,
+        "sandbox": 11,
+        "ms": 8.32,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 3,
+        "sandbox": 12,
+        "ms": 10.04,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 3,
+        "sandbox": 13,
+        "ms": 9.454,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 3,
+        "sandbox": 14,
+        "ms": 14.804,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 3,
+        "sandbox": 15,
+        "ms": 9.625,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 4,
+        "sandbox": 0,
+        "ms": 10.154,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 4,
+        "sandbox": 1,
+        "ms": 10.292,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 4,
+        "sandbox": 2,
+        "ms": 11.264,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 4,
+        "sandbox": 3,
+        "ms": 11.547,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 4,
+        "sandbox": 4,
+        "ms": 11.683,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 4,
+        "sandbox": 5,
+        "ms": 14.172,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 4,
+        "sandbox": 6,
+        "ms": 10.38,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 4,
+        "sandbox": 7,
+        "ms": 11.361,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 4,
+        "sandbox": 8,
+        "ms": 11.037,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 4,
+        "sandbox": 9,
+        "ms": 9.334,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 4,
+        "sandbox": 10,
+        "ms": 13.497,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 4,
+        "sandbox": 11,
+        "ms": 9.93,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 4,
+        "sandbox": 12,
+        "ms": 11.713,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 4,
+        "sandbox": 13,
+        "ms": 11.234,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 4,
+        "sandbox": 14,
+        "ms": 10.353,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 4,
+        "sandbox": 15,
+        "ms": 10.43,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 5,
+        "sandbox": 0,
+        "ms": 9.262,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 5,
+        "sandbox": 1,
+        "ms": 10.872,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 5,
+        "sandbox": 2,
+        "ms": 11.992,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 5,
+        "sandbox": 3,
+        "ms": 10.5,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 5,
+        "sandbox": 4,
+        "ms": 10.525,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 5,
+        "sandbox": 5,
+        "ms": 8.112,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 5,
+        "sandbox": 6,
+        "ms": 8.476,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 5,
+        "sandbox": 7,
+        "ms": 8.312,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 5,
+        "sandbox": 8,
+        "ms": 11.54,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 5,
+        "sandbox": 9,
+        "ms": 9.408,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 5,
+        "sandbox": 10,
+        "ms": 8.113,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 5,
+        "sandbox": 11,
+        "ms": 8.949,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 5,
+        "sandbox": 12,
+        "ms": 13.716,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 5,
+        "sandbox": 13,
+        "ms": 14.135,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 5,
+        "sandbox": 14,
+        "ms": 9.705,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 5,
+        "sandbox": 15,
+        "ms": 9.683,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 6,
+        "sandbox": 0,
+        "ms": 8.353,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 6,
+        "sandbox": 1,
+        "ms": 9.104,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 6,
+        "sandbox": 2,
+        "ms": 14.76,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 6,
+        "sandbox": 3,
+        "ms": 8.46,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 6,
+        "sandbox": 4,
+        "ms": 9.91,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 6,
+        "sandbox": 5,
+        "ms": 9.076,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 6,
+        "sandbox": 6,
+        "ms": 9.758,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 6,
+        "sandbox": 7,
+        "ms": 7.889,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 6,
+        "sandbox": 8,
+        "ms": 11.731,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 6,
+        "sandbox": 9,
+        "ms": 8.917,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 6,
+        "sandbox": 10,
+        "ms": 12.854,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 6,
+        "sandbox": 11,
+        "ms": 14.855,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 6,
+        "sandbox": 12,
+        "ms": 9.354,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 6,
+        "sandbox": 13,
+        "ms": 9.142,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 6,
+        "sandbox": 14,
+        "ms": 9.198,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 6,
+        "sandbox": 15,
+        "ms": 12.91,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 7,
+        "sandbox": 0,
+        "ms": 7.836,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 7,
+        "sandbox": 1,
+        "ms": 8.5,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 7,
+        "sandbox": 2,
+        "ms": 13.673,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 7,
+        "sandbox": 3,
+        "ms": 7.49,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 7,
+        "sandbox": 4,
+        "ms": 11.338,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 7,
+        "sandbox": 5,
+        "ms": 8.806,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 7,
+        "sandbox": 6,
+        "ms": 8.178,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 7,
+        "sandbox": 7,
+        "ms": 9.141,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 7,
+        "sandbox": 8,
+        "ms": 8.928,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 7,
+        "sandbox": 9,
+        "ms": 10.916,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 7,
+        "sandbox": 10,
+        "ms": 13.489,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 7,
+        "sandbox": 11,
+        "ms": 8.561,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 7,
+        "sandbox": 12,
+        "ms": 10.479,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 7,
+        "sandbox": 13,
+        "ms": 9.411,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 7,
+        "sandbox": 14,
+        "ms": 12.767,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 7,
+        "sandbox": 15,
+        "ms": 10.533,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 8,
+        "sandbox": 0,
+        "ms": 14.29,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 8,
+        "sandbox": 1,
+        "ms": 10.649,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 8,
+        "sandbox": 2,
+        "ms": 11.924,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 8,
+        "sandbox": 3,
+        "ms": 9.522,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 8,
+        "sandbox": 4,
+        "ms": 8.714,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 8,
+        "sandbox": 5,
+        "ms": 8.982,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 8,
+        "sandbox": 6,
+        "ms": 9.653,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 8,
+        "sandbox": 7,
+        "ms": 12.171,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 8,
+        "sandbox": 8,
+        "ms": 11.725,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 8,
+        "sandbox": 9,
+        "ms": 13.246,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 8,
+        "sandbox": 10,
+        "ms": 10.642,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 8,
+        "sandbox": 11,
+        "ms": 13.295,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 8,
+        "sandbox": 12,
+        "ms": 12.873,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 8,
+        "sandbox": 13,
+        "ms": 11.901,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 8,
+        "sandbox": 14,
+        "ms": 12.174,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 8,
+        "sandbox": 15,
+        "ms": 9.825,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 9,
+        "sandbox": 0,
+        "ms": 9.35,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 9,
+        "sandbox": 1,
+        "ms": 11.849,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 9,
+        "sandbox": 2,
+        "ms": 11.484,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 9,
+        "sandbox": 3,
+        "ms": 10.972,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 9,
+        "sandbox": 4,
+        "ms": 8.472,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 9,
+        "sandbox": 5,
+        "ms": 11.803,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 9,
+        "sandbox": 6,
+        "ms": 14.411,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 9,
+        "sandbox": 7,
+        "ms": 11.111,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 9,
+        "sandbox": 8,
+        "ms": 11.836,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 9,
+        "sandbox": 9,
+        "ms": 11.388,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 9,
+        "sandbox": 10,
+        "ms": 9.446,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 9,
+        "sandbox": 11,
+        "ms": 8.857,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 9,
+        "sandbox": 12,
+        "ms": 13.084,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 9,
+        "sandbox": 13,
+        "ms": 9.392,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 9,
+        "sandbox": 14,
+        "ms": 11.272,
+        "bytes": 14865
+      },
+      {
+        "n": 16,
+        "round": 9,
+        "sandbox": 15,
+        "ms": 11.524,
+        "bytes": 14865
+      }
+    ]
+  },
+  "summary": [
+    {
+      "n": 1,
+      "observe_ms": {
+        "n": 10,
+        "min": 5.912,
+        "p50": 6.736,
+        "mean": 7.944,
+        "p90": 10.677,
+        "p99": 13.608,
+        "max": 13.608
+      },
+      "observe_wall_ms": {
+        "n": 10,
+        "min": 6.0,
+        "p50": 6.8,
+        "mean": 8.06,
+        "p90": 10.9,
+        "p99": 13.9,
+        "max": 13.9
+      },
+      "click_wall_ms": {
+        "n": 10,
+        "min": 0.9,
+        "p50": 1.0,
+        "mean": 1.24,
+        "p90": 1.7,
+        "p99": 2.5,
+        "max": 2.5
+      },
+      "boot_wall_ms": 9208.3,
+      "proc_rss_mib": 44.9,
+      "threads": 2,
+      "guest_rss_per_sandbox_mib": 39.9
+    },
+    {
+      "n": 2,
+      "observe_ms": {
+        "n": 20,
+        "min": 6.742,
+        "p50": 7.941,
+        "mean": 8.383,
+        "p90": 9.751,
+        "p99": 12.006,
+        "max": 12.006
+      },
+      "observe_wall_ms": {
+        "n": 10,
+        "min": 6.9,
+        "p50": 8.1,
+        "mean": 8.58,
+        "p90": 9.9,
+        "p99": 12.3,
+        "max": 12.3
+      },
+      "click_wall_ms": {
+        "n": 10,
+        "min": 0.9,
+        "p50": 1.2,
+        "mean": 1.35,
+        "p90": 1.5,
+        "p99": 3.0,
+        "max": 3.0
+      },
+      "boot_wall_ms": 7814.9,
+      "proc_rss_mib": 58.1,
+      "threads": 2,
+      "guest_rss_per_sandbox_mib": 39.9
+    },
+    {
+      "n": 4,
+      "observe_ms": {
+        "n": 40,
+        "min": 5.622,
+        "p50": 6.762,
+        "mean": 7.459,
+        "p90": 9.761,
+        "p99": 12.305,
+        "max": 12.305
+      },
+      "observe_wall_ms": {
+        "n": 10,
+        "min": 6.0,
+        "p50": 6.4,
+        "mean": 7.76,
+        "p90": 9.9,
+        "p99": 12.9,
+        "max": 12.9
+      },
+      "click_wall_ms": {
+        "n": 10,
+        "min": 0.9,
+        "p50": 1.2,
+        "mean": 1.28,
+        "p90": 1.5,
+        "p99": 1.9,
+        "max": 1.9
+      },
+      "boot_wall_ms": 7729.9,
+      "proc_rss_mib": 77.0,
+      "threads": 2,
+      "guest_rss_per_sandbox_mib": 39.6
+    },
+    {
+      "n": 8,
+      "observe_ms": {
+        "n": 80,
+        "min": 6.031,
+        "p50": 7.431,
+        "mean": 7.687,
+        "p90": 8.599,
+        "p99": 10.896,
+        "max": 10.985
+      },
+      "observe_wall_ms": {
+        "n": 10,
+        "min": 7.5,
+        "p50": 8.2,
+        "mean": 8.56,
+        "p90": 8.7,
+        "p99": 12.0,
+        "max": 12.0
+      },
+      "click_wall_ms": {
+        "n": 10,
+        "min": 1.2,
+        "p50": 1.3,
+        "mean": 1.42,
+        "p90": 1.7,
+        "p99": 2.1,
+        "max": 2.1
+      },
+      "boot_wall_ms": 15615.2,
+      "proc_rss_mib": 95.5,
+      "threads": 2,
+      "guest_rss_per_sandbox_mib": 41.9
+    },
+    {
+      "n": 16,
+      "observe_ms": {
+        "n": 160,
+        "min": 7.49,
+        "p50": 11.264,
+        "mean": 11.573,
+        "p90": 15.013,
+        "p99": 16.977,
+        "max": 19.161
+      },
+      "observe_wall_ms": {
+        "n": 10,
+        "min": 13.6,
+        "p50": 14.4,
+        "mean": 15.58,
+        "p90": 16.1,
+        "p99": 24.3,
+        "max": 24.3
+      },
+      "click_wall_ms": {
+        "n": 10,
+        "min": 1.8,
+        "p50": 1.9,
+        "mean": 2.09,
+        "p90": 2.1,
+        "p99": 3.5,
+        "max": 3.5
+      },
+      "boot_wall_ms": 33556.0,
+      "proc_rss_mib": 129.7,
+      "threads": 2,
+      "guest_rss_per_sandbox_mib": 40.2
+    }
+  ]
+}

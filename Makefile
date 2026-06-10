@@ -31,4 +31,7 @@ sandbox-image: ## build the Linux Sandbox docker image
 sandbox-bench: ## run a one-sandbox local Docker provider benchmark
 	PYTHONPATH=sdk/python/src python scripts/sandbox_bench.py --provider docker --concurrency 1 --iterations 1
 
-.PHONY: help guard fmt lint test run sandbox-image sandbox-bench
+benchmarks: ## run every local benchmark suite (Docker; regenerates results JSON + plots)
+	bash benchmarks/run_all.sh
+
+.PHONY: help guard fmt lint test run sandbox-image sandbox-bench benchmarks

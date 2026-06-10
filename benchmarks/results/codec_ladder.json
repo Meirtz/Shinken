@@ -1,0 +1,6996 @@
+{
+  "suite": "codec_ladder",
+  "meta": {
+    "generated_utc": "2026-06-10T17:55:20Z",
+    "git_commit": "ec2aacb",
+    "python": "3.13.9",
+    "host_os": "macOS 26.5.1",
+    "host_arch": "arm64",
+    "host_cpu": "Apple M4 Pro",
+    "host_cores": "14",
+    "host_mem_gib": 48.0,
+    "docker_server": "29.4.3",
+    "image": "shinken/sandbox-linux",
+    "image_arch": "linux/arm64",
+    "screen_geometry": "1280x800x24"
+  },
+  "scenarios": [
+    "desktop",
+    "dense-text"
+  ],
+  "qualities": [
+    10,
+    20,
+    30,
+    40,
+    50,
+    60,
+    70,
+    80,
+    90,
+    95
+  ],
+  "scales": [
+    null,
+    1024,
+    768,
+    512
+  ],
+  "reps": 5,
+  "datapoints": [
+    {
+      "scenario": "desktop",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": null,
+      "bytes": 66699,
+      "ms": 13.902,
+      "w": 1280,
+      "h": 800,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": null,
+      "bytes": 66699,
+      "ms": 8.984,
+      "w": 1280,
+      "h": 800,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": null,
+      "bytes": 66699,
+      "ms": 7.927,
+      "w": 1280,
+      "h": 800,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": null,
+      "bytes": 66699,
+      "ms": 6.317,
+      "w": 1280,
+      "h": 800,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": null,
+      "bytes": 66699,
+      "ms": 5.106,
+      "w": 1280,
+      "h": 800,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": null,
+      "bytes": 37269,
+      "ms": 10.105,
+      "w": 1280,
+      "h": 800,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": null,
+      "bytes": 37269,
+      "ms": 9.179,
+      "w": 1280,
+      "h": 800,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": null,
+      "bytes": 37269,
+      "ms": 9.135,
+      "w": 1280,
+      "h": 800,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": null,
+      "bytes": 37269,
+      "ms": 8.772,
+      "w": 1280,
+      "h": 800,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": null,
+      "bytes": 37269,
+      "ms": 8.598,
+      "w": 1280,
+      "h": 800,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": null,
+      "bytes": 46467,
+      "ms": 8.279,
+      "w": 1280,
+      "h": 800,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": null,
+      "bytes": 46467,
+      "ms": 8.014,
+      "w": 1280,
+      "h": 800,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": null,
+      "bytes": 46467,
+      "ms": 7.926,
+      "w": 1280,
+      "h": 800,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": null,
+      "bytes": 46467,
+      "ms": 7.884,
+      "w": 1280,
+      "h": 800,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": null,
+      "bytes": 46467,
+      "ms": 8.22,
+      "w": 1280,
+      "h": 800,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": null,
+      "bytes": 54733,
+      "ms": 8.282,
+      "w": 1280,
+      "h": 800,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": null,
+      "bytes": 54733,
+      "ms": 8.087,
+      "w": 1280,
+      "h": 800,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": null,
+      "bytes": 54733,
+      "ms": 8.481,
+      "w": 1280,
+      "h": 800,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": null,
+      "bytes": 54733,
+      "ms": 7.841,
+      "w": 1280,
+      "h": 800,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": null,
+      "bytes": 54733,
+      "ms": 7.755,
+      "w": 1280,
+      "h": 800,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": null,
+      "bytes": 60635,
+      "ms": 7.92,
+      "w": 1280,
+      "h": 800,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": null,
+      "bytes": 60635,
+      "ms": 7.285,
+      "w": 1280,
+      "h": 800,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": null,
+      "bytes": 60635,
+      "ms": 7.616,
+      "w": 1280,
+      "h": 800,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": null,
+      "bytes": 60635,
+      "ms": 7.643,
+      "w": 1280,
+      "h": 800,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": null,
+      "bytes": 60635,
+      "ms": 7.692,
+      "w": 1280,
+      "h": 800,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": null,
+      "bytes": 65693,
+      "ms": 7.602,
+      "w": 1280,
+      "h": 800,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": null,
+      "bytes": 65693,
+      "ms": 7.57,
+      "w": 1280,
+      "h": 800,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": null,
+      "bytes": 65693,
+      "ms": 7.838,
+      "w": 1280,
+      "h": 800,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": null,
+      "bytes": 65693,
+      "ms": 7.295,
+      "w": 1280,
+      "h": 800,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": null,
+      "bytes": 65693,
+      "ms": 9.848,
+      "w": 1280,
+      "h": 800,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": null,
+      "bytes": 70804,
+      "ms": 8.827,
+      "w": 1280,
+      "h": 800,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": null,
+      "bytes": 70804,
+      "ms": 7.757,
+      "w": 1280,
+      "h": 800,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": null,
+      "bytes": 70804,
+      "ms": 7.189,
+      "w": 1280,
+      "h": 800,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": null,
+      "bytes": 70804,
+      "ms": 7.231,
+      "w": 1280,
+      "h": 800,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": null,
+      "bytes": 70804,
+      "ms": 6.911,
+      "w": 1280,
+      "h": 800,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": null,
+      "bytes": 77776,
+      "ms": 7.252,
+      "w": 1280,
+      "h": 800,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": null,
+      "bytes": 77776,
+      "ms": 7.344,
+      "w": 1280,
+      "h": 800,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": null,
+      "bytes": 77776,
+      "ms": 7.471,
+      "w": 1280,
+      "h": 800,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": null,
+      "bytes": 77776,
+      "ms": 7.253,
+      "w": 1280,
+      "h": 800,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": null,
+      "bytes": 77776,
+      "ms": 7.26,
+      "w": 1280,
+      "h": 800,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": null,
+      "bytes": 87900,
+      "ms": 7.656,
+      "w": 1280,
+      "h": 800,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": null,
+      "bytes": 87900,
+      "ms": 7.102,
+      "w": 1280,
+      "h": 800,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": null,
+      "bytes": 87900,
+      "ms": 7.713,
+      "w": 1280,
+      "h": 800,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": null,
+      "bytes": 87900,
+      "ms": 7.255,
+      "w": 1280,
+      "h": 800,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": null,
+      "bytes": 87900,
+      "ms": 7.177,
+      "w": 1280,
+      "h": 800,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": null,
+      "bytes": 121687,
+      "ms": 9.902,
+      "w": 1280,
+      "h": 800,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": null,
+      "bytes": 121687,
+      "ms": 11.1,
+      "w": 1280,
+      "h": 800,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": null,
+      "bytes": 121687,
+      "ms": 10.204,
+      "w": 1280,
+      "h": 800,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": null,
+      "bytes": 121687,
+      "ms": 10.797,
+      "w": 1280,
+      "h": 800,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": null,
+      "bytes": 121687,
+      "ms": 10.72,
+      "w": 1280,
+      "h": 800,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": null,
+      "bytes": 148044,
+      "ms": 10.668,
+      "w": 1280,
+      "h": 800,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": null,
+      "bytes": 148044,
+      "ms": 10.093,
+      "w": 1280,
+      "h": 800,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": null,
+      "bytes": 148044,
+      "ms": 10.182,
+      "w": 1280,
+      "h": 800,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": null,
+      "bytes": 148044,
+      "ms": 9.628,
+      "w": 1280,
+      "h": 800,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": null,
+      "bytes": 148044,
+      "ms": 9.348,
+      "w": 1280,
+      "h": 800,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": 1024,
+      "bytes": 43605,
+      "ms": 3.344,
+      "w": 1024,
+      "h": 640,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": 1024,
+      "bytes": 43605,
+      "ms": 3.295,
+      "w": 1024,
+      "h": 640,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": 1024,
+      "bytes": 43605,
+      "ms": 3.513,
+      "w": 1024,
+      "h": 640,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": 1024,
+      "bytes": 43605,
+      "ms": 3.256,
+      "w": 1024,
+      "h": 640,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": 1024,
+      "bytes": 43605,
+      "ms": 3.561,
+      "w": 1024,
+      "h": 640,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": 1024,
+      "bytes": 24176,
+      "ms": 6.753,
+      "w": 1024,
+      "h": 640,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": 1024,
+      "bytes": 24176,
+      "ms": 6.973,
+      "w": 1024,
+      "h": 640,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": 1024,
+      "bytes": 24176,
+      "ms": 5.998,
+      "w": 1024,
+      "h": 640,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": 1024,
+      "bytes": 24176,
+      "ms": 5.547,
+      "w": 1024,
+      "h": 640,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": 1024,
+      "bytes": 24176,
+      "ms": 5.755,
+      "w": 1024,
+      "h": 640,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": 1024,
+      "bytes": 29782,
+      "ms": 5.637,
+      "w": 1024,
+      "h": 640,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": 1024,
+      "bytes": 29782,
+      "ms": 5.666,
+      "w": 1024,
+      "h": 640,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": 1024,
+      "bytes": 29782,
+      "ms": 5.705,
+      "w": 1024,
+      "h": 640,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": 1024,
+      "bytes": 29782,
+      "ms": 5.841,
+      "w": 1024,
+      "h": 640,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": 1024,
+      "bytes": 29782,
+      "ms": 6.664,
+      "w": 1024,
+      "h": 640,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": 1024,
+      "bytes": 35358,
+      "ms": 5.99,
+      "w": 1024,
+      "h": 640,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": 1024,
+      "bytes": 35358,
+      "ms": 6.194,
+      "w": 1024,
+      "h": 640,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": 1024,
+      "bytes": 35358,
+      "ms": 6.391,
+      "w": 1024,
+      "h": 640,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": 1024,
+      "bytes": 35358,
+      "ms": 6.222,
+      "w": 1024,
+      "h": 640,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": 1024,
+      "bytes": 35358,
+      "ms": 5.365,
+      "w": 1024,
+      "h": 640,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": 1024,
+      "bytes": 39275,
+      "ms": 5.453,
+      "w": 1024,
+      "h": 640,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": 1024,
+      "bytes": 39275,
+      "ms": 5.783,
+      "w": 1024,
+      "h": 640,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": 1024,
+      "bytes": 39275,
+      "ms": 5.756,
+      "w": 1024,
+      "h": 640,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": 1024,
+      "bytes": 39275,
+      "ms": 5.811,
+      "w": 1024,
+      "h": 640,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": 1024,
+      "bytes": 39275,
+      "ms": 5.722,
+      "w": 1024,
+      "h": 640,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": 1024,
+      "bytes": 42488,
+      "ms": 5.708,
+      "w": 1024,
+      "h": 640,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": 1024,
+      "bytes": 42488,
+      "ms": 5.671,
+      "w": 1024,
+      "h": 640,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": 1024,
+      "bytes": 42488,
+      "ms": 5.648,
+      "w": 1024,
+      "h": 640,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": 1024,
+      "bytes": 42488,
+      "ms": 5.723,
+      "w": 1024,
+      "h": 640,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": 1024,
+      "bytes": 42488,
+      "ms": 5.843,
+      "w": 1024,
+      "h": 640,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": 1024,
+      "bytes": 45616,
+      "ms": 5.932,
+      "w": 1024,
+      "h": 640,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": 1024,
+      "bytes": 45616,
+      "ms": 5.726,
+      "w": 1024,
+      "h": 640,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": 1024,
+      "bytes": 45616,
+      "ms": 5.893,
+      "w": 1024,
+      "h": 640,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": 1024,
+      "bytes": 45616,
+      "ms": 5.948,
+      "w": 1024,
+      "h": 640,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": 1024,
+      "bytes": 45616,
+      "ms": 5.475,
+      "w": 1024,
+      "h": 640,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": 1024,
+      "bytes": 50137,
+      "ms": 5.291,
+      "w": 1024,
+      "h": 640,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": 1024,
+      "bytes": 50137,
+      "ms": 5.687,
+      "w": 1024,
+      "h": 640,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": 1024,
+      "bytes": 50137,
+      "ms": 5.93,
+      "w": 1024,
+      "h": 640,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": 1024,
+      "bytes": 50137,
+      "ms": 5.465,
+      "w": 1024,
+      "h": 640,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": 1024,
+      "bytes": 50137,
+      "ms": 5.992,
+      "w": 1024,
+      "h": 640,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": 1024,
+      "bytes": 56508,
+      "ms": 7.411,
+      "w": 1024,
+      "h": 640,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": 1024,
+      "bytes": 56508,
+      "ms": 5.975,
+      "w": 1024,
+      "h": 640,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": 1024,
+      "bytes": 56508,
+      "ms": 5.66,
+      "w": 1024,
+      "h": 640,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": 1024,
+      "bytes": 56508,
+      "ms": 5.656,
+      "w": 1024,
+      "h": 640,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": 1024,
+      "bytes": 56508,
+      "ms": 5.777,
+      "w": 1024,
+      "h": 640,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": 1024,
+      "bytes": 78479,
+      "ms": 7.019,
+      "w": 1024,
+      "h": 640,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": 1024,
+      "bytes": 78479,
+      "ms": 7.302,
+      "w": 1024,
+      "h": 640,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": 1024,
+      "bytes": 78479,
+      "ms": 7.956,
+      "w": 1024,
+      "h": 640,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": 1024,
+      "bytes": 78479,
+      "ms": 7.753,
+      "w": 1024,
+      "h": 640,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": 1024,
+      "bytes": 78479,
+      "ms": 10.888,
+      "w": 1024,
+      "h": 640,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": 1024,
+      "bytes": 95813,
+      "ms": 8.053,
+      "w": 1024,
+      "h": 640,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": 1024,
+      "bytes": 95813,
+      "ms": 8.209,
+      "w": 1024,
+      "h": 640,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": 1024,
+      "bytes": 95813,
+      "ms": 8.224,
+      "w": 1024,
+      "h": 640,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": 1024,
+      "bytes": 95813,
+      "ms": 7.899,
+      "w": 1024,
+      "h": 640,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": 1024,
+      "bytes": 95813,
+      "ms": 7.53,
+      "w": 1024,
+      "h": 640,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": 768,
+      "bytes": 26443,
+      "ms": 3.289,
+      "w": 768,
+      "h": 480,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": 768,
+      "bytes": 26443,
+      "ms": 4.266,
+      "w": 768,
+      "h": 480,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": 768,
+      "bytes": 26443,
+      "ms": 3.468,
+      "w": 768,
+      "h": 480,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": 768,
+      "bytes": 26443,
+      "ms": 3.29,
+      "w": 768,
+      "h": 480,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": 768,
+      "bytes": 26443,
+      "ms": 4.85,
+      "w": 768,
+      "h": 480,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": 768,
+      "bytes": 14735,
+      "ms": 5.225,
+      "w": 768,
+      "h": 480,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": 768,
+      "bytes": 14735,
+      "ms": 4.208,
+      "w": 768,
+      "h": 480,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": 768,
+      "bytes": 14735,
+      "ms": 4.402,
+      "w": 768,
+      "h": 480,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": 768,
+      "bytes": 14735,
+      "ms": 4.324,
+      "w": 768,
+      "h": 480,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": 768,
+      "bytes": 14735,
+      "ms": 4.349,
+      "w": 768,
+      "h": 480,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": 768,
+      "bytes": 18186,
+      "ms": 4.99,
+      "w": 768,
+      "h": 480,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": 768,
+      "bytes": 18186,
+      "ms": 6.297,
+      "w": 768,
+      "h": 480,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": 768,
+      "bytes": 18186,
+      "ms": 4.386,
+      "w": 768,
+      "h": 480,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": 768,
+      "bytes": 18186,
+      "ms": 4.367,
+      "w": 768,
+      "h": 480,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": 768,
+      "bytes": 18186,
+      "ms": 4.346,
+      "w": 768,
+      "h": 480,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": 768,
+      "bytes": 21517,
+      "ms": 4.434,
+      "w": 768,
+      "h": 480,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": 768,
+      "bytes": 21517,
+      "ms": 4.255,
+      "w": 768,
+      "h": 480,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": 768,
+      "bytes": 21517,
+      "ms": 4.349,
+      "w": 768,
+      "h": 480,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": 768,
+      "bytes": 21517,
+      "ms": 4.71,
+      "w": 768,
+      "h": 480,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": 768,
+      "bytes": 21517,
+      "ms": 4.157,
+      "w": 768,
+      "h": 480,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": 768,
+      "bytes": 23807,
+      "ms": 4.407,
+      "w": 768,
+      "h": 480,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": 768,
+      "bytes": 23807,
+      "ms": 4.314,
+      "w": 768,
+      "h": 480,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": 768,
+      "bytes": 23807,
+      "ms": 4.243,
+      "w": 768,
+      "h": 480,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": 768,
+      "bytes": 23807,
+      "ms": 4.043,
+      "w": 768,
+      "h": 480,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": 768,
+      "bytes": 23807,
+      "ms": 4.479,
+      "w": 768,
+      "h": 480,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": 768,
+      "bytes": 25819,
+      "ms": 4.141,
+      "w": 768,
+      "h": 480,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": 768,
+      "bytes": 25819,
+      "ms": 4.393,
+      "w": 768,
+      "h": 480,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": 768,
+      "bytes": 25819,
+      "ms": 4.793,
+      "w": 768,
+      "h": 480,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": 768,
+      "bytes": 25819,
+      "ms": 4.257,
+      "w": 768,
+      "h": 480,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": 768,
+      "bytes": 25819,
+      "ms": 4.232,
+      "w": 768,
+      "h": 480,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": 768,
+      "bytes": 27674,
+      "ms": 4.305,
+      "w": 768,
+      "h": 480,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": 768,
+      "bytes": 27674,
+      "ms": 4.325,
+      "w": 768,
+      "h": 480,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": 768,
+      "bytes": 27674,
+      "ms": 4.239,
+      "w": 768,
+      "h": 480,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": 768,
+      "bytes": 27674,
+      "ms": 4.166,
+      "w": 768,
+      "h": 480,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": 768,
+      "bytes": 27674,
+      "ms": 4.183,
+      "w": 768,
+      "h": 480,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": 768,
+      "bytes": 30340,
+      "ms": 4.235,
+      "w": 768,
+      "h": 480,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": 768,
+      "bytes": 30340,
+      "ms": 4.37,
+      "w": 768,
+      "h": 480,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": 768,
+      "bytes": 30340,
+      "ms": 4.501,
+      "w": 768,
+      "h": 480,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": 768,
+      "bytes": 30340,
+      "ms": 4.519,
+      "w": 768,
+      "h": 480,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": 768,
+      "bytes": 30340,
+      "ms": 4.682,
+      "w": 768,
+      "h": 480,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": 768,
+      "bytes": 34203,
+      "ms": 4.684,
+      "w": 768,
+      "h": 480,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": 768,
+      "bytes": 34203,
+      "ms": 4.732,
+      "w": 768,
+      "h": 480,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": 768,
+      "bytes": 34203,
+      "ms": 4.567,
+      "w": 768,
+      "h": 480,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": 768,
+      "bytes": 34203,
+      "ms": 4.969,
+      "w": 768,
+      "h": 480,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": 768,
+      "bytes": 34203,
+      "ms": 4.851,
+      "w": 768,
+      "h": 480,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": 768,
+      "bytes": 47085,
+      "ms": 5.781,
+      "w": 768,
+      "h": 480,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": 768,
+      "bytes": 47085,
+      "ms": 5.554,
+      "w": 768,
+      "h": 480,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": 768,
+      "bytes": 47085,
+      "ms": 6.034,
+      "w": 768,
+      "h": 480,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": 768,
+      "bytes": 47085,
+      "ms": 6.219,
+      "w": 768,
+      "h": 480,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": 768,
+      "bytes": 47085,
+      "ms": 5.84,
+      "w": 768,
+      "h": 480,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": 768,
+      "bytes": 57261,
+      "ms": 5.353,
+      "w": 768,
+      "h": 480,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": 768,
+      "bytes": 57261,
+      "ms": 5.681,
+      "w": 768,
+      "h": 480,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": 768,
+      "bytes": 57261,
+      "ms": 5.312,
+      "w": 768,
+      "h": 480,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": 768,
+      "bytes": 57261,
+      "ms": 5.09,
+      "w": 768,
+      "h": 480,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": 768,
+      "bytes": 57261,
+      "ms": 5.301,
+      "w": 768,
+      "h": 480,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": 512,
+      "bytes": 13361,
+      "ms": 3.748,
+      "w": 512,
+      "h": 320,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": 512,
+      "bytes": 13361,
+      "ms": 2.433,
+      "w": 512,
+      "h": 320,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": 512,
+      "bytes": 13361,
+      "ms": 2.252,
+      "w": 512,
+      "h": 320,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": 512,
+      "bytes": 13361,
+      "ms": 2.139,
+      "w": 512,
+      "h": 320,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": 512,
+      "bytes": 13361,
+      "ms": 2.091,
+      "w": 512,
+      "h": 320,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": 512,
+      "bytes": 6902,
+      "ms": 2.725,
+      "w": 512,
+      "h": 320,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": 512,
+      "bytes": 6902,
+      "ms": 2.737,
+      "w": 512,
+      "h": 320,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": 512,
+      "bytes": 6902,
+      "ms": 2.837,
+      "w": 512,
+      "h": 320,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": 512,
+      "bytes": 6902,
+      "ms": 2.669,
+      "w": 512,
+      "h": 320,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": 512,
+      "bytes": 6902,
+      "ms": 2.746,
+      "w": 512,
+      "h": 320,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": 512,
+      "bytes": 8373,
+      "ms": 2.854,
+      "w": 512,
+      "h": 320,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": 512,
+      "bytes": 8373,
+      "ms": 2.851,
+      "w": 512,
+      "h": 320,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": 512,
+      "bytes": 8373,
+      "ms": 2.64,
+      "w": 512,
+      "h": 320,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": 512,
+      "bytes": 8373,
+      "ms": 2.74,
+      "w": 512,
+      "h": 320,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": 512,
+      "bytes": 8373,
+      "ms": 2.925,
+      "w": 512,
+      "h": 320,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": 512,
+      "bytes": 9877,
+      "ms": 2.935,
+      "w": 512,
+      "h": 320,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": 512,
+      "bytes": 9877,
+      "ms": 2.993,
+      "w": 512,
+      "h": 320,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": 512,
+      "bytes": 9877,
+      "ms": 3.088,
+      "w": 512,
+      "h": 320,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": 512,
+      "bytes": 9877,
+      "ms": 2.876,
+      "w": 512,
+      "h": 320,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": 512,
+      "bytes": 9877,
+      "ms": 2.84,
+      "w": 512,
+      "h": 320,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": 512,
+      "bytes": 10865,
+      "ms": 2.838,
+      "w": 512,
+      "h": 320,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": 512,
+      "bytes": 10865,
+      "ms": 2.897,
+      "w": 512,
+      "h": 320,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": 512,
+      "bytes": 10865,
+      "ms": 2.998,
+      "w": 512,
+      "h": 320,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": 512,
+      "bytes": 10865,
+      "ms": 3.088,
+      "w": 512,
+      "h": 320,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": 512,
+      "bytes": 10865,
+      "ms": 2.941,
+      "w": 512,
+      "h": 320,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": 512,
+      "bytes": 11720,
+      "ms": 2.829,
+      "w": 512,
+      "h": 320,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": 512,
+      "bytes": 11720,
+      "ms": 2.798,
+      "w": 512,
+      "h": 320,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": 512,
+      "bytes": 11720,
+      "ms": 3.2,
+      "w": 512,
+      "h": 320,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": 512,
+      "bytes": 11720,
+      "ms": 3.677,
+      "w": 512,
+      "h": 320,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": 512,
+      "bytes": 11720,
+      "ms": 3.979,
+      "w": 512,
+      "h": 320,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": 512,
+      "bytes": 12596,
+      "ms": 3.563,
+      "w": 512,
+      "h": 320,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": 512,
+      "bytes": 12596,
+      "ms": 3.515,
+      "w": 512,
+      "h": 320,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": 512,
+      "bytes": 12596,
+      "ms": 3.071,
+      "w": 512,
+      "h": 320,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": 512,
+      "bytes": 12596,
+      "ms": 2.867,
+      "w": 512,
+      "h": 320,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": 512,
+      "bytes": 12596,
+      "ms": 2.874,
+      "w": 512,
+      "h": 320,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": 512,
+      "bytes": 13778,
+      "ms": 3.054,
+      "w": 512,
+      "h": 320,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": 512,
+      "bytes": 13778,
+      "ms": 3.218,
+      "w": 512,
+      "h": 320,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": 512,
+      "bytes": 13778,
+      "ms": 2.973,
+      "w": 512,
+      "h": 320,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": 512,
+      "bytes": 13778,
+      "ms": 2.945,
+      "w": 512,
+      "h": 320,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": 512,
+      "bytes": 13778,
+      "ms": 2.899,
+      "w": 512,
+      "h": 320,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": 512,
+      "bytes": 15478,
+      "ms": 2.929,
+      "w": 512,
+      "h": 320,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": 512,
+      "bytes": 15478,
+      "ms": 2.759,
+      "w": 512,
+      "h": 320,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": 512,
+      "bytes": 15478,
+      "ms": 2.777,
+      "w": 512,
+      "h": 320,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": 512,
+      "bytes": 15478,
+      "ms": 2.662,
+      "w": 512,
+      "h": 320,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": 512,
+      "bytes": 15478,
+      "ms": 2.695,
+      "w": 512,
+      "h": 320,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": 512,
+      "bytes": 21274,
+      "ms": 3.104,
+      "w": 512,
+      "h": 320,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": 512,
+      "bytes": 21274,
+      "ms": 3.082,
+      "w": 512,
+      "h": 320,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": 512,
+      "bytes": 21274,
+      "ms": 3.282,
+      "w": 512,
+      "h": 320,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": 512,
+      "bytes": 21274,
+      "ms": 3.484,
+      "w": 512,
+      "h": 320,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": 512,
+      "bytes": 21274,
+      "ms": 3.98,
+      "w": 512,
+      "h": 320,
+      "rep": 4
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": 512,
+      "bytes": 25923,
+      "ms": 3.852,
+      "w": 512,
+      "h": 320,
+      "rep": 0
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": 512,
+      "bytes": 25923,
+      "ms": 3.695,
+      "w": 512,
+      "h": 320,
+      "rep": 1
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": 512,
+      "bytes": 25923,
+      "ms": 3.659,
+      "w": 512,
+      "h": 320,
+      "rep": 2
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": 512,
+      "bytes": 25923,
+      "ms": 3.691,
+      "w": 512,
+      "h": 320,
+      "rep": 3
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": 512,
+      "bytes": 25923,
+      "ms": 3.52,
+      "w": 512,
+      "h": 320,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": null,
+      "bytes": 764850,
+      "ms": 26.214,
+      "w": 1280,
+      "h": 800,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": null,
+      "bytes": 764850,
+      "ms": 19.76,
+      "w": 1280,
+      "h": 800,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": null,
+      "bytes": 764850,
+      "ms": 16.71,
+      "w": 1280,
+      "h": 800,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": null,
+      "bytes": 764850,
+      "ms": 11.063,
+      "w": 1280,
+      "h": 800,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": null,
+      "bytes": 764850,
+      "ms": 11.222,
+      "w": 1280,
+      "h": 800,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": null,
+      "bytes": 119790,
+      "ms": 9.19,
+      "w": 1280,
+      "h": 800,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": null,
+      "bytes": 119790,
+      "ms": 8.476,
+      "w": 1280,
+      "h": 800,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": null,
+      "bytes": 119790,
+      "ms": 8.536,
+      "w": 1280,
+      "h": 800,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": null,
+      "bytes": 119790,
+      "ms": 8.167,
+      "w": 1280,
+      "h": 800,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": null,
+      "bytes": 119790,
+      "ms": 8.377,
+      "w": 1280,
+      "h": 800,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": null,
+      "bytes": 187954,
+      "ms": 9.349,
+      "w": 1280,
+      "h": 800,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": null,
+      "bytes": 187954,
+      "ms": 9.568,
+      "w": 1280,
+      "h": 800,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": null,
+      "bytes": 187954,
+      "ms": 9.72,
+      "w": 1280,
+      "h": 800,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": null,
+      "bytes": 187954,
+      "ms": 9.146,
+      "w": 1280,
+      "h": 800,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": null,
+      "bytes": 187954,
+      "ms": 9.431,
+      "w": 1280,
+      "h": 800,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": null,
+      "bytes": 250497,
+      "ms": 9.201,
+      "w": 1280,
+      "h": 800,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": null,
+      "bytes": 250497,
+      "ms": 9.519,
+      "w": 1280,
+      "h": 800,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": null,
+      "bytes": 250497,
+      "ms": 9.914,
+      "w": 1280,
+      "h": 800,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": null,
+      "bytes": 250497,
+      "ms": 10.77,
+      "w": 1280,
+      "h": 800,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": null,
+      "bytes": 250497,
+      "ms": 9.911,
+      "w": 1280,
+      "h": 800,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": null,
+      "bytes": 301014,
+      "ms": 10.45,
+      "w": 1280,
+      "h": 800,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": null,
+      "bytes": 301014,
+      "ms": 11.313,
+      "w": 1280,
+      "h": 800,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": null,
+      "bytes": 301014,
+      "ms": 11.551,
+      "w": 1280,
+      "h": 800,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": null,
+      "bytes": 301014,
+      "ms": 10.906,
+      "w": 1280,
+      "h": 800,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": null,
+      "bytes": 301014,
+      "ms": 10.716,
+      "w": 1280,
+      "h": 800,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": null,
+      "bytes": 347207,
+      "ms": 12.278,
+      "w": 1280,
+      "h": 800,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": null,
+      "bytes": 347207,
+      "ms": 11.51,
+      "w": 1280,
+      "h": 800,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": null,
+      "bytes": 347207,
+      "ms": 10.773,
+      "w": 1280,
+      "h": 800,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": null,
+      "bytes": 347207,
+      "ms": 10.623,
+      "w": 1280,
+      "h": 800,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": null,
+      "bytes": 347207,
+      "ms": 12.276,
+      "w": 1280,
+      "h": 800,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": null,
+      "bytes": 396922,
+      "ms": 11.341,
+      "w": 1280,
+      "h": 800,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": null,
+      "bytes": 396922,
+      "ms": 11.851,
+      "w": 1280,
+      "h": 800,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": null,
+      "bytes": 396922,
+      "ms": 11.478,
+      "w": 1280,
+      "h": 800,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": null,
+      "bytes": 396922,
+      "ms": 11.747,
+      "w": 1280,
+      "h": 800,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": null,
+      "bytes": 396922,
+      "ms": 11.318,
+      "w": 1280,
+      "h": 800,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": null,
+      "bytes": 464821,
+      "ms": 13.515,
+      "w": 1280,
+      "h": 800,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": null,
+      "bytes": 464821,
+      "ms": 12.405,
+      "w": 1280,
+      "h": 800,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": null,
+      "bytes": 464821,
+      "ms": 12.018,
+      "w": 1280,
+      "h": 800,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": null,
+      "bytes": 464821,
+      "ms": 13.59,
+      "w": 1280,
+      "h": 800,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": null,
+      "bytes": 464821,
+      "ms": 13.797,
+      "w": 1280,
+      "h": 800,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": null,
+      "bytes": 566683,
+      "ms": 15.988,
+      "w": 1280,
+      "h": 800,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": null,
+      "bytes": 566683,
+      "ms": 15.913,
+      "w": 1280,
+      "h": 800,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": null,
+      "bytes": 566683,
+      "ms": 14.652,
+      "w": 1280,
+      "h": 800,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": null,
+      "bytes": 566683,
+      "ms": 16.067,
+      "w": 1280,
+      "h": 800,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": null,
+      "bytes": 566683,
+      "ms": 13.885,
+      "w": 1280,
+      "h": 800,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": null,
+      "bytes": 1199140,
+      "ms": 26.049,
+      "w": 1280,
+      "h": 800,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": null,
+      "bytes": 1199140,
+      "ms": 26.24,
+      "w": 1280,
+      "h": 800,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": null,
+      "bytes": 1199140,
+      "ms": 21.307,
+      "w": 1280,
+      "h": 800,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": null,
+      "bytes": 1199140,
+      "ms": 23.302,
+      "w": 1280,
+      "h": 800,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": null,
+      "bytes": 1199140,
+      "ms": 24.506,
+      "w": 1280,
+      "h": 800,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": null,
+      "bytes": 1604977,
+      "ms": 28.634,
+      "w": 1280,
+      "h": 800,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": null,
+      "bytes": 1604977,
+      "ms": 27.418,
+      "w": 1280,
+      "h": 800,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": null,
+      "bytes": 1604977,
+      "ms": 26.553,
+      "w": 1280,
+      "h": 800,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": null,
+      "bytes": 1604977,
+      "ms": 26.471,
+      "w": 1280,
+      "h": 800,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": null,
+      "bytes": 1604977,
+      "ms": 26.084,
+      "w": 1280,
+      "h": 800,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": 1024,
+      "bytes": 479376,
+      "ms": 9.078,
+      "w": 1024,
+      "h": 640,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": 1024,
+      "bytes": 479376,
+      "ms": 7.092,
+      "w": 1024,
+      "h": 640,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": 1024,
+      "bytes": 479376,
+      "ms": 7.809,
+      "w": 1024,
+      "h": 640,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": 1024,
+      "bytes": 479376,
+      "ms": 8.63,
+      "w": 1024,
+      "h": 640,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": 1024,
+      "bytes": 479376,
+      "ms": 6.512,
+      "w": 1024,
+      "h": 640,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": 1024,
+      "bytes": 76408,
+      "ms": 7.012,
+      "w": 1024,
+      "h": 640,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": 1024,
+      "bytes": 76408,
+      "ms": 6.339,
+      "w": 1024,
+      "h": 640,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": 1024,
+      "bytes": 76408,
+      "ms": 6.103,
+      "w": 1024,
+      "h": 640,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": 1024,
+      "bytes": 76408,
+      "ms": 6.248,
+      "w": 1024,
+      "h": 640,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": 1024,
+      "bytes": 76408,
+      "ms": 6.431,
+      "w": 1024,
+      "h": 640,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": 1024,
+      "bytes": 121183,
+      "ms": 7.115,
+      "w": 1024,
+      "h": 640,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": 1024,
+      "bytes": 121183,
+      "ms": 7.35,
+      "w": 1024,
+      "h": 640,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": 1024,
+      "bytes": 121183,
+      "ms": 8.132,
+      "w": 1024,
+      "h": 640,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": 1024,
+      "bytes": 121183,
+      "ms": 7.184,
+      "w": 1024,
+      "h": 640,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": 1024,
+      "bytes": 121183,
+      "ms": 7.299,
+      "w": 1024,
+      "h": 640,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": 1024,
+      "bytes": 163830,
+      "ms": 7.405,
+      "w": 1024,
+      "h": 640,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": 1024,
+      "bytes": 163830,
+      "ms": 8.062,
+      "w": 1024,
+      "h": 640,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": 1024,
+      "bytes": 163830,
+      "ms": 7.259,
+      "w": 1024,
+      "h": 640,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": 1024,
+      "bytes": 163830,
+      "ms": 7.643,
+      "w": 1024,
+      "h": 640,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": 1024,
+      "bytes": 163830,
+      "ms": 8.764,
+      "w": 1024,
+      "h": 640,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": 1024,
+      "bytes": 199282,
+      "ms": 9.238,
+      "w": 1024,
+      "h": 640,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": 1024,
+      "bytes": 199282,
+      "ms": 7.944,
+      "w": 1024,
+      "h": 640,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": 1024,
+      "bytes": 199282,
+      "ms": 8.012,
+      "w": 1024,
+      "h": 640,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": 1024,
+      "bytes": 199282,
+      "ms": 8.311,
+      "w": 1024,
+      "h": 640,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": 1024,
+      "bytes": 199282,
+      "ms": 9.874,
+      "w": 1024,
+      "h": 640,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": 1024,
+      "bytes": 230457,
+      "ms": 10.929,
+      "w": 1024,
+      "h": 640,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": 1024,
+      "bytes": 230457,
+      "ms": 9.139,
+      "w": 1024,
+      "h": 640,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": 1024,
+      "bytes": 230457,
+      "ms": 8.707,
+      "w": 1024,
+      "h": 640,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": 1024,
+      "bytes": 230457,
+      "ms": 8.292,
+      "w": 1024,
+      "h": 640,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": 1024,
+      "bytes": 230457,
+      "ms": 8.349,
+      "w": 1024,
+      "h": 640,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": 1024,
+      "bytes": 264229,
+      "ms": 15.623,
+      "w": 1024,
+      "h": 640,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": 1024,
+      "bytes": 264229,
+      "ms": 9.116,
+      "w": 1024,
+      "h": 640,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": 1024,
+      "bytes": 264229,
+      "ms": 8.486,
+      "w": 1024,
+      "h": 640,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": 1024,
+      "bytes": 264229,
+      "ms": 9.897,
+      "w": 1024,
+      "h": 640,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": 1024,
+      "bytes": 264229,
+      "ms": 9.078,
+      "w": 1024,
+      "h": 640,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": 1024,
+      "bytes": 310569,
+      "ms": 11.402,
+      "w": 1024,
+      "h": 640,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": 1024,
+      "bytes": 310569,
+      "ms": 9.687,
+      "w": 1024,
+      "h": 640,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": 1024,
+      "bytes": 310569,
+      "ms": 9.769,
+      "w": 1024,
+      "h": 640,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": 1024,
+      "bytes": 310569,
+      "ms": 9.103,
+      "w": 1024,
+      "h": 640,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": 1024,
+      "bytes": 310569,
+      "ms": 9.932,
+      "w": 1024,
+      "h": 640,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": 1024,
+      "bytes": 379067,
+      "ms": 11.738,
+      "w": 1024,
+      "h": 640,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": 1024,
+      "bytes": 379067,
+      "ms": 10.359,
+      "w": 1024,
+      "h": 640,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": 1024,
+      "bytes": 379067,
+      "ms": 10.824,
+      "w": 1024,
+      "h": 640,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": 1024,
+      "bytes": 379067,
+      "ms": 10.598,
+      "w": 1024,
+      "h": 640,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": 1024,
+      "bytes": 379067,
+      "ms": 11.428,
+      "w": 1024,
+      "h": 640,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": 1024,
+      "bytes": 781566,
+      "ms": 17.571,
+      "w": 1024,
+      "h": 640,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": 1024,
+      "bytes": 781566,
+      "ms": 16.063,
+      "w": 1024,
+      "h": 640,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": 1024,
+      "bytes": 781566,
+      "ms": 17.76,
+      "w": 1024,
+      "h": 640,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": 1024,
+      "bytes": 781566,
+      "ms": 17.033,
+      "w": 1024,
+      "h": 640,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": 1024,
+      "bytes": 781566,
+      "ms": 16.08,
+      "w": 1024,
+      "h": 640,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": 1024,
+      "bytes": 1048779,
+      "ms": 19.748,
+      "w": 1024,
+      "h": 640,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": 1024,
+      "bytes": 1048779,
+      "ms": 18.699,
+      "w": 1024,
+      "h": 640,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": 1024,
+      "bytes": 1048779,
+      "ms": 16.93,
+      "w": 1024,
+      "h": 640,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": 1024,
+      "bytes": 1048779,
+      "ms": 18.651,
+      "w": 1024,
+      "h": 640,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": 1024,
+      "bytes": 1048779,
+      "ms": 20.136,
+      "w": 1024,
+      "h": 640,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": 768,
+      "bytes": 271659,
+      "ms": 5.184,
+      "w": 768,
+      "h": 480,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": 768,
+      "bytes": 271659,
+      "ms": 4.998,
+      "w": 768,
+      "h": 480,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": 768,
+      "bytes": 271659,
+      "ms": 4.701,
+      "w": 768,
+      "h": 480,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": 768,
+      "bytes": 271659,
+      "ms": 5.374,
+      "w": 768,
+      "h": 480,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": 768,
+      "bytes": 271659,
+      "ms": 5.68,
+      "w": 768,
+      "h": 480,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": 768,
+      "bytes": 46354,
+      "ms": 4.667,
+      "w": 768,
+      "h": 480,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": 768,
+      "bytes": 46354,
+      "ms": 4.675,
+      "w": 768,
+      "h": 480,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": 768,
+      "bytes": 46354,
+      "ms": 4.426,
+      "w": 768,
+      "h": 480,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": 768,
+      "bytes": 46354,
+      "ms": 4.526,
+      "w": 768,
+      "h": 480,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": 768,
+      "bytes": 46354,
+      "ms": 4.328,
+      "w": 768,
+      "h": 480,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": 768,
+      "bytes": 72330,
+      "ms": 5.1,
+      "w": 768,
+      "h": 480,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": 768,
+      "bytes": 72330,
+      "ms": 5.71,
+      "w": 768,
+      "h": 480,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": 768,
+      "bytes": 72330,
+      "ms": 4.879,
+      "w": 768,
+      "h": 480,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": 768,
+      "bytes": 72330,
+      "ms": 4.812,
+      "w": 768,
+      "h": 480,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": 768,
+      "bytes": 72330,
+      "ms": 4.75,
+      "w": 768,
+      "h": 480,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": 768,
+      "bytes": 97194,
+      "ms": 5.195,
+      "w": 768,
+      "h": 480,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": 768,
+      "bytes": 97194,
+      "ms": 5.341,
+      "w": 768,
+      "h": 480,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": 768,
+      "bytes": 97194,
+      "ms": 5.394,
+      "w": 768,
+      "h": 480,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": 768,
+      "bytes": 97194,
+      "ms": 7.533,
+      "w": 768,
+      "h": 480,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": 768,
+      "bytes": 97194,
+      "ms": 5.566,
+      "w": 768,
+      "h": 480,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": 768,
+      "bytes": 117971,
+      "ms": 6.712,
+      "w": 768,
+      "h": 480,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": 768,
+      "bytes": 117971,
+      "ms": 6.253,
+      "w": 768,
+      "h": 480,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": 768,
+      "bytes": 117971,
+      "ms": 6.137,
+      "w": 768,
+      "h": 480,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": 768,
+      "bytes": 117971,
+      "ms": 6.106,
+      "w": 768,
+      "h": 480,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": 768,
+      "bytes": 117971,
+      "ms": 6.039,
+      "w": 768,
+      "h": 480,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": 768,
+      "bytes": 136482,
+      "ms": 6.556,
+      "w": 768,
+      "h": 480,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": 768,
+      "bytes": 136482,
+      "ms": 6.614,
+      "w": 768,
+      "h": 480,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": 768,
+      "bytes": 136482,
+      "ms": 6.384,
+      "w": 768,
+      "h": 480,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": 768,
+      "bytes": 136482,
+      "ms": 5.832,
+      "w": 768,
+      "h": 480,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": 768,
+      "bytes": 136482,
+      "ms": 6.099,
+      "w": 768,
+      "h": 480,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": 768,
+      "bytes": 156088,
+      "ms": 5.686,
+      "w": 768,
+      "h": 480,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": 768,
+      "bytes": 156088,
+      "ms": 6.068,
+      "w": 768,
+      "h": 480,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": 768,
+      "bytes": 156088,
+      "ms": 5.804,
+      "w": 768,
+      "h": 480,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": 768,
+      "bytes": 156088,
+      "ms": 5.999,
+      "w": 768,
+      "h": 480,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": 768,
+      "bytes": 156088,
+      "ms": 7.052,
+      "w": 768,
+      "h": 480,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": 768,
+      "bytes": 182932,
+      "ms": 6.257,
+      "w": 768,
+      "h": 480,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": 768,
+      "bytes": 182932,
+      "ms": 6.488,
+      "w": 768,
+      "h": 480,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": 768,
+      "bytes": 182932,
+      "ms": 6.451,
+      "w": 768,
+      "h": 480,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": 768,
+      "bytes": 182932,
+      "ms": 6.313,
+      "w": 768,
+      "h": 480,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": 768,
+      "bytes": 182932,
+      "ms": 6.46,
+      "w": 768,
+      "h": 480,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": 768,
+      "bytes": 222805,
+      "ms": 6.912,
+      "w": 768,
+      "h": 480,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": 768,
+      "bytes": 222805,
+      "ms": 7.339,
+      "w": 768,
+      "h": 480,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": 768,
+      "bytes": 222805,
+      "ms": 6.493,
+      "w": 768,
+      "h": 480,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": 768,
+      "bytes": 222805,
+      "ms": 6.714,
+      "w": 768,
+      "h": 480,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": 768,
+      "bytes": 222805,
+      "ms": 6.757,
+      "w": 768,
+      "h": 480,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": 768,
+      "bytes": 476443,
+      "ms": 12.114,
+      "w": 768,
+      "h": 480,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": 768,
+      "bytes": 476443,
+      "ms": 10.969,
+      "w": 768,
+      "h": 480,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": 768,
+      "bytes": 476443,
+      "ms": 9.976,
+      "w": 768,
+      "h": 480,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": 768,
+      "bytes": 476443,
+      "ms": 11.896,
+      "w": 768,
+      "h": 480,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": 768,
+      "bytes": 476443,
+      "ms": 9.931,
+      "w": 768,
+      "h": 480,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": 768,
+      "bytes": 639787,
+      "ms": 11.525,
+      "w": 768,
+      "h": 480,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": 768,
+      "bytes": 639787,
+      "ms": 12.6,
+      "w": 768,
+      "h": 480,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": 768,
+      "bytes": 639787,
+      "ms": 12.838,
+      "w": 768,
+      "h": 480,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": 768,
+      "bytes": 639787,
+      "ms": 10.863,
+      "w": 768,
+      "h": 480,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": 768,
+      "bytes": 639787,
+      "ms": 11.286,
+      "w": 768,
+      "h": 480,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": 512,
+      "bytes": 129101,
+      "ms": 3.705,
+      "w": 512,
+      "h": 320,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": 512,
+      "bytes": 129101,
+      "ms": 3.356,
+      "w": 512,
+      "h": 320,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": 512,
+      "bytes": 129101,
+      "ms": 3.309,
+      "w": 512,
+      "h": 320,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": 512,
+      "bytes": 129101,
+      "ms": 3.215,
+      "w": 512,
+      "h": 320,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": 512,
+      "bytes": 129101,
+      "ms": 3.907,
+      "w": 512,
+      "h": 320,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": 512,
+      "bytes": 21256,
+      "ms": 3.465,
+      "w": 512,
+      "h": 320,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": 512,
+      "bytes": 21256,
+      "ms": 2.999,
+      "w": 512,
+      "h": 320,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": 512,
+      "bytes": 21256,
+      "ms": 3.098,
+      "w": 512,
+      "h": 320,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": 512,
+      "bytes": 21256,
+      "ms": 3.374,
+      "w": 512,
+      "h": 320,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": 512,
+      "bytes": 21256,
+      "ms": 3.236,
+      "w": 512,
+      "h": 320,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": 512,
+      "bytes": 33210,
+      "ms": 3.513,
+      "w": 512,
+      "h": 320,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": 512,
+      "bytes": 33210,
+      "ms": 3.653,
+      "w": 512,
+      "h": 320,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": 512,
+      "bytes": 33210,
+      "ms": 3.64,
+      "w": 512,
+      "h": 320,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": 512,
+      "bytes": 33210,
+      "ms": 3.47,
+      "w": 512,
+      "h": 320,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": 512,
+      "bytes": 33210,
+      "ms": 3.552,
+      "w": 512,
+      "h": 320,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": 512,
+      "bytes": 44624,
+      "ms": 3.777,
+      "w": 512,
+      "h": 320,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": 512,
+      "bytes": 44624,
+      "ms": 4.145,
+      "w": 512,
+      "h": 320,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": 512,
+      "bytes": 44624,
+      "ms": 4.235,
+      "w": 512,
+      "h": 320,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": 512,
+      "bytes": 44624,
+      "ms": 4.122,
+      "w": 512,
+      "h": 320,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": 512,
+      "bytes": 44624,
+      "ms": 4.586,
+      "w": 512,
+      "h": 320,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": 512,
+      "bytes": 54117,
+      "ms": 4.31,
+      "w": 512,
+      "h": 320,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": 512,
+      "bytes": 54117,
+      "ms": 4.875,
+      "w": 512,
+      "h": 320,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": 512,
+      "bytes": 54117,
+      "ms": 4.667,
+      "w": 512,
+      "h": 320,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": 512,
+      "bytes": 54117,
+      "ms": 4.354,
+      "w": 512,
+      "h": 320,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": 512,
+      "bytes": 54117,
+      "ms": 4.119,
+      "w": 512,
+      "h": 320,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": 512,
+      "bytes": 62368,
+      "ms": 4.631,
+      "w": 512,
+      "h": 320,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": 512,
+      "bytes": 62368,
+      "ms": 5.104,
+      "w": 512,
+      "h": 320,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": 512,
+      "bytes": 62368,
+      "ms": 4.459,
+      "w": 512,
+      "h": 320,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": 512,
+      "bytes": 62368,
+      "ms": 4.608,
+      "w": 512,
+      "h": 320,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": 512,
+      "bytes": 62368,
+      "ms": 4.403,
+      "w": 512,
+      "h": 320,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": 512,
+      "bytes": 71420,
+      "ms": 4.616,
+      "w": 512,
+      "h": 320,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": 512,
+      "bytes": 71420,
+      "ms": 4.202,
+      "w": 512,
+      "h": 320,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": 512,
+      "bytes": 71420,
+      "ms": 4.358,
+      "w": 512,
+      "h": 320,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": 512,
+      "bytes": 71420,
+      "ms": 4.739,
+      "w": 512,
+      "h": 320,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": 512,
+      "bytes": 71420,
+      "ms": 4.141,
+      "w": 512,
+      "h": 320,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": 512,
+      "bytes": 83754,
+      "ms": 4.12,
+      "w": 512,
+      "h": 320,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": 512,
+      "bytes": 83754,
+      "ms": 4.588,
+      "w": 512,
+      "h": 320,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": 512,
+      "bytes": 83754,
+      "ms": 5.448,
+      "w": 512,
+      "h": 320,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": 512,
+      "bytes": 83754,
+      "ms": 4.575,
+      "w": 512,
+      "h": 320,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": 512,
+      "bytes": 83754,
+      "ms": 4.825,
+      "w": 512,
+      "h": 320,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": 512,
+      "bytes": 101739,
+      "ms": 4.757,
+      "w": 512,
+      "h": 320,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": 512,
+      "bytes": 101739,
+      "ms": 4.661,
+      "w": 512,
+      "h": 320,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": 512,
+      "bytes": 101739,
+      "ms": 4.81,
+      "w": 512,
+      "h": 320,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": 512,
+      "bytes": 101739,
+      "ms": 4.76,
+      "w": 512,
+      "h": 320,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": 512,
+      "bytes": 101739,
+      "ms": 4.887,
+      "w": 512,
+      "h": 320,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": 512,
+      "bytes": 219890,
+      "ms": 6.768,
+      "w": 512,
+      "h": 320,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": 512,
+      "bytes": 219890,
+      "ms": 6.858,
+      "w": 512,
+      "h": 320,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": 512,
+      "bytes": 219890,
+      "ms": 6.084,
+      "w": 512,
+      "h": 320,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": 512,
+      "bytes": 219890,
+      "ms": 6.187,
+      "w": 512,
+      "h": 320,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": 512,
+      "bytes": 219890,
+      "ms": 6.728,
+      "w": 512,
+      "h": 320,
+      "rep": 4
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": 512,
+      "bytes": 295167,
+      "ms": 7.934,
+      "w": 512,
+      "h": 320,
+      "rep": 0
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": 512,
+      "bytes": 295167,
+      "ms": 7.27,
+      "w": 512,
+      "h": 320,
+      "rep": 1
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": 512,
+      "bytes": 295167,
+      "ms": 6.454,
+      "w": 512,
+      "h": 320,
+      "rep": 2
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": 512,
+      "bytes": 295167,
+      "ms": 6.285,
+      "w": 512,
+      "h": 320,
+      "rep": 3
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": 512,
+      "bytes": 295167,
+      "ms": 6.094,
+      "w": 512,
+      "h": 320,
+      "rep": 4
+    }
+  ],
+  "cells": [
+    {
+      "scenario": "desktop",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": null,
+      "bytes": {
+        "n": 5,
+        "min": 66699,
+        "p50": 66699,
+        "mean": 66699.0,
+        "p90": 66699,
+        "p99": 66699,
+        "max": 66699
+      },
+      "ms": {
+        "n": 5,
+        "min": 5.106,
+        "p50": 7.927,
+        "mean": 8.447,
+        "p90": 13.902,
+        "p99": 13.902,
+        "max": 13.902
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": null,
+      "bytes": {
+        "n": 5,
+        "min": 37269,
+        "p50": 37269,
+        "mean": 37269.0,
+        "p90": 37269,
+        "p99": 37269,
+        "max": 37269
+      },
+      "ms": {
+        "n": 5,
+        "min": 8.598,
+        "p50": 9.135,
+        "mean": 9.158,
+        "p90": 10.105,
+        "p99": 10.105,
+        "max": 10.105
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": null,
+      "bytes": {
+        "n": 5,
+        "min": 46467,
+        "p50": 46467,
+        "mean": 46467.0,
+        "p90": 46467,
+        "p99": 46467,
+        "max": 46467
+      },
+      "ms": {
+        "n": 5,
+        "min": 7.884,
+        "p50": 8.014,
+        "mean": 8.065,
+        "p90": 8.279,
+        "p99": 8.279,
+        "max": 8.279
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": null,
+      "bytes": {
+        "n": 5,
+        "min": 54733,
+        "p50": 54733,
+        "mean": 54733.0,
+        "p90": 54733,
+        "p99": 54733,
+        "max": 54733
+      },
+      "ms": {
+        "n": 5,
+        "min": 7.755,
+        "p50": 8.087,
+        "mean": 8.089,
+        "p90": 8.481,
+        "p99": 8.481,
+        "max": 8.481
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": null,
+      "bytes": {
+        "n": 5,
+        "min": 60635,
+        "p50": 60635,
+        "mean": 60635.0,
+        "p90": 60635,
+        "p99": 60635,
+        "max": 60635
+      },
+      "ms": {
+        "n": 5,
+        "min": 7.285,
+        "p50": 7.643,
+        "mean": 7.631,
+        "p90": 7.92,
+        "p99": 7.92,
+        "max": 7.92
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": null,
+      "bytes": {
+        "n": 5,
+        "min": 65693,
+        "p50": 65693,
+        "mean": 65693.0,
+        "p90": 65693,
+        "p99": 65693,
+        "max": 65693
+      },
+      "ms": {
+        "n": 5,
+        "min": 7.295,
+        "p50": 7.602,
+        "mean": 8.031,
+        "p90": 9.848,
+        "p99": 9.848,
+        "max": 9.848
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": null,
+      "bytes": {
+        "n": 5,
+        "min": 70804,
+        "p50": 70804,
+        "mean": 70804.0,
+        "p90": 70804,
+        "p99": 70804,
+        "max": 70804
+      },
+      "ms": {
+        "n": 5,
+        "min": 6.911,
+        "p50": 7.231,
+        "mean": 7.583,
+        "p90": 8.827,
+        "p99": 8.827,
+        "max": 8.827
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": null,
+      "bytes": {
+        "n": 5,
+        "min": 77776,
+        "p50": 77776,
+        "mean": 77776.0,
+        "p90": 77776,
+        "p99": 77776,
+        "max": 77776
+      },
+      "ms": {
+        "n": 5,
+        "min": 7.252,
+        "p50": 7.26,
+        "mean": 7.316,
+        "p90": 7.471,
+        "p99": 7.471,
+        "max": 7.471
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": null,
+      "bytes": {
+        "n": 5,
+        "min": 87900,
+        "p50": 87900,
+        "mean": 87900.0,
+        "p90": 87900,
+        "p99": 87900,
+        "max": 87900
+      },
+      "ms": {
+        "n": 5,
+        "min": 7.102,
+        "p50": 7.255,
+        "mean": 7.381,
+        "p90": 7.713,
+        "p99": 7.713,
+        "max": 7.713
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": null,
+      "bytes": {
+        "n": 5,
+        "min": 121687,
+        "p50": 121687,
+        "mean": 121687.0,
+        "p90": 121687,
+        "p99": 121687,
+        "max": 121687
+      },
+      "ms": {
+        "n": 5,
+        "min": 9.902,
+        "p50": 10.72,
+        "mean": 10.545,
+        "p90": 11.1,
+        "p99": 11.1,
+        "max": 11.1
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": null,
+      "bytes": {
+        "n": 5,
+        "min": 148044,
+        "p50": 148044,
+        "mean": 148044.0,
+        "p90": 148044,
+        "p99": 148044,
+        "max": 148044
+      },
+      "ms": {
+        "n": 5,
+        "min": 9.348,
+        "p50": 10.093,
+        "mean": 9.984,
+        "p90": 10.668,
+        "p99": 10.668,
+        "max": 10.668
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": 1024,
+      "bytes": {
+        "n": 5,
+        "min": 43605,
+        "p50": 43605,
+        "mean": 43605.0,
+        "p90": 43605,
+        "p99": 43605,
+        "max": 43605
+      },
+      "ms": {
+        "n": 5,
+        "min": 3.256,
+        "p50": 3.344,
+        "mean": 3.394,
+        "p90": 3.561,
+        "p99": 3.561,
+        "max": 3.561
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": 1024,
+      "bytes": {
+        "n": 5,
+        "min": 24176,
+        "p50": 24176,
+        "mean": 24176.0,
+        "p90": 24176,
+        "p99": 24176,
+        "max": 24176
+      },
+      "ms": {
+        "n": 5,
+        "min": 5.547,
+        "p50": 5.998,
+        "mean": 6.205,
+        "p90": 6.973,
+        "p99": 6.973,
+        "max": 6.973
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": 1024,
+      "bytes": {
+        "n": 5,
+        "min": 29782,
+        "p50": 29782,
+        "mean": 29782.0,
+        "p90": 29782,
+        "p99": 29782,
+        "max": 29782
+      },
+      "ms": {
+        "n": 5,
+        "min": 5.637,
+        "p50": 5.705,
+        "mean": 5.903,
+        "p90": 6.664,
+        "p99": 6.664,
+        "max": 6.664
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": 1024,
+      "bytes": {
+        "n": 5,
+        "min": 35358,
+        "p50": 35358,
+        "mean": 35358.0,
+        "p90": 35358,
+        "p99": 35358,
+        "max": 35358
+      },
+      "ms": {
+        "n": 5,
+        "min": 5.365,
+        "p50": 6.194,
+        "mean": 6.032,
+        "p90": 6.391,
+        "p99": 6.391,
+        "max": 6.391
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": 1024,
+      "bytes": {
+        "n": 5,
+        "min": 39275,
+        "p50": 39275,
+        "mean": 39275.0,
+        "p90": 39275,
+        "p99": 39275,
+        "max": 39275
+      },
+      "ms": {
+        "n": 5,
+        "min": 5.453,
+        "p50": 5.756,
+        "mean": 5.705,
+        "p90": 5.811,
+        "p99": 5.811,
+        "max": 5.811
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": 1024,
+      "bytes": {
+        "n": 5,
+        "min": 42488,
+        "p50": 42488,
+        "mean": 42488.0,
+        "p90": 42488,
+        "p99": 42488,
+        "max": 42488
+      },
+      "ms": {
+        "n": 5,
+        "min": 5.648,
+        "p50": 5.708,
+        "mean": 5.719,
+        "p90": 5.843,
+        "p99": 5.843,
+        "max": 5.843
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": 1024,
+      "bytes": {
+        "n": 5,
+        "min": 45616,
+        "p50": 45616,
+        "mean": 45616.0,
+        "p90": 45616,
+        "p99": 45616,
+        "max": 45616
+      },
+      "ms": {
+        "n": 5,
+        "min": 5.475,
+        "p50": 5.893,
+        "mean": 5.795,
+        "p90": 5.948,
+        "p99": 5.948,
+        "max": 5.948
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": 1024,
+      "bytes": {
+        "n": 5,
+        "min": 50137,
+        "p50": 50137,
+        "mean": 50137.0,
+        "p90": 50137,
+        "p99": 50137,
+        "max": 50137
+      },
+      "ms": {
+        "n": 5,
+        "min": 5.291,
+        "p50": 5.687,
+        "mean": 5.673,
+        "p90": 5.992,
+        "p99": 5.992,
+        "max": 5.992
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": 1024,
+      "bytes": {
+        "n": 5,
+        "min": 56508,
+        "p50": 56508,
+        "mean": 56508.0,
+        "p90": 56508,
+        "p99": 56508,
+        "max": 56508
+      },
+      "ms": {
+        "n": 5,
+        "min": 5.656,
+        "p50": 5.777,
+        "mean": 6.096,
+        "p90": 7.411,
+        "p99": 7.411,
+        "max": 7.411
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": 1024,
+      "bytes": {
+        "n": 5,
+        "min": 78479,
+        "p50": 78479,
+        "mean": 78479.0,
+        "p90": 78479,
+        "p99": 78479,
+        "max": 78479
+      },
+      "ms": {
+        "n": 5,
+        "min": 7.019,
+        "p50": 7.753,
+        "mean": 8.184,
+        "p90": 10.888,
+        "p99": 10.888,
+        "max": 10.888
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": 1024,
+      "bytes": {
+        "n": 5,
+        "min": 95813,
+        "p50": 95813,
+        "mean": 95813.0,
+        "p90": 95813,
+        "p99": 95813,
+        "max": 95813
+      },
+      "ms": {
+        "n": 5,
+        "min": 7.53,
+        "p50": 8.053,
+        "mean": 7.983,
+        "p90": 8.224,
+        "p99": 8.224,
+        "max": 8.224
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": 768,
+      "bytes": {
+        "n": 5,
+        "min": 26443,
+        "p50": 26443,
+        "mean": 26443.0,
+        "p90": 26443,
+        "p99": 26443,
+        "max": 26443
+      },
+      "ms": {
+        "n": 5,
+        "min": 3.289,
+        "p50": 3.468,
+        "mean": 3.833,
+        "p90": 4.85,
+        "p99": 4.85,
+        "max": 4.85
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": 768,
+      "bytes": {
+        "n": 5,
+        "min": 14735,
+        "p50": 14735,
+        "mean": 14735.0,
+        "p90": 14735,
+        "p99": 14735,
+        "max": 14735
+      },
+      "ms": {
+        "n": 5,
+        "min": 4.208,
+        "p50": 4.349,
+        "mean": 4.502,
+        "p90": 5.225,
+        "p99": 5.225,
+        "max": 5.225
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": 768,
+      "bytes": {
+        "n": 5,
+        "min": 18186,
+        "p50": 18186,
+        "mean": 18186.0,
+        "p90": 18186,
+        "p99": 18186,
+        "max": 18186
+      },
+      "ms": {
+        "n": 5,
+        "min": 4.346,
+        "p50": 4.386,
+        "mean": 4.877,
+        "p90": 6.297,
+        "p99": 6.297,
+        "max": 6.297
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": 768,
+      "bytes": {
+        "n": 5,
+        "min": 21517,
+        "p50": 21517,
+        "mean": 21517.0,
+        "p90": 21517,
+        "p99": 21517,
+        "max": 21517
+      },
+      "ms": {
+        "n": 5,
+        "min": 4.157,
+        "p50": 4.349,
+        "mean": 4.381,
+        "p90": 4.71,
+        "p99": 4.71,
+        "max": 4.71
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": 768,
+      "bytes": {
+        "n": 5,
+        "min": 23807,
+        "p50": 23807,
+        "mean": 23807.0,
+        "p90": 23807,
+        "p99": 23807,
+        "max": 23807
+      },
+      "ms": {
+        "n": 5,
+        "min": 4.043,
+        "p50": 4.314,
+        "mean": 4.297,
+        "p90": 4.479,
+        "p99": 4.479,
+        "max": 4.479
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": 768,
+      "bytes": {
+        "n": 5,
+        "min": 25819,
+        "p50": 25819,
+        "mean": 25819.0,
+        "p90": 25819,
+        "p99": 25819,
+        "max": 25819
+      },
+      "ms": {
+        "n": 5,
+        "min": 4.141,
+        "p50": 4.257,
+        "mean": 4.363,
+        "p90": 4.793,
+        "p99": 4.793,
+        "max": 4.793
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": 768,
+      "bytes": {
+        "n": 5,
+        "min": 27674,
+        "p50": 27674,
+        "mean": 27674.0,
+        "p90": 27674,
+        "p99": 27674,
+        "max": 27674
+      },
+      "ms": {
+        "n": 5,
+        "min": 4.166,
+        "p50": 4.239,
+        "mean": 4.244,
+        "p90": 4.325,
+        "p99": 4.325,
+        "max": 4.325
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": 768,
+      "bytes": {
+        "n": 5,
+        "min": 30340,
+        "p50": 30340,
+        "mean": 30340.0,
+        "p90": 30340,
+        "p99": 30340,
+        "max": 30340
+      },
+      "ms": {
+        "n": 5,
+        "min": 4.235,
+        "p50": 4.501,
+        "mean": 4.461,
+        "p90": 4.682,
+        "p99": 4.682,
+        "max": 4.682
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": 768,
+      "bytes": {
+        "n": 5,
+        "min": 34203,
+        "p50": 34203,
+        "mean": 34203.0,
+        "p90": 34203,
+        "p99": 34203,
+        "max": 34203
+      },
+      "ms": {
+        "n": 5,
+        "min": 4.567,
+        "p50": 4.732,
+        "mean": 4.761,
+        "p90": 4.969,
+        "p99": 4.969,
+        "max": 4.969
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": 768,
+      "bytes": {
+        "n": 5,
+        "min": 47085,
+        "p50": 47085,
+        "mean": 47085.0,
+        "p90": 47085,
+        "p99": 47085,
+        "max": 47085
+      },
+      "ms": {
+        "n": 5,
+        "min": 5.554,
+        "p50": 5.84,
+        "mean": 5.886,
+        "p90": 6.219,
+        "p99": 6.219,
+        "max": 6.219
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": 768,
+      "bytes": {
+        "n": 5,
+        "min": 57261,
+        "p50": 57261,
+        "mean": 57261.0,
+        "p90": 57261,
+        "p99": 57261,
+        "max": 57261
+      },
+      "ms": {
+        "n": 5,
+        "min": 5.09,
+        "p50": 5.312,
+        "mean": 5.347,
+        "p90": 5.681,
+        "p99": 5.681,
+        "max": 5.681
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": 512,
+      "bytes": {
+        "n": 5,
+        "min": 13361,
+        "p50": 13361,
+        "mean": 13361.0,
+        "p90": 13361,
+        "p99": 13361,
+        "max": 13361
+      },
+      "ms": {
+        "n": 5,
+        "min": 2.091,
+        "p50": 2.252,
+        "mean": 2.533,
+        "p90": 3.748,
+        "p99": 3.748,
+        "max": 3.748
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": 512,
+      "bytes": {
+        "n": 5,
+        "min": 6902,
+        "p50": 6902,
+        "mean": 6902.0,
+        "p90": 6902,
+        "p99": 6902,
+        "max": 6902
+      },
+      "ms": {
+        "n": 5,
+        "min": 2.669,
+        "p50": 2.737,
+        "mean": 2.743,
+        "p90": 2.837,
+        "p99": 2.837,
+        "max": 2.837
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": 512,
+      "bytes": {
+        "n": 5,
+        "min": 8373,
+        "p50": 8373,
+        "mean": 8373.0,
+        "p90": 8373,
+        "p99": 8373,
+        "max": 8373
+      },
+      "ms": {
+        "n": 5,
+        "min": 2.64,
+        "p50": 2.851,
+        "mean": 2.802,
+        "p90": 2.925,
+        "p99": 2.925,
+        "max": 2.925
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": 512,
+      "bytes": {
+        "n": 5,
+        "min": 9877,
+        "p50": 9877,
+        "mean": 9877.0,
+        "p90": 9877,
+        "p99": 9877,
+        "max": 9877
+      },
+      "ms": {
+        "n": 5,
+        "min": 2.84,
+        "p50": 2.935,
+        "mean": 2.946,
+        "p90": 3.088,
+        "p99": 3.088,
+        "max": 3.088
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": 512,
+      "bytes": {
+        "n": 5,
+        "min": 10865,
+        "p50": 10865,
+        "mean": 10865.0,
+        "p90": 10865,
+        "p99": 10865,
+        "max": 10865
+      },
+      "ms": {
+        "n": 5,
+        "min": 2.838,
+        "p50": 2.941,
+        "mean": 2.952,
+        "p90": 3.088,
+        "p99": 3.088,
+        "max": 3.088
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": 512,
+      "bytes": {
+        "n": 5,
+        "min": 11720,
+        "p50": 11720,
+        "mean": 11720.0,
+        "p90": 11720,
+        "p99": 11720,
+        "max": 11720
+      },
+      "ms": {
+        "n": 5,
+        "min": 2.798,
+        "p50": 3.2,
+        "mean": 3.297,
+        "p90": 3.979,
+        "p99": 3.979,
+        "max": 3.979
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": 512,
+      "bytes": {
+        "n": 5,
+        "min": 12596,
+        "p50": 12596,
+        "mean": 12596.0,
+        "p90": 12596,
+        "p99": 12596,
+        "max": 12596
+      },
+      "ms": {
+        "n": 5,
+        "min": 2.867,
+        "p50": 3.071,
+        "mean": 3.178,
+        "p90": 3.563,
+        "p99": 3.563,
+        "max": 3.563
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": 512,
+      "bytes": {
+        "n": 5,
+        "min": 13778,
+        "p50": 13778,
+        "mean": 13778.0,
+        "p90": 13778,
+        "p99": 13778,
+        "max": 13778
+      },
+      "ms": {
+        "n": 5,
+        "min": 2.899,
+        "p50": 2.973,
+        "mean": 3.018,
+        "p90": 3.218,
+        "p99": 3.218,
+        "max": 3.218
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": 512,
+      "bytes": {
+        "n": 5,
+        "min": 15478,
+        "p50": 15478,
+        "mean": 15478.0,
+        "p90": 15478,
+        "p99": 15478,
+        "max": 15478
+      },
+      "ms": {
+        "n": 5,
+        "min": 2.662,
+        "p50": 2.759,
+        "mean": 2.764,
+        "p90": 2.929,
+        "p99": 2.929,
+        "max": 2.929
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": 512,
+      "bytes": {
+        "n": 5,
+        "min": 21274,
+        "p50": 21274,
+        "mean": 21274.0,
+        "p90": 21274,
+        "p99": 21274,
+        "max": 21274
+      },
+      "ms": {
+        "n": 5,
+        "min": 3.082,
+        "p50": 3.282,
+        "mean": 3.386,
+        "p90": 3.98,
+        "p99": 3.98,
+        "max": 3.98
+      }
+    },
+    {
+      "scenario": "desktop",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": 512,
+      "bytes": {
+        "n": 5,
+        "min": 25923,
+        "p50": 25923,
+        "mean": 25923.0,
+        "p90": 25923,
+        "p99": 25923,
+        "max": 25923
+      },
+      "ms": {
+        "n": 5,
+        "min": 3.52,
+        "p50": 3.691,
+        "mean": 3.683,
+        "p90": 3.852,
+        "p99": 3.852,
+        "max": 3.852
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": null,
+      "bytes": {
+        "n": 5,
+        "min": 764850,
+        "p50": 764850,
+        "mean": 764850.0,
+        "p90": 764850,
+        "p99": 764850,
+        "max": 764850
+      },
+      "ms": {
+        "n": 5,
+        "min": 11.063,
+        "p50": 16.71,
+        "mean": 16.994,
+        "p90": 26.214,
+        "p99": 26.214,
+        "max": 26.214
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": null,
+      "bytes": {
+        "n": 5,
+        "min": 119790,
+        "p50": 119790,
+        "mean": 119790.0,
+        "p90": 119790,
+        "p99": 119790,
+        "max": 119790
+      },
+      "ms": {
+        "n": 5,
+        "min": 8.167,
+        "p50": 8.476,
+        "mean": 8.549,
+        "p90": 9.19,
+        "p99": 9.19,
+        "max": 9.19
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": null,
+      "bytes": {
+        "n": 5,
+        "min": 187954,
+        "p50": 187954,
+        "mean": 187954.0,
+        "p90": 187954,
+        "p99": 187954,
+        "max": 187954
+      },
+      "ms": {
+        "n": 5,
+        "min": 9.146,
+        "p50": 9.431,
+        "mean": 9.443,
+        "p90": 9.72,
+        "p99": 9.72,
+        "max": 9.72
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": null,
+      "bytes": {
+        "n": 5,
+        "min": 250497,
+        "p50": 250497,
+        "mean": 250497.0,
+        "p90": 250497,
+        "p99": 250497,
+        "max": 250497
+      },
+      "ms": {
+        "n": 5,
+        "min": 9.201,
+        "p50": 9.911,
+        "mean": 9.863,
+        "p90": 10.77,
+        "p99": 10.77,
+        "max": 10.77
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": null,
+      "bytes": {
+        "n": 5,
+        "min": 301014,
+        "p50": 301014,
+        "mean": 301014.0,
+        "p90": 301014,
+        "p99": 301014,
+        "max": 301014
+      },
+      "ms": {
+        "n": 5,
+        "min": 10.45,
+        "p50": 10.906,
+        "mean": 10.987,
+        "p90": 11.551,
+        "p99": 11.551,
+        "max": 11.551
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": null,
+      "bytes": {
+        "n": 5,
+        "min": 347207,
+        "p50": 347207,
+        "mean": 347207.0,
+        "p90": 347207,
+        "p99": 347207,
+        "max": 347207
+      },
+      "ms": {
+        "n": 5,
+        "min": 10.623,
+        "p50": 11.51,
+        "mean": 11.492,
+        "p90": 12.278,
+        "p99": 12.278,
+        "max": 12.278
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": null,
+      "bytes": {
+        "n": 5,
+        "min": 396922,
+        "p50": 396922,
+        "mean": 396922.0,
+        "p90": 396922,
+        "p99": 396922,
+        "max": 396922
+      },
+      "ms": {
+        "n": 5,
+        "min": 11.318,
+        "p50": 11.478,
+        "mean": 11.547,
+        "p90": 11.851,
+        "p99": 11.851,
+        "max": 11.851
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": null,
+      "bytes": {
+        "n": 5,
+        "min": 464821,
+        "p50": 464821,
+        "mean": 464821.0,
+        "p90": 464821,
+        "p99": 464821,
+        "max": 464821
+      },
+      "ms": {
+        "n": 5,
+        "min": 12.018,
+        "p50": 13.515,
+        "mean": 13.065,
+        "p90": 13.797,
+        "p99": 13.797,
+        "max": 13.797
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": null,
+      "bytes": {
+        "n": 5,
+        "min": 566683,
+        "p50": 566683,
+        "mean": 566683.0,
+        "p90": 566683,
+        "p99": 566683,
+        "max": 566683
+      },
+      "ms": {
+        "n": 5,
+        "min": 13.885,
+        "p50": 15.913,
+        "mean": 15.301,
+        "p90": 16.067,
+        "p99": 16.067,
+        "max": 16.067
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": null,
+      "bytes": {
+        "n": 5,
+        "min": 1199140,
+        "p50": 1199140,
+        "mean": 1199140.0,
+        "p90": 1199140,
+        "p99": 1199140,
+        "max": 1199140
+      },
+      "ms": {
+        "n": 5,
+        "min": 21.307,
+        "p50": 24.506,
+        "mean": 24.281,
+        "p90": 26.24,
+        "p99": 26.24,
+        "max": 26.24
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": null,
+      "bytes": {
+        "n": 5,
+        "min": 1604977,
+        "p50": 1604977,
+        "mean": 1604977.0,
+        "p90": 1604977,
+        "p99": 1604977,
+        "max": 1604977
+      },
+      "ms": {
+        "n": 5,
+        "min": 26.084,
+        "p50": 26.553,
+        "mean": 27.032,
+        "p90": 28.634,
+        "p99": 28.634,
+        "max": 28.634
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": 1024,
+      "bytes": {
+        "n": 5,
+        "min": 479376,
+        "p50": 479376,
+        "mean": 479376.0,
+        "p90": 479376,
+        "p99": 479376,
+        "max": 479376
+      },
+      "ms": {
+        "n": 5,
+        "min": 6.512,
+        "p50": 7.809,
+        "mean": 7.824,
+        "p90": 9.078,
+        "p99": 9.078,
+        "max": 9.078
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": 1024,
+      "bytes": {
+        "n": 5,
+        "min": 76408,
+        "p50": 76408,
+        "mean": 76408.0,
+        "p90": 76408,
+        "p99": 76408,
+        "max": 76408
+      },
+      "ms": {
+        "n": 5,
+        "min": 6.103,
+        "p50": 6.339,
+        "mean": 6.427,
+        "p90": 7.012,
+        "p99": 7.012,
+        "max": 7.012
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": 1024,
+      "bytes": {
+        "n": 5,
+        "min": 121183,
+        "p50": 121183,
+        "mean": 121183.0,
+        "p90": 121183,
+        "p99": 121183,
+        "max": 121183
+      },
+      "ms": {
+        "n": 5,
+        "min": 7.115,
+        "p50": 7.299,
+        "mean": 7.416,
+        "p90": 8.132,
+        "p99": 8.132,
+        "max": 8.132
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": 1024,
+      "bytes": {
+        "n": 5,
+        "min": 163830,
+        "p50": 163830,
+        "mean": 163830.0,
+        "p90": 163830,
+        "p99": 163830,
+        "max": 163830
+      },
+      "ms": {
+        "n": 5,
+        "min": 7.259,
+        "p50": 7.643,
+        "mean": 7.827,
+        "p90": 8.764,
+        "p99": 8.764,
+        "max": 8.764
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": 1024,
+      "bytes": {
+        "n": 5,
+        "min": 199282,
+        "p50": 199282,
+        "mean": 199282.0,
+        "p90": 199282,
+        "p99": 199282,
+        "max": 199282
+      },
+      "ms": {
+        "n": 5,
+        "min": 7.944,
+        "p50": 8.311,
+        "mean": 8.676,
+        "p90": 9.874,
+        "p99": 9.874,
+        "max": 9.874
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": 1024,
+      "bytes": {
+        "n": 5,
+        "min": 230457,
+        "p50": 230457,
+        "mean": 230457.0,
+        "p90": 230457,
+        "p99": 230457,
+        "max": 230457
+      },
+      "ms": {
+        "n": 5,
+        "min": 8.292,
+        "p50": 8.707,
+        "mean": 9.083,
+        "p90": 10.929,
+        "p99": 10.929,
+        "max": 10.929
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": 1024,
+      "bytes": {
+        "n": 5,
+        "min": 264229,
+        "p50": 264229,
+        "mean": 264229.0,
+        "p90": 264229,
+        "p99": 264229,
+        "max": 264229
+      },
+      "ms": {
+        "n": 5,
+        "min": 8.486,
+        "p50": 9.116,
+        "mean": 10.44,
+        "p90": 15.623,
+        "p99": 15.623,
+        "max": 15.623
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": 1024,
+      "bytes": {
+        "n": 5,
+        "min": 310569,
+        "p50": 310569,
+        "mean": 310569.0,
+        "p90": 310569,
+        "p99": 310569,
+        "max": 310569
+      },
+      "ms": {
+        "n": 5,
+        "min": 9.103,
+        "p50": 9.769,
+        "mean": 9.979,
+        "p90": 11.402,
+        "p99": 11.402,
+        "max": 11.402
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": 1024,
+      "bytes": {
+        "n": 5,
+        "min": 379067,
+        "p50": 379067,
+        "mean": 379067.0,
+        "p90": 379067,
+        "p99": 379067,
+        "max": 379067
+      },
+      "ms": {
+        "n": 5,
+        "min": 10.359,
+        "p50": 10.824,
+        "mean": 10.989,
+        "p90": 11.738,
+        "p99": 11.738,
+        "max": 11.738
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": 1024,
+      "bytes": {
+        "n": 5,
+        "min": 781566,
+        "p50": 781566,
+        "mean": 781566.0,
+        "p90": 781566,
+        "p99": 781566,
+        "max": 781566
+      },
+      "ms": {
+        "n": 5,
+        "min": 16.063,
+        "p50": 17.033,
+        "mean": 16.901,
+        "p90": 17.76,
+        "p99": 17.76,
+        "max": 17.76
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": 1024,
+      "bytes": {
+        "n": 5,
+        "min": 1048779,
+        "p50": 1048779,
+        "mean": 1048779.0,
+        "p90": 1048779,
+        "p99": 1048779,
+        "max": 1048779
+      },
+      "ms": {
+        "n": 5,
+        "min": 16.93,
+        "p50": 18.699,
+        "mean": 18.833,
+        "p90": 20.136,
+        "p99": 20.136,
+        "max": 20.136
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": 768,
+      "bytes": {
+        "n": 5,
+        "min": 271659,
+        "p50": 271659,
+        "mean": 271659.0,
+        "p90": 271659,
+        "p99": 271659,
+        "max": 271659
+      },
+      "ms": {
+        "n": 5,
+        "min": 4.701,
+        "p50": 5.184,
+        "mean": 5.187,
+        "p90": 5.68,
+        "p99": 5.68,
+        "max": 5.68
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": 768,
+      "bytes": {
+        "n": 5,
+        "min": 46354,
+        "p50": 46354,
+        "mean": 46354.0,
+        "p90": 46354,
+        "p99": 46354,
+        "max": 46354
+      },
+      "ms": {
+        "n": 5,
+        "min": 4.328,
+        "p50": 4.526,
+        "mean": 4.524,
+        "p90": 4.675,
+        "p99": 4.675,
+        "max": 4.675
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": 768,
+      "bytes": {
+        "n": 5,
+        "min": 72330,
+        "p50": 72330,
+        "mean": 72330.0,
+        "p90": 72330,
+        "p99": 72330,
+        "max": 72330
+      },
+      "ms": {
+        "n": 5,
+        "min": 4.75,
+        "p50": 4.879,
+        "mean": 5.05,
+        "p90": 5.71,
+        "p99": 5.71,
+        "max": 5.71
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": 768,
+      "bytes": {
+        "n": 5,
+        "min": 97194,
+        "p50": 97194,
+        "mean": 97194.0,
+        "p90": 97194,
+        "p99": 97194,
+        "max": 97194
+      },
+      "ms": {
+        "n": 5,
+        "min": 5.195,
+        "p50": 5.394,
+        "mean": 5.806,
+        "p90": 7.533,
+        "p99": 7.533,
+        "max": 7.533
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": 768,
+      "bytes": {
+        "n": 5,
+        "min": 117971,
+        "p50": 117971,
+        "mean": 117971.0,
+        "p90": 117971,
+        "p99": 117971,
+        "max": 117971
+      },
+      "ms": {
+        "n": 5,
+        "min": 6.039,
+        "p50": 6.137,
+        "mean": 6.249,
+        "p90": 6.712,
+        "p99": 6.712,
+        "max": 6.712
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": 768,
+      "bytes": {
+        "n": 5,
+        "min": 136482,
+        "p50": 136482,
+        "mean": 136482.0,
+        "p90": 136482,
+        "p99": 136482,
+        "max": 136482
+      },
+      "ms": {
+        "n": 5,
+        "min": 5.832,
+        "p50": 6.384,
+        "mean": 6.297,
+        "p90": 6.614,
+        "p99": 6.614,
+        "max": 6.614
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": 768,
+      "bytes": {
+        "n": 5,
+        "min": 156088,
+        "p50": 156088,
+        "mean": 156088.0,
+        "p90": 156088,
+        "p99": 156088,
+        "max": 156088
+      },
+      "ms": {
+        "n": 5,
+        "min": 5.686,
+        "p50": 5.999,
+        "mean": 6.122,
+        "p90": 7.052,
+        "p99": 7.052,
+        "max": 7.052
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": 768,
+      "bytes": {
+        "n": 5,
+        "min": 182932,
+        "p50": 182932,
+        "mean": 182932.0,
+        "p90": 182932,
+        "p99": 182932,
+        "max": 182932
+      },
+      "ms": {
+        "n": 5,
+        "min": 6.257,
+        "p50": 6.451,
+        "mean": 6.394,
+        "p90": 6.488,
+        "p99": 6.488,
+        "max": 6.488
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": 768,
+      "bytes": {
+        "n": 5,
+        "min": 222805,
+        "p50": 222805,
+        "mean": 222805.0,
+        "p90": 222805,
+        "p99": 222805,
+        "max": 222805
+      },
+      "ms": {
+        "n": 5,
+        "min": 6.493,
+        "p50": 6.757,
+        "mean": 6.843,
+        "p90": 7.339,
+        "p99": 7.339,
+        "max": 7.339
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": 768,
+      "bytes": {
+        "n": 5,
+        "min": 476443,
+        "p50": 476443,
+        "mean": 476443.0,
+        "p90": 476443,
+        "p99": 476443,
+        "max": 476443
+      },
+      "ms": {
+        "n": 5,
+        "min": 9.931,
+        "p50": 10.969,
+        "mean": 10.977,
+        "p90": 12.114,
+        "p99": 12.114,
+        "max": 12.114
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": 768,
+      "bytes": {
+        "n": 5,
+        "min": 639787,
+        "p50": 639787,
+        "mean": 639787.0,
+        "p90": 639787,
+        "p99": 639787,
+        "max": 639787
+      },
+      "ms": {
+        "n": 5,
+        "min": 10.863,
+        "p50": 11.525,
+        "mean": 11.822,
+        "p90": 12.838,
+        "p99": 12.838,
+        "max": 12.838
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "png",
+      "quality": null,
+      "max_long_edge": 512,
+      "bytes": {
+        "n": 5,
+        "min": 129101,
+        "p50": 129101,
+        "mean": 129101.0,
+        "p90": 129101,
+        "p99": 129101,
+        "max": 129101
+      },
+      "ms": {
+        "n": 5,
+        "min": 3.215,
+        "p50": 3.356,
+        "mean": 3.498,
+        "p90": 3.907,
+        "p99": 3.907,
+        "max": 3.907
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": 512,
+      "bytes": {
+        "n": 5,
+        "min": 21256,
+        "p50": 21256,
+        "mean": 21256.0,
+        "p90": 21256,
+        "p99": 21256,
+        "max": 21256
+      },
+      "ms": {
+        "n": 5,
+        "min": 2.999,
+        "p50": 3.236,
+        "mean": 3.234,
+        "p90": 3.465,
+        "p99": 3.465,
+        "max": 3.465
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 20,
+      "max_long_edge": 512,
+      "bytes": {
+        "n": 5,
+        "min": 33210,
+        "p50": 33210,
+        "mean": 33210.0,
+        "p90": 33210,
+        "p99": 33210,
+        "max": 33210
+      },
+      "ms": {
+        "n": 5,
+        "min": 3.47,
+        "p50": 3.552,
+        "mean": 3.566,
+        "p90": 3.653,
+        "p99": 3.653,
+        "max": 3.653
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 30,
+      "max_long_edge": 512,
+      "bytes": {
+        "n": 5,
+        "min": 44624,
+        "p50": 44624,
+        "mean": 44624.0,
+        "p90": 44624,
+        "p99": 44624,
+        "max": 44624
+      },
+      "ms": {
+        "n": 5,
+        "min": 3.777,
+        "p50": 4.145,
+        "mean": 4.173,
+        "p90": 4.586,
+        "p99": 4.586,
+        "max": 4.586
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 40,
+      "max_long_edge": 512,
+      "bytes": {
+        "n": 5,
+        "min": 54117,
+        "p50": 54117,
+        "mean": 54117.0,
+        "p90": 54117,
+        "p99": 54117,
+        "max": 54117
+      },
+      "ms": {
+        "n": 5,
+        "min": 4.119,
+        "p50": 4.354,
+        "mean": 4.465,
+        "p90": 4.875,
+        "p99": 4.875,
+        "max": 4.875
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": 512,
+      "bytes": {
+        "n": 5,
+        "min": 62368,
+        "p50": 62368,
+        "mean": 62368.0,
+        "p90": 62368,
+        "p99": 62368,
+        "max": 62368
+      },
+      "ms": {
+        "n": 5,
+        "min": 4.403,
+        "p50": 4.608,
+        "mean": 4.641,
+        "p90": 5.104,
+        "p99": 5.104,
+        "max": 5.104
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 60,
+      "max_long_edge": 512,
+      "bytes": {
+        "n": 5,
+        "min": 71420,
+        "p50": 71420,
+        "mean": 71420.0,
+        "p90": 71420,
+        "p99": 71420,
+        "max": 71420
+      },
+      "ms": {
+        "n": 5,
+        "min": 4.141,
+        "p50": 4.358,
+        "mean": 4.411,
+        "p90": 4.739,
+        "p99": 4.739,
+        "max": 4.739
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 70,
+      "max_long_edge": 512,
+      "bytes": {
+        "n": 5,
+        "min": 83754,
+        "p50": 83754,
+        "mean": 83754.0,
+        "p90": 83754,
+        "p99": 83754,
+        "max": 83754
+      },
+      "ms": {
+        "n": 5,
+        "min": 4.12,
+        "p50": 4.588,
+        "mean": 4.711,
+        "p90": 5.448,
+        "p99": 5.448,
+        "max": 5.448
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 80,
+      "max_long_edge": 512,
+      "bytes": {
+        "n": 5,
+        "min": 101739,
+        "p50": 101739,
+        "mean": 101739.0,
+        "p90": 101739,
+        "p99": 101739,
+        "max": 101739
+      },
+      "ms": {
+        "n": 5,
+        "min": 4.661,
+        "p50": 4.76,
+        "mean": 4.775,
+        "p90": 4.887,
+        "p99": 4.887,
+        "max": 4.887
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 90,
+      "max_long_edge": 512,
+      "bytes": {
+        "n": 5,
+        "min": 219890,
+        "p50": 219890,
+        "mean": 219890.0,
+        "p90": 219890,
+        "p99": 219890,
+        "max": 219890
+      },
+      "ms": {
+        "n": 5,
+        "min": 6.084,
+        "p50": 6.728,
+        "mean": 6.525,
+        "p90": 6.858,
+        "p99": 6.858,
+        "max": 6.858
+      }
+    },
+    {
+      "scenario": "dense-text",
+      "format": "jpeg",
+      "quality": 95,
+      "max_long_edge": 512,
+      "bytes": {
+        "n": 5,
+        "min": 295167,
+        "p50": 295167,
+        "mean": 295167.0,
+        "p90": 295167,
+        "p99": 295167,
+        "max": 295167
+      },
+      "ms": {
+        "n": 5,
+        "min": 6.094,
+        "p50": 6.454,
+        "mean": 6.807,
+        "p90": 7.934,
+        "p99": 7.934,
+        "max": 7.934
+      }
+    }
+  ]
+}

@@ -37,6 +37,7 @@ committed is world-readable.
 | `shinkend/` | ✅ | Rust Guest Runtime (`shinkend`) |
 | `sdk/python/` | ✅ | Python SDK and CLI |
 | `images/linux/` | ✅ | Local Linux Sandbox image |
+| `benchmarks/` | ✅ | Rerunnable local benchmark suites + raw result JSONs; figures land in `docs/engineering/assets/benchmarks/`, narrative in `docs/engineering/benchmarks.md` |
 | `references/` | 🚫 git-ignored | 12 cloned prior-art repos studied for design (OSWorld, cua, codex, anthropic-quickstarts, neko, OpenAdapt, e2b-desktop, UI-TARS-desktop, OmniParser; + 2026-06: uni-agent, CUA-Gym, Agentix); provenance + re-clone in `references/README.md` (tracked) |
 
 ## Conventions

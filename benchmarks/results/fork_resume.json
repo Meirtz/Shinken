@@ -1,0 +1,312 @@
+{
+  "suite": "fork_resume",
+  "meta": {
+    "generated_utc": "2026-06-10T17:57:56Z",
+    "git_commit": "ec2aacb",
+    "python": "3.13.9",
+    "host_os": "macOS 26.5.1",
+    "host_arch": "arm64",
+    "host_cpu": "Apple M4 Pro",
+    "host_cores": "14",
+    "host_mem_gib": 48.0,
+    "docker_server": "29.4.3",
+    "image": "shinken/sandbox-linux",
+    "image_arch": "linux/arm64",
+    "screen_geometry": "1280x800x24"
+  },
+  "reps": 8,
+  "fanout": [
+    1,
+    2,
+    4,
+    8
+  ],
+  "datapoints": {
+    "cold_boot": [
+      {
+        "rep": 0,
+        "create_ms": 9241.5,
+        "connect_ms": 3.8,
+        "first_obs_ms": 17.8,
+        "total_ms": 9263.2
+      },
+      {
+        "rep": 1,
+        "create_ms": 7736.4,
+        "connect_ms": 3.5,
+        "first_obs_ms": 14.1,
+        "total_ms": 7754.0
+      },
+      {
+        "rep": 2,
+        "create_ms": 7738.8,
+        "connect_ms": 4.0,
+        "first_obs_ms": 12.5,
+        "total_ms": 7755.2
+      },
+      {
+        "rep": 3,
+        "create_ms": 7793.5,
+        "connect_ms": 5.3,
+        "first_obs_ms": 16.4,
+        "total_ms": 7815.3
+      },
+      {
+        "rep": 4,
+        "create_ms": 7788.2,
+        "connect_ms": 5.0,
+        "first_obs_ms": 15.1,
+        "total_ms": 7808.3
+      },
+      {
+        "rep": 5,
+        "create_ms": 7802.4,
+        "connect_ms": 7.2,
+        "first_obs_ms": 19.3,
+        "total_ms": 7829.0
+      },
+      {
+        "rep": 6,
+        "create_ms": 7772.6,
+        "connect_ms": 6.0,
+        "first_obs_ms": 29.1,
+        "total_ms": 7807.7
+      },
+      {
+        "rep": 7,
+        "create_ms": 7713.0,
+        "connect_ms": 5.1,
+        "first_obs_ms": 19.9,
+        "total_ms": 7738.0
+      }
+    ],
+    "checkpoint": [
+      {
+        "rep": 0,
+        "checkpoint_ms": 1708.1
+      },
+      {
+        "rep": 1,
+        "checkpoint_ms": 550.5
+      },
+      {
+        "rep": 2,
+        "checkpoint_ms": 579.3
+      },
+      {
+        "rep": 3,
+        "checkpoint_ms": 534.8
+      },
+      {
+        "rep": 4,
+        "checkpoint_ms": 537.3
+      },
+      {
+        "rep": 5,
+        "checkpoint_ms": 555.6
+      },
+      {
+        "rep": 6,
+        "checkpoint_ms": 524.0
+      },
+      {
+        "rep": 7,
+        "checkpoint_ms": 571.8
+      }
+    ],
+    "fork_resume": [
+      {
+        "n": 1,
+        "replica": 0,
+        "resume_ms": 9216.0,
+        "connect_ms": 4.2,
+        "first_obs_ms": 14.6,
+        "total_ms": 9234.9,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 2,
+        "replica": 0,
+        "resume_ms": 7769.0,
+        "connect_ms": 4.9,
+        "first_obs_ms": 14.4,
+        "total_ms": 7788.3,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 2,
+        "replica": 1,
+        "resume_ms": 7768.3,
+        "connect_ms": 5.2,
+        "first_obs_ms": 14.7,
+        "total_ms": 7788.2,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 4,
+        "replica": 0,
+        "resume_ms": 7677.9,
+        "connect_ms": 4.5,
+        "first_obs_ms": 18.4,
+        "total_ms": 7700.8,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 4,
+        "replica": 1,
+        "resume_ms": 7673.6,
+        "connect_ms": 6.1,
+        "first_obs_ms": 11.8,
+        "total_ms": 7691.5,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 4,
+        "replica": 2,
+        "resume_ms": 7676.1,
+        "connect_ms": 4.0,
+        "first_obs_ms": 11.8,
+        "total_ms": 7691.9,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 4,
+        "replica": 3,
+        "resume_ms": 7664.2,
+        "connect_ms": 4.7,
+        "first_obs_ms": 11.8,
+        "total_ms": 7680.7,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 8,
+        "replica": 0,
+        "resume_ms": 7549.6,
+        "connect_ms": 4.9,
+        "first_obs_ms": 10.6,
+        "total_ms": 7565.2,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 8,
+        "replica": 1,
+        "resume_ms": 7552.2,
+        "connect_ms": 7.1,
+        "first_obs_ms": 12.8,
+        "total_ms": 7572.1,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 8,
+        "replica": 2,
+        "resume_ms": 7549.4,
+        "connect_ms": 7.2,
+        "first_obs_ms": 15.8,
+        "total_ms": 7572.4,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 8,
+        "replica": 3,
+        "resume_ms": 7553.4,
+        "connect_ms": 5.9,
+        "first_obs_ms": 13.1,
+        "total_ms": 7572.5,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 8,
+        "replica": 4,
+        "resume_ms": 7552.6,
+        "connect_ms": 5.9,
+        "first_obs_ms": 13.2,
+        "total_ms": 7571.8,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 8,
+        "replica": 5,
+        "resume_ms": 7538.4,
+        "connect_ms": 6.9,
+        "first_obs_ms": 11.2,
+        "total_ms": 7556.6,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 8,
+        "replica": 6,
+        "resume_ms": 7539.9,
+        "connect_ms": 6.0,
+        "first_obs_ms": 12.6,
+        "total_ms": 7558.5,
+        "inherited_golden_state": true
+      },
+      {
+        "n": 8,
+        "replica": 7,
+        "resume_ms": 7538.1,
+        "connect_ms": 6.6,
+        "first_obs_ms": 16.6,
+        "total_ms": 7561.3,
+        "inherited_golden_state": true
+      }
+    ],
+    "fanout_walls": [
+      {
+        "n": 1,
+        "wall_ms": 9509.8,
+        "wall_per_replica_ms": 9509.8,
+        "all_inherited": true
+      },
+      {
+        "n": 2,
+        "wall_ms": 8173.9,
+        "wall_per_replica_ms": 4087.0,
+        "all_inherited": true
+      },
+      {
+        "n": 4,
+        "wall_ms": 8236.4,
+        "wall_per_replica_ms": 2059.1,
+        "all_inherited": true
+      },
+      {
+        "n": 8,
+        "wall_ms": 8492.7,
+        "wall_per_replica_ms": 1061.6,
+        "all_inherited": true
+      }
+    ]
+  },
+  "summary": {
+    "cold_boot_total_ms": {
+      "n": 8,
+      "min": 7738.0,
+      "p50": 7808.3,
+      "mean": 7971.337,
+      "p90": 7829.0,
+      "p99": 9263.2,
+      "max": 9263.2
+    },
+    "checkpoint_ms": {
+      "n": 8,
+      "min": 524.0,
+      "p50": 555.6,
+      "mean": 695.175,
+      "p90": 579.3,
+      "p99": 1708.1,
+      "max": 1708.1
+    },
+    "fork_total_ms": {
+      "n": 15,
+      "min": 7556.6,
+      "p50": 7572.5,
+      "mean": 7740.447,
+      "p90": 7788.3,
+      "p99": 9234.9,
+      "max": 9234.9
+    },
+    "replicas_verified": 15,
+    "replicas_total": 15
+  }
+}
