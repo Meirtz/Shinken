@@ -6,7 +6,9 @@ backend (D2). Running a shell command, a Python snippet, an installer, or an edi
 **powerful, side-effecting capability** that belongs behind the D6 `tool_runner` policy
 boundary — not as "just another GUI backend." This doc defines the Phase-0 boundary so
 the two never blur. It is a **design/spec**; the runtime lands later and does not block
-the typed GUI act/observe work (#4).
+the typed GUI act/observe work (#4). How code-agent **RL workloads** compose this
+boundary (headless profile, fork-N rollouts, reward seams) is
+[`code-agent-rl.md`](code-agent-rl.md) — this doc stays the exec-semantics anchor.
 
 ## What goes where
 

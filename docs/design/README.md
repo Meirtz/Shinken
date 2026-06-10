@@ -17,6 +17,7 @@ eval, substrates, streaming, and future cross-OS/GPU tiers.
 - Competitive landscape: [`landscape.md`](landscape.md)
 - ADRs / technical decisions: [`tech-decisions.md`](tech-decisions.md)
 - CLI / code execution boundary: [`code-execution.md`](code-execution.md)
+- Code-agent RL readiness (reserved seams, design-only): [`code-agent-rl.md`](code-agent-rl.md)
 - Threat model: [`threat-model.md`](threat-model.md)
 - Economics and build-vs-buy: [`economics-and-build-vs-buy.md`](economics-and-build-vs-buy.md)
 - Glossary: [`glossary.md`](glossary.md)
