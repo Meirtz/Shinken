@@ -1,7 +1,7 @@
 # 03 — OSWorld Teardown (Design Input)
 
 > **Status:** design input · **Date:** 2026-05-30 · **Audience:** Shinken contributors
-> **Companion docs:** [02-architecture.md](architecture.md) · [04-landscape.md](landscape.md) · [05-tech-decisions.md](tech-decisions.md) · [08-threat-model.md](threat-model.md)
+> **Companion docs:** [02-architecture.md](architecture.md) · [04-landscape.md](landscape.md) · [05-tech-decisions.md](tech-decisions.md) · [08 Isolation & capability note](threat-model.md)
 
 OSWorld ([os-world.github.io](https://os-world.github.io/), paper [arXiv:2404.07972](https://arxiv.org/abs/2404.07972), code [github.com/xlang-ai/OSWorld](https://github.com/xlang-ai/OSWorld)) is the most influential open benchmark for computer-use agents: ~369 real-desktop tasks across Chrome, LibreOffice, GIMP, VLC, and multi-app workflows, scored by executable checks against a live OS inside a VM. It earned that status honestly — it was the first widely adopted harness to run *real* applications on a *real* desktop and grade *real* end states. State-of-the-art reported scores have climbed from single digits to ~83% on the OSWorld-Verified variant ([xlang.ai/blog/osworld-verified](https://xlang.ai/blog/osworld-verified)) (vendor-published, unverified), now reportedly above the ~72.4% human baseline.
 
@@ -15,7 +15,7 @@ and **what is too primitive**, then map every weakness to the Shinken decision (
 modern competitor, **trycua/cua**, which already fixed several of OSWorld's mistakes and so usefully
 calibrates "table stakes" vs. "true differentiation."
 
-This is not a takedown. OSWorld's *data-model* instincts — declarative task config, a getter/metric registry, snapshot-based reset, a uniform in-VM control API — are good and we keep them. What we replace is the *transport and runtime*: blocking HTTP polling, full-frame PNGs, code-as-action, an unauthenticated RCE server, X11/Linux-only assumptions, and slow snapshot-revert.
+This is not a takedown. OSWorld's *data-model* instincts — declarative task config, a getter/metric registry, snapshot-based reset, a uniform in-VM control API — are good and we keep them. What we replace is the *transport and runtime*: blocking HTTP polling, full-frame PNGs, code-as-action, an unauthenticated arbitrary-execution server with no identity or scoping, X11/Linux-only assumptions, and slow snapshot-revert.
 
 ---
 
@@ -29,7 +29,7 @@ Inside each guest VM runs a single ~1,800-line Flask file (`desktop_env/server/m
 
 - **Observe:** `GET /screenshot` renders a full-frame PNG to disk and `send_file`s it back (`main.py:263–333`), compositing the cursor via an X11-only `XFixesGetCursorImage` ctypes binding (`pyxcursor.py:52–66`). `GET /accessibility` walks the AT-SPI / UIA / AX tree and returns the **entire tree serialized as one XML string inside a JSON field** (`main.py:902–964`). `GET /terminal` scrapes the active terminal — Linux-only, returns HTTP 500 elsewhere (`main.py:361–363`).
 - **Act/Exec:** `POST /execute` runs `subprocess.run` on a caller-supplied command, with the in-source comment *"Execute the command without any safety checks"* (`main.py:92`). `POST /run_python`, `/run_bash_script`, and `/setup/launch` are likewise arbitrary execution. There is **no dedicated input route** — keyboard/mouse actions are pyautogui Python source strings shipped to `/execute`.
-- **Files / setup:** `POST /file` (arbitrary read), `/setup/upload` (arbitrary write), `/setup/download_file` (server-side fetch of any URL — an SSRF by construction), plus window-management and wallpaper routes.
+- **Files / setup:** `POST /file` (arbitrary read), `/setup/upload` (arbitrary write), `/setup/download_file` (server-side fetch of any caller-supplied URL), plus window-management and wallpaper routes.
 - **Record:** `POST /start_recording` spawns `ffmpeg -f x11grab` to a single global `/tmp/recording.mp4`; `recording_process` is one module global (`main.py:72`), so the server supports exactly one recording and implicitly one client.
 
 It *tries* to be tri-platform (Linux/Windows/macOS branches throughout) but is overwhelmingly X11/Ubuntu-centric; several non-Linux paths are stubs or carry real bugs (e.g. `/screen_size` references an unbound variable on macOS; Windows a11y uses namespace keys that are never defined; `/run_python`'s error path calls an unimported `traceback`).
@@ -128,19 +128,19 @@ The competitive lesson from trycua/cua: it already adopted several of these corr
 
 Each weakness below is grounded in `file:line` and mapped to the Shinken decision (D-ref) that closes it.
 
-### 3.1 Unauthenticated Flask `:5000` — RCE-by-design
+### 3.1 Unauthenticated Flask `:5000` — no identity, no scoping
 
-**The problem.** The in-VM server is an unauthenticated, plaintext-HTTP, arbitrary-code-execution surface bound to `0.0.0.0`:
+**The problem.** The in-VM server is an unauthenticated, plaintext-HTTP, arbitrary-command-execution surface bound to `0.0.0.0`:
 
 - `POST /execute` runs `subprocess.run` on caller-controlled input, commented *"without any safety checks"* (`main.py:92`); `/run_python`, `/run_bash_script`, `/setup/launch` are equally open.
-- `/file` is arbitrary file read, `/setup/upload` arbitrary write, `/setup/download_file` a built-in SSRF (`main.py:1135–1158, 1161–1191, 1234–1288`).
-- Flask dev server with `debug=True` ⇒ the Werkzeug interactive debugger is an RCE console on any traceback (`main.py:1797`).
+- `/file` is arbitrary file read, `/setup/upload` arbitrary write, `/setup/download_file` a server-side fetch of any caller-supplied URL (`main.py:1135–1158, 1161–1191, 1234–1288`).
+- Flask dev server with `debug=True` ⇒ the Werkzeug interactive debugger opens a code console on any traceback (`main.py:1797`).
 - Credentials are static and weak (`user`/`password`); the agent prompt literally hands the model the sudo password (`prompts.py:18`); a real third-party API key is committed in source (`surfer_agent.py:24`); `pyautogui.FAILSAFE` is force-disabled (`python.py:31`), removing the panic abort.
-- Cloud providers expose this over a **public IP/IPv6 with firewall `mode=open`** (`fastvm/provider.py:53–60`) and EC2 public-IP association — i.e. an unauthenticated RCE endpoint reachable from the internet during runs.
+- Cloud providers expose this over a **public IP/IPv6 with firewall `mode=open`** (`fastvm/provider.py:53–60`) and EC2 public-IP association — i.e. an unauthenticated execution endpoint reachable over the network during runs.
 
-**Why it's fatal for production.** "It's only a benchmark VM" stops being true the moment the runtime serves production agents handling real credentials and data. There is no identity, no per-action scoping, no audit boundary between *agent* actions and *grader* actions.
+**Why it's too primitive for a runtime.** "It's only a benchmark VM" stops being true the moment the runtime serves production agents handling real credentials and data. There is no identity, no per-action scoping, no boundary between *agent* actions and *grader* actions.
 
-**Shinken fix — D6 + D2 + D9.** A three-layer permission model: a **Cedar** declarative decision layer (formally verifiable, sub-ms), an object-capability caretaker/membrane handle layer (O(1) revoke), and **OS enforcement** (Linux: bubblewrap + seccomp network-gate + Landlock + cgroups + an **out-of-VM egress proxy**, deny-by-default). Eight capability classes (`net.egress`, `fs.scope`, `clipboard`, `gpu`, `install.privileged/sudo`, `persistence`, `credentials`, `peripheral`) with four risk tiers (Auto/Notify/Ask/Block). The host↔guest channel is **virtio-vsock, never HTTP-on-a-public-port** (D4). Secrets are brokered via Vault/KMS with proxy header-injection so the model never sees plaintext (D6). The agent loop runs **outside** the sandbox and routes tool calls through a controlled `tool_runner` boundary and the **Action Gateway** choke point (auth → rate-limit → budget → Cedar policy → dispatch) (D9). See [08-threat-model.md](threat-model.md) and [permissions](../../notes/permissions.md).
+**Shinken fix — D6 + D2 + D9.** A three-layer capability model — runtime plumbing that scopes each Sandbox to the resources its task needs: a **Cedar** declarative decision layer (formally verifiable, sub-ms), an object-capability caretaker/membrane handle layer (O(1) revoke), and **OS enforcement** (Linux: bubblewrap + seccomp network-gate + Landlock + cgroups + an **out-of-VM egress proxy**, deny-by-default). Eight capability classes (`net.egress`, `fs.scope`, `clipboard`, `gpu`, `install.privileged/sudo`, `persistence`, `credentials`, `peripheral`) with four scope tiers (Auto/Notify/Ask/Block). The host↔guest channel is **virtio-vsock, not HTTP-on-a-public-port** (D4). Secrets are brokered via Vault/KMS with proxy header-injection so the model never sees plaintext (D6). The agent loop runs **outside** the sandbox and routes tool calls through a controlled `tool_runner` boundary and the **Action Gateway** choke point (auth → rate-limit → budget → Cedar policy → dispatch) (D9). See the [08 Isolation & capability note](threat-model.md) and [permissions](../../notes/permissions.md).
 
 ### 3.2 Full-frame PNG polling — bandwidth waste, no streaming
 
@@ -188,7 +188,7 @@ These two cross-cut everything above; OSWorld has neither as a first-class featu
 
 **No replay.** The replay hooks are explicit stubs: `setup.py` `_act_setup` / `_replay_setup` raise `NotImplementedError` (`setup.py:460–471`); `getters/replay.py:get_replay` only re-emits three action types and is fixme-flagged. Action execution is non-deterministic (`python.py:315–318`). The only artifacts are write-only PNGs + a JSONL of free-text strings + an opaque post-hoc mp4, served by a poll-and-full-page-refresh Flask `monitor/`. There is no structured, timestamped, re-runnable event log; no action IDs; no pre/post state hashes. **Shinken fix — D5:** the event stream *is* the replay log. The `.skn` bundle (ZIP, Playwright-trace model) holds `manifest.json` + append-only `events.jsonl` (logical-clock `seq` + wall anchor, `action_id` pairing action→observation) + an immutable, branchable checkpoint DAG + content-addressed media. Not bit-deterministic — a pragmatic state-snapshot + event-log + observation-log. **Branch = CoW-fork env snapshot + deserialize agent checkpoint → re-run from step N** (the same fork primitive as reset). `.skn` doubles as RL/SFT training data — a supporting byproduct of the runtime-state wedge, never the headline (D12). See [replay](../../notes/replay.md).
 
-**No capability model.** Covered in §3.1; the fix is D6's three-layer Sandbox Capability Manager: explicit egress, credentials, host filesystem, GPU, persistence, and OS automation entitlements, with grants/denials as first-class replay events. cua's capability story is also weak (binary container-name + API-key; safety-check hook unimplemented) — so this is an open lane to win on trust.
+**No capability model.** Covered in §3.1; the fix is D6's three-layer Sandbox Capability Manager — runtime plumbing that scopes each Sandbox to the egress, credentials, host filesystem, GPU, persistence, and OS-automation resources its task needs, with grants/denials as first-class replay events. cua's capability story is also thin (binary container-name + API-key; safety-check hook unimplemented) — so finer-grained resource scoping is an open lane.
 
 ---
 
@@ -196,34 +196,35 @@ These two cross-cut everything above; OSWorld has neither as a first-class featu
 
 | # | OSWorld weakness | Representative `file:line` | Shinken decision |
 |---|---|---|---|
-| 1 | Unauthenticated Flask `:5000` RCE-by-design (no auth/TLS, SSRF, debug console, public IP) | `main.py:92, 1797`; `fastvm/provider.py:53–60`; `surfer_agent.py:24` | **D6** (Cedar+ocap+OS, egress proxy) · **D2** (`tool_runner`) · **D4** (vsock) · **D9** (Action Gateway) |
+| 1 | Unauthenticated Flask `:5000` arbitrary-execution server (no auth/TLS, no identity or scoping, debug console, public IP) | `main.py:92, 1797`; `fastvm/provider.py:53–60`; `surfer_agent.py:24` | **D6** (Cedar+ocap+OS, egress proxy) · **D2** (`tool_runner`) · **D4** (vsock) · **D9** (Action Gateway) |
 | 2 | Full-frame PNG polling + whole-XML a11y per step; no streaming | `main.py:263–333, 902–964`; `desktop_env.py:332–340` | **D3** (screenshot-first + structured upgrade) · **D4** (WebRTC dual-channel, NVENC) |
 | 3 | Code-as-action; 5 untyped action dialects; non-deterministic exec | `python.py:29–37, 195–222, 315–318` | **D2** (typed schema + adapters; code-as-action off-by-default) |
 | 4 | X11/Linux-only in practice; hardcoded `Ubuntu`/`1920×1080` | `run.py:167`; `main.py:361–363`; `actions.py:1–2`; `pyxcursor.py:52–66` | **D10** (one ACI, per-OS handlers) · **D3** (`Element` schema) · **D1** (per-OS substrate) |
 | 5 | Slow snapshot-revert; no fork/warm-pool; hardcoded sleeps; process-per-VM | `desktop_env.py:293–302`; `aws/provider.py:142–198`; `lib_run_single.py:26, 64` | **D1** (CoW fork-from-snapshot) · **D9** (warm pools) · **D7** (readiness probes, forked replicas) |
 | 6 | Brittle stringly-typed evaluators; untested graders; mutating grade-time setup | `desktop_env.py:364–409, 453–519`; `chrome.py:205–236`; `basic_os.py` | **D7** (typed verifier DAG; task+grader+env versioned; conformance-tested) |
 | 7a | No replay (stubs; non-deterministic; write-only logs) | `setup.py:460–471`; `getters/replay.py`; `python.py:315–318` | **D5** (`.skn` event-sourced, branchable) |
-| 7b | No permissions (recap of #1) | `main.py:92`; `prompts.py:18` | **D6** (capability-unlock; HITL) |
+| 7b | No resource scoping (recap of #1) | `main.py:92`; `prompts.py:18` | **D6** (capability scoping; HITL) |
 
 ---
 
 ## 5. The thesis, restated
 
-OSWorld proved the *task model* — a real OS, real apps, executable graders, declarative task JSON. It is a great benchmark and a poor runtime: its transport (blocking HTTP poll), actuation (arbitrary code strings), security posture (an open RCE server), observation model (full PNGs), reset (minute-scale relaunch), and grading (stringly-typed reflection) are all the *primitive* path, not the *streaming production* path its own submodules already gesture toward.
+OSWorld proved the *task model* — a real OS, real apps, executable graders, declarative task JSON. It is a great benchmark and a poor runtime: its transport (blocking HTTP poll), actuation (arbitrary code strings), guest server (an unauthenticated arbitrary-execution endpoint with no identity or scoping), observation model (full PNGs), reset (minute-scale relaunch), and grading (stringly-typed reflection) are all the *primitive* path, not the *streaming production* path its own submodules already gesture toward.
 
 Shinken keeps OSWorld's good data-model instincts and rebuilds the runtime around six commitments that fall directly out of this teardown:
 
 1. **Screenshot-first, structured-upgrade** observation (D3) instead of full-frame PNG polling as the whole product.
 2. **A single typed, versioned action schema** with adapters (D2) instead of five code-as-action dialects.
 3. **Dual-channel WebRTC streaming over vsock** (D4) instead of blocking HTTP on a public port.
-4. **Capability-unlock permissions + an Action Gateway** (D6, D9) instead of an unauthenticated RCE server.
+4. **Per-Sandbox capability scoping + an Action Gateway** (D6, D9) instead of an unauthenticated, unscoped execution server.
 5. **CoW fork-from-snapshot** (D1) — the same primitive for instant reset *and* replay-branching — instead of minute-scale relaunch.
 6. **Event-sourced `.skn` replay** (D5) and a **typed, conformance-tested verifier DAG** (D7) instead of write-only logs and stringly-typed graders.
 
 The competitive read from trycua/cua sharpens the bar: cua already fixed #2 (typed actions),
 structured a11y, and basic trajectory replay, and matched cross-platform breadth — so those are
 table stakes. Shinken's defensible wins are **real-time streaming**, **bandwidth via structured
-paths where coverage is strong**, **high concurrency via fork**, **fine-grained permissions**, and
-**training/eval-grade replay artifacts** — exactly the axes where both OSWorld and cua are weakest.
+paths where coverage is strong**, **high concurrency via fork**, and
+**training/eval-grade replay artifacts** — exactly the axes where both OSWorld and cua are weakest
+(finer-grained per-Sandbox resource scoping rounds out the runtime as plumbing, not a headline win).
 See [02-architecture.md](architecture.md) and [04-landscape.md](landscape.md) for how those
 wins compose into a single platform serving production agents and evaluation on one runtime.

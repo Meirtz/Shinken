@@ -6,7 +6,7 @@
 > scope and narrative, not current implementation status. Current status lives in
 > [`STATUS.md`](../engineering/status.md).
 >
-> Sibling docs: [01 PRD](prd.md) · [02 Architecture](architecture.md) · [03 OSWorld teardown](osworld-analysis.md) · [04 Landscape](landscape.md) · [05 Tech decisions (ADRs)](tech-decisions.md) · [06 Roadmap](../engineering/roadmap.md) · [07 Glossary](glossary.md) · [08 Threat model](threat-model.md) · [09 Economics & build-vs-buy](economics-and-build-vs-buy.md) · Sources: [`../../notes/sources.md`](../../notes/sources.md)
+> Sibling docs: [01 PRD](prd.md) · [02 Architecture](architecture.md) · [03 OSWorld teardown](osworld-analysis.md) · [04 Landscape](landscape.md) · [05 Tech decisions (ADRs)](tech-decisions.md) · [06 Roadmap](../engineering/roadmap.md) · [07 Glossary](glossary.md) · [08 Isolation & capability note](threat-model.md) · [09 Economics & build-vs-buy](economics-and-build-vs-buy.md) · Sources: [`../../notes/sources.md`](../../notes/sources.md)
 
 **Shinken is the open infrastructure stack for computer-use agents.** It is an AI-native,
 cross-platform **sandbox runtime + control plane + control panel** that boots real desktop/browser
@@ -214,4 +214,4 @@ Being opinionated means saying no. As of 2026-06-02:
 
 ### Open questions carried forward (do not paper over)
 
-The **a11y-tree coverage** assumption on Electron/Qt/canvas/games is the load-bearing unverified bet behind the bandwidth and replay-stability claims (it needs a measurement spike); macOS/Windows fast-reset is largely infeasible today; Windows-in-cloud licensing and the macOS ~2-VM/host cap shape cost and roadmap; **all speed/density/cost numbers in this document are vendor-published and unverified** pending a first-party measurement plan; and a consolidated threat model and the multi-player in/out decision are still open. These flow into [01 PRD](prd.md), [05 Tech decisions](tech-decisions.md), [08 Threat model](threat-model.md), and [09 Economics & build-vs-buy](economics-and-build-vs-buy.md).
+The **a11y-tree coverage** assumption on Electron/Qt/canvas/games is the load-bearing unverified bet behind the bandwidth and replay-stability claims (it needs a measurement spike); macOS/Windows fast-reset is largely infeasible today; Windows-in-cloud licensing and the macOS ~2-VM/host cap shape cost and roadmap; **all speed/density/cost numbers in this document are vendor-published and unverified** pending a first-party measurement plan; and the isolation & capability boundaries and the multi-player in/out decision are still open. These flow into [01 PRD](prd.md), [05 Tech decisions](tech-decisions.md), the [08 Isolation & capability note](threat-model.md), and [09 Economics & build-vs-buy](economics-and-build-vs-buy.md).

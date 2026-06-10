@@ -5,7 +5,7 @@
 > required product semantics and SLO targets, not current implementation. Current implementation
 > status lives in [`STATUS.md`](../engineering/status.md); v0.0.1 implementation scope lives in
 > [`10-phase0-plan.md`](../engineering/v0.0.1-plan.md).
-> **Siblings:** [00 Vision](vision.md) · [02 Architecture](architecture.md) · [03 OSWorld teardown](osworld-analysis.md) · [04 Landscape](landscape.md) · [05 Tech decisions / ADRs](tech-decisions.md) · [06 Roadmap](../engineering/roadmap.md) · [07 Glossary](glossary.md) · [08 Threat model](threat-model.md) · [09 Economics & build-vs-buy](economics-and-build-vs-buy.md)
+> **Siblings:** [00 Vision](vision.md) · [02 Architecture](architecture.md) · [03 OSWorld teardown](osworld-analysis.md) · [04 Landscape](landscape.md) · [05 Tech decisions / ADRs](tech-decisions.md) · [06 Roadmap](../engineering/roadmap.md) · [07 Glossary](glossary.md) · [08 Isolation & capability note](threat-model.md) · [09 Economics & build-vs-buy](economics-and-build-vs-buy.md)
 
 Shinken is the open infrastructure stack for computer-use agents: an AI-native, cross-platform
 **Sandbox runtime + Control Plane + Control Panel** that serves *production agent deployment*,
@@ -17,7 +17,7 @@ and human supervision. This PRD enumerates the personas and their top journeys, 
 **functional requirements** grouped by subsystem (Sandbox lifecycle, ACI actions [D2], observation
 [D3], streaming [D4], replay [D5], sandbox capability management [D6], eval [D7], control plane
 [D9], interfaces/SDK/MCP [D8]), the **non-functional requirements** (concurrency, latency budgets,
-cost, security/isolation, availability, multi-tenancy, compliance), explicit **in/out-of-scope**, and
+cost, isolation & resource scoping, availability, multi-tenancy, compliance), explicit **in/out-of-scope**, and
 **success KPIs**. Every requirement carries an ID (`FR-<SUBSYS>-N` / `NFR-<CLASS>-N`) and is
 reconciled to its governing decision **D1–D12** (see [05 Tech decisions](tech-decisions.md)).
 Numeric speed/density/cost figures are marked **(vendor-published, unverified)** unless first-party;
@@ -171,10 +171,10 @@ Sandbox capability management is a **3-layer entitlement + boundary-enforcement*
 | FR-PRM-1 | The decision layer MUST be **[Cedar](https://docs.cedarpolicy.com/)** (formally verifiable via SMT/Lean, sub-ms), **NOT** OPA/Rego, evaluating sandbox capability grants with deny-wins-at-any-scope and managed > project > session precedence. | D6 |
 | FR-PRM-2 | A separate **[object-capability](https://en.wikipedia.org/wiki/Object-capability_model) caretaker/membrane handle layer** MUST provide O(1) instant, synchronous revoke (fail-closed at next use), independent of any policy-cache window. | D6 |
 | FR-PRM-3 | OS enforcement MUST bind per guest: Linux = bubblewrap + seccomp (network-gate) + [Landlock](https://docs.kernel.org/userspace-api/landlock.html) + cgroups + an **out-of-VM egress proxy**; macOS = Seatbelt + TCC entitlement preflight; Windows = restricted token + per-workspace capability-SID. | D6 |
-| FR-PRM-4 | The egress proxy MUST be deny-by-default, scoped-domain (`host` / `*.host` / `**.host`, rejecting a bare global `*`), anti-domain-fronting, and fail-closed, with optional TLS-terminating MITM for high-risk sessions, and MUST harden DNS as a first-class egress channel (block raw port 53, force a controlled resolver). | D6, NFR-SEC |
-| FR-PRM-5 | The capability grammar MUST be **8 typed boundary/entitlement classes**: `net.egress`, `fs.scope` / host mounts, `clipboard`, `gpu`, `install.privileged/sudo`, `persistence`, `credentials`, `peripheral` / OS automation — each carrying `{scope, risk_tier, lifecycle, enforcement_binding}`. | D6 |
+| FR-PRM-4 | The egress proxy MUST be deny-by-default and scoped-domain (`host` / `*.host` / `**.host`, rejecting a bare global `*`), so a Sandbox reaches only the network hosts its task was granted, with an optional TLS-terminating mode and a controlled DNS resolver. | D6, NFR-SEC |
+| FR-PRM-5 | The capability grammar MUST be **8 typed resource classes**: `net.egress`, `fs.scope` / host mounts, `clipboard`, `gpu`, `install.privileged/sudo`, `persistence`, `credentials`, `peripheral` / OS automation — each carrying `{scope, scope_tier, lifecycle, enforcement_binding}`. | D6 |
 | FR-PRM-6 | Sandbox-internal actions SHOULD run without per-action human approval once the Sandbox is provisioned. The classifier MUST focus on boundary crossings: external egress, credential use, host filesystem scopes, persistence, expensive compute, and production-side effects. | D6 |
-| FR-PRM-7 | On an exceptional boundary `Ask`, the session MUST pause and stream a typed approval/configuration card showing the actor, requested capability, scope, blast radius, lifecycle, and **Grant / Narrow / Deny**. | D6 |
+| FR-PRM-7 | On an exceptional boundary `Ask`, the session MUST pause and stream a typed approval/configuration card showing the actor, requested capability, scope, affected resources, lifecycle, and **Grant / Narrow / Deny**. | D6 |
 | FR-PRM-8 | Grants MUST be scoped, time-boxed, and lifecycle-revocable: `once` / `session` / persisted policy amendment; an agent MUST never be able to widen its own authority (the policy store is write-protected under managed precedence). | D6 |
 | FR-PRM-9 | Secrets MUST be brokered at the proxy via header-injection from a secret broker ([HashiCorp Vault](https://www.hashicorp.com/products/vault), any cloud KMS, or [SPIFFE/SPIRE](https://spiffe.io/)) with JIT short-lived credentials; the model MUST never see plaintext, and credentials MUST never enter the agent context or the replay. | D6, NFR-SEC |
 | FR-PRM-10 | The system MUST **fail closed on ambiguous boundary grants**: unmatched external capability → deny/ask; reviewer timeout → capability not granted; critical boundary capability → pre-authorized only. Ordinary in-sandbox actions continue within the existing entitlement envelope. | D6, NFR-SEC |
@@ -284,17 +284,17 @@ RPC path is not acceptable for hot binary transfer.
 | NFR-COST-4 | macOS and Windows MUST be priced as scarce/heavier premium tiers (macOS ≤2 VMs/host; Windows per-core licensing) and capacity-planned as standing pools. | D1, D10 |
 | NFR-COST-5 | File/artifact transfer MUST be metered separately from action/observation traffic and deduplicated where content-addressed resources repeat across runs. | D5, D9 |
 
-### 3.4 Security & isolation (NFR-SEC) — D1, D6
+### 3.4 Isolation & resource scoping (NFR-SEC) — D1, D6
 
 | ID | Requirement | Reconciles |
 |----|-------------|-----------|
-| NFR-SEC-1 | Isolation MUST be tiered: gVisor/Kata containers (the default Linux fast-path) up to a per-session microVM (its own guest kernel) for untrusted/sensitive workloads. | D1 |
+| NFR-SEC-1 | Isolation MUST be tiered: gVisor/Kata containers (the default Linux fast-path) up to a per-session microVM (its own guest kernel) for workloads that need a stronger isolation boundary. | D1 |
 | NFR-SEC-2 | Network MUST be **deny-by-default**, with the out-of-VM egress proxy the only path out, backed by OS netns/firewall so an agent that ignores proxy env vars still cannot egress. | D6 |
 | NFR-SEC-3 | All credentials MUST be JIT short-lived and brokered at the proxy (Vault dynamic secrets / SPIFFE SVIDs); never in the agent context or the replay. | D6 |
-| NFR-SEC-4 | Risk classification MUST be taint-aware, and the design MUST respect the **Agents Rule of Two** (at most two of {untrusted input, sensitive-data access, state-change/external communication}; if all three are needed, require a human in the loop). | D6 |
-| NFR-SEC-5 | A consolidated **threat model** (prompt-injection → exfiltration, sandbox escape, multi-tenant noisy-neighbor) MUST be authored before scaling — see [08 Threat model](threat-model.md). *(Static prompt-injection defenses are reportedly 0–62% robust; adaptive attacks 80–100% successful — published research, unverified.)* | D6 |
+| NFR-SEC-4 | Boundary-crossing capabilities (external egress + sensitive-data access + external state-change combined) SHOULD be classifiable so an operator can require a human in the loop before they are all granted at once. | D6 |
+| NFR-SEC-5 | The isolation and capability boundaries (guest isolation tier, egress scoping, multi-tenant separation) MUST be documented before scaling — see the [08 Isolation & capability note](threat-model.md). | D6 |
 | NFR-SEC-6 | Every capability denial (Landlock audit, egress-proxy decision event, Windows audit) MUST feed the replay/audit timeline as a structured event. | D5, D6 |
-| NFR-SEC-7 | The trusted GPU substrate MUST use a GPU TEE + remote attestation + Confidential Containers for isolation-sensitive tenants; prefer MIG-backed vGPU / Kata GPU passthrough over raw time-slicing/MPS for untrusted GPU agents. | D11, D1 |
+| NFR-SEC-7 | The trusted GPU substrate MUST use a GPU TEE + remote attestation + Confidential Containers for isolation-sensitive tenants; prefer MIG-backed vGPU / Kata GPU passthrough over raw time-slicing/MPS where stronger GPU isolation is required. | D11, D1 |
 
 ### 3.5 Availability (NFR-AVAIL) — D9
 
@@ -311,7 +311,7 @@ RPC path is not acceptable for hot binary transfer.
 | ID | Requirement | Reconciles |
 |----|-------------|-----------|
 | NFR-MT-1 | Rate limiting and budgets MUST be per-(tenant, workload, model) at the Action Gateway. | D9 |
-| NFR-MT-2 | GPU scheduling MUST use Equal Share or Fixed Share (per-agent SLA), **never** Best Effort for untrusted/noisy multi-tenant (one runaway agent must not monopolize the GPU). | D11 |
+| NFR-MT-2 | GPU scheduling MUST use Equal Share or Fixed Share (per-agent SLA), **never** Best Effort for noisy multi-tenant (one runaway agent must not monopolize the GPU). | D11 |
 | NFR-MT-3 | Per-session microVMs MUST be destroyed + memory-sanitized at end (no cross-tenant contamination). | D9 |
 | NFR-MT-4 | Policy/config MUST follow managed > project > session precedence so a tenant or agent cannot widen its own authority. | D6 |
 | NFR-MT-5 | Telemetry MUST carry `shinken.tenant_id` for per-tenant attribution and cost allocation. | D9 |
@@ -399,7 +399,7 @@ These KPIs gate the phased rollout (see [06 Roadmap](../engineering/roadmap.md))
 | KPI-SAFE-1 | Auto-grant classifier false-positive rate | ≤0.4% *(the published Claude Code auto-mode bar — vendor-published, unverified)* | D6 |
 | KPI-SAFE-2 | Permission-event completeness | 100% of grants/denials recorded as replay events | D5, D6 |
 | KPI-SAFE-3 | Credential leakage | zero plaintext secrets in the agent context or the replay | D6, NFR-SEC-3 |
-| KPI-SAFE-4 | Threat model | a consolidated threat model authored before any GA scaling | NFR-SEC-5 |
+| KPI-SAFE-4 | Isolation & capability note | the isolation and capability boundaries documented before any GA scaling | NFR-SEC-5 |
 
 ---
 

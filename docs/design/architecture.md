@@ -4,7 +4,7 @@
 > Audience: architecture/design maintainers · Role: full target system specification · Source of
 > truth: component boundaries, planes, substrate model, and data flow. Current implementation status
 > lives in [`STATUS.md`](../engineering/status.md).
-> Sibling docs: [00 Vision](vision.md) · [01 PRD](prd.md) · [03 OSWorld teardown](osworld-analysis.md) · [04 Landscape](landscape.md) · [05 Tech decisions / ADRs](tech-decisions.md) · [06 Roadmap](../engineering/roadmap.md) · [07 Glossary](glossary.md) · [08 Threat model](threat-model.md) · [09 Economics & build-vs-buy](economics-and-build-vs-buy.md)
+> Sibling docs: [00 Vision](vision.md) · [01 PRD](prd.md) · [03 OSWorld teardown](osworld-analysis.md) · [04 Landscape](landscape.md) · [05 Tech decisions / ADRs](tech-decisions.md) · [06 Roadmap](../engineering/roadmap.md) · [07 Glossary](glossary.md) · [08 Isolation & capability note](threat-model.md) · [09 Economics & build-vs-buy](economics-and-build-vs-buy.md)
 
 Shinken is the open infrastructure stack for computer-use agents: an AI-native, cross-platform
 **sandbox runtime + control plane + control panel** that also exposes evaluation and trajectory-data
@@ -119,7 +119,7 @@ flowchart TB
 ### 1.1.1 Client / server responsibility split
 
 The component diagram is easier to reason about if read as five lanes. This split is also the
-security model: clients request work, the server-side control plane authorizes and records it, and
+responsibility model: clients request work, the server-side control plane authorizes and records it, and
 the guest runtime executes only validated ACI.
 
 | Lane | Owns | Must not own |
@@ -184,8 +184,7 @@ orphans from crashed control-plane nodes, not just timer expiries.
 tenant-auth  →  per-(tenant,workload,model) token-bucket + WFQ rate-limit
              →  combined budget check (tokens + sandbox-seconds + egress)
              →  Cedar policy decision (sandbox capability / entitlement authorization)
-             →  prompt-injection / untrusted-content classifier
-             →  Rule-of-Two / HITL only for boundary-crossing capabilities
+             →  optional HITL confirmation only for boundary-crossing capabilities
              →  dispatch validated typed action to the Guest Runtime
 ```
 
@@ -288,10 +287,10 @@ Rung 4  continuous NVENC video                → media plane (explicit live-wat
 ```
 
 Each observation carries a **coverage signal** (fraction of visible pixels covered by a11y bounding
-boxes) so the policy knows when an app is a11y-hostile (Electron/canvas/games) and must escalate.
+boxes) so the policy knows when an app exposes little usable a11y (Electron/canvas/games) and must escalate.
 a11y coverage on those surfaces is the **load-bearing unverified assumption** behind the structured
 cost/latency thesis, not behind the first usable GUI loop, and needs a first-party measurement spike
-([08 Threat model](threat-model.md), [09 Economics](economics-and-build-vs-buy.md)).
+([08 Isolation & capability note](threat-model.md), [09 Economics](economics-and-build-vs-buy.md)).
 
 ---
 
@@ -348,7 +347,7 @@ flowchart LR
   CPN -. "validated actions only" .-> SK
 ```
 
-Everything the guest sends *to the network* — including this callback when used — flows through the **out-of-VM egress proxy** (deny-by-default, scoped-domain allowlist, anti-domain-fronting, optional TLS-MITM, fail-closed) that is part of the OS-enforcement layer of D6 (§5.3). The egress proxy is also where the secret broker injects scoped, short-lived tokens at the network layer so the model never holds plaintext credentials.
+Everything the guest sends *to the network* — including this callback when used — flows through the **out-of-VM egress proxy** (deny-by-default, scoped-domain allowlist, optional TLS-terminating mode) that is part of the OS-enforcement layer of D6 (§5.3), so a Sandbox reaches only the network hosts its task was granted. The egress proxy is also where the secret broker injects scoped, short-lived tokens at the network layer so the model never holds plaintext credentials.
 
 ---
 
@@ -474,7 +473,7 @@ flowchart TB
 
 1. **Restore is page-fault-bound, not VMM-bound.** The VMM-side restore is cheap (<30 ms; vendor-published, unverified) but naive restore then faults thousands of guest pages off disk one-by-one on the critical path. The fix is a **REAP-style working-set record-and-prefetch** layer: record the warm working set once (8–99 MB, ~24 MB avg) and prefetch it in one sequential read before resuming vCPUs, eliminating ~97% of critical-path faults (~3.7× faster restore; vendor-published, unverified). Use `userfaultfd` (with `mincore`+`madvise` concurrent region loading) so off-working-set faults — common when agent inputs vary — are handled gracefully and can be served remotely from a page server for disaggregated pools.
 
-2. **Uniqueness is a security property, not a nit.** Forks share PRNG/CSPRNG state, MAC/IP, `boot_id`, clock, saved random-seed files, and TLS/session tokens. The `VMGenID` device reseeds *only* the kernel CSPRNG on Linux ≥5.18 (with a race window). Everything in userspace (numpy/openssl, app tokens) stays identical until the **post-fork uniqueness hook** (§1.3) resets it. Resuming the same state twice without this is a crypto/security hole.
+2. **Uniqueness is a correctness property, not a nit.** Forks share PRNG/CSPRNG state, MAC/IP, `boot_id`, clock, saved random-seed files, and TLS/session tokens. The `VMGenID` device reseeds *only* the kernel CSPRNG on Linux ≥5.18 (with a race window). Everything in userspace (numpy/openssl, app tokens) stays identical until the **post-fork uniqueness hook** (§1.3) resets it. Resuming the same state twice without this gives colliding identities and duplicated random streams.
 
 3. **Density is governed by private/dirty RSS, not snapshot size.** The ~93% shared-page advantage erodes as a workload writes memory (~265 KB private pre-execution, ~1.75 MB for numpy, ~27 MB for heavy; ~50 idle agents per 8 GB; all vendor-published, unverified). The scheduler bin-packs on measured private RSS, and forks are recycled on a fixed TTL.
 
@@ -551,7 +550,7 @@ The design principle throughout (D12): an **open, self-hostable core** — reusa
 | **D3** | Screenshot-first baseline with structured upgrades; act on element refs where available | §1.3 observation engine; §2 observation rungs; §5 step 2 |
 | **D4** | Single-PeerConnection WebRTC, dual-transport (DataChannel + on-demand NVENC track); SFU fan-out; WHIP/WHEP | §2 three planes; §5 step 6; §7 SFU topology |
 | **D5** | Event-stream + bisected snapshots = `.skn`; immutable branchable checkpoint DAG; replay = training data | §1.2 Replay Store; §5 step 7; §6 branching |
-| **D6** | 3-layer capability-unlock permission: Cedar + ocap caretaker + OS enforcement; 8 classes, 4 risk tiers | §5 step 4–5; §1.2 policy store; §4 egress proxy |
+| **D6** | 3-layer capability scoping: Cedar + ocap caretaker + OS enforcement; 8 classes, 4 scope tiers | §5 step 4–5; §1.2 policy store; §4 egress proxy |
 | **D7** | Eval = thin verifier-DAG orchestration on the runtime; `N≥5` CoW forks → pass@k / pass^k | §1.2 Eval Service; §5 step 8; §6 branching |
 | **D8** | Native streaming SDK core + optional MCP facade; never route the hot loop through MCP | §1.1 SDK + MCP facade; §1.4 Operator contract |
 | **D9** | Control plane = Fleet Manager + Action Gateway + dual-timer sessions + OTel-GenAI; sandbox = circuit-breakable | §1.2 control plane; §7 scaling + telemetry |
@@ -563,7 +562,7 @@ The design principle throughout (D12): an **open, self-hostable core** — reusa
 
 ## 10. Known gaps carried into this architecture
 
-These are not papered over (canon-aligned, also tracked in [open-questions](../../notes/open-questions.md) and [08 Threat model](threat-model.md)):
+These are not papered over (canon-aligned, also tracked in [open-questions](../../notes/open-questions.md) and the [08 Isolation & capability note](threat-model.md)):
 
 - **a11y coverage on Electron/Qt/canvas/games is the load-bearing unverified assumption** behind the structured observation cost model (§2), not behind the first usable GUI loop. Phase 0 proves the screenshot baseline first; the a11y spike decides where structured observation becomes the fast path. Until then the `coverage_ratio` signal and the SoM/OmniParser + pixel fallback rungs are the safety net.
 - **macOS / Windows fast-reset is largely infeasible today.** The matrix (§3) treats both as heavier, snapshot-light, longer-lived tiers; sub-second fork is a Linux-only property in v1.
@@ -597,4 +596,3 @@ External sources are cited inline by URL above and consolidated in [`../../notes
 - Anthropic computer-use tool (action grammars, zoom) — <https://platform.claude.com/docs/en/docs/agents-and-tools/tool-use/computer-use-tool>
 - Apple Virtualization framework + 2-VM cap — <https://developer.apple.com/documentation/virtualization>
 - Bedrock AgentCore dual-timer lifecycle — <https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-lifecycle-settings.html>
-- Meta Agents Rule of Two — <https://ai.meta.com/blog/practical-ai-agent-security/>

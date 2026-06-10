@@ -10,7 +10,7 @@
 > vendor-published number below before any figure here is allowed into a capacity plan or an SLA.
 > Cross-links: [00 Vision](vision.md) · [01 PRD](prd.md) · [02 Architecture](architecture.md) ·
 > [04 Landscape](landscape.md) · [05 Tech decisions](tech-decisions.md) ·
-> [06 Roadmap](../engineering/roadmap.md) · [08 Threat model](threat-model.md). Sources:
+> [06 Roadmap](../engineering/roadmap.md) · [08 Isolation & capability note](threat-model.md). Sources:
 > [`../../notes/sources.md`](../../notes/sources.md).
 
 **Summary.** Shinken's economic thesis fits in one sentence: *the steady-state cost of running an
@@ -109,7 +109,7 @@ The codec is rarely the bottleneck at scale; **TURN relay and SFU fan-out egress
 puts a TURN bill near **~$95k/mo at 10k relayed streams** and budgets **~1.5 GB/participant-hour at
 720p** (alert above ~2.5 GB/ph); untuned simulcast can triple receiver cost
 ([scaling WebRTC](https://amsiot.com/blog/scaling-webrtc-to-10000-devices/)) — all vendor-published,
-unverified. The structural defense is the same as §1.1: keep the default channel structured (~20
+unverified. The structural lever is the same as §1.1: keep the default channel structured (~20
 kbps, rarely needs a TURN-relayed media path), fan out the rare Tier-2 video via an SFU with
 simulcast/SVC, pin low-bandwidth reviewers to lower layers, and treat any sustained media stream as a
 billable event. A structured-default fleet simply never generates the relay traffic that produces a
@@ -230,7 +230,7 @@ vendor.
 
 | Option | What it is | Fork / branch | Self-host | Cross-OS | GPU | Fit for Shinken |
 |--------|-----------|--------------:|:---------:|:--------:|:---:|-----------------|
-| **In-house Firecracker fleet** | Own VMM-per-microVM on KVM + control plane | sub-ms fork; restore 5–30 ms (VMM only) | yes (you build it) | Linux only | none (no PCIe/VFIO) | **Core of the v1 Linux fork tier.** Max density (thousands/host), tiny attack surface, full control of the fork primitive. Cost = you operate it. |
+| **In-house Firecracker fleet** | Own VMM-per-microVM on KVM + control plane | sub-ms fork; restore 5–30 ms (VMM only) | yes (you build it) | Linux only | none (no PCIe/VFIO) | **Core of the v1 Linux fork tier.** Max density (thousands/host), tiny device-model footprint, full control of the fork primitive. Cost = you operate it. |
 | **In-house Cloud Hypervisor fleet** | rust-vmm VMM with display/VFIO/Windows | snapshot exists but excludes VFIO state (fragile) | yes | Linux + Windows | VFIO passthrough | **The desktop/Windows/GPU tier.** Firecracker has no display/GPU; CLH/QEMU fill the gap. No reliable GPU-VM fast-fork. |
 | **E2B** | OSS Firecracker SaaS + open infra | restore ~28–150 ms; pause ~4 s/GiB | yes (run the OSS infra) | Linux/X11 | none | **The blueprint to copy, not necessarily rent.** Clean `create/connect/auto-pause` lifecycle, UFFD lazy memory, 4 KiB diff dedup. Streaming is raw VNC — the gap we beat. |
 | **Morph** | Commercial CoW live-fork ("Infinibranch") | fork P99 ~1.3 ms; snapshot/branch/restore <250 ms | no (hosted) | Linux | none | **The fork numbers to match.** Owns the live-branch primitive; smaller vendor, less hyperscale-proven. Rent to prototype branching UX; not the self-host answer. |
@@ -397,7 +397,7 @@ ready pool is the right default**: it converts a tail-latency risk into a small,
 ### 4.2 Warm-parent pool depth and the per-tier asymmetry
 
 The warm-parent pool is sized by *fan-out limits and image diversity*, not arrival rate: each parent
-backs many forks (CoW), but a single parent is a blast-radius and a snapshot-chain-depth concern
+backs many forks (CoW), but a single parent is a single-point-of-failure and a snapshot-chain-depth concern
 (repeated branching regresses without compaction — the OSS reference saw branching go from ~150 ms to
 ~2.7 s by the 6th un-compacted branch). Hold **≥2 warm parents per (image×region)** for availability,
 scale parents with the number of distinct golden images, and **flatten/compact CoW chains
@@ -455,7 +455,7 @@ The load-bearing risk is that the **blend rate** (how much of a real session is 
 forced-to-pixels) and the **a11y coverage** on Electron/Qt/canvas/games are unknown. A synthetic
 "send a JSON diff" benchmark will look great and tell us nothing. The measurement corpus must be
 **real agent trajectories** on the conformance suites Shinken already targets (**D7**):
-OSWorld-Verified, WindowsAgentArena, WebArena/VisualWebArena, plus a deliberately a11y-hostile set
+OSWorld-Verified, WindowsAgentArena, WebArena/VisualWebArena, plus a deliberately a11y-poor set
 (Electron apps, `<canvas>`/WebGL, a game). Capture rides the `.skn` replay bundle (**D5**) so
 measurement is a byproduct of normal operation, not a separate harness.
 
@@ -464,7 +464,7 @@ measurement is a byproduct of normal operation, not a separate harness.
 | # | Metric | Method | Target (retires which `(unverified)` claim) |
 |---|--------|--------|---------------------------------------------|
 | **M1** | **Tier-0 structured bitrate** (active & idle), p50/p95 | Bytes/s of `events.jsonl` over real OSWorld/WebArena sessions, by app class | Active ≤ **80 kbps**, idle ≤ **5 kbps**, blend ≈ **10–30 kbps** → validates the ~150× / $36k-vs-$4.86M egress claim (§1.1) |
-| **M2** | **Pixel-escalation rate (the blend)** | Fraction of session wall-time + screen-area forced to Tier-1/Tier-2 because a11y/DOM coverage failed or churn was too high; per app class | Pixel-time ≤ **10–20%** on instrumented apps; record the worst-case a11y-hostile rate explicitly → validates §1.1/§1.5 |
+| **M2** | **Pixel-escalation rate (the blend)** | Fraction of session wall-time + screen-area forced to Tier-1/Tier-2 because a11y/DOM coverage failed or churn was too high; per app class | Pixel-time ≤ **10–20%** on instrumented apps; record the worst-case a11y-poor rate explicitly → validates §1.1/§1.5 |
 | **M3** | **a11y/DOM coverage** | % of interactive elements with usable role/name/bbox vs ground-truth, per toolkit (GTK/Qt/Electron/Chromium/Win UIA/macOS AX) | Coverage ≥ **90%** on standard toolkits; quantify the Electron/canvas gap as a number, not a hand-wave |
 | **M4** | **Fork latency & time-to-first-action** | Wall-clock fork request → ready → first ACI ack, p50/p95/p99, with/without working-set prefetch | Fork p99 ≤ **30 ms** VMM; **time-to-first-action ≤ 1 s** → validates §4 `T_provision` and the D1 sub-second target |
 | **M5** | **Private dirty RSS per fork** | Measure CoW dirtied pages per desktop fork at t=0/1min/10min, for idle browser / active browser / office-doc | Establish the real density band (§1.3); if ≤128 MB the plausible band holds, if >256 MB revise packing down |
