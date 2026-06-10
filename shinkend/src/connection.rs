@@ -46,6 +46,9 @@ pub struct ScreencastSpec {
     /// server-side stream registry by the serve loop (main.rs) — never here, so the
     /// [`Session`] stays a pure state machine.
     pub resume_stream: Option<String>,
+    /// Dirty-tile delta mode (B2): push only changed 64px tiles plus periodic full
+    /// keyframes instead of full frames.
+    pub delta: bool,
 }
 
 /// A side effect on the connection's frame stream, returned alongside a reply.
@@ -323,6 +326,7 @@ fn dispatch_action(
                         scope,
                         format: img.format.as_str().to_string(),
                     }),
+                    tiles: None,
                 },
                 Err(e) => ack(call_id, false, Some(e.to_string())),
             };
@@ -330,6 +334,23 @@ fn dispatch_action(
         }
         "start_screencast" => {
             let fps = spec.fps.unwrap_or(FPS_DEFAULT).clamp(FPS_MIN, FPS_MAX);
+            let delta = spec.delta.unwrap_or(false);
+            // A delta stream needs raw (pre-encode) capture to diff tiles; nack a
+            // backend that can't do it rather than ack and then die frameless.
+            if delta && !exec.supports_raw_capture() {
+                return (
+                    ack(
+                        call_id,
+                        false,
+                        Some(format!(
+                            "delta screencast not supported by the {} backend",
+                            exec.backend()
+                        )),
+                    ),
+                    StreamCtl::None,
+                    0,
+                );
+            }
             let cast = ScreencastSpec {
                 stream_id: call_id.to_string(),
                 fps,
@@ -342,6 +363,7 @@ fn dispatch_action(
                 scope,
                 start_seq: 0,
                 resume_stream: spec.resume_stream,
+                delta,
             };
             (ack(call_id, true, None), StreamCtl::Start(cast), 0)
         }
@@ -605,6 +627,41 @@ mod tests {
             }
             other => panic!("expected Start, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn start_screencast_delta_flag_reaches_the_spec() {
+        let mut s = session(None);
+        s.on_text(HELLO);
+        let step = s.on_text(
+            r#"{"type":"action","call_id":"sc1","action":{"verb":"start_screencast","delta":true}}"#,
+        );
+        assert!(step.reply.unwrap().contains("\"ok\":true"));
+        match step.stream {
+            StreamCtl::Start(spec) => assert!(spec.delta),
+            other => panic!("expected Start, got {other:?}"),
+        }
+        // and an omitted delta stays full-frame mode
+        let step =
+            s.on_text(r#"{"type":"action","call_id":"sc2","action":{"verb":"start_screencast"}}"#);
+        match step.stream {
+            StreamCtl::Start(spec) => assert!(!spec.delta),
+            other => panic!("expected Start, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn delta_screencast_is_nacked_on_a_backend_without_raw_capture() {
+        // SizedExec keeps the trait defaults: no capture_raw → supports_raw_capture()
+        // is false → the delta request must be nacked, not acked-then-frameless.
+        let mut s = Session::new(None, Arc::new(SizedExec(640, 480)));
+        s.on_text(HELLO);
+        let step = s.on_text(
+            r#"{"type":"action","call_id":"sc1","action":{"verb":"start_screencast","delta":true}}"#,
+        );
+        let reply = step.reply.unwrap();
+        assert!(reply.contains("\"ok\":false") && reply.contains("delta screencast not supported"));
+        assert_eq!(step.stream, StreamCtl::None);
     }
 
     #[test]

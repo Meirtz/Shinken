@@ -29,6 +29,15 @@ pub struct Capabilities {
     pub targets: Vec<String>,
     pub observation_types: Vec<String>,
     pub max_long_edge: u32,
+    /// Image codecs this runtime can encode (`png` / `jpeg`). A client must not request
+    /// a `format` outside this list. Defaults to png-only when absent so a welcome from
+    /// a pre-negotiation runtime still parses (those only ever encoded PNG).
+    #[serde(default = "default_image_formats")]
+    pub image_formats: Vec<String>,
+}
+
+fn default_image_formats() -> Vec<String> {
+    vec!["png".to_string()]
 }
 
 /// An image carried in an `observation` (base64 image bytes + codec + dimensions).
@@ -47,6 +56,20 @@ pub struct ImageRef {
 
 fn default_image_format() -> String {
     "png".to_string()
+}
+
+/// One changed tile in a dirty-tile delta frame (`tiles` on an `observation`).
+/// Coordinates are in the delivered (post-downscale) resolution of the stream's last
+/// full keyframe; `ref` is the tile's base64 image, encoded per the stream's
+/// format/quality (the tile carries no codec field — the keyframe's `format` governs).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TileRef {
+    pub x: u32,
+    pub y: u32,
+    pub w: u16,
+    pub h: u16,
+    #[serde(rename = "ref")]
+    pub data: String,
 }
 
 /// One ACI message. `#[serde(tag = "type")]` gives the `{"type": "..."}` discriminator.
@@ -110,6 +133,10 @@ pub enum Message {
         seq: Option<u64>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         image: Option<ImageRef>,
+        /// Dirty-tile delta frame (`start_screencast` with `delta`): only the tiles
+        /// that changed since the previous delivered frame, INSTEAD of `image`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tiles: Option<Vec<TileRef>>,
     },
 }
 
@@ -160,6 +187,9 @@ pub fn capabilities() -> Capabilities {
             .map(|s| s.to_string())
             .collect(),
         max_long_edge: MAX_LONG_EDGE,
+        // Codec negotiation: advertise what encode_frame can actually produce, so a
+        // client can reject an unsupported `format` before sending it.
+        image_formats: ["png", "jpeg"].iter().map(|s| s.to_string()).collect(),
     }
 }
 
@@ -184,6 +214,19 @@ pub fn stream_frame(stream_id: &str, seq: u64, image: ImageRef) -> Message {
         stream: Some(stream_id.to_string()),
         seq: Some(seq),
         image: Some(image),
+        tiles: None,
+    }
+}
+
+/// Build one server-pushed dirty-tile delta frame: only the changed tiles, no `image`.
+pub fn stream_tiles_frame(stream_id: &str, seq: u64, tiles: Vec<TileRef>) -> Message {
+    Message::Observation {
+        obs_id: format!("{stream_id}-{seq}"),
+        cause: None,
+        stream: Some(stream_id.to_string()),
+        seq: Some(seq),
+        image: None,
+        tiles: Some(tiles),
     }
 }
 
@@ -288,6 +331,62 @@ mod tests {
                 "advertised observation {o} not in schema ObservationType"
             );
         }
+    }
+
+    // Contract test: the advertised codecs must equal the schema's ImageFormat enum, so
+    // negotiation can never promise a codec the published contract doesn't know.
+    #[test]
+    fn advertised_image_formats_match_schema() {
+        let mut adv = capabilities().image_formats;
+        adv.sort();
+        assert_eq!(
+            adv,
+            schema_enum("ImageFormat"),
+            "advertised image_formats must equal the schema ImageFormat enum"
+        );
+    }
+
+    // Back-compat: a welcome from a pre-negotiation runtime (no image_formats field)
+    // must parse as png-only — those runtimes only ever encoded PNG.
+    #[test]
+    fn welcome_without_image_formats_parses_as_png_only() {
+        let old = r#"{"type":"welcome","v":0,
+            "server":{"name":"shinkend","version":"0.0.0","platform":"linux"},
+            "capabilities":{"schema_version":0,"verbs":[],"targets":[],
+                            "observation_types":[],"max_long_edge":2576}}"#;
+        let msg: Message = serde_json::from_str(old).unwrap();
+        match msg {
+            Message::Welcome { capabilities, .. } => {
+                assert_eq!(capabilities.image_formats, vec!["png".to_string()]);
+            }
+            other => panic!("expected welcome, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tiles_frame_serializes_tiles_without_image() {
+        let msg = stream_tiles_frame(
+            "s1",
+            7,
+            vec![TileRef {
+                x: 64,
+                y: 0,
+                w: 64,
+                h: 36,
+                data: "abc".to_string(),
+            }],
+        );
+        let text = serde_json::to_string(&msg).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["stream"], "s1");
+        assert_eq!(v["seq"], 7);
+        assert!(
+            v.get("image").is_none(),
+            "a tiles frame must carry no image"
+        );
+        assert_eq!(v["tiles"][0]["ref"], "abc");
+        assert_eq!(v["tiles"][0]["x"], 64);
+        assert_eq!(v["tiles"][0]["h"], 36);
     }
 
     #[test]

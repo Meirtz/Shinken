@@ -509,6 +509,9 @@ fn spawn_screencast(
     streams: Arc<StreamRegistry>,
     generation: u64,
 ) -> JoinHandle<()> {
+    if spec.delta {
+        return spawn_delta_screencast(exec, out, spec, _permit, streams, generation);
+    }
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_secs_f64(1.0 / spec.fps));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -565,6 +568,123 @@ fn spawn_screencast(
             match out.try_send(WsMessage::Text(text)) {
                 Ok(()) => {
                     last_hash = Some(hash);
+                    seq += 1;
+                    streams.record(&spec.stream_id, seq, generation);
+                }
+                Err(mpsc::error::TrySendError::Full(_)) => continue,
+                Err(mpsc::error::TrySendError::Closed(_)) => break,
+            }
+        }
+    })
+}
+
+/// The dirty-tile delta variant of [`spawn_screencast`] (B2): capture RAW pixels
+/// (downscaled BEFORE tiling so tiles align with the delivered resolution), diff
+/// against the previous delivered frame in 64px tiles, and push only the changed
+/// tiles; a full keyframe goes out first (also right after a resume — this task
+/// restarts with an empty baseline) and every `KEYFRAME_INTERVAL`th delivered frame.
+/// An unchanged frame emits nothing (the same idle suppression as the full-frame
+/// path), and the baseline/seq advance ONLY on a successful send, so a frame dropped
+/// on a full writer queue is re-diffed next tick instead of being lost.
+///
+/// Memory bound: the baseline is ONE raw RGB frame (`w*h*3` ≈ 6 MB at 1080p) held in
+/// [`executor::DeltaState`] per active screencast — see its docs.
+fn spawn_delta_screencast(
+    exec: Arc<dyn Executor>,
+    out: mpsc::Sender<WsMessage>,
+    spec: ScreencastSpec,
+    _permit: tokio::sync::OwnedSemaphorePermit,
+    streams: Arc<StreamRegistry>,
+    generation: u64,
+) -> JoinHandle<()> {
+    use executor::{DeltaFrame, DeltaState};
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_secs_f64(1.0 / spec.fps));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        // capture_raw already downscales, so encode must not downscale again.
+        let encode_opts = crate::executor::EncodeOpts {
+            max_long_edge: None,
+            format: spec.format,
+            quality: spec.quality,
+        };
+        let max_long_edge = spec.max_long_edge;
+        let scope = spec.scope.clone();
+        let mut seq: u64 = spec.start_seq;
+        let mut state = DeltaState::default();
+        loop {
+            tick.tick().await;
+            // Capture + diff + encode all run off the runtime's worker threads (X11
+            // GetImage is blocking; tile diff/encode is real CPU work on a limited
+            // guest). Awaiting serializes ticks like the full-frame path (#137). The
+            // state moves through the closure and back, like serve() does its Session.
+            let exec2 = exec.clone();
+            let scope2 = scope.clone();
+            let st = state;
+            let (st, outcome) = match tokio::task::spawn_blocking(move || {
+                let outcome = exec2
+                    .capture_raw(&scope2, max_long_edge)
+                    .and_then(|(rgb, w, h)| {
+                        let frame = st.tick(&rgb, w, h, encode_opts)?;
+                        Ok((frame, rgb, w, h))
+                    });
+                (st, outcome)
+            })
+            .await
+            {
+                Ok(pair) => pair,
+                Err(_) => break, // the blocking pool is gone
+            };
+            state = st;
+            let Ok((frame, rgb, w, h)) = outcome else {
+                break; // capture or encode failed
+            };
+            // Keep the resume entry alive on EVERY capture tick (see the full-frame
+            // loop): suppressed/dropped frames never `record`.
+            streams.touch(&spec.stream_id, generation);
+            let (msg, was_key) = match frame {
+                DeltaFrame::Unchanged => continue, // idle suppression — no message
+                DeltaFrame::Key(img) => (
+                    protocol::stream_frame(
+                        &spec.stream_id,
+                        seq,
+                        protocol::ImageRef {
+                            data: img.data_base64,
+                            w: img.w,
+                            h: img.h,
+                            scope: spec.scope.clone(),
+                            format: img.format.as_str().to_string(),
+                        },
+                    ),
+                    true,
+                ),
+                DeltaFrame::Tiles(tiles) => (
+                    protocol::stream_tiles_frame(
+                        &spec.stream_id,
+                        seq,
+                        tiles
+                            .into_iter()
+                            .map(|t| protocol::TileRef {
+                                x: t.x,
+                                y: t.y,
+                                w: t.w,
+                                h: t.h,
+                                data: t.data_base64,
+                            })
+                            .collect(),
+                    ),
+                    false,
+                ),
+            };
+            let Ok(text) = serde_json::to_string(&msg) else {
+                break;
+            };
+            // Commit the baseline/cadence/seq ONLY on a successful send (mirrors the
+            // full-frame loop's last_hash semantics): a frame dropped on Full must be
+            // re-diffed against the SAME baseline next tick, or its tiles would be
+            // treated as already delivered and the client's view would stay stale.
+            match out.try_send(WsMessage::Text(text)) {
+                Ok(()) => {
+                    state.commit(rgb, w, h, was_key);
                     seq += 1;
                     streams.record(&spec.stream_id, seq, generation);
                 }
@@ -776,6 +896,7 @@ mod tests {
             scope: "screen".into(),
             start_seq: 0,
             resume_stream: None,
+            delta: false,
         };
         let handle = spawn_screencast(
             exec.clone(),
@@ -789,6 +910,128 @@ mod tests {
         handle.abort();
         // the loop awaits each blocking capture before the next tick → never concurrent (#137)
         assert_eq!(exec.max.load(Ordering::SeqCst), 1);
+    }
+
+    /// End-to-end delta screencast (B2) against the VirtualExecutor (whose synthetic
+    /// frame changes every capture): the FIRST frame is a full keyframe (`image`),
+    /// the following frames are dirty tiles (`tiles`, no `image`), and the keyframe
+    /// cadence re-sends a full `image` as every `KEYFRAME_INTERVAL`th delivered frame.
+    #[tokio::test]
+    async fn delta_screencast_keyframe_then_tiles_then_cadence_keyframe() {
+        use executor::KEYFRAME_INTERVAL;
+
+        let addr = spawn_server().await;
+        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}"))
+            .await
+            .unwrap();
+        ws.send(WsMessage::Text(HELLO.into())).await.unwrap();
+        assert!(text(&mut ws).await.contains("\"type\":\"welcome\""));
+        ws.send(WsMessage::Text(
+            r#"{"type":"action","call_id":"d1","action":{"verb":"start_screencast","fps":30,"delta":true}}"#
+                .into(),
+        ))
+        .await
+        .unwrap();
+        let ack = text(&mut ws).await;
+        assert!(ack.contains("\"type\":\"ack\"") && ack.contains("\"ok\":true"));
+
+        // Collect one full cadence cycle + 1: seq 0..=KEYFRAME_INTERVAL.
+        let n = KEYFRAME_INTERVAL as usize + 1;
+        let mut frames = Vec::with_capacity(n);
+        for _ in 0..n {
+            frames.push(next_observation(&mut ws).await);
+        }
+        // seq advances 0..=N with no gaps (every tick changes, none suppressed/dropped)
+        for (i, v) in frames.iter().enumerate() {
+            assert_eq!(v["stream"], "d1");
+            assert_eq!(v["seq"].as_u64().unwrap(), i as u64);
+        }
+        // frame 0: keyframe — image, no tiles
+        assert!(frames[0]["image"]["ref"].is_string());
+        assert!(frames[0].get("tiles").is_none());
+        // frames 1..KEYFRAME_INTERVAL-1: tiles only (the 2x2 frame is one edge tile)
+        for v in &frames[1..KEYFRAME_INTERVAL as usize] {
+            assert!(v.get("image").is_none(), "tile frame must carry no image");
+            let tiles = v["tiles"].as_array().unwrap();
+            assert_eq!(tiles.len(), 1);
+            assert_eq!(tiles[0]["x"], 0);
+            assert_eq!(tiles[0]["y"], 0);
+            assert_eq!(tiles[0]["w"], 2);
+            assert_eq!(tiles[0]["h"], 2);
+            assert!(tiles[0]["ref"].is_string());
+        }
+        // the KEYFRAME_INTERVALth delivered frame is a cadence keyframe again
+        let key = &frames[KEYFRAME_INTERVAL as usize];
+        assert!(
+            key["image"]["ref"].is_string() && key.get("tiles").is_none(),
+            "every {KEYFRAME_INTERVAL}th delta frame must be a full keyframe"
+        );
+    }
+
+    /// Delta + idle interplay: a static screen emits exactly ONE keyframe and then
+    /// nothing — no tile frames, no periodic keyframes (idle suppression beats the
+    /// cadence, which only counts DELIVERED frames).
+    #[tokio::test]
+    async fn delta_screencast_suppresses_unchanged_frames() {
+        use executor::{ActionSpec, CapturedImage, EncodeOpts};
+
+        /// A backend whose raw frame never changes.
+        struct StaticExec;
+        impl Executor for StaticExec {
+            fn execute(&self, _: &ActionSpec) -> anyhow::Result<String> {
+                Ok(String::new())
+            }
+            fn backend(&self) -> &'static str {
+                "static"
+            }
+            fn capture(&self, _: &str, _: EncodeOpts) -> anyhow::Result<CapturedImage> {
+                anyhow::bail!("unused")
+            }
+            fn capture_raw(&self, _: &str, _: Option<u32>) -> anyhow::Result<(Vec<u8>, u16, u16)> {
+                Ok((vec![7u8; 4 * 4 * 3], 4, 4))
+            }
+            fn supports_raw_capture(&self) -> bool {
+                true
+            }
+        }
+
+        let (out, mut rx) = mpsc::channel::<WsMessage>(8);
+        let permit = Arc::new(Semaphore::new(1)).try_acquire_owned().unwrap();
+        let spec = ScreencastSpec {
+            stream_id: "st".into(),
+            fps: 30.0,
+            max_long_edge: None,
+            format: executor::ImageFormat::Png,
+            quality: executor::DEFAULT_JPEG_QUALITY,
+            scope: "screen".into(),
+            start_seq: 0,
+            resume_stream: None,
+            delta: true,
+        };
+        let handle = spawn_screencast(
+            Arc::new(StaticExec),
+            out,
+            spec,
+            permit,
+            Arc::new(StreamRegistry::default()),
+            0,
+        );
+        // First frame: the keyframe.
+        let first = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+            .await
+            .expect("keyframe within 3s")
+            .expect("channel open");
+        let v: serde_json::Value = serde_json::from_str(&first.into_text().unwrap()).unwrap();
+        assert_eq!(v["seq"], 0);
+        assert!(v["image"]["ref"].is_string());
+        // Then: silence — many ticks pass, no further message.
+        assert!(
+            tokio::time::timeout(Duration::from_millis(400), rx.recv())
+                .await
+                .is_err(),
+            "a static screen must be idle-suppressed after the keyframe"
+        );
+        handle.abort();
     }
 
     /// Read server-pushed frames until the next `observation`, skipping acks.

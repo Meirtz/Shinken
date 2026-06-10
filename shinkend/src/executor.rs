@@ -84,6 +84,12 @@ pub struct ActionSpec {
     /// `seq` continues where it left off; otherwise a fresh stream starts (#56).
     #[serde(default)]
     pub resume_stream: Option<String>,
+    /// For `start_screencast`: dirty-tile delta mode (B2). Only changed 64px tiles
+    /// are pushed (`tiles` on the observation) instead of full frames; a full
+    /// keyframe is sent first, after a resume, and every [`KEYFRAME_INTERVAL`]th
+    /// delivered frame. Omitted = full frames.
+    #[serde(default)]
+    pub delta: Option<bool>,
 }
 
 /// Wire image codec for a captured frame. PNG is the lossless default (back-compatible
@@ -173,6 +179,26 @@ pub trait Executor: Send + Sync {
     /// full screen, no scaling, lossless PNG.
     fn capture(&self, _scope: &str, _opts: EncodeOpts) -> Result<CapturedImage> {
         self.screenshot()
+    }
+    /// Capture a region as raw RGB8 `(pixels, w, h)`, downscaled (if `max_long_edge`)
+    /// but NOT encoded — the dirty-tile delta path (B2) needs pixels to diff before
+    /// deciding what to encode. Downscale happens HERE, before tiling, so tile
+    /// coordinates align with the delivered resolution. Default: unsupported.
+    fn capture_raw(
+        &self,
+        _scope: &str,
+        _max_long_edge: Option<u32>,
+    ) -> Result<(Vec<u8>, u16, u16)> {
+        bail!(
+            "raw capture (delta screencast) not supported by the {} backend",
+            self.backend()
+        )
+    }
+    /// Whether [`Executor::capture_raw`] works on this backend — checked at
+    /// `start_screencast` dispatch so a `delta` request on a backend without raw
+    /// capture is nacked loudly instead of acked and then silently dying.
+    fn supports_raw_capture(&self) -> bool {
+        false
     }
 }
 
@@ -279,6 +305,194 @@ fn encode_frame(rgb: &[u8], w: u16, h: u16, opts: EncodeOpts) -> Result<Captured
         w,
         h,
     })
+}
+
+// ---- dirty-tile delta screencast (B2) ----
+
+/// Tile edge (px) for the dirty-tile delta screencast. Tiles are TILE_SIZE×TILE_SIZE in
+/// the DELIVERED (post-downscale) resolution; edge tiles are smaller when the frame is
+/// not a multiple. 64px ≈ one toolbar button / one text line: small enough that a
+/// keystroke dirties only a few tiles, big enough that per-tile codec overhead
+/// (PNG/JPEG headers) doesn't dominate.
+pub const TILE_SIZE: u16 = 64;
+
+/// Every Nth DELIVERED delta frame is a full keyframe instead of tiles. A constant, not
+/// negotiated: it bounds two error windows regardless of client behavior — (1) a client
+/// that joined mid-stream or whose tile frame was dropped on a full writer queue is
+/// self-healed within at most N-1 frames; (2) when `format=jpeg`, tiles are lossy
+/// regions composited client-side onto a lossy keyframe, and N bounds the accumulated
+/// compositing drift. 30 ≈ one keyframe per 6 s at the 5-fps default — frequent enough
+/// to self-heal, rare enough that steady-state bandwidth stays tile-dominated.
+pub const KEYFRAME_INTERVAL: u64 = 30;
+
+/// One changed tile's rect `(x, y, w, h)` in the delivered resolution.
+pub type TileRect = (u32, u32, u16, u16);
+
+/// A changed tile, encoded for the wire.
+#[derive(Debug, Clone)]
+pub struct EncodedTile {
+    pub x: u32,
+    pub y: u32,
+    pub w: u16,
+    pub h: u16,
+    pub data_base64: String,
+}
+
+/// Compare two equal-sized RGB8 frames tile-by-tile and return the rects of the tiles
+/// that changed. The comparison is per-row slice equality inside each tile (compiles to
+/// memcmp) with early exit on the first differing row — cheap enough to run every
+/// capture tick on a limited guest CPU.
+pub fn diff_tiles(prev: &[u8], curr: &[u8], w: u16, h: u16) -> Vec<TileRect> {
+    debug_assert_eq!(prev.len(), curr.len());
+    let (wu, hu, ts) = (w as usize, h as usize, TILE_SIZE as usize);
+    let mut out = Vec::new();
+    let mut ty = 0usize;
+    while ty < hu {
+        let th = ts.min(hu - ty); // edge tiles are smaller at non-multiple-of-64 dims
+        let mut tx = 0usize;
+        while tx < wu {
+            let tw = ts.min(wu - tx);
+            let changed = (ty..ty + th).any(|row| {
+                let start = (row * wu + tx) * 3;
+                prev[start..start + tw * 3] != curr[start..start + tw * 3]
+            });
+            if changed {
+                out.push((tx as u32, ty as u32, tw as u16, th as u16));
+            }
+            tx += ts;
+        }
+        ty += ts;
+    }
+    out
+}
+
+/// Encode raw RGB8 pixels as a PNG with the FAST compression preset + adaptive
+/// filtering. Used for tile payloads only: a delta frame encodes many small images per
+/// tick, so per-tile encode cost must stay well below the full-frame default path —
+/// `Compression::Fast` trades a few percent of size for a large deflate-time win, and
+/// adaptive filtering claws most of the size back. Keyframes keep the default-preset
+/// [`encode_png`] (one image per ~30 frames; size matters more there).
+fn encode_png_fast(rgb: &[u8], w: u32, h: u32) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
+    {
+        let mut enc = png::Encoder::new(&mut out, w, h);
+        enc.set_color(png::ColorType::Rgb);
+        enc.set_depth(png::BitDepth::Eight);
+        enc.set_compression(png::Compression::Fast);
+        enc.set_adaptive_filter(png::AdaptiveFilterType::Adaptive);
+        let mut writer = enc.write_header()?;
+        writer.write_image_data(rgb)?;
+        writer.finish()?;
+    }
+    Ok(out)
+}
+
+/// Copy one tile's pixels out of a full RGB8 frame into a contiguous buffer.
+fn tile_rgb(rgb: &[u8], frame_w: u16, rect: TileRect) -> Vec<u8> {
+    let (x, y, tw, th) = (
+        rect.0 as usize,
+        rect.1 as usize,
+        rect.2 as usize,
+        rect.3 as usize,
+    );
+    let fw = frame_w as usize;
+    let mut out = Vec::with_capacity(tw * th * 3);
+    for row in y..y + th {
+        let start = (row * fw + x) * 3;
+        out.extend_from_slice(&rgb[start..start + tw * 3]);
+    }
+    out
+}
+
+/// Encode the changed tiles of `rgb` per `opts.format`/`opts.quality` (PNG tiles use the
+/// fast preset; JPEG tiles use the existing encoder). `opts.max_long_edge` is ignored —
+/// the delta path downscales BEFORE tiling (`capture_raw`), so tiles already sit in the
+/// delivered resolution.
+pub fn encode_tiles(
+    rgb: &[u8],
+    w: u16,
+    _h: u16,
+    rects: &[TileRect],
+    opts: EncodeOpts,
+) -> Result<Vec<EncodedTile>> {
+    rects
+        .iter()
+        .map(|&rect| {
+            let (tw, th) = (rect.2, rect.3);
+            let pixels = tile_rgb(rgb, w, rect);
+            let bytes = match opts.format {
+                ImageFormat::Png => encode_png_fast(&pixels, tw as u32, th as u32)?,
+                ImageFormat::Jpeg => encode_jpeg(&pixels, tw, th, opts.quality)?,
+            };
+            Ok(EncodedTile {
+                x: rect.0,
+                y: rect.1,
+                w: tw,
+                h: th,
+                data_base64: B64.encode(bytes),
+            })
+        })
+        .collect()
+}
+
+/// What one delta-screencast tick decided to emit.
+#[derive(Debug)]
+pub enum DeltaFrame {
+    /// Nothing changed — the same idle suppression as the full-frame path (no message).
+    Unchanged,
+    /// A full keyframe: the first frame, a post-resume restart, a dimension change
+    /// (e.g. window resize), or the [`KEYFRAME_INTERVAL`] cadence.
+    Key(CapturedImage),
+    /// Only the changed tiles, to composite onto the last keyframe client-side.
+    Tiles(Vec<EncodedTile>),
+}
+
+/// Dirty-tile delta screencast state (B2): the per-stream baseline + keyframe cadence.
+///
+/// Memory bound (deliberate, guest RAM is limited): ONE previous RGB frame per active
+/// screencast — `w*h*3` bytes at the delivered (post-downscale) resolution, ≈6 MB at
+/// 1920×1080 — no tile cache, no frame history. With `MAX_SCREENCASTS = 8` the worst
+/// case stays under ~50 MB.
+///
+/// [`DeltaState::tick`] is pure compute over an already-captured frame; the baseline
+/// advances only via [`DeltaState::commit`] AFTER the frame was actually delivered, so
+/// a frame dropped on a full writer queue is re-diffed against the same baseline next
+/// tick (mirroring the non-delta loop's commit-last_hash-on-send semantics).
+#[derive(Default)]
+pub struct DeltaState {
+    prev: Option<(Vec<u8>, u16, u16)>,
+    /// Delivered frames since the last keyframe.
+    since_key: u64,
+}
+
+impl DeltaState {
+    /// Decide what to emit for the captured `rgb` (already downscaled). Does NOT
+    /// advance the baseline — call [`DeltaState::commit`] after a successful send.
+    pub fn tick(&self, rgb: &[u8], w: u16, h: u16, opts: EncodeOpts) -> Result<DeltaFrame> {
+        match &self.prev {
+            Some((prev, pw, ph)) if (*pw, *ph) == (w, h) => {
+                let rects = diff_tiles(prev, rgb, w, h);
+                if rects.is_empty() {
+                    return Ok(DeltaFrame::Unchanged);
+                }
+                if self.since_key >= KEYFRAME_INTERVAL - 1 {
+                    Ok(DeltaFrame::Key(encode_frame(rgb, w, h, opts)?))
+                } else {
+                    Ok(DeltaFrame::Tiles(encode_tiles(rgb, w, h, &rects, opts)?))
+                }
+            }
+            // No baseline (first frame / post-resume restart) or the dimensions
+            // changed (resize invalidates every tile coordinate) → full keyframe.
+            _ => Ok(DeltaFrame::Key(encode_frame(rgb, w, h, opts)?)),
+        }
+    }
+
+    /// Commit a DELIVERED frame: adopt `rgb` as the new baseline and advance the
+    /// keyframe cadence (`was_key` resets it).
+    pub fn commit(&mut self, rgb: Vec<u8>, w: u16, h: u16, was_key: bool) {
+        self.prev = Some((rgb, w, h));
+        self.since_key = if was_key { 0 } else { self.since_key + 1 };
+    }
 }
 
 const EXECUTOR_ENV: &str = "SHINKEND_EXECUTOR";
@@ -708,6 +922,18 @@ impl Executor for X11Executor {
         encode_frame(&rgb, w, h, opts)
     }
 
+    fn capture_raw(&self, scope: &str, max_long_edge: Option<u32>) -> Result<(Vec<u8>, u16, u16)> {
+        let (rgb, w, h) = self.capture_scope(parse_scope(scope))?;
+        Ok(match max_long_edge {
+            Some(m) => downscale_rgb(&rgb, w, h, m),
+            None => (rgb, w, h),
+        })
+    }
+
+    fn supports_raw_capture(&self) -> bool {
+        true
+    }
+
     fn execute(&self, a: &ActionSpec) -> Result<String> {
         match a.verb.as_str() {
             "move" => {
@@ -832,6 +1058,23 @@ impl Executor for VirtualExecutor {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed) as u8;
         let rgb: Vec<u8> = (0..2u8 * 2 * 3).map(|i| n.wrapping_add(i)).collect();
         encode_frame(&rgb, 2, 2, opts)
+    }
+
+    /// The same advancing synthetic frame as raw RGB, so the delta screencast path is
+    /// integration-testable without a display (every capture changes every pixel).
+    fn capture_raw(&self, _scope: &str, max_long_edge: Option<u32>) -> Result<(Vec<u8>, u16, u16)> {
+        let n = self
+            .frame
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed) as u8;
+        let rgb: Vec<u8> = (0..2u8 * 2 * 3).map(|i| n.wrapping_add(i)).collect();
+        Ok(match max_long_edge {
+            Some(m) => downscale_rgb(&rgb, 2, 2, m),
+            None => (rgb, 2, 2),
+        })
+    }
+
+    fn supports_raw_capture(&self) -> bool {
+        true
     }
 }
 
@@ -1050,6 +1293,183 @@ mod tests {
         // a cap of 0 means "no limit" — also a no-op
         let (_, w0, h0) = downscale_rgb(&rgb, 3, 3, 0);
         assert_eq!((w0, h0), (3, 3));
+    }
+
+    // ---- dirty-tile delta (B2) ----
+
+    /// A photographic-ish gradient frame (PNG-compressible but not trivial).
+    fn gradient(w: u16, h: u16) -> Vec<u8> {
+        (0..(w as usize * h as usize))
+            .flat_map(|i| {
+                let x = (i % w as usize) as u8;
+                let y = (i / w as usize) as u8;
+                [x.wrapping_mul(3), y.wrapping_mul(5), x ^ y]
+            })
+            .collect()
+    }
+
+    /// Set one pixel in an RGB8 frame.
+    fn poke(rgb: &mut [u8], w: u16, x: usize, y: usize) {
+        let i = (y * w as usize + x) * 3;
+        rgb[i] ^= 0xff;
+    }
+
+    #[test]
+    fn diff_tiles_finds_only_changed_tiles_including_edge_tiles() {
+        // 100x70: tile grid is (0,0,64,64) (64,0,36,64) (0,64,64,6) (64,64,36,6) —
+        // the right/bottom tiles are edge tiles smaller than 64.
+        let (w, h) = (100u16, 70u16);
+        let prev = gradient(w, h);
+        // identical frames → no tiles
+        assert!(diff_tiles(&prev, &prev, w, h).is_empty());
+        // one pixel inside the top-left tile → exactly that tile
+        let mut curr = prev.clone();
+        poke(&mut curr, w, 10, 10);
+        assert_eq!(diff_tiles(&prev, &curr, w, h), vec![(0, 0, 64, 64)]);
+        // the very last pixel (bottom-right edge tile, 36x6) → exactly that tile
+        let mut curr = prev.clone();
+        poke(&mut curr, w, 99, 69);
+        assert_eq!(diff_tiles(&prev, &curr, w, h), vec![(64, 64, 36, 6)]);
+        // pixels in two tiles → both, in row-major order
+        let mut curr = prev.clone();
+        poke(&mut curr, w, 70, 0); // (64,0,36,64)
+        poke(&mut curr, w, 0, 69); // (0,64,64,6)
+        assert_eq!(
+            diff_tiles(&prev, &curr, w, h),
+            vec![(64, 0, 36, 64), (0, 64, 64, 6)]
+        );
+    }
+
+    #[test]
+    fn encode_tiles_produces_decodable_payloads_in_the_stream_codec() {
+        let (w, h) = (100u16, 70u16);
+        let rgb = gradient(w, h);
+        let rects = vec![(64, 64, 36, 6), (0, 0, 64, 64)];
+        // PNG tiles: decodable, with the tile's own dimensions.
+        let tiles = encode_tiles(&rgb, w, h, &rects, EncodeOpts::default()).unwrap();
+        assert_eq!(tiles.len(), 2);
+        assert_eq!(
+            (tiles[0].x, tiles[0].y, tiles[0].w, tiles[0].h),
+            (64, 64, 36, 6)
+        );
+        let bytes = B64.decode(&tiles[0].data_base64).unwrap();
+        let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+        let reader = decoder.read_info().unwrap();
+        assert_eq!(reader.info().width, 36);
+        assert_eq!(reader.info().height, 6);
+        // JPEG tiles use the existing encoder (SOI marker).
+        let jt = encode_tiles(
+            &rgb,
+            w,
+            h,
+            &rects,
+            EncodeOpts {
+                max_long_edge: None,
+                format: ImageFormat::Jpeg,
+                quality: 80,
+            },
+        )
+        .unwrap();
+        let jbytes = B64.decode(&jt[1].data_base64).unwrap();
+        assert_eq!(&jbytes[..2], &[0xFF, 0xD8]);
+    }
+
+    #[test]
+    fn one_dirty_tile_costs_less_than_the_full_frame() {
+        // The lossless bandwidth lever: a single changed 64px tile must encode to
+        // (much) fewer bytes than re-encoding the whole frame.
+        let (w, h) = (256u16, 192u16);
+        let rgb = gradient(w, h);
+        let full = encode_frame(&rgb, w, h, EncodeOpts::default()).unwrap();
+        let tiles = encode_tiles(&rgb, w, h, &[(0, 0, 64, 64)], EncodeOpts::default()).unwrap();
+        assert!(
+            tiles[0].data_base64.len() < full.data_base64.len() / 2,
+            "tile ({}) should be far smaller than the full frame ({})",
+            tiles[0].data_base64.len(),
+            full.data_base64.len()
+        );
+    }
+
+    #[test]
+    fn delta_state_keyframe_tiles_cadence_and_idle() {
+        let (w, h) = (100u16, 70u16);
+        let opts = EncodeOpts::default();
+        let mut state = DeltaState::default();
+        let mut frame = gradient(w, h);
+
+        // 1) no baseline → keyframe
+        match state.tick(&frame, w, h, opts).unwrap() {
+            DeltaFrame::Key(img) => assert_eq!((img.w, img.h), (w, h)),
+            other => panic!("expected Key, got {other:?}"),
+        }
+        state.commit(frame.clone(), w, h, true);
+
+        // 2) unchanged → idle suppression, and suppression does NOT advance cadence
+        assert!(matches!(
+            state.tick(&frame, w, h, opts).unwrap(),
+            DeltaFrame::Unchanged
+        ));
+
+        // 3) KEYFRAME_INTERVAL-1 changed frames → tiles; the next one → keyframe
+        for i in 1..KEYFRAME_INTERVAL {
+            poke(&mut frame, w, (i % 60) as usize, 5);
+            match state.tick(&frame, w, h, opts).unwrap() {
+                DeltaFrame::Tiles(t) => assert_eq!(t.len(), 1, "one dirty tile expected"),
+                other => panic!("expected Tiles at delivered frame {i}, got {other:?}"),
+            }
+            state.commit(frame.clone(), w, h, false);
+        }
+        poke(&mut frame, w, 3, 3);
+        assert!(
+            matches!(state.tick(&frame, w, h, opts).unwrap(), DeltaFrame::Key(_)),
+            "every {KEYFRAME_INTERVAL}th delivered frame must be a keyframe"
+        );
+        state.commit(frame.clone(), w, h, true);
+
+        // 4) a dimension change (resize) invalidates the baseline → keyframe
+        let small = gradient(50, 40);
+        assert!(matches!(
+            state.tick(&small, 50, 40, opts).unwrap(),
+            DeltaFrame::Key(_)
+        ));
+    }
+
+    #[test]
+    fn delta_state_uncommitted_tick_rediffs_the_same_baseline() {
+        // Commit-on-send semantics: when a frame is dropped (try_send Full), the
+        // baseline must not advance — the next tick re-diffs against the SAME prev,
+        // so the change is re-attempted instead of lost.
+        let (w, h) = (100u16, 70u16);
+        let opts = EncodeOpts::default();
+        let mut state = DeltaState::default();
+        let base = gradient(w, h);
+        state.commit(base.clone(), w, h, true);
+
+        let mut changed = base.clone();
+        poke(&mut changed, w, 10, 10);
+        // tick once (frame "dropped": no commit), then tick again — both must see the change
+        assert!(matches!(
+            state.tick(&changed, w, h, opts).unwrap(),
+            DeltaFrame::Tiles(_)
+        ));
+        assert!(matches!(
+            state.tick(&changed, w, h, opts).unwrap(),
+            DeltaFrame::Tiles(_)
+        ));
+    }
+
+    #[test]
+    fn virtual_executor_capture_raw_advances_and_downscales() {
+        let ex = VirtualExecutor::default();
+        let (a, w, h) = ex.capture_raw("screen", None).unwrap();
+        assert_eq!((w, h), (2, 2));
+        assert_eq!(a.len(), 2 * 2 * 3);
+        let (b, _, _) = ex.capture_raw("screen", None).unwrap();
+        assert_ne!(a, b, "synthetic raw frames must advance per capture");
+        let (c, w1, h1) = ex.capture_raw("screen", Some(1)).unwrap();
+        assert_eq!((w1, h1), (1, 1));
+        assert_eq!(c.len(), 3);
+        assert!(ex.supports_raw_capture());
     }
 
     #[test]

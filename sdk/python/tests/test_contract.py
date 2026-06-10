@@ -35,6 +35,8 @@ def _act(verb, **kw):
         _act("start_screencast", fps=10, max_long_edge=640),
         _act("start_screencast", fps=10, resume_stream="sc-old"),
         _act("start_screencast", fps=10, format="jpeg", quality=80),
+        _act("start_screencast", fps=10, delta=True),
+        _act("start_screencast", fps=10, delta=False),
         _act("stop_screencast"),
         _act("screenshot", scope="active_window"),
         _act("screenshot", scope="window:0x1f"),
@@ -54,6 +56,31 @@ def _act(verb, **kw):
             "seq": 0,
             "image": {"ref": "x", "w": 8, "h": 8, "scope": "screen", "format": "jpeg"},
         },
+        # a dirty-tile delta frame: tiles INSTEAD of image (B2)
+        {
+            "type": "observation",
+            "obs_id": "o",
+            "stream": "s",
+            "seq": 1,
+            "tiles": [
+                {"x": 0, "y": 0, "w": 64, "h": 64, "ref": "abc"},
+                {"x": 64, "y": 64, "w": 36, "h": 6, "ref": "def"},  # edge tile
+            ],
+        },
+        # welcome advertising the codec capability (negotiation)
+        {
+            "type": "welcome",
+            "v": 0,
+            "server": {"name": "shinkend", "version": "0", "platform": "linux"},
+            "capabilities": {
+                "schema_version": 0,
+                "verbs": ["click"],
+                "targets": ["point_px"],
+                "observation_types": ["screenshot"],
+                "max_long_edge": 2576,
+                "image_formats": ["png", "jpeg"],
+            },
+        },
     ],
 )
 def test_aci_wire_vocab_validates(msg):
@@ -72,6 +99,56 @@ def test_aci_wire_vocab_validates(msg):
         _act("screenshot", format="jpg"),
         _act("screenshot", format="jpeg", quality=0),
         _act("screenshot", format="jpeg", quality=101),
+        # delta is a strict boolean, not truthy-anything
+        _act("start_screencast", delta="yes"),
+        _act("start_screencast", delta=1),
+        # a tile requires all of x/y/w/h/ref and admits nothing else
+        {
+            "type": "observation",
+            "obs_id": "o",
+            "stream": "s",
+            "seq": 0,
+            "tiles": [{"x": 0, "y": 0, "w": 64, "h": 64}],  # missing ref
+        },
+        {
+            "type": "observation",
+            "obs_id": "o",
+            "stream": "s",
+            "seq": 0,
+            "tiles": [{"x": 0, "y": 0, "w": 64, "h": 64, "ref": "abc", "format": "png"}],
+        },
+        {  # tiles must not be empty — an unchanged frame is suppressed, not sent
+            "type": "observation",
+            "obs_id": "o",
+            "stream": "s",
+            "seq": 0,
+            "tiles": [],
+        },
+        {  # tiles INSTEAD of image — never both
+            "type": "observation",
+            "obs_id": "o",
+            "stream": "s",
+            "seq": 0,
+            "image": {"ref": "x", "w": 8, "h": 8},
+            "tiles": [{"x": 0, "y": 0, "w": 64, "h": 64, "ref": "abc"}],
+        },
+        {  # tiles only make sense within a stream (relative to its keyframe)
+            "type": "observation",
+            "obs_id": "o",
+            "tiles": [{"x": 0, "y": 0, "w": 64, "h": 64, "ref": "abc"}],
+        },
+        {  # image_formats admits only the schema's ImageFormat enum
+            "type": "welcome",
+            "v": 0,
+            "server": {"name": "s", "version": "0", "platform": "linux"},
+            "capabilities": {
+                "schema_version": 0,
+                "verbs": [],
+                "targets": [],
+                "observation_types": [],
+                "image_formats": ["png", "webp"],
+            },
+        },
     ],
 )
 def test_aci_invalid_rejected(msg):

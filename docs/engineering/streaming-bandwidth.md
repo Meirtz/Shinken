@@ -5,9 +5,13 @@ figures. This note records **first-party** measurements taken through the Shinke
 a real GUI desktop on a remote sandbox substrate reached over an intercontinental WAN
 (~0.28 s round-trip), so the claims behind the wedge are now measured, not cited.
 
-Two questions: (1) how small can one observation get without losing the screen, and (2) what
-is the network/host envelope when one local process drives many sandboxes — the
+Three questions: (1) how small can one observation get without losing the screen, (2) how
+small can a continuous **lossless** stream get when only part of the screen changes, and
+(3) what is the network/host envelope when one local process drives many sandboxes — the
 "control plane in a trainer process pulling N sandboxes" case.
+
+(The B2 numbers in §2 were measured on the local Docker sandbox rather than the WAN
+substrate — bytes/frame is substrate-independent; the B1/B3 latency rows are not.)
 
 ## 1. Observation codec ladder (B1)
 
@@ -27,7 +31,39 @@ JPEG is both ~20× smaller **and** ~4× faster end-to-end than PNG (PNG's deflat
 0.85 s). Downscaling to the model's real input resolution compounds it. Lossless PNG stays the
 default; JPEG is the opt-in bandwidth lever for high-fps or many-sandbox use.
 
-## 2. Fan-out envelope (B3)
+## 2. Dirty-tile delta screencast (B2)
+
+`start_screencast` with `delta: true` keeps ONE previous RGB frame per stream (~6 MB at
+1080p — the deliberate memory bound), splits each capture into 64px tiles, and pushes only
+the changed tiles (`tiles: [{x, y, w, h, ref}]` on the observation, each tile encoded in the
+stream's format/quality — PNG tiles use the fast compression preset so per-tile encode cost
+stays below the full-frame path). A full keyframe goes out first, after a resume, and every
+30th delivered frame (a constant: it bounds how long a dropped tile frame leaves a client
+stale, and bounds lossy compositing drift for JPEG tiles). Unchanged frames are
+idle-suppressed as before. Compositing is the consumer's job — the SDK passes tiles through
+raw.
+
+Measured on the local Docker sandbox (1280×800 Xvfb desktop, typing in an xterm at
+~12 chars/s, fps=10, ~8 s window, 81 frames delivered per mode; decoded payload bytes —
+base64+JSON framing adds ~33% on the wire):
+
+| mode           | mean bytes/frame | vs full-PNG | composition                                |
+|----------------|------------------|-------------|--------------------------------------------|
+| full-PNG       | 28.1 KB          | 1.0×        | 81 full frames                             |
+| delta-PNG      | 2.3 KB           | **12.1×**   | 3 keyframes (~30 KB) + 78 tile frames (mean 1.2 KB, ~2 tiles/frame) |
+| delta-JPEG q80 | 3.0 KB           | 9.5×        | 3 keyframes (~34 KB) + 78 tile frames (mean 1.8 KB) |
+
+**Reads:**
+- **The lossless lever works: ~12× under live typing with zero quality loss.** A keystroke
+  dirties ~2 tiles (~1 KB); the periodic keyframe dominates the residual mean.
+- **For text/terminal content, delta-PNG beats delta-JPEG** — flat-background glyphs
+  compress better losslessly than as DCT blocks, and the JPEG keyframe is larger too. JPEG
+  (B1) stays the lever for photographic/full-frame content; delta-PNG is the default lever
+  for UI work, and the two compound only when tiles are photographic.
+- This compounds with B1's downscale: `max_long_edge` applies BEFORE tiling, so tiles align
+  with the delivered resolution.
+
+## 3. Fan-out envelope (B3)
 
 One local process drove N sandboxes concurrently, each: inject shinkend → local `ws→wss`
 proxy → SDK connect; then synchronized rounds of {observe JPEG q80 @1280 (~48 KiB) + click}.
@@ -72,8 +108,10 @@ proxy → SDK connect; then synchronized rounds of {observe JPEG q80 @1280 (~48 
    measured at N=16: 16 loop threads → **1**. It is a resource handle only; it adds no
    orchestration surface. (The remaining per-connection cost on a WAN substrate is the local
    ws→wss proxy, which the same single-loop pattern can absorb.)
-3. **Reduce per-step bytes further with a dirty-tile diff** (B2, planned): send only changed
-   tiles + periodic keyframes, since a single click/keystroke changes a small screen region.
+3. **For continuous lossless streaming, use the dirty-tile delta** (B2 — shipped:
+   `screencast(delta=True)`): only changed tiles + periodic keyframes travel, measured ~12×
+   under live typing with PNG (lossless). Prefer delta-PNG over delta-JPEG for UI/text
+   content (see §2).
 4. **Batch at WAN distance:** prefer `act_batch` and observe/act coalescing to amortize RTT.
 
 Reproduce with the local dev-test harness (not committed): the bandwidth probe and the

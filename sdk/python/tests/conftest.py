@@ -55,6 +55,7 @@ async def _push_frames(
     start_seq: int = 0,
     streams: dict[str, int] | None = None,
     format: str = "png",
+    delta: bool = False,
 ) -> None:
     """Push server-pushed screencast frames with advancing seq until cancelled. The
     frame's reported width echoes ``max_long_edge`` so a test can confirm the cap
@@ -62,29 +63,34 @@ async def _push_frames(
     region, as the real runtime tags every frame with ``spec.scope`` (#143).
     ``start_seq``/``streams`` mirror the runtime's resume registry (#56): seq starts
     where the logical stream left off, and every sent frame records the next seq so a
-    later ``resume_stream`` can continue it."""
+    later ``resume_stream`` can continue it. With ``delta`` (B2), the FIRST frame of
+    this push (start or resume — the runtime's tile baseline doesn't survive the
+    stream task) is a full keyframe and the rest are dirty-tile frames (``tiles``
+    instead of ``image``), like the real runtime's delta mode."""
     seq = start_seq
     period = max(1.0 / fps, 0.005)
     width = max_long_edge or 1
+    first = True
     with contextlib.suppress(asyncio.CancelledError, Exception):
         while True:
-            await ws.send(
-                json.dumps(
-                    {
-                        "type": "observation",
-                        "obs_id": f"{stream_id}-{seq}",
-                        "stream": stream_id,
-                        "seq": seq,
-                        "image": {
-                            "ref": _PNG_1X1,
-                            "w": width,
-                            "h": 1,
-                            "scope": scope,
-                            "format": format,
-                        },
-                    }
-                )
-            )
+            frame: dict = {
+                "type": "observation",
+                "obs_id": f"{stream_id}-{seq}",
+                "stream": stream_id,
+                "seq": seq,
+            }
+            if delta and not first:
+                frame["tiles"] = [{"x": 0, "y": 0, "w": 1, "h": 1, "ref": _PNG_1X1}]
+            else:
+                frame["image"] = {
+                    "ref": _PNG_1X1,
+                    "w": width,
+                    "h": 1,
+                    "scope": scope,
+                    "format": format,
+                }
+            await ws.send(json.dumps(frame))
+            first = False
             seq += 1
             if streams is not None:
                 streams[stream_id] = seq
@@ -117,6 +123,7 @@ def _record(state: dict, action: dict) -> None:
                 "resume_stream": action.get("resume_stream"),
                 "format": action.get("format"),
                 "quality": action.get("quality"),
+                "delta": action.get("delta"),
             }
         )
 
@@ -178,6 +185,7 @@ async def _handler(ws, streams: dict[str, int] | None = None) -> None:
                             "targets": ["point_px", "element_ref"],
                             "observation_types": ["a11y", "screenshot", "screencast"],
                             "max_long_edge": 2576,
+                            "image_formats": ["png", "jpeg"],
                         },
                     }
                 )
@@ -244,6 +252,7 @@ async def _handler(ws, streams: dict[str, int] | None = None) -> None:
                         start_seq,
                         streams,
                         action.get("format") or "png",
+                        action.get("delta") or False,
                     )
                 )
             elif verb == "stop_screencast":

@@ -19,7 +19,7 @@ import time
 import uuid
 from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from websockets.asyncio.client import connect as _ws_connect
@@ -73,6 +73,9 @@ class Capabilities:
     targets: list[str]
     observation_types: list[str]
     max_long_edge: int | None = None
+    # Image codecs the runtime can encode. Defaults to png-only: a welcome from a
+    # pre-negotiation runtime omits the field, and those only ever encoded PNG.
+    image_formats: list[str] = field(default_factory=lambda: ["png"])
 
 
 def _to_uri(addr: str) -> str:
@@ -117,6 +120,7 @@ def _parse_welcome(welcome: dict) -> tuple[Capabilities, str]:
             targets=caps.get("targets", []),
             observation_types=caps.get("observation_types", []),
             max_long_edge=caps.get("max_long_edge"),
+            image_formats=caps.get("image_formats") or ["png"],
         ),
         (welcome.get("server") or {}).get("platform", "linux"),
     )
@@ -514,6 +518,18 @@ class AsyncSandbox:
     ):
         return await self.act("scroll", _target(target, x, y), dy=dy)
 
+    def _check_image_format(self, format: str | None) -> None:
+        """Codec negotiation: reject a requested ``format`` the runtime's welcome did
+        not advertise (``capabilities.image_formats``) BEFORE anything goes on the
+        wire, so the caller gets a typed :class:`ValueError` instead of a runtime nack
+        round-trip. ``None`` (the png default) always passes — every runtime encodes
+        PNG."""
+        if format is not None and format not in self.capabilities.image_formats:
+            raise ValueError(
+                f"image format {format!r} not advertised by the runtime "
+                f"(supported: {self.capabilities.image_formats})"
+            )
+
     async def screenshot(
         self,
         scope: str = "screen",
@@ -531,8 +547,12 @@ class AsyncSandbox:
         ``format`` says which codec. When the codec is PNG, ``'png'`` is kept as a
         back-compatible alias of ``bytes``; it is ABSENT for other codecs, so legacy
         code blindly reading ``shot['png']`` fails loudly rather than mislabeling JPEG
-        bytes as PNG."""
+        bytes as PNG.
+
+        Raises :class:`ValueError` before sending if ``format`` is not among the
+        runtime's advertised ``capabilities.image_formats``."""
         self._gate("screenshot")
+        self._check_image_format(format)
         call_id = self._next_id()
         action: dict = {"verb": "screenshot", "scope": scope}
         if format is not None:
@@ -568,13 +588,21 @@ class AsyncSandbox:
         resume_stream: str | None = None,
         format: str | None = None,
         quality: int | None = None,
+        delta: bool = False,
     ) -> str:
         """Start a server-pushed screencast; returns the requested stream id. Frames
         arrive asynchronously and are read with :meth:`next_frame`. ``max_long_edge``
         caps each frame's longer edge (px) to save bandwidth; ``scope`` selects the
         capture region (``screen``, ``active_window``, or ``window:<id>``); ``format``
         (``png`` default / ``jpeg``) + ``quality`` pick the per-frame codec — ``jpeg`` is
-        the high-fps bandwidth lever.
+        the high-fps bandwidth lever. Raises :class:`ValueError` before sending if
+        ``format`` is not among the runtime's advertised ``capabilities.image_formats``.
+
+        ``delta`` turns on dirty-tile delta mode (B2), the LOSSLESS bandwidth lever:
+        the runtime pushes only the changed 64px tiles of each frame (read back as
+        ``frame['tiles']`` from :meth:`next_frame`) instead of a full image, with a
+        full keyframe first, after a resume, and periodically thereafter. Compositing
+        tiles onto the last keyframe is the consumer's job.
 
         ``resume_stream`` asks the runtime to continue that logical stream (#56): if
         the runtime still holds its state, frames keep the SAME ``stream`` id and
@@ -582,6 +610,7 @@ class AsyncSandbox:
         seq 0). The ack carries no stream identity — the first frame's ``stream``/
         ``seq`` are authoritative for which of the two happened."""
         self._gate("start_screencast")
+        self._check_image_format(format)
         self._clear_frames()
         # Remember the requested capture region so recorded frames carry the true
         # scope, not a hardcoded "screen" (#143). Frames also echo it from shinkend.
@@ -597,6 +626,8 @@ class AsyncSandbox:
             action["format"] = format
         if quality is not None:
             action["quality"] = quality
+        if delta:
+            action["delta"] = True
         call_id = self._next_id()
         reply = await self._rpc({"type": "action", "call_id": call_id, "action": action})
         if not reply.get("ok"):
@@ -609,6 +640,7 @@ class AsyncSandbox:
             "scope": scope,
             "format": format,
             "quality": quality,
+            "delta": delta,
         }
         self._active_stream = resume_stream or call_id
         return self._active_stream
@@ -629,6 +661,7 @@ class AsyncSandbox:
         scope: str | None = None,
         format: str | None = None,
         quality: int | None = None,
+        delta: bool | None = None,
     ) -> str:
         """Resume the logical screencast ``stream_id`` (#56) — typically after
         :meth:`next_frame` raised :class:`ConnectionError` and the caller reconnected
@@ -637,9 +670,12 @@ class AsyncSandbox:
         Resume continues stream IDENTITY + SEQ only — the runtime does not remember
         capture parameters. Params left as ``None`` reuse the ones this Sandbox
         started the stream with; on a NEW connection the caller must re-pass ALL the
-        original capture parameters (including ``format``/``quality`` — else a JPEG
-        stream silently resumes as the PNG default, ~20× larger frames) or accept the
-        standard defaults (fps=5.0, full resolution, ``screen`` scope, ``png``).
+        original capture parameters (including ``format``/``quality``/``delta`` —
+        else a JPEG stream silently resumes as the PNG default, ~20× larger frames,
+        and a delta stream resumes as full frames) or accept the standard defaults
+        (fps=5.0, full resolution, ``screen`` scope, ``png``, full frames). A resumed
+        delta stream restarts from a full keyframe — the runtime's tile baseline does
+        not survive the stream task.
 
         Read the first frame to learn the outcome: ``stream`` == ``stream_id`` means
         seq continued — the seq gap counts frames the runtime emitted but the client
@@ -658,6 +694,8 @@ class AsyncSandbox:
             format = remembered.get("format")
         if quality is None:
             quality = remembered.get("quality")
+        if delta is None:
+            delta = remembered.get("delta", False)
         return await self.astart_screencast(
             fps,
             max_long_edge=max_long_edge,
@@ -665,6 +703,7 @@ class AsyncSandbox:
             resume_stream=stream_id,
             format=format,
             quality=quality,
+            delta=delta,
         )
 
     async def astop_screencast(self) -> None:
@@ -686,7 +725,14 @@ class AsyncSandbox:
         'stream'}`` (``'png'`` aliases ``bytes`` only when the codec really is PNG), or
         None if the stream ended cleanly or `timeout` seconds elapsed with no frame.
         Raises :class:`ConnectionError` if the connection dropped mid-stream, so silent
-        truncation is distinguishable from a normal end."""
+        truncation is distinguishable from a normal end.
+
+        On a delta stream (``delta=True``), a dirty-tile frame comes back as
+        ``{'tiles': [{'x', 'y', 'w', 'h', 'bytes'}, ...], 'seq', 'stream'}`` instead —
+        no ``'bytes'``/``'png'`` keys. Each tile's ``bytes`` is one image encoded in
+        the stream's format/quality, positioned at (x, y) in the last full keyframe's
+        resolution. The SDK passes tiles through RAW: compositing them onto the last
+        keyframe is the consumer's job (the SDK takes no imaging dependency)."""
         try:
             item = (
                 await asyncio.wait_for(self._frames.get(), timeout)
@@ -703,6 +749,22 @@ class AsyncSandbox:
         # that fell back to a fresh stream the recorded id is the LIVE one and the
         # next resume targets a stream the runtime actually holds.
         self._active_stream = item.get("stream") or self._active_stream
+        tiles = item.get("tiles")
+        if tiles is not None:
+            return {
+                "tiles": [
+                    {
+                        "x": t.get("x"),
+                        "y": t.get("y"),
+                        "w": t.get("w"),
+                        "h": t.get("h"),
+                        "bytes": base64.b64decode(t.get("ref", "")),
+                    }
+                    for t in tiles
+                ],
+                "seq": item.get("seq"),
+                "stream": item.get("stream"),
+            }
         img = item.get("image") or {}
         raw = base64.b64decode(img.get("ref", ""))
         frame = {
@@ -962,6 +1024,7 @@ class _Screencast:
         resume_stream: str | None = None,
         format: str | None = None,
         quality: int | None = None,
+        delta: bool | None = None,
     ) -> None:
         self._sb = sandbox
         self._fps = fps
@@ -972,6 +1035,7 @@ class _Screencast:
         self._resume_stream = resume_stream
         self._format = format
         self._quality = quality
+        self._delta = delta
         self._count = 0
         self._started = False
 
@@ -988,6 +1052,7 @@ class _Screencast:
                     self._scope,
                     format=self._format,
                     quality=self._quality,
+                    delta=self._delta,
                 )
             )
         else:
@@ -998,6 +1063,7 @@ class _Screencast:
                     self._scope,
                     format=self._format,
                     quality=self._quality,
+                    delta=bool(self._delta),
                 )
             )
         self._started = True
@@ -1204,6 +1270,7 @@ class Sandbox:
         scope: str | None = None,
         format: str | None = None,
         quality: int | None = None,
+        delta: bool = False,
     ) -> _Screencast:
         """Stream the screen in real time as a context manager yielding frames::
 
@@ -1217,9 +1284,23 @@ class Sandbox:
         ``max_long_edge`` downscales each frame to save bandwidth; ``scope`` selects
         the region (``screen``, ``active_window``, ``window:<id>``); ``format``
         (``png``/``jpeg``) + ``quality`` pick the per-frame codec.
+
+        ``delta=True`` turns on dirty-tile delta mode (the lossless bandwidth lever):
+        after a full keyframe, changed frames arrive as ``{'tiles': [{'x', 'y', 'w',
+        'h', 'bytes'}, ...], 'seq', 'stream'}`` — only the changed 64px tiles, to
+        composite onto the last keyframe yourself (the SDK takes no imaging
+        dependency). A full keyframe is re-sent periodically and after a resume.
         """
         return _Screencast(
-            self, fps, timeout, limit, max_long_edge, scope, format=format, quality=quality
+            self,
+            fps,
+            timeout,
+            limit,
+            max_long_edge,
+            scope,
+            format=format,
+            quality=quality,
+            delta=delta,
         )
 
     @property
@@ -1241,6 +1322,7 @@ class Sandbox:
         scope: str | None = None,
         format: str | None = None,
         quality: int | None = None,
+        delta: bool | None = None,
     ) -> _Screencast:
         """Resume the logical screencast ``stream_id`` (#56), as the same
         frame-iterating context manager :meth:`screencast` returns.
@@ -1248,9 +1330,11 @@ class Sandbox:
         Resume continues stream IDENTITY + SEQ only — the runtime does not remember
         capture parameters. Params left as ``None`` reuse the ones this Sandbox
         started the stream with; on a NEW connection the caller must re-pass ALL the
-        original capture parameters (including ``format``/``quality`` — else a JPEG
-        stream silently resumes as the PNG default) or accept the standard defaults
-        (fps=5.0, full resolution, ``screen`` scope, ``png``).
+        original capture parameters (including ``format``/``quality``/``delta`` —
+        else a JPEG stream silently resumes as the PNG default and a delta stream
+        as full frames) or accept the standard defaults (fps=5.0, full resolution,
+        ``screen`` scope, ``png``, full frames). A resumed delta stream restarts from
+        a full keyframe.
 
         The recovery flow: iterating a screencast raises :class:`ConnectionError`
         when the connection drops mid-stream; the caller reconnects (a NEW
@@ -1271,6 +1355,7 @@ class Sandbox:
             stream_id,
             format=format,
             quality=quality,
+            delta=delta,
         )
 
     def _set_guest_transport(self, transport: Any) -> None:
