@@ -130,3 +130,58 @@ def test_verifier_receipt_schema():
     jsonschema.validate(r.to_dict(), ev.RECEIPT_SCHEMA)  # valid receipt passes
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate({"passed": "yes", "checks": []}, ev.RECEIPT_SCHEMA)
+
+
+# --- kind <-> exit_reason alignment (#56): one documented mapping, no drift -------------
+
+
+def test_run_result_exit_reason_derives_from_kind():
+    receipt = ev.VerifierReceipt(False, [])
+    # The documented projection (eval.py tasks are unbudgeted -> verdicts complete):
+    expect = {
+        "pass": "task_complete",
+        "fail": "task_complete",
+        "setup": "setup_error",
+        "sandbox_died": "sandbox_died",
+        "error": "agent_error",
+    }
+    for kind, reason in expect.items():
+        rr = ev.RunResult(0, kind == "pass", 0, 0.0, receipt, None, kind)
+        assert rr.exit_reason == reason, kind
+        assert rr.to_dict()["exit_reason"] == reason
+    # An explicit finer value (a budgeted run, a scorer fault) is never overwritten:
+    rr = ev.RunResult(0, False, 0, 0.0, receipt, "error: x", "error", "scorer_error")
+    assert rr.exit_reason == "scorer_error"
+
+
+def test_eval_scorer_error_refines_to_scorer_exit_reason(mock_shinkend, tmp_path):
+    from shinken.errors import ScorerError
+
+    def verify(_env):
+        raise ScorerError("evaluator subprocess died", kind="crash", exit_code=1)
+
+    task = ev.Task("t", run=lambda e: None, verify=verify)
+    s = ev.run_eval(task, _factory(mock_shinkend), n=1, out_dir=str(tmp_path))
+    (r,) = s.results
+    # kind stays the coarse harness "error" (non-verdict); exit_reason is the finer field.
+    assert r.kind == "error" and r.exit_reason == "scorer_error"
+    assert not r.infra_failure  # a scorer fault is not retry-eligible infra death
+
+
+def test_eval_failure_paths_set_exit_reason(mock_shinkend, tmp_path):
+    def setup(_env):
+        raise ev.SetupError("display not ready")
+
+    task = ev.Task(
+        "t", run=lambda e: None, verify=lambda e: ev.VerifierReceipt(True, []), setup=setup
+    )
+    s = ev.run_eval(task, _factory(mock_shinkend), n=1, out_dir=str(tmp_path))
+    assert s.results[0].exit_reason == "setup_error"
+
+    def run_dead(_env):
+        raise ConnectionError("socket closed")
+
+    task2 = ev.Task("t2", run=run_dead, verify=lambda e: ev.VerifierReceipt(True, []))
+    s2 = ev.run_eval(task2, _factory(mock_shinkend), n=1, out_dir=str(tmp_path))
+    assert s2.results[0].kind == "sandbox_died"
+    assert s2.results[0].exit_reason == "sandbox_died"

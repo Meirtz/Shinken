@@ -12,7 +12,15 @@ import pytest
 import shinken
 from shinken import runtime
 from shinken.operator import ScriptedAgent
-from shinken.runtime import Runtime, Step, Trajectory, rollout, workloads
+from shinken.runtime import (
+    EXIT_REASONS,
+    Runtime,
+    Step,
+    Trajectory,
+    resolve_exit_reason,
+    rollout,
+    workloads,
+)
 
 _PLAN = [
     [{"verb": "click", "target": {"kind": "point_px", "x": 1, "y": 2}}],
@@ -31,6 +39,7 @@ def test_rollout_records_trajectory_and_terminal(mock_shinkend):
     with shinken.connect(mock_shinkend) as session:
         traj = rollout(session, ScriptedAgent(_PLAN), max_steps=10)
     assert traj.terminal == "done"
+    assert traj.exit_reason == "task_complete"
     assert len(traj.steps) == 2 and traj.num_actions == 2
     assert traj.steps[0].actions[0]["verb"] == "click"
 
@@ -41,6 +50,84 @@ def test_rollout_stuck_when_agent_emits_no_actions(mock_shinkend):
     with shinken.connect(mock_shinkend) as session:
         traj = rollout(session, ScriptedAgent(plan), max_steps=5)
     assert traj.terminal == "stuck" and traj.num_actions == 0
+    assert traj.exit_reason == "agent_error"  # no actions and not done is an agent fault
+
+
+# --- trajectory-level exit_reason (#56): documented precedence + typed defaults ---------
+
+
+def test_exit_reason_precedence_each_cause_beats_every_lower_one():
+    # The documented order: sandbox_died > setup_error > agent_error > scorer_error
+    # > max_steps > task_complete. Each cause must win over all causes below it,
+    # regardless of argument order.
+    assert EXIT_REASONS == (
+        "sandbox_died",
+        "setup_error",
+        "agent_error",
+        "scorer_error",
+        "max_steps",
+        "task_complete",
+    )
+    for i, high in enumerate(EXIT_REASONS):
+        for low in EXIT_REASONS[i + 1 :]:
+            assert resolve_exit_reason(high, low) == high
+            assert resolve_exit_reason(low, high) == high
+
+
+def test_resolve_exit_reason_ignores_none_and_rejects_unknown_values():
+    assert resolve_exit_reason(None, "max_steps", None) == "max_steps"
+    assert resolve_exit_reason() is None and resolve_exit_reason(None) is None
+    with pytest.raises(ValueError):
+        resolve_exit_reason("flaky")  # a typo must never become a low-precedence reason
+
+
+def test_rollout_max_steps_sets_budget_exit_reason(mock_shinkend):
+    with shinken.connect(mock_shinkend) as session:
+        traj = rollout(session, ScriptedAgent(_PLAN), max_steps=1)  # plan needs 2 turns
+    assert traj.terminal == "max_steps" and traj.exit_reason == "max_steps"
+
+
+def test_rollout_records_sandbox_death_as_exit_reason_not_a_crash():
+    class _DeadSession:
+        def observe(self):
+            return {}
+
+        def act_batch(self, actions):
+            raise ConnectionError("socket closed under us")
+
+    traj = rollout(_DeadSession(), ScriptedAgent(_PLAN), max_steps=5)
+    assert traj.terminal == "aborted" and traj.exit_reason == "sandbox_died"
+    assert traj.metadata["error"].startswith("sandbox_died:")
+    assert traj.steps == []  # the failed turn is not recorded as a completed step
+
+
+def test_rollout_records_agent_fault_as_exit_reason_not_a_crash(mock_shinkend):
+    class _BadAgent:
+        def decide(self, obs):
+            raise ValueError("adapter emitted nonsense")
+
+    with shinken.connect(mock_shinkend) as session:
+        traj = rollout(session, _BadAgent(), max_steps=5)
+    assert traj.terminal == "aborted" and traj.exit_reason == "agent_error"
+    assert "adapter emitted nonsense" in traj.metadata["error"]
+
+
+def test_step_token_fidelity_fields_are_reserved_and_unpopulated():
+    # A-2 (#223): the fields exist for lossless RL-trainer conversion, default None,
+    # and are serialized so a record's schema is stable before the train Workload lands.
+    s = Step(0, {"png": b""})
+    assert s.prompt_token_ids is None and s.response_token_ids is None
+    assert s.response_mask is None and s.finish_reason is None
+    d = s.to_dict()
+    for k in ("prompt_token_ids", "response_token_ids", "response_mask", "finish_reason"):
+        assert k in d and d[k] is None
+
+
+def test_trajectory_exit_reason_defaults_none_and_serializes():
+    t = Trajectory()
+    assert t.exit_reason is None and t.to_dict()["exit_reason"] is None
+    t2 = Trajectory(exit_reason="task_complete")
+    assert t2.to_dict()["exit_reason"] == "task_complete"
 
 
 def test_runtime_opens_session_and_rolls_out(mock_shinkend):

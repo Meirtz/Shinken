@@ -20,9 +20,11 @@ import sys
 import urllib.request
 from typing import Any
 
-from shinken.errors import SandboxDied, is_connection_loss
+from shinken.errors import SandboxDied, ScorerError, is_connection_loss
 from shinken.osworld import parse_model_actions
 from shinken.runtime import workloads
+from shinken.runtime.trajectory import resolve_exit_reason
+from shinken.scorer_proc import run_scorer_callable
 
 # The model contract — OSWorld's screenshot→pyautogui form (pixel coords + WAIT/DONE/FAIL).
 SYSTEM_PROMPT = (
@@ -246,8 +248,20 @@ def run_episode(
     max_steps: int = 15,
     observation: str = "screenshot",
     pause: float = 2.0,
+    isolate_scorer: bool = True,
+    scorer_timeout: float = 600.0,
 ) -> dict:
-    """observe → model → parse_model_actions → actuate (to DONE/FAIL), then OSWorld scores."""
+    """observe → model → parse_model_actions → actuate (to DONE/FAIL), then OSWorld scores.
+
+    The result carries the trajectory-level ``exit_reason`` (#56, precedence in
+    ``shinken.runtime.trajectory.EXIT_REASONS``): ``task_complete`` (model reached
+    DONE/FAIL), ``max_steps`` (budget exhausted), or ``scorer_error`` (the isolated
+    evaluator produced no trusted verdict — score 0, but typed so it is never confused
+    with a real task failure). ``isolate_scorer`` (default ON — this is the
+    external-evaluator lane, T-5) runs ``env.evaluate()`` in a fresh forked subprocess
+    via ``shinken.scorer_proc``: bounded ``scorer_timeout``, atomic result file, stray
+    evaluator stdout contained; the in-process tiny verifiers of ``shinken.eval`` are
+    deliberately NOT routed through this."""
     history: list[str] = []
     terminal: str | None = None
     steps = 0
@@ -282,12 +296,29 @@ def run_episode(
                 history.append(f"[action skipped: {str(exc)[:100]}]")
         if terminal is not None:
             break
-    score = float(env.evaluate())
+    scorer_error: str | None = None
+    if isolate_scorer:
+        # T-5 scorer isolation: the evaluator is third-party external code — run it in a
+        # fresh (forked) subprocess so a crash/hang/stray-stdout in the evaluator cannot
+        # corrupt the score or wedge the episode. A scorer fault is typed: score 0 with
+        # exit_reason="scorer_error" — NOT a task failure, NOT an infra death.
+        try:
+            score = float(run_scorer_callable(env.evaluate, timeout=scorer_timeout)["score"])
+        except ScorerError as exc:
+            score, scorer_error = 0.0, f"scorer_error: {exc}"
+    else:
+        score = float(env.evaluate())
+    exit_reason = resolve_exit_reason(
+        "scorer_error" if scorer_error is not None else None,
+        "task_complete" if terminal is not None else "max_steps",
+    )
     return {
         "steps": steps,
         "terminal": terminal,
         "score": score,
-        "passed": score >= 1.0 and terminal != "FAIL",
+        "passed": score >= 1.0 and terminal != "FAIL" and scorer_error is None,
+        "exit_reason": exit_reason,
+        "error": scorer_error,
     }
 
 
@@ -296,7 +327,9 @@ class OSWorldEvalWorkload:
 
     ``run(rt, *, env, agent, actuator, instruction, ...)`` — the OSWorld env (boot+score) and
     the actuator are assembled by the caller (live: official OSWorld env + a shinkend actuator;
-    dry-run: a fake env + recording actuator). Returns ``{steps, terminal, score, passed}``."""
+    dry-run: a fake env + recording actuator). Returns ``{steps, terminal, score, passed,
+    exit_reason, error}``; ``isolate_scorer`` (default ON) is the T-5 subprocess scorer
+    isolation for this external-evaluator lane (see :func:`run_episode`)."""
 
     name = "osworld-eval"
 
@@ -311,6 +344,8 @@ class OSWorldEvalWorkload:
         max_steps: int = 15,
         observation: str = "screenshot",
         pause: float = 2.0,
+        isolate_scorer: bool = True,
+        scorer_timeout: float = 600.0,
     ) -> dict:
         return run_episode(
             env,
@@ -320,6 +355,8 @@ class OSWorldEvalWorkload:
             max_steps=max_steps,
             observation=observation,
             pause=pause,
+            isolate_scorer=isolate_scorer,
+            scorer_timeout=scorer_timeout,
         )
 
 

@@ -154,7 +154,11 @@ priority order. None of this touches the waist — all are consumers/composition
    `response_ids`, `response_mask` with 1=model/0=tool tokens, `response_logprobs`, `reward_score`,
    `num_turns`, `extra_fields{traj_masked, traj_exit_reason}`). **Token fidelity is an adapter
    requirement:** when collecting against a token-level inference server, adapters must pass through
-   token ids/masks/logprobs — messages-only records are lossy for RL (retokenization mismatch). The
+   token ids/masks/logprobs — messages-only records are lossy for RL (retokenization mismatch).
+   `Step` already reserves the optional fields (`prompt_token_ids`, `response_token_ids`,
+   `response_mask` with 1=model/0=tool, `finish_reason` — all default `None`, populated by no
+   current code path) and `Trajectory.exit_reason` covers `traj_exit_reason`, so the conversion is
+   lossless once a token-level adapter fills them. The
    train Workload exposes an HTTP gym facade (`/reset`, `/step`, `/evaluate`) because that is the
    shape verl/TRL-style trainers consume. Cheapest interop deliverable: a swerex-protocol shim — run
    `swerex.server` inside `images/linux` so uni-agent's attach deployment drives a Shinken sandbox

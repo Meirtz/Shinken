@@ -44,6 +44,36 @@ class SandboxDied(ShinkenError):
         super().__init__(full)
 
 
+class ScorerError(ShinkenError):
+    """The isolated scorer failed to produce a trustworthy verdict (T-5 scorer isolation;
+    see ``shinken.scorer_proc``). Typed so a consumer records the trajectory-level
+    ``exit_reason="scorer_error"`` instead of mistaking a scorer fault for a task failure
+    (a real 0) or an infrastructure death (a retry signal). ``kind`` is one of
+    :data:`ScorerError.KINDS`: ``crash`` (the scorer process exited without writing a
+    verdict), ``timeout`` (killed at the deadline with no verdict written), or ``garbage``
+    (exited cleanly but produced no parseable verdict)."""
+
+    KINDS = ("crash", "timeout", "garbage")
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        kind: str,
+        exit_code: int | None = None,
+        detail: str | None = None,
+    ) -> None:
+        if kind not in self.KINDS:
+            raise ValueError(f"unknown ScorerError kind {kind!r}; expected one of {self.KINDS}")
+        self.kind = kind
+        self.exit_code = exit_code
+        self.detail = detail
+        suffix = [f"kind={kind}"]
+        if exit_code is not None:
+            suffix.append(f"exit_code={exit_code}")
+        super().__init__(f"{message} ({', '.join(suffix)})")
+
+
 #: The typed status of a single dispatched action in a batch result (#56). `ok` and `error`
 #: come from the runtime's ack (client-side gate denials also classify as `error`);
 #: `timeout` is an RPC deadline; `skipped` means the action never ran because an earlier

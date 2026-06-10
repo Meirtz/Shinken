@@ -241,3 +241,133 @@ def test_run_episode_propagates_sandbox_death_not_skip():
 
     with _pytest.raises(SandboxDied):
         oe.run_episode(_Env(), agent, _Dead(), "t", max_steps=5)
+
+
+# --- trajectory-level exit_reason (#56) + T-5 scorer isolation in the workload ----------
+
+
+class _ScorableEnv:
+    """Minimal env whose evaluator behavior is injectable (the external-scorer seam)."""
+
+    def __init__(self, evaluate):
+        self._evaluate = evaluate
+
+    def _get_obs(self):
+        return {"screenshot": None, "accessibility_tree": None}
+
+    def evaluate(self):
+        return self._evaluate()
+
+
+def test_run_episode_terminal_is_task_complete_and_max_steps_budget():
+    done_agent = oe.ScriptedAgent(["```DONE```"])
+    res = oe.run_episode(_ScorableEnv(lambda: 1.0), done_agent, oe.RecordingActuator(), "t")
+    assert res["exit_reason"] == "task_complete" and res["error"] is None
+
+    looping = oe.ScriptedAgent(["```python\npyautogui.click(1, 2)\n```"] * 10)
+    res2 = oe.run_episode(
+        _ScorableEnv(lambda: 0.0), looping, oe.RecordingActuator(), "t", max_steps=2
+    )
+    assert res2["steps"] == 2 and res2["terminal"] is None
+    assert res2["exit_reason"] == "max_steps"
+
+
+def test_isolated_scorer_crash_is_typed_scorer_error_not_a_task_failure():
+    def boom() -> float:
+        raise RuntimeError("evaluator exploded")
+
+    agent = oe.ScriptedAgent(["```DONE```"])
+    res = oe.run_episode(_ScorableEnv(boom), agent, oe.RecordingActuator(), "t")
+    # scorer_error outranks task_complete (precedence) — score 0, typed, episode intact.
+    assert res["exit_reason"] == "scorer_error"
+    assert res["score"] == 0.0 and res["passed"] is False
+    assert res["error"].startswith("scorer_error:")
+
+
+def test_isolated_scorer_timeout_is_typed_scorer_error():
+    import time as _time
+
+    agent = oe.ScriptedAgent(["```DONE```"])
+    res = oe.run_episode(
+        _ScorableEnv(lambda: _time.sleep(60)),
+        agent,
+        oe.RecordingActuator(),
+        "t",
+        scorer_timeout=0.5,
+    )
+    assert res["exit_reason"] == "scorer_error" and res["passed"] is False
+
+
+def test_in_process_scoring_remains_available_behind_the_flag():
+    # isolate_scorer=False keeps the legacy in-process call (a scorer fault then raises).
+    agent = oe.ScriptedAgent(["```DONE```"])
+    res = oe.run_episode(
+        _ScorableEnv(lambda: 1.0), agent, oe.RecordingActuator(), "t", isolate_scorer=False
+    )
+    assert res["passed"] is True and res["exit_reason"] == "task_complete"
+
+
+def test_dry_run_receipt_records_exit_reason(capsys):
+    import json as _json
+
+    assert osw.main(["--dry-run"]) == 0
+    receipt = _json.loads(capsys.readouterr().out)
+    assert receipt["exit_reason"] == "task_complete" and receipt["passed"] is True
+
+
+def _real_run_args(tmp_path, out):
+    task = tmp_path / "task.json"
+    task.write_text('{"id": "t-1", "snapshot": "s", "instruction": "do it"}')
+    return ["--task", str(task), "--backend", "osworld", "--out", str(out)]
+
+
+def test_receipt_failure_before_agent_loop_is_setup_error(tmp_path, monkeypatch):
+    import json as _json
+
+    out = tmp_path / "receipt.json"
+    monkeypatch.setattr(
+        osw, "make_osworld_env", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boot failed"))
+    )
+    assert osw.main(_real_run_args(tmp_path, out)) == 1
+    receipt = _json.loads(out.read_text())
+    # T-5 split: before the agent loop -> infra-side setup_error (retry a fresh sandbox).
+    assert receipt["exit_reason"] == "setup_error"
+    assert "boot failed" in receipt["error"] and receipt["passed"] is False
+
+
+class _StubAgentFactory:
+    @staticmethod
+    def from_env():
+        return object()
+
+
+def test_receipt_failure_in_agent_loop_classifies_agent_error_and_sandbox_died(
+    tmp_path, monkeypatch
+):
+    import json as _json
+
+    from shinken.errors import SandboxDied
+
+    rec = oe.RecordingActuator()
+    monkeypatch.setattr(osw, "make_osworld_env", lambda *a, **k: oe.FakeOSWorldEnv(rec))
+    monkeypatch.setattr(osw, "ChatModelAgent", _StubAgentFactory)
+
+    class _Raises:
+        def __init__(self, exc):
+            self._exc = exc
+
+        def run(self, *a, **k):
+            raise self._exc
+
+    out = tmp_path / "receipt.json"
+    monkeypatch.setattr(osw.workloads, "get", lambda name: _Raises(ValueError("model nonsense")))
+    assert osw.main(_real_run_args(tmp_path, out)) == 1
+    receipt = _json.loads(out.read_text())
+    assert receipt["exit_reason"] == "agent_error"  # after the agent loop began
+
+    monkeypatch.setattr(
+        osw.workloads, "get", lambda name: _Raises(SandboxDied("vm died", exit_code=137))
+    )
+    assert osw.main(_real_run_args(tmp_path, out)) == 1
+    receipt = _json.loads(out.read_text())
+    assert receipt["exit_reason"] == "sandbox_died"  # infra death is typed either way

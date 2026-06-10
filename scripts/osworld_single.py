@@ -22,6 +22,7 @@ import os
 import sys
 import time
 
+from shinken.errors import SandboxDied
 from shinken.osworld_eval import (
     ChatModelAgent,
     FakeOSWorldEnv,
@@ -194,15 +195,21 @@ def main(argv: list[str] | None = None) -> int:
         "passed": False,
         "score": 0.0,
         "error": None,
+        "exit_reason": None,  # trajectory-level why-it-stopped (#56) — set below in every path
         "wall_s": 0.0,
     }
     t0 = time.monotonic()
     env = actuator = None
+    # T-5 infra-vs-task split: a failure BEFORE the agent loop begins (env boot/reset,
+    # model client, actuator/injection) is setup_error — infrastructure, retry on a fresh
+    # sandbox; a failure after is agent_error; sandbox death is typed either way.
+    agent_started = False
     try:
         env = make_osworld_env(args.provider, args.width, args.height, args.observation)
         env.reset(task_config)
         agent = ChatModelAgent.from_env()
         actuator = _build_shinken_actuator(args) if args.backend == "shinken" else env
+        agent_started = True
         result = workload.run(
             Runtime(),
             env=env,
@@ -216,6 +223,11 @@ def main(argv: list[str] | None = None) -> int:
         record.update(result)
     except Exception as exc:  # noqa: BLE001 — record the failure as the receipt, then re-raise context
         record["error"] = f"{type(exc).__name__}: {exc}"
+        record["exit_reason"] = (
+            "sandbox_died"
+            if isinstance(exc, SandboxDied)
+            else ("agent_error" if agent_started else "setup_error")
+        )
     finally:
         record["wall_s"] = round(time.monotonic() - t0, 3)
         if actuator is not None and actuator is not env:

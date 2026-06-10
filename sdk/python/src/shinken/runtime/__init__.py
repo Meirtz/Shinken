@@ -15,7 +15,7 @@ from shinken import providers
 
 from . import workloads
 from .loop import rollout
-from .trajectory import Step, Trajectory
+from .trajectory import EXIT_REASONS, Step, Trajectory, resolve_exit_reason
 from .workloads import Workload, WorkloadError
 
 
@@ -63,12 +63,14 @@ class Runtime:
 
 
 __all__ = [
+    "EXIT_REASONS",
     "Runtime",
     "Session",
     "Step",
     "Trajectory",
     "Workload",
     "WorkloadError",
+    "resolve_exit_reason",
     "rollout",
     "workloads",
 ]

@@ -14,12 +14,34 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from .errors import SandboxDied, ShinkenError, is_connection_loss
+from .errors import SandboxDied, ScorerError, ShinkenError, is_connection_loss
 
 
 class SetupError(ShinkenError):
     """Raised by a task's setup/readiness step — reported distinctly from a task
     (verifier) failure, so a flaky environment isn't scored as a failed task."""
+
+
+#: ``kind`` ↔ ``exit_reason`` (#56). ``RunResult.kind`` is the eval summary taxonomy
+#: ("what does this run count as": ``pass | fail | setup | sandbox_died | error``);
+#: the trajectory-level ``exit_reason`` (``shinken.runtime.trajectory.EXIT_REASONS``,
+#: with documented precedence) is the finer field ("why did the trajectory stop").
+#: The mapping — documented once here so the two taxonomies never drift:
+#:
+#:   pass | fail   <->  task_complete | max_steps   (a scored verdict; eval.py's tasks
+#:                       are unbudgeted, so the derived default is ``task_complete`` —
+#:                       a budgeted caller passes ``exit_reason="max_steps"`` explicitly)
+#:   setup         <->  setup_error
+#:   sandbox_died  <->  sandbox_died
+#:   error         <->  agent_error | scorer_error   (``exit_reason`` is finer: a
+#:                       :class:`ScorerError` refines ``error`` to ``scorer_error``)
+_EXIT_REASON_FOR_KIND = {
+    "pass": "task_complete",
+    "fail": "task_complete",
+    "setup": "setup_error",
+    "sandbox_died": "sandbox_died",
+    "error": "agent_error",
+}
 
 
 def _classify_run_failure(exc: BaseException) -> str:
@@ -33,6 +55,16 @@ def _classify_run_failure(exc: BaseException) -> str:
     if isinstance(exc, SandboxDied) or is_connection_loss(exc):
         return "sandbox_died"
     return "error"
+
+
+def _failure_exit_reason(exc: BaseException, kind: str) -> str:
+    """The finer trajectory-level ``exit_reason`` for a failed run: the documented
+    ``_EXIT_REASON_FOR_KIND`` projection, except a :class:`ScorerError` (an isolated
+    external scorer that crashed/timed out — ``shinken.scorer_proc``) refines the
+    harness-`error` kind to ``scorer_error``."""
+    if isinstance(exc, ScorerError):
+        return "scorer_error"
+    return _EXIT_REASON_FOR_KIND[kind]
 
 
 def check(name: str, ok: bool, evidence: Any = None) -> dict:
@@ -104,10 +136,17 @@ class RunResult:
     # None derives a safe value in __post_init__ — a constructor that omits `kind` must
     # never produce a row that silently counts as a pass.
     kind: str | None = None
+    # The finer trajectory-level field (#56): one of
+    # shinken.runtime.trajectory.EXIT_REASONS. Derived from `kind` via the documented
+    # `_EXIT_REASON_FOR_KIND` mapping when omitted; a caller that knows better (a
+    # ScorerError -> "scorer_error", a budgeted run -> "max_steps") passes it explicitly.
+    exit_reason: str | None = None
 
     def __post_init__(self) -> None:
         if self.kind is None:
             self.kind = "pass" if self.passed else ("error" if self.error is not None else "fail")
+        if self.exit_reason is None:
+            self.exit_reason = _EXIT_REASON_FOR_KIND.get(self.kind)
 
     @property
     def infra_failure(self) -> bool:
@@ -124,6 +163,7 @@ class RunResult:
             "receipt": self.receipt.to_dict(),
             "error": self.error,
             "kind": self.kind,
+            "exit_reason": self.exit_reason,
         }
 
 
@@ -181,6 +221,7 @@ def run_eval(
         steps = 0
         receipt = VerifierReceipt(False, [])
         kind = "pass"
+        reason: str | None = None  # None -> derived from kind (verdicts are task_complete)
         t0 = time.perf_counter()
         wall = 0.0
         try:
@@ -197,12 +238,13 @@ def run_eval(
         except Exception as exc:  # noqa: BLE001 — classify, never crash the eval loop
             wall = time.perf_counter() - t0
             kind = _classify_run_failure(exc)
+            reason = _failure_exit_reason(exc, kind)
             err = f"{kind}: {exc}"
         finally:
             if env is not None:
                 with contextlib.suppress(Exception):
                     env.close()
-        results.append(RunResult(i, passed, steps, wall, receipt, err, kind))
+        results.append(RunResult(i, passed, steps, wall, receipt, err, kind, reason))
 
     return _summarize(task.name, n, results)
 
@@ -281,6 +323,7 @@ def _score_replica(i: int, env: Any, task: Task) -> RunResult:
     steps = 0
     receipt = VerifierReceipt(False, [])
     kind = "pass"
+    reason: str | None = None  # None -> derived from kind (verdicts are task_complete)
     t0 = time.perf_counter()
     wall = 0.0
     try:
@@ -294,8 +337,9 @@ def _score_replica(i: int, env: Any, task: Task) -> RunResult:
     except Exception as exc:  # noqa: BLE001 — classify, never raise into the fork loop
         wall = time.perf_counter() - t0
         kind = _classify_run_failure(exc)
+        reason = _failure_exit_reason(exc, kind)
         err = f"{kind}: {exc}"
-    return RunResult(i, passed, steps, wall, receipt, err, kind)
+    return RunResult(i, passed, steps, wall, receipt, err, kind, reason)
 
 
 def run_eval_forked(
@@ -332,8 +376,11 @@ def run_eval_forked(
         except Exception as exc:  # golden setup/checkpoint failed -> no replicas run
             exc = _confirm_death(provider, base, exc)  # add exit detail if the base died
             kind = _classify_run_failure(exc)
+            reason = _failure_exit_reason(exc, kind)
             res = [
-                RunResult(i, False, 0, 0.0, VerifierReceipt(False, []), f"{kind}: {exc}", kind)
+                RunResult(
+                    i, False, 0, 0.0, VerifierReceipt(False, []), f"{kind}: {exc}", kind, reason
+                )
                 for i in range(n)
             ]
             return _summarize(task.name, n, res)
@@ -358,8 +405,11 @@ def run_eval_forked(
             except Exception as exc:  # resume/connect failure for this replica
                 exc = _confirm_death(provider, handle, exc)
                 kind = _classify_run_failure(exc)
+                reason = _failure_exit_reason(exc, kind)
                 results.append(
-                    RunResult(i, False, 0, 0.0, VerifierReceipt(False, []), f"{kind}: {exc}", kind)
+                    RunResult(
+                        i, False, 0, 0.0, VerifierReceipt(False, []), f"{kind}: {exc}", kind, reason
+                    )
                 )
             finally:
                 if env is not None:

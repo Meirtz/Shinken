@@ -64,11 +64,12 @@ ships too. `.skn` recording is **not** built (removed/deferred, #216/#217). Full
 map: **[docs/engineering/status.md](docs/engineering/status.md)**.
 
 The immediate work (per the recalibrated priorities):
-1. **Finish #56 hardening** — the schema alignment (screencast verbs, `scope`/`fps`/`max_long_edge`,
+1. **#56 hardening is DONE** — the schema alignment (screencast verbs, `scope`/`fps`/`max_long_edge`,
    `stream`/`seq`, `hello.token`), the frame-queue bounds, the vacuous-test fixes, the **error
-   taxonomy** (`sandbox_died` with exit/signal detail, typed per-action status), and the
-   **screencast reconnect semantics** (`resume_stream`: stream identity + seq continuity) are
-   **done**; the residue is a trajectory-level exit-reason field (with #223) — see
+   taxonomy** (`sandbox_died` with exit/signal detail, typed per-action status), the
+   **screencast reconnect semantics** (`resume_stream`: stream identity + seq continuity), the
+   **trajectory-level `exit_reason`** (documented precedence, `shinken/runtime/trajectory.py`),
+   and **subprocess scorer isolation** (T-5, `shinken/scorer_proc.py`) are all built — see
    [docs/engineering/v0.0.1-plan.md](docs/engineering/v0.0.1-plan.md) §6.
 2. **a11y-coverage spike — STILL UNGATED (#2)** — measure what fraction of real apps (browser,
    Electron, Qt, canvas, games) expose usable accessibility trees + the bandwidth of a tree diff.
