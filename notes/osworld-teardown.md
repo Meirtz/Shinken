@@ -39,7 +39,7 @@ patterns, and where Shinken's decisions invert it.
 │  ═══════════ plaintext HTTP, no auth, :5000 ════════════════  VM boot / snapshot revert  │
 │        ▼                                                                                 │
 │  GUEST: desktop_env/server/main.py  (Flask dev server, debug=True, 0.0.0.0:5000)         │
-│   ~30 routes: /execute /run_python /run_bash_script (RCE), /screenshot (full PNG),       │
+│   ~30 routes: /execute /run_python /run_bash_script (arbitrary exec), /screenshot (PNG), │
 │   /accessibility (full XML), /setup/* , /start_recording (ffmpeg x11grab)                │
 │  X11/Xorg only · DISPLAY=:0 · user `user` / pw `password` · single global recording      │
 └──────────────────────────────────────────────────────────────────────────────────────┘
@@ -70,7 +70,7 @@ The route surface, grouped by purpose:
 | Group | Routes | Behavior |
 |---|---|---|
 | Observe | `GET /screenshot`, `GET /accessibility`, `GET /terminal`, `GET /platform`, `GET /cursor_position` | full PNG, full XML tree, scraped terminal text |
-| Exec (RCE) | `POST /execute` ≡ `/setup/execute`, `/run_python`, `/run_bash_script`, `/setup/launch` | arbitrary subprocess / python / bash |
+| Exec (arbitrary) | `POST /execute` ≡ `/setup/execute`, `/run_python`, `/run_bash_script`, `/setup/launch` | arbitrary subprocess / python / bash |
 | Exec+wait | `POST /execute_with_verification` (+`/setup/`) | run command then poll for a window title or `returncode==0` |
 | Files | `POST /file`, `/list_directory`, `/wallpaper`, `/setup/upload`, `/setup/download_file` | read / write / fetch-URL into guest |
 | Window/info | `POST /screen_size`, `/window_size`, `/desktop_path`, `/setup/open_file`, `/setup/activate_window`, `/setup/close_window`, `/setup/change_wallpaper` | mostly `wmctrl`/Xlib, Linux-centric |
@@ -110,7 +110,7 @@ Notable handler internals:
 - **Files** (`main.py:1042–1288`): `/file` and `/wallpaper` `send_file` an
   `expandvars`/`expanduser` path (arbitrary read); `/setup/upload` `makedirs` + `file.save`
   (arbitrary write); `/setup/download_file` makes the guest `requests.get` any URL with 3 retries
-  and content-length verification (an SSRF by construction).
+  and content-length verification (a fetch-arbitrary-URL endpoint).
 
 `pyxcursor.py` is an X11-only ctypes binding to `libXfixes`/`libX11`; it raises if `$DISPLAY` is
 unset (`pyxcursor.py:52–66`) and reshapes the cursor buffer assuming 8 bytes/pixel then slices 4
@@ -126,11 +126,11 @@ no auth header, no content negotiation. `/cursor_position` returns a bare JSON a
 
 ### Primitive / weak parts
 
-- **RCE-by-design, no auth, no TLS.** Every route is open on `0.0.0.0:5000`. `/execute`,
-  `/run_python`, `/run_bash_script`, `/setup/launch` are unauthenticated arbitrary remote code
+- **Arbitrary code execution, no auth, no TLS.** Every route is open on `0.0.0.0:5000`. `/execute`,
+  `/run_python`, `/run_bash_script`, `/setup/launch` are no-auth arbitrary code
   execution; `/file`/`/wallpaper` are arbitrary read; `/setup/upload` is arbitrary write;
-  `/setup/download_file` is an SSRF. The Flask dev server with `debug=True` turns any traceback into
-  an interactive RCE console.
+  `/setup/download_file` is a fetch-arbitrary-URL endpoint. The Flask dev server with `debug=True` turns any traceback into
+  an interactive code console.
 - **Single-threaded.** A slow a11y dump or a 30 s python exec blocks all other requests; concurrent
   screenshots during recording contend.
 - **Maximally bandwidth-wasteful observations.** Full-resolution lossless PNG written to a temp file
@@ -182,7 +182,7 @@ no auth header, no content negotiation. `/cursor_position` returns a bare JSON a
 ### Maps to
 
 D2 (typed action schema replaces code-as-action), D3 (structured a11y with refs replaces XML
-blob), D4 (streaming dual-channel replaces PNG polling), D6 (capability gate replaces open RCE), D10
+blob), D4 (streaming dual-channel replaces PNG polling), D6 (capability gate replaces open arbitrary exec), D10
 (real per-OS handler factory replaces `if/elif` ladders).
 
 ---
@@ -353,7 +353,7 @@ FastVM is the only one that approximates a fast path: its `FASTVM_GUIDELINE.md:8
 launch ~0.5 s / revert ~0.7 s vs AWS 60–90 s boot **(vendor-published, unverified)**, after a
 one-time image "bake" (~1.5–4.5 min) producing an org-scoped snapshot id. Even so it does
 delete+relaunch, not fork; it ships Debian/XFCE (not the canonical Ubuntu/GNOME), risking task drift;
-and it requires public IPv6 reachability to the unauthenticated guest server.
+and it requires public IPv6 reachability to the no-auth guest server.
 
 ### API / schema
 
@@ -394,8 +394,8 @@ novnc 5910.
   and add an 80-line docstring to keep it from breaking, `fastvm/provider.py:1–21`).
 - **GCP is a dead 0-byte stub** yet is dispatchable from the factory and listed in the clean-start set.
 - **Cloud reaches the guest over a public IP** with firewall `mode=open` (FastVM) or a public-IP EC2
-  — the in-VM server has no auth and accepts arbitrary `/run_python`/`/execute`: an unauthenticated
-  RCE surface exposed to the internet during runs.
+  — the in-VM server has no auth and accepts arbitrary `/run_python`/`/execute`: an open
+  arbitrary-exec endpoint exposed to the internet during runs.
 - **No snapshot GC.** AWS AMIs, Azure disk snapshots, FastVM snapshots are created but never deleted —
   a cost/quota leak.
 - **Manager pooling is essentially absent for cloud** (AWS/FastVM managers are no-ops except
@@ -627,7 +627,7 @@ monitor HTTP (poll): GET /api/tasks(/brief), /api/task/<type>/<id>, .../screensh
 
 ### Primitive / weak parts
 
-- **Code-as-action is RCE by design.** Model output is wrapped as `python -c '{command}'` and run with
+- **Code-as-action is arbitrary execution by design.** Model output is wrapped as `python -c '{command}'` and run with
   no sandbox, allowlist, or static check; the prompt hands the model the sudo password
   (`utils.py:163–185`); `pyautogui.FAILSAFE` is force-disabled (`python.py:31`), removing the panic
   abort. `execute_python_command`'s own docstring admits "…or any other python command. who knows?"
@@ -748,7 +748,7 @@ Side-channels: VNC 8006 + noVNC 5910 (human view), Chrome CDP 9222, VLC 8080, RD
   providers and aren't reused in the loop.
 - **Full-frame PNG + full XML every step** — no deltas, no diffing, no ROI, no codec negotiation, no
   caching.
-- **Arbitrary-code RCE, no auth, plaintext HTTP, ports bound 0.0.0.0/0**; static credentials; an API
+- **Arbitrary code execution, no auth, plaintext HTTP, ports bound 0.0.0.0/0**; static credentials; an API
   key committed in source.
 - **No replay / determinism** — `_act_setup`/`_replay_setup` are `NotImplementedError`; `get_replay`
   is a fixme stub; pyautogui injects random easing + random duration (`python.py:315–318`) so even
@@ -794,7 +794,7 @@ transport (reliable data channel = the event/replay log; on-demand NVENC media t
 full PNG + full XML as the whole product with screenshot-first, layered structured escalation (~6× token savings where coverage is strong, structured ≈ 150×
 cheaper than H.264 office video — both **vendor-published, unverified** pending a first-party
 measurement spike, per [`docs/design/tech-decisions.md`](../docs/design/tech-decisions.md)); D5 replaces the
-write-only `traj.jsonl`+mp4 with the event-sourced, branchable `.skn` bundle; D6 replaces open RCE
+write-only `traj.jsonl`+mp4 with the event-sourced, branchable `.skn` bundle; D6 replaces open arbitrary exec
 with the 3-layer capability-unlock permission stack; D1+D9 replace process-per-VM + AMI-relaunch with
 warm pools + fork-from-snapshot; D10 replaces the `os_type='Ubuntu'` reality with one Guest Runtime
 contract across Linux/Windows/macOS.
@@ -805,9 +805,9 @@ contract across Linux/Windows/macOS.
 
 | Subsystem | Keep (reusable instinct) | Replace (too primitive) | Decision |
 |---|---|---|---|
-| In-VM server | uniform one-port control API; per-OS a11y → one namespaced tree; cursor compositing; execute-with-verification | RCE/no-auth; Flask dev `debug=True`; full-PNG polling; XML blob; X11-only; single-threaded | D2/D3/D4/D6/D10 |
+| In-VM server | uniform one-port control API; per-OS a11y → one namespaced tree; cursor compositing; execute-with-verification | arbitrary exec/no-auth; Flask dev `debug=True`; full-PNG polling; XML blob; X11-only; single-threaded | D2/D3/D4/D6/D10 |
 | Client env | gym surface; declarative `{type,parameters}` setup; provider abstraction; dirty-tracking; magic-byte validation | synchronous polling + fixed sleeps; code-as-action; heavy reset; 3× duplicated env; reward cosmetic | D2/D3/D4/D7/D9 |
-| Providers | 5-method lifecycle vs allocation split; new-handle-on-revert; bake-once-restore (FastVM); TTL self-terminate | leaky colon-string contract; cost-opaque revert; no fork/CoW; no GPU; no warm pool; public unauth surface | D1/D9/D11 |
+| Providers | 5-method lifecycle vs allocation split; new-handle-on-revert; bake-once-restore (FastVM); TTL self-terminate | leaky colon-string contract; cost-opaque revert; no fork/CoW; no GPU; no warm pool; public no-auth surface | D1/D9/D11 |
 | Evaluators | declarative task JSON; getter/metric two-stage; result-vs-expected duality; and/or conjunction; manifest | `getattr` stringification; `eval()` on guest output; hardcoded OS paths; continuous-as-binary; no replay; flaky sleeps | D5/D6/D7 |
 | Agents/obs-action | uniform predict contract; obs×action matrix; vendor→one-primitive translation tables; SoM; image budgeting; sentinels | five incompatible schemas; code-as-action; brittle coords; failure-masking; per-vendor forks | D2/D3/D4/D6/D8 |
 | End-to-end | provider seam; in-VM daemon concept; declarative config; snapshot reset; resumable markers; resilient workers; surferH driver direction | blocking poll I/O; hardcoded sleeps; full-frame every step; fake Gym reward; single-platform; process-per-VM scale | D1–D12 |
@@ -815,6 +815,6 @@ contract across Linux/Windows/macOS.
 The one-line verdict for [`docs/design/osworld-analysis.md`](../docs/design/osworld-analysis.md): OSWorld's
 **data-model instincts are sound and we keep them** (declarative tasks, getter/metric registry,
 snapshot reset, a uniform in-VM control API, the gym surface); what Shinken replaces is the
-**transport and runtime** — blocking HTTP polling, full-frame PNGs, code-as-action, an unauthenticated
-RCE server, X11/Linux-only assumptions, and slow snapshot-revert — on the four headline axes:
+**transport and runtime** — blocking HTTP polling, full-frame PNGs, code-as-action, a no-auth
+arbitrary-exec server, X11/Linux-only assumptions, and slow snapshot-revert — on the four headline axes:
 streaming (D4), bandwidth (D3+D4), permissions (D6), and deterministic replay (D5).

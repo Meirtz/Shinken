@@ -1,7 +1,7 @@
 # Security Policy
 
-Shinken runs untrusted, AI-generated actions against real desktops. Security is a first-class
-concern — see [`docs/design/threat-model.md`](docs/design/threat-model.md).
+Shinken is a research/runtime project for computer-use agents. This document describes how to
+report a vulnerability.
 
 ## Reporting a vulnerability
 
@@ -10,13 +10,7 @@ concern — see [`docs/design/threat-model.md`](docs/design/threat-model.md).
 ("Report a vulnerability" under the Security tab). We aim to acknowledge reports within a few days.
 
 When reporting, include: affected version/commit, a description and impact, reproduction steps,
-and any logs or a `.skn` replay bundle that helps.
-
-## Scope
-
-In scope: sandbox escape, cross-tenant isolation breaks, the egress/credential broker, the
-permission/capability engine, and the replay store. Out of scope (pre-release): the design docs
-themselves and not-yet-implemented components.
+and any logs that help.
 
 ## Disclosure
 

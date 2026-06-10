@@ -67,7 +67,7 @@ replay-branching the same operation (D5). See [sandbox-infra.md](sandbox-infra.m
 - Firecracker snapshotting — snapshot support: https://github.com/firecracker-microvm/firecracker/blob/main/docs/snapshotting/snapshot-support.md, page faults on resume (UFFD lazy paging, sub-30 ms — vendor, unverified): https://github.com/firecracker-microvm/firecracker/blob/main/docs/snapshotting/handling-page-faults-on-snapshot-resume.md, random-for-clones (VMGenID/VMClock/PRNG reseed): https://github.com/firecracker-microvm/firecracker/blob/main/docs/snapshotting/random-for-clones.md — the snapshot/restore core + post-fork uniqueness hook (reseed RNG/MAC/hostname) Shinken requires (D1).
 - Firecracker — rootfs CoW (#3061): https://github.com/firecracker-microvm/firecracker/discussions/3061 and GPU/PCIe tracking (#4845): https://github.com/firecracker-microvm/firecracker/discussions/4845 — disk-side CoW for N parallel clones; confirms GPU is out-of-scope (D11).
 - Restoring Uniqueness in MicroVM Snapshots (arXiv 2102.12892): https://arxiv.org/abs/2102.12892 — the foundational uniqueness-on-fork paper.
-- Announcing Firecracker (AWS Open Source Blog): https://aws.amazon.com/blogs/opensource/firecracker-open-source-secure-fast-microvm-serverless — origin & threat-model framing; Seven Years of Firecracker (Marc Brooker, 2025): https://brooker.co.za/blog/2025/09/18/firecracker.html — snapshot/jailer maturity retrospective.
+- Announcing Firecracker (AWS Open Source Blog): https://aws.amazon.com/blogs/opensource/firecracker-open-source-secure-fast-microvm-serverless — origin & isolation framing; Seven Years of Firecracker (Marc Brooker, 2025): https://brooker.co.za/blog/2025/09/18/firecracker.html — snapshot/jailer maturity retrospective.
 - Cloud Hypervisor — GitHub: https://github.com/cloud-hypervisor/cloud-hypervisor — richer device model VMM for Windows-desktop + GPU-VFIO tiers (D1/D11).
 - crosvm — virtio-gpu (virgl/gfxstream, headless): https://crosvm.dev/book/devices/gpu.html — virtio-gpu path for Linux desktop guests where Firecracker can't.
 - Taming Serverless Cold Starts Through OS Co-Design (sub-5 ms restore): https://arxiv.org/pdf/2509.14292 — research frontier for restore latency (academic, unverified).
@@ -146,11 +146,11 @@ The event-sourced `.skn` bundle and branchable checkpoint DAG (D5). See [replay.
 
 ---
 
-## 5. Permissions, capability models & security
+## 5. Permissions & capability model
 
-The three-layer capability-unlock permission system: Cedar + ocap + OS enforcement, plus
-egress/secret brokering (D6). See [permissions.md](permissions.md) and
-[../docs/design/threat-model.md](../docs/design/threat-model.md).
+The three-layer resource-scoping system: Cedar + ocap + OS enforcement, plus egress/secret
+brokering (D6) — how the runtime scopes net egress, filesystem, and credentials for a Sandbox.
+See [permissions.md](permissions.md) and the [isolation & capability note](../docs/design/threat-model.md).
 
 **Declarative policy engine (Cedar — D6 layer 1)**
 - Cedar — policy structure: https://docs.cedarpolicy.com/policies/syntax-policy.html, operators: https://docs.cedarpolicy.com/policies/syntax-operators.html, templates: https://docs.cedarpolicy.com/policies/templates.html — the declarative decision layer Shinken chooses over OPA/Rego.
@@ -161,14 +161,12 @@ egress/secret brokering (D6). See [permissions.md](permissions.md) and
 
 **OS-level sandboxing (D6 layer 3)**
 - Landlock — unprivileged sandboxing: https://landlock.io and news #5 (ABI 6 IPC scoping, ABI 7 audit): https://landlock.io/news/5 — Linux FS-scope enforcement.
-- OpenAI Codex — sandbox concepts (Seatbelt/Landlock, modes): https://developers.openai.com/codex/concepts/sandboxing, approvals & security: https://developers.openai.com/codex/agent-approvals-security, internet access (GET/HEAD/OPTIONS allowlist): https://developers.openai.com/codex/cloud/internet-access — the three-axis (admissibility × confinement × approval) model + escalation-prompt UX + exfil mitigation Shinken mirrors.
+- OpenAI Codex — sandbox concepts (Seatbelt/Landlock, modes): https://developers.openai.com/codex/concepts/sandboxing, approvals & security: https://developers.openai.com/codex/agent-approvals-security, internet access (GET/HEAD/OPTIONS allowlist): https://developers.openai.com/codex/cloud/internet-access — the three-axis (admissibility × confinement × approval) model + escalation-prompt UX + egress scoping Shinken mirrors.
 - OpenAI — building a safe sandbox for Codex on Windows: https://openai.com/index/building-codex-windows-sandbox — Windows restricted-token/cap-SID enforcement (D6 Windows path).
 - Claude Code — sandboxing: https://code.claude.com/docs/en/sandboxing, security: https://code.claude.com/docs/en/security, permissions (allow/ask/deny, deny-wins, source-attributed): https://code.claude.com/docs/en/permissions — the out-of-sandbox egress proxy + OS backstop, and the deny>ask>allow grammar the Permission Panel adopts.
 - Anthropic — Claude Code sandboxing: https://www.anthropic.com/engineering/claude-code-sandboxing and auto mode (safer skip-permissions): https://www.anthropic.com/engineering/claude-code-auto-mode — two-layer "what it CAN touch" vs "when to ASK" split (D6).
 
-**Prompt injection, egress & secret brokering**
-- Anthropic — mitigating prompt injection in browser use (~1% attack success — vendor, unverified): https://www.anthropic.com/research/prompt-injection-defenses and OpenAI — understanding prompt injections: https://openai.com/index/prompt-injections — quantifies the taint-aware risk the permission tiers address.
-- Defeating Prompt Injections by Design (CaMeL): https://arxiv.org/pdf/2503.18813 — capability/taint-tracking design motivating taint-aware approvals (D6).
+**Egress scoping & secret brokering**
 - HashiCorp — SPIFFE for agentic AI identity: https://www.hashicorp.com/en/blog/spiffe-securing-the-identity-of-agentic-ai-and-non-human-actors and Vault SPIFFE auth: https://www.hashicorp.com/en/blog/vault-enterprise-1-21-spiffe-auth-fips-140-3-level-1-compliance-granular-secret-recovery — the secret-broker (Vault/SPIFFE) so the model never sees plaintext (D6).
 
 ---

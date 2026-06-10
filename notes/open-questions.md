@@ -6,7 +6,7 @@
 > and feeds the risk sections of the docs. Cross-links:
 > [00-vision](../docs/design/vision.md) · [01-prd](../docs/design/prd.md) · [02-architecture](../docs/design/architecture.md) ·
 > [05-tech-decisions](../docs/design/tech-decisions.md) · [06-roadmap](../docs/engineering/roadmap.md) ·
-> [08-threat-model](../docs/design/threat-model.md) · [09-economics-and-build-vs-buy](../docs/design/economics-and-build-vs-buy.md) ·
+> [isolation & capability note](../docs/design/threat-model.md) · [09-economics-and-build-vs-buy](../docs/design/economics-and-build-vs-buy.md) ·
 > sources in [`sources.md`](sources.md).
 
 The research produced a strong *qualitative* landscape and a defensible thesis — screenshot-first
@@ -27,7 +27,7 @@ first.
 | Q2 | First-party perf / density / cost numbers | **HIGH** | D1, D4, D11 | Measurement plan + spikes |
 | Q3 | Windows/macOS fast-reset feasibility | **HIGH** | D1, D10 | Spike + decision |
 | Q4 | Windows/macOS licensing economics | **HIGH** | D1, D12 | Research + legal review |
-| Q5 | Consolidated threat-model validation | **HIGH** | D6 | Red-team spikes |
+| Q5 | Egress/capability scoping validation | **MED** | D6 | Spec + integration spike |
 | Q6 | Build-vs-buy among public substrates | **HIGH** | D1, D9, D12 | Decision + integration spike |
 | Q7 | Multi-player / non-exclusive computer-use | **MED** | D2, D4 | Scope decision |
 | Q8 | Event-schema versioning + upcasting | **MED** | D2, D5 | Spec + spike |
@@ -195,46 +195,39 @@ via AOMedia) feeds the D11 codec ADR. There is also a **replay-store PII / data-
 - Consult counsel/procurement rather than blog summaries. Capture as constraints in 05/06/09. *This is a
   decision gate, not an experiment.*
 
-### Q5 — Consolidated threat-model validation
+### Q5 — Egress/capability scoping validation
 
-**Question.** Do the D6 mitigations actually stop the concrete attacker kill chains, especially
-prompt-injection → exfiltration past the SNI/scoped-domain allowlist, and multi-tenant side channels?
+**Question.** The D6 egress and capability scoping is designed-only; does it behave as specified once
+built — in particular, does the egress proxy actually confine outbound traffic to the configured
+allowlist, and does cross-tenant isolation hold on the shared substrate?
 
-**Why it matters.** [08-threat-model](../docs/design/threat-model.md) exists, but the pieces were assembled
-qualitatively, not *validated* against live kill chains. The load-bearing chains:
+**Why it matters.** The [isolation & capability note](../docs/design/threat-model.md) describes the
+mechanism, but the pieces were assembled qualitatively, not yet exercised against a running deployment.
+The scoping that needs first-party validation:
 
-```
-(1) malicious web/screen content
-      → screenshot OR a11y-name prompt-injection   (structured does NOT remove this:
-                                                     a malicious a11y `name` can inject)
-      → agent acts
-      → egress to attacker domain via DOMAIN FRONTING past the D6 egress proxy
-      → exfiltrates a brokered credential
-(2) microVM escape → host → other tenants            (blast radius)
-(3) CoW page-dedup memory leakage across tenant forks + shared-GPU/NVENC contention
-                                                     (covert channel + DoS)
-(4) Shinken abused as C2 / crypto-mining / scraping  (needs rate-limit + abuse detection
-                                                     in the D9 Action Gateway)
-```
+- **Egress confinement.** The proxy should keep outbound traffic within the configured per-host
+  allowlist (deny-by-default, canonical Host matching, controlled DNS resolver, optional TLS-MITM),
+  with the OS network gate (§4 of [permissions.md](permissions.md)) as the backstop. This is currently
+  designed-only, not yet validated.
+- **Cross-tenant isolation on shared resources.** CoW page-dedup across tenant forks and shared
+  GPU/NVENC scheduling are points where one session's state could become visible to or starve another;
+  the D11 MIG-backed / Confidential-Containers isolation tier is meant to address this and needs
+  measurement.
 
-The "lethal trifecta" framing (untrusted content + private data + exfiltration channel) shows structured
-observation does not by itself neutralize injection
-([Simon Willison](https://simonwillison.net/2025/Jun/16/the-lethal-trifecta/)); DNS-tunnel exfil PoCs show
-allowlists fail if DNS is open. The egress-proxy design mirrors a hardened reference (forced out-of-VM
-proxy, deny-by-default, fail-closed DNS, optional TLS-MITM — cf.
-[Cloudflare sandbox auth](https://blog.cloudflare.com/sandbox-auth/)).
+The egress-proxy design mirrors a public reference (out-of-VM proxy, deny-by-default, fail-closed DNS,
+optional TLS-MITM).
 
-**Resolution — Red-team SPIKES S5 mapped to D6.**
-- For each chain, attempt it against a reference deployment and confirm the mapped D6 control fires: egress
-  proxy (deny-by-default, anti-domain-fronting, optional TLS-MITM, **fail-closed**) blocks exfil;
-  header-injection credential brokering keeps plaintext from the model; the
-  [Cedar](https://docs.cedarpolicy.com/policies/syntax-policy.html) decision layer + ocap caretaker/membrane
-  revoke is O(1); taint promotion bumps untrusted-derived params to Ask/Block.
-- Explicitly test CoW page-dedup leakage (disable same-page-merging across tenant forks if it leaks) and
-  GPU/NVENC contention as a covert/DoS channel (validates the D11 MIG-backed / Confidential-Containers
-  isolation tier).
-- *Success:* every chain is either blocked, or produces a documented residual risk + compensating control in
-  08. Abuse-detection (rate-limit / anomaly) is specified in the Action Gateway (D9).
+**Resolution — Spec + integration spike.**
+- Stand up a reference deployment and confirm the egress proxy confines traffic to the allowlist, the
+  [Cedar](https://docs.cedarpolicy.com/policies/syntax-policy.html) decision layer + ocap
+  caretaker/membrane revoke is O(1), and provenance promotion bumps externally-sourced params to
+  Ask/Block.
+- Measure CoW page-dedup behaviour across tenant forks (disable same-page-merging across tenants if
+  state leaks) and GPU/NVENC scheduling fairness; validate the D11 MIG-backed / Confidential-Containers
+  isolation tier.
+- *Success:* egress confinement and cross-tenant isolation behave as specified, with any residual gap
+  and its compensating control documented. Rate-limit / quota controls are specified in the Action
+  Gateway (D9).
 
 ### Q6 — Build-vs-buy among public substrates
 
@@ -395,7 +388,7 @@ S2 CoW-fork+reseed ──┐
 S3 dual-channel WebRTC├──────► first-party numbers (replace "vendor-published, unverified")
 S6 substrate integ.  ┘        └─► v1 substrate ADR (D1/D9, Q6)
 S4 Win/mac reset ───────────► roadmap + economics (D1/D10, Q3/Q4)
-S5 red-team chains ─────────► validates 08-threat-model (D6, Q5)
+S5 egress/isolation spike ──► validates D6 scoping (Q5)
 S7 schema upcasting / S9 side-effect-safe fork ─► replay correctness (D5, Q8/Q10)
 S8 grader flake ────────────► eval reliability (D7, Q9)
 ```
@@ -405,5 +398,6 @@ reshape* the architecture and must be de-risked before heavy build: **Q1** (a11y
 structured fast paths do not win on real apps, D3 and the BEAT claim change), **Q2** (no first-party numbers —
 every figure stays "(vendor-published, unverified)" until S2/S3), and **Q6** (the chosen public substrate
 must provide, or let us build beneath it, the D1 fork primitive). The other HIGH items (Q3/Q4 cross-OS reset
-+ licensing, Q5 threat-model validation) and the MED/LOW items are reshaping rather than existential. Record
-the Q7 decision (multi-player **out** for v1, with an `actor_id` seam) now to avoid a retrofit later.
++ licensing) and the MED/LOW items (including Q5 egress/capability-scoping validation) are reshaping rather
+than existential. Record the Q7 decision (multi-player **out** for v1, with an `actor_id` seam) now to avoid
+a retrofit later.
