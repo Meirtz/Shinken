@@ -4,7 +4,7 @@
 > Audience: maintainers and implementers · Role: phase sequencing and milestone strategy. Current
 > implementation status lives in [`STATUS.md`](status.md); detailed v0.0.1 implementation scope lives
 > in [`10-phase0-plan.md`](v0.0.1-plan.md).
-> Sibling docs: [00 Vision](../design/vision.md) · [01 PRD](../design/prd.md) · [02 Architecture](../design/architecture.md) · [03 OSWorld teardown](../design/osworld-analysis.md) · [04 Landscape](../design/landscape.md) · [05 Tech decisions / ADRs](../design/tech-decisions.md) · [07 Glossary](../design/glossary.md) · [08 Threat model](../design/threat-model.md) · [09 Economics & build-vs-buy](../design/economics-and-build-vs-buy.md)
+> Sibling docs: [00 Vision](../design/vision.md) · [01 PRD](../design/prd.md) · [02 Architecture](../design/architecture.md) · [03 OSWorld teardown](../design/osworld-analysis.md) · [04 Landscape](../design/landscape.md) · [05 Tech decisions / ADRs](../design/tech-decisions.md) · [07 Glossary](../design/glossary.md) · [08 Isolation & capability note](../design/threat-model.md) · [09 Economics & build-vs-buy](../design/economics-and-build-vs-buy.md)
 
 > **What's actually built so far → [`STATUS.md`](status.md).** Phase 0's pixel slice (actions +
 > screenshot + real-time screencast + bandwidth levers + focused-window capture, Linux/X11) is
@@ -143,8 +143,8 @@ No cluster substrate dependency yet. The limit is scale, not scope.
   replay refs. High throughput and resumability can improve later; the semantic API must exist in
   v0.0.1.
 - **Capability envelope and local gateway seam:** ordinary in-sandbox GUI actions run inside the
-  declared envelope; boundary decisions are recorded as `.skn` permission events. Full Cedar/ocap/OS
-  enforcement comes later.
+  declared resource envelope; boundary decisions are recorded as `.skn` permission events. The full
+  Cedar/ocap/OS-level resource-scoping layer comes later.
 - **Tiny eval harness:** deterministic GUI tasks, programmatic verifiers, N-run summaries, and
   replay-linked verifier receipts.
 - Transport: local **WebSocket** for v0.0.1; virtio-vsock and WebRTC dual-channel optimize the same
@@ -195,14 +195,14 @@ canvas/WebGL surfaces, and games, which can yield empty or shallow trees.
 
 **Objective:** Make the v0.0.1 semantics fast, durable, and operable on a real cluster substrate.
 This phase does not invent the core product meaning; it productionizes it with the default Linux
-fast-fork tier, dual-channel streaming, stronger Sandbox Capability Manager enforcement, and the
-Control Panel human UI.
+fast-fork tier, dual-channel streaming, the Sandbox Capability Manager (control-plane
+resource-scoping), and the Control Panel human UI.
 
 ### Goals
 
 - **Linux fast-fork tier ([D1](../design/tech-decisions.md)):** a container fast-path on the OSS `kubernetes-sigs/agent-sandbox` CRD (gVisor/Kata runtime classes, warm pools via the `SandboxWarmPool` CRD shape — see [Agent Sandbox on Kubernetes](https://northflank.com/blog/agent-sandbox-on-kubernetes) and the [GKE Agent Sandbox blog](https://cloud.google.com/blog/products/containers-kubernetes/bringing-you-agent-sandbox-on-gke-and-agent-substrate)), plus a VM tier on **Firecracker** (headless) and **QEMU-microvm/crosvm** (desktop, virtio-gpu, since Firecracker exposes no display or GPU device — [D1](../design/tech-decisions.md)). Reset = **fork-from-snapshot**: MAP_PRIVATE CoW + userfaultfd + a warm parent pool ([Firecracker snapshot docs](https://github.com/firecracker-microvm/firecracker/blob/main/docs/snapshotting/snapshot-support.md)), with the **post-fork uniqueness hook** that reseeds RNG/MAC/hostname/boot-id — the documented ["Restoring Uniqueness in MicroVM Snapshots"](https://ar5iv.labs.arxiv.org/html/2102.12892) pitfall.
 - **Dual-channel streaming ([D4](../design/tech-decisions.md)):** a single-PeerConnection WebRTC session — a reliable-ordered **data channel** carrying the structured action/observation/permission event stream (this *is* the replay log, [D5](../design/tech-decisions.md)), plus an **on-demand hardware-encoded media track** (H.264/AV1; NVENC on the optional GPU tier). WHIP/WHEP signaling ([RFC 9725](https://datatracker.ietf.org/doc/html/rfc9725), [WebRTC DataChannel/SCTP RFC 8831](https://datatracker.ietf.org/doc/html/rfc8831)). At Phase 1 a single-tenant SFU is fine; encode-once fan-out is a Phase 4 concern. The open-source [neko](https://github.com/m1k1o/neko) GStreamer→`webrtcbin` design and the [Selkies-GStreamer](https://github.com/selkies-project/selkies-gstreamer) `ximagesrc → nvcodec → webrtcbin` pattern are the starting references.
-- **Capability Manager MVP ([D6](../design/tech-decisions.md)):** the 3-layer model in minimum form — a [Cedar](https://docs.cedarpolicy.com/policies/syntax-policy.html) declarative decision layer (sub-ms, formally verifiable; deliberately **not** OPA/Rego), an object-capability caretaker/membrane handle layer for O(1) instant revoke, and **OS enforcement** on Linux only (bubblewrap + seccomp network-gate + [Landlock](https://docs.kernel.org/userspace-api/landlock.html) + cgroups + an **out-of-VM egress proxy**, deny-by-default and scoped-domain). Implement capability descriptors for egress, credentials, host filesystem scopes, GPU, persistence, clipboard, privileged installs, and OS automation; broker secrets via proxy header-injection so the model never sees plaintext. Ordinary in-sandbox actions should not prompt.
+- **Capability Manager MVP ([D6](../design/tech-decisions.md)) — control-plane resource-scoping:** the 3-layer model in minimum form, scoping which resources a session can reach — a [Cedar](https://docs.cedarpolicy.com/policies/syntax-policy.html) declarative decision layer (sub-ms, formally verifiable; deliberately **not** OPA/Rego), an object-capability caretaker/membrane handle layer for O(1) instant revoke, and **OS-level scoping** on Linux only (bubblewrap + seccomp network-gate + [Landlock](https://docs.kernel.org/userspace-api/landlock.html) + cgroups + an **out-of-VM egress proxy**, default-deny and scoped-domain). Implement capability descriptors for egress, credentials, host filesystem scopes, GPU, persistence, clipboard, privileged installs, and OS automation; broker secrets via proxy header-injection so the model never sees plaintext. Ordinary in-sandbox actions should not prompt. This is runtime plumbing, not a headline.
 - **Control Panel (headline #1/#2):** a web UI with a live structured + on-demand video view, capability configuration cards, `.skn` replay/scrubbing, and basic cross-session search. Human takeover routes through the **Operator** seam.
 - **Action Gateway ([D9](../design/tech-decisions.md)):** the single request-path choke point doing tenant-auth → token-bucket rate-limit → Cedar policy → dispatch, wired in even at low concurrency so nothing ever bypasses it.
 
@@ -210,14 +210,14 @@ Control Panel human UI.
 
 - Fleet Manager v1 (warm pool per image/tier on the `agent-sandbox` CRD; fork-on-demand; cold-pool replenish).
 - WebRTC dual-transport stack (data channel + hardware-encoded media track) over virtio-vsock host↔guest.
-- Cedar policy engine + ocap membrane + Linux OS-enforcement + egress proxy + Vault broker.
+- Cedar policy engine + ocap membrane + Linux OS-level resource scoping + egress proxy + Vault broker.
 - Control Panel (live view, capability config, replay scrub, search).
 - Branchable `.skn` ([D5](../design/tech-decisions.md)): a checkpoint DAG with CoW-fork branching — branch and instant-reset are the **same primitive** ([D1](../design/tech-decisions.md)).
 
 ### 🔬 SPIKE — CoW-fork density
 
 - **Method:** on Firecracker and Cloud Hypervisor/QEMU, fork N children from one warm parent and measure **private-RSS-bound concurrent guests per host** (the real density metric, not total image size), fork P99, time-to-first-action, and correctness of the uniqueness reseed (RNG/MAC/clock/TLS). Compare against the published anchors: [Morph Infinibranch](https://cloud.morph.so/docs/documentation/instances/branch) fork P99 ~1.3 ms with ~93% shared pages; Firecracker VMM-side restore 5–30 ms; the OSS [forkd](https://github.com/deeplethe/forkd) reference ~1 ms/child and ~150 ms live branch — **all vendor-published, unverified**. Additionally measure **fork-N vs cold-boot-N amortization** on (i) an OSWorld-class desktop image and (ii) a SWE-bench-class task image — the wedge's economics number against named 2026 baselines: uni-agent's GRPO pays n_resp_per_prompt=8 independent cold boots per prompt (https://github.com/verl-project/uni-agent); CUA-Gym pays 2 fresh cloud VMs × ~10 min provisioning per generated task (https://github.com/xlang-ai/CUA-Gym); Agentix scores each instance in a second fresh sandbox (https://github.com/Agentix-Project/Agentix); cua publishes 1–5 s cloud fork (vendor-published, unverified) that its own bench does not use (https://github.com/trycua/cua).
-- **Pass/fail:** PASS if first-party fork P99 and density land within ~2× of the published anchors *and* the uniqueness hook is correct (no cross-fork RNG/MAC collisions). FAIL → the blast radius is cross-cutting, matching the canon's own cross-cutting section: (a) the Linux fork-tier economics and the Phase 4 cost model in [`09-economics-and-build-vs-buy.md`](../design/economics-and-build-vs-buy.md) need rework ([D1](../design/tech-decisions.md)); (b) **[D5](../design/tech-decisions.md) replay-branching latency** degrades — "branch from step N" stops being the same sub-ms primitive as instant-reset and falls back to slow snapshot-restore; (c) **[D7](../design/tech-decisions.md) N≥5 pass@k/pass^k eval replica cost** rises, since cheap forked replicas are what make statistical eval economical; (d) the **[D12](../design/tech-decisions.md) "can't get this elsewhere" adoption wedge** weakens, because cheap fork/resume is the concrete reason eval/training teams adopt over acquiring OSWorld-style datasets. **What survives in a snapshot-restore-only world:** deterministic reset, checkpoint/resume, and the layered ACI/observation/capability/eval stack still differentiate — Shinken stays a complete CUA infrastructure layer, but the headline narrows from *sub-ms branchable* runtime to *snapshot-restore* runtime, and the cost/eval-density claims must be re-derived from restore latency, not fork density.
+- **Pass/fail:** PASS if first-party fork P99 and density land within ~2× of the published anchors *and* the uniqueness hook is correct (no cross-fork RNG/MAC collisions). FAIL → the impact is cross-cutting, matching the canon's own cross-cutting section: (a) the Linux fork-tier economics and the Phase 4 cost model in [`09-economics-and-build-vs-buy.md`](../design/economics-and-build-vs-buy.md) need rework ([D1](../design/tech-decisions.md)); (b) **[D5](../design/tech-decisions.md) replay-branching latency** degrades — "branch from step N" stops being the same sub-ms primitive as instant-reset and falls back to slow snapshot-restore; (c) **[D7](../design/tech-decisions.md) N≥5 pass@k/pass^k eval replica cost** rises, since cheap forked replicas are what make statistical eval economical; (d) the **[D12](../design/tech-decisions.md) "can't get this elsewhere" adoption wedge** weakens, because cheap fork/resume is the concrete reason eval/training teams adopt over acquiring OSWorld-style datasets. **What survives in a snapshot-restore-only world:** deterministic reset, checkpoint/resume, and the layered ACI/observation/capability/eval stack still differentiate — Shinken stays a complete CUA infrastructure layer, but the headline narrows from *sub-ms branchable* runtime to *snapshot-restore* runtime, and the cost/eval-density claims must be re-derived from restore latency, not fork density.
 
 ### 🔬 SPIKE — dual-channel latency PoC
 
@@ -280,7 +280,7 @@ Control Panel human UI.
 
 - **Windows tier ([D1](../design/tech-decisions.md), heavier):** Cloud Hypervisor/QEMU + virtio-win + the Guest Runtime (UIA → the unified `Element` schema, [D3](../design/tech-decisions.md)). Longer-lived and snapshot-light. **Licensing-gated** — resolve the open question of whether commodity multi-tenant Windows is even permissible (no commodity multi-tenant desktop Windows exists without specific licensing programs; the realistic options are per-core Datacenter licensing for density vs customer-supplied/BYOL). This is a *gate*, not an assumption. The Windows golden-image pipeline (cloudbase-init + sysprep) follows the [Cloud Hypervisor Windows guide](https://github.com/cloud-hypervisor/cloud-hypervisor/blob/main/docs/windows.md).
 - **macOS tier ([D1](../design/tech-decisions.md), scarce premium):** **Apple Virtualization.framework on Apple hardware** (the tart/lume pattern). Hard caps acknowledged: Apple-hardware-only, **2 VMs per host** (Apple EULA, [confirmed by the Apple containerization issue tracker](https://github.com/apple/containerization/issues/737)), TCC pre-grant. Plan as **low-density standing pools**, not a fork tier — macOS/Windows fast-reset is largely infeasible with today's tooling.
-- **Per-OS handler-factory beneath one ACI ([D10](../design/tech-decisions.md)):** AT-SPI (Linux) / UIA (Windows) / AX (macOS) / CDP (browser) all normalize into the one `Element` schema; the action schema and event stream are unchanged. macOS enforcement = Seatbelt + TCC; Windows = restricted token + per-workspace capability-SID ([D6](../design/tech-decisions.md)).
+- **Per-OS handler-factory beneath one ACI ([D10](../design/tech-decisions.md)):** AT-SPI (Linux) / UIA (Windows) / AX (macOS) / CDP (browser) all normalize into the one `Element` schema; the action schema and event stream are unchanged. macOS resource scoping = Seatbelt + TCC; Windows = restricted token + per-workspace capability-SID ([D6](../design/tech-decisions.md)).
 
 ### 🔬 SPIKE — macOS-reset feasibility & Windows-licensing
 
@@ -291,7 +291,7 @@ Control Panel human UI.
 
 - A Windows Guest Runtime (UIA handler) + Cloud Hypervisor/QEMU + a virtio-win image pipeline.
 - A macOS Guest Runtime (AX handler) + a Virtualization.framework standing pool on Apple hardware.
-- Per-OS OS-enforcement (Seatbelt/TCC; restricted token/capability-SID) wired into the [D6](../design/tech-decisions.md) permission model.
+- Per-OS resource scoping (Seatbelt/TCC; restricted token/capability-SID) wired into the [D6](../design/tech-decisions.md) capability model.
 - A [WindowsAgentArena](https://arxiv.org/abs/2409.08264) conformance suite added to the eval layer ([D7](../design/tech-decisions.md)).
 
 ### Success criteria
@@ -342,7 +342,7 @@ Control Panel human UI.
 ### Dependencies
 
 - **NICE DCV** (the pixel-channel build-vs-buy, finalized), **NRAS** + **Confidential Containers** + **GPU-TEE** (trusted tier), **vGPU/MIG** (density/isolation), the `agent-sandbox` substrate, and Vault.
-- The consolidated threat model in [`08-threat-model.md`](../design/threat-model.md) must be GA-ready before multi-tenant launch (multi-tenant noisy-neighbor, CoW page-dedup leakage, and shared-GPU/NVENC side channels are Phase-4-blocking risks).
+- The consolidated [isolation & capability note](../design/threat-model.md) must be GA-ready before multi-tenant launch (multi-tenant noisy-neighbor isolation, CoW page-dedup isolation, and shared-GPU/NVENC isolation are Phase-4-blocking robustness items).
 
 ---
 
@@ -367,7 +367,7 @@ These are **explicitly post-v1** (Android is roadmap, not v1; multi-player is an
 | NVENC-density | The cloud streaming cost model | 4 | Concurrent streams/L4-L40S making the ~$0.8M/mo AV1 anchor plausible | D11, D4 |
 | GPU-TEE-attestation | The trusted multi-tenant GPU tier | 4 | End-to-end NRAS + Confidential-Containers attestation gating a `gpu` unlock | D11, D6 |
 
-Every spike has a **kill condition**. If a11y-coverage fails, D3 flips to pixels-first before Phase 1 builds on it. If CoW-fork density fails, the blast radius is cross-cutting — the Phase 4 cost model and Linux-default-tier positioning (D1), D5 replay-branching latency, D7 N≥5 eval-replica cost, and the D12 adoption wedge all revise to a snapshot-restore-only story (see the spike's kill condition above). This is the entire point of the phasing: the architecture's load-bearing bets are tested *before* the platform leans on them.
+Every spike has a **kill condition**. If a11y-coverage fails, D3 flips to pixels-first before Phase 1 builds on it. If CoW-fork density fails, the impact is cross-cutting — the Phase 4 cost model and Linux-default-tier positioning (D1), D5 replay-branching latency, D7 N≥5 eval-replica cost, and the D12 adoption wedge all revise to a snapshot-restore-only story (see the spike's kill condition above). This is the entire point of the phasing: the architecture's load-bearing bets are tested *before* the platform leans on them.
 
 ---
 
@@ -378,7 +378,7 @@ These remain unresolved and are tracked as roadmap risks rather than hidden; det
 - **a11y coverage on Electron/Qt/canvas/games** — the load-bearing unverified assumption; the Phase 0 spike resolves it.
 - **macOS/Windows fast-reset** — largely infeasible with today's tooling; the Phase 3 spike sets expectations.
 - **No first-party perf numbers yet** — every speed/density/cost figure in this document is **vendor-published, unverified** until the Phase 0/1/4 spikes replace them; see the measurement plan in [`09-economics-and-build-vs-buy.md`](../design/economics-and-build-vs-buy.md).
-- **Consolidated threat model** — prompt-injection → exfiltration, sandbox escape, multi-tenant noisy-neighbor / side-channel, CoW page-dedup leakage; needed before Phase 4 multi-tenant GA. The Rule-of-Two + stripped-input injection classifier + default-deny egress controls ([D6](../design/tech-decisions.md), drawing on [Meta's Agents Rule of Two](https://ai.meta.com/blog/practical-ai-agent-security/) and [Anthropic's prompt-injection defenses](https://www.anthropic.com/research/prompt-injection-defenses)) are the starting baseline, but a ~1% prompt-injection attack-success-rate is *large* at ultra-high concurrency. Full analysis in [`08-threat-model.md`](../design/threat-model.md).
+- **Consolidated isolation & capability note** — multi-tenant noisy-neighbor isolation, CoW page-dedup isolation, and shared-GPU/NVENC isolation; needed before Phase 4 multi-tenant GA. The capability/resource-scoping layer ([D6](../design/tech-decisions.md)) — scoped egress, secret brokering, and per-session resource scopes — is the runtime plumbing this builds on, but the multi-tenant isolation properties still need first-party validation at ultra-high concurrency. Full analysis in the [isolation & capability note](../design/threat-model.md).
 - **Windows-in-cloud licensing & macOS 2-VM/host economics** — these shape cost and the Phase 3 roadmap; resolved by the Phase 3 spikes.
 - **Protocol/event-schema versioning + upcasting** — must be specified before `.skn` files outlive a single ACI version ([D5](../design/tech-decisions.md)).
 - **Multi-player / non-exclusive computer-use** — an explicit in/out scope decision, defaulted to non-goal for v1 above.

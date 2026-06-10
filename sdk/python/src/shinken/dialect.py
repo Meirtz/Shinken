@@ -14,8 +14,8 @@ The Phase-0 dialect is the XML-like tag form documented in ``docs/design/aci-spe
     </actions>
 
 The parser is **pure and side-effect-free**: it does no I/O and never evaluates code (it
-is a small hand-written tag scanner, so there is no XML entity/DTD attack surface). It is
-the adapter boundary's reference grammar — vendor adapters may use their own
+is a small hand-written tag scanner, so there is no XML entity/DTD expansion to worry
+about). It is the adapter boundary's reference grammar — vendor adapters may use their own
 function-call/JSON grammars, but must normalize into the same canonical ACI actions.
 
 Malformed output raises :class:`DialectError` with a teaching message, so an Operator

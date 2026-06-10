@@ -42,7 +42,7 @@ these fields instead of inferring behavior from provider names.
 | `reset_strategy` | What `reset()` means | recreate | provider-managed | fork-from-snapshot | fork/recreate by tier |
 
 `DockerLocalProvider` is useful for development, compatibility, and low-concurrency baselines. It
-is not a security boundary for hostile multi-tenant workloads, and it is not a checkpoint/fork tier.
+is not an isolation boundary for multi-tenant workloads, and it is not a checkpoint/fork tier.
 
 ## Local Benchmark Contract
 

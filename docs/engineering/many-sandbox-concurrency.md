@@ -156,7 +156,7 @@ loop + ~3 fds each); folding TLS into the SDK's own dial (`wss://` straight from
 `aconnect`, which websockets supports natively) makes it 1 fd + 0 extra threads per sandbox.
 
 Budget: N=1024 sockets + provider handles + logs + stdio ≈ plan **nofile ≥ 4×N (8192)**.
-Defaults are hostile: Linux soft default 1024 (exactly the fleet size — zero headroom),
+Defaults are too low: Linux soft default 1024 (exactly the fleet size — zero headroom),
 macOS 256. The N=256 validation gate (§7) records actual fd high-water marks.
 
 ## 4. Observation scheduling for RL: pull, not push
