@@ -23,7 +23,7 @@ import json
 from matplotlib.colors import to_rgb
 from matplotlib.ticker import FixedLocator, NullFormatter, NullLocator, ScalarFormatter
 
-from _common import PALETTE, REPO_ROOT, RESULTS_DIR, new_axes, save_plot
+from _common import style, PALETTE, REPO_ROOT, RESULTS_DIR, new_axes, save_plot
 
 REMOTE_DATA = RESULTS_DIR / "remote"
 
@@ -258,8 +258,57 @@ def a11y_coverage():
     save_plot(fig, "a11y_coverage")
 
 
+def fork_ladder():
+    """THE runtime-state figure: time to one USABLE replica of a mid-task state,
+    per tier — each tier's p50 read from its own tracked suite JSON. Carried
+    state grows; latency does not."""
+    import json
+
+    def p50(name, key):
+        return json.loads((RESULTS_DIR / f"{name}.json").read_text())["summary"][key]["p50"]
+
+    rows = [
+        ("cold boot\n(no state)", p50("fork_resume", "cold_boot_total_ms"),
+         "nothing — setup must replay", "0.45"),
+        ("disk fork\n(docker commit)", p50("fork_resume", "fork_total_ms"),
+         "files", PALETTE["jpeg"]),
+        ("memory fork\n(CRIU restore)", p50("fork_resume_memory", "fork_total_ms"),
+         "files + processes + heap", PALETTE["accent"]),
+        ("warm-pool graft", p50("fork_resume_pool", "pool_graft_total_ms"),
+         "files, onto a pre-booted base", PALETTE["delta"]),
+    ]
+    style()
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots(figsize=(8.6, 4.2))
+    bars = ax.barh([r[0] for r in rows][::-1], [r[1] / 1000.0 for r in rows][::-1],
+                   color=[r[3] for r in rows][::-1], height=0.62)
+    ax.set_xscale("log")
+    ax.set_xticks([0.1, 0.2, 0.5, 1.0])
+    ax.set_xticklabels(["0.1 s", "0.2 s", "0.5 s", "1 s"])
+    ax.set_xlim(0.08, 1.45)
+    for bar, (_label, ms, carried, _c) in zip(bars, rows[::-1]):
+        ax.text(bar.get_width() * 1.07, bar.get_y() + bar.get_height() / 2,
+                f"{ms / 1000:.2f} s", va="center", fontweight="bold", fontsize=12)
+        if bar.get_width() >= 0.35:  # room inside the bar
+            ax.text(0.082, bar.get_y() + bar.get_height() / 2,
+                    f"carries: {carried}", va="center", ha="left", fontsize=10,
+                    style="italic", color="white")
+        else:  # short bar: annotate to the right of the value label
+            ax.text(bar.get_width() * 1.45, bar.get_y() + bar.get_height() / 2,
+                    f"carries: {carried}", va="center", ha="left", fontsize=10,
+                    style="italic", color="0.35")
+    ax.set_xlabel("time to a usable replica of a mid-task state (p50, log scale)")
+    ax.set_title("The fork ladder — every rung state-verified, the donor stays live")
+    ax.text(0.99, 0.03,
+            "checkpointing the LIVE sandbox: 0.53 s (disk) / 0.70 s (memory, donor keeps running)",
+            transform=ax.transAxes, ha="right", va="bottom", fontsize=10, color="0.35")
+    save_plot(fig, "fork_ladder")
+
+
 if __name__ == "__main__":
     remote_codec_ladder()
+    fork_ladder()
     bandwidth_bars()
     aggregate_projection()
     a11y_coverage()

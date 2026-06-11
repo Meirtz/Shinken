@@ -464,29 +464,36 @@ def write_result(suite: str, payload: dict[str, Any]) -> Path:
 
 def style() -> None:
     """Apply the one shared matplotlib style (Agg, no display). Idempotent; called
-    by ``new_axes`` and importable by any plotting script outside this package."""
+    by ``new_axes`` and importable by any plotting script outside this package.
+    Paper aesthetic: seaborn whitegrid + Times New Roman with STIX math."""
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    import seaborn as sns
 
+    sns.set_theme(context="notebook", style="whitegrid")
     plt.rcParams.update(
         {
             "figure.dpi": 140,
-            "font.size": 11,
-            "axes.titlesize": 12,
-            "axes.labelsize": 11,
-            "legend.fontsize": 9,
-            "xtick.labelsize": 10,
-            "ytick.labelsize": 10,
+            "font.family": "serif",
+            "font.serif": ["Times New Roman", "STIXGeneral", "DejaVu Serif"],
+            "mathtext.fontset": "stix",
+            "font.size": 12,
+            "axes.titlesize": 13,
+            "axes.labelsize": 12,
+            "legend.fontsize": 10,
+            "xtick.labelsize": 11,
+            "ytick.labelsize": 11,
             "axes.grid": True,
-            "grid.alpha": 0.25,
+            "grid.alpha": 0.35,
             "grid.linewidth": 0.6,
             "axes.spines.top": False,
             "axes.spines.right": False,
+            "axes.edgecolor": "0.25",
+            "axes.linewidth": 0.9,
         }
     )
-
 
 def new_axes(ncols: int = 1, *, height: float = 4.2, width: float = 6.4, nrows: int = 1):
     """Consistent matplotlib axes for every suite figure."""

@@ -169,7 +169,7 @@ replica by an in-memory marker no files-only mechanism can fake (privileged cont
 necessity: a latency/state-fidelity tier, not an isolation posture). Cold boot → usable is
 ~0.2 s after push-based readiness.
 
-<p align="center"><img src="docs/assets/bench/fork_resume.png" width="820"></p>
+<p align="center"><img src="docs/assets/bench/fork_ladder.png" width="820"></p>
 
 **2 — Fork-native consumption: what the ladder buys when loops run on it.** The gym facade's
 `reset()` *is* a fork: task setup runs once into a golden checkpoint and every episode forks a
@@ -181,6 +181,8 @@ real: one process drives **128 real Docker desktops** (128/128 booted in 7.3 s, 
 amortized per replica, observe-all at 142 ms p50, 2 OS threads), and the client plane alone
 holds **1,024 live ACI sessions on one event-loop thread** (~884 Mbps sustained decoded
 ingest; protocol-faithful synthetic peers).
+
+<p align="center"><img src="docs/assets/bench/local_fanout.png" width="820"></p>
 
 **3 — Fleet observation dedup: the fork dividend.** Replicas forked from one checkpoint render
 identical pixels *by construction*, so content-negotiated observation (`if_none_match` against
