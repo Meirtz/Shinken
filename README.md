@@ -86,6 +86,14 @@ with provider.session(SandboxSpec()) as env:
     ckpt.delete()
 ```
 
+Here is that loop run for real on the **memory tier** (CRIU): the golden desktop holds a
+shell variable that exists only in process memory, the checkpoint is taken while the donor
+keeps running, and every replica wakes up with the same screen, the same shell, the same
+heap — then diverges. Real screenshots, regenerated any time with
+`python scripts/readme_demo.py fork`:
+
+<p align="center"><img src="docs/assets/demo/fork_fanout.png" width="860"></p>
+
 **One checkpoint, a whole fleet** — `spawn_many` mints N verified replicas and `fleet.map`
 drives them concurrently (for real: one process, one event loop):
 
@@ -102,6 +110,32 @@ with provider.session(SandboxSpec()) as env:
         fleet.map(lambda e: e.destroy())
         ckpt.delete()
 ```
+
+**Observe on demand, act by element id** — the agent decides when to look. A structured
+observation is a numbered tree whose element ids are **stable across observations** (never
+rebound), so the model can say "click e7" across turns; a re-observation comes back as a
+`~/+/-` **diff**, not a re-dump:
+
+```python
+import time
+
+from shinken import DockerLocalProvider, SandboxSpec
+
+provider = DockerLocalProvider()
+with provider.session(SandboxSpec()) as env:
+    env.launch_app("zenity", ["--entry", "--title=Expense report", "--text=Vendor name:"])
+    time.sleep(1.0)
+    obs = env.observe(structured=True, settle_ms=200)  # numbered tree + stable ids
+    entry = next(e for e in obs["elements"] if e["role"] == "text")
+    env.act_on(entry["ref"], "click")                  # guest-resolved element target
+    env.type_text("Imagine Diffusion KK")
+    diff = env.observe_diff()                          # '~ e7 … Value:"Imagine Diffusion KK"'
+```
+
+The same exchange, captured live (`python scripts/readme_demo.py observe`) — the full tree
+is 0.6 KiB against a 45 KiB screenshot, and the diff after typing is 194 bytes:
+
+<p align="center"><img src="docs/assets/demo/observe_diff.png" width="860"></p>
 
 **Drive with a model adapter** — model dialect in, validated ACI action out, result back in
 the model's grammar:
@@ -121,10 +155,29 @@ with provider.session(SandboxSpec()) as env:
 Every sandbox stays addressable through `env.handle`; `shinken ps` lists what is alive and
 `shinken gc` reaps anything leaked.
 
-> **macOS caveat** — the native backend (`shinkend --backend macos`) drives the **real
-> desktop** of your Mac: it requires a TCC grant (Screen Recording + Accessibility) and its
-> clicks land on your actual screen. Use the Docker provider for isolation; the macOS engine
-> is a local-only v1 slice (no mac CI yet).
+## Platforms
+
+One wire contract, one SDK, per-OS engines inside `shinkend`. Maturity is uneven and
+labeled honestly:
+
+| platform | act + observe (pixels) | structured observation | fork tiers | CI |
+|---|---|---|---|---|
+| **Linux/X11** (Docker sandbox) | ✅ all 22 verbs | ✅ guest AT-SPI engine: stable ids, diffs, settle | ✅ disk · warm-pool · CRIU memory | ✅ live (9 jobs) |
+| **macOS** (native, real desktop) | 🟡 v1: capture + pointer/keyboard, Retina-correct, TCC-honest | ○ designed (AXUIElement tier, D14) | — (no sandbox boundary) | local smoke only |
+| **Windows · Linux/Wayland** | ○ designed | ○ designed (UIA tier) | — | — |
+
+The macOS engine drives the **real desktop** of your Mac — same wire contract, no
+container:
+
+```bash
+cargo run --manifest-path shinkend/Cargo.toml -- --backend macos
+python scripts/macos_smoke.py        # non-destructive: readiness, capture, hover
+```
+
+> **macOS caveat** — it requires TCC grants (Screen Recording + Accessibility) and its
+> clicks land on your actual screen. Use the Docker provider for isolation; the macOS
+> engine is a local-only v1 slice (no mac CI yet);
+> [docs/engineering/macos-engine.md](docs/engineering/macos-engine.md).
 
 ## Architecture
 
@@ -152,11 +205,16 @@ flowchart LR
   classDef d stroke-dasharray:5 5,stroke:#999,color:#666;
 ```
 
-Most CUA stacks run `screenshot → model → pixel click → sleep → repeat` and throw the run
-away. Shinken's loop is typed at every edge and lands in checkpointable state:
+**The agent decides when to look.** Observation is a tool the model calls — `observe`,
+`screenshot`, `observe_diff` — not something the runtime pushes into the loop, and any
+mutating action can opt into returning a fresh observation (`observe=`), so
+act-then-reobserve is one round trip. There is no harness-side per-step screenshot poll:
+the opt-in screencast exists for human monitoring and recording, not for the agent loop.
+Harnesses that *do* poll (OSWorld-style `screenshot → model → click → sleep → repeat`) are
+supported through the adapter — the polling lives in the adapter, not in the contract:
 
 ```text
-observation (pixels now, hybrid structured designed) → typed action → verified result → checkpointable state
+agent-initiated observe (pixels and/or structured tree) → typed action → verified result → checkpointable state
 ```
 
 ## Why "Shinken"?
