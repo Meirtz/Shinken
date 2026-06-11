@@ -113,6 +113,37 @@ exactly the shape Shinken's fleet numbers are built for: `num_generations_per_pr
 maps to N forks of one golden checkpoint at ~0.5 s each, where re-provisioning
 environments per generation is the cost the trainer otherwise eats.
 
+## 5. Close the loop on a laptop (MLX GRPO)
+
+NeMo RL is the production trainer, but it needs CUDA. To prove the *learning* half closes
+around Shinken's environment without a GPU node, [`local_grpo.py`](local_grpo.py) runs a
+real GRPO loop entirely on Apple Silicon: a small **MLX** policy (Qwen2.5-1.5B-Instruct-4bit
++ LoRA — the only trainable params) drives `ShinkenComputerEngine`, group-relative advantage
+turns the CUA-Gym reward into a gradient, and an Adam step on the LoRA weights moves the
+policy.
+
+```bash
+python -m venv ~/venvs/mlxrl
+~/venvs/mlxrl/bin/pip install "mlx-lm>=0.21" -e sdk/python
+~/venvs/mlxrl/bin/python examples/nemo_gym/local_grpo.py
+```
+
+Measured (2026-06-12, M4 Pro, group 8, task `hello-file`) — **mean reward 0.25 → 0.875 over
+5 iterations in 62 s**, LoRA-updated every iteration that had reward spread:
+
+```text
+iter 0: mean_reward=0.250  [0,0,0,0,0,1,0,1]   updated=True (20s)
+iter 1: mean_reward=0.250  [0,0,0,0,1,0,1,0]   updated=True (10s)
+iter 2: mean_reward=0.125  [0,0,0,0,1,0,0,0]   updated=True (11s)
+iter 3: mean_reward=0.875  [1,1,1,0,1,1,1,1]   updated=True (11s)
+iter 4: mean_reward=0.875  [1,1,1,1,1,1,1,0]   updated=True (10s)
+```
+
+This is the same loop NeMo RL runs at scale — fork-native env, group baseline,
+policy-gradient on the policy that produced the rollouts — just small enough to watch
+converge on one machine. `num_generations_per_prompt` in the GRPO config is exactly this
+group: N forks of one golden checkpoint.
+
 ## Notes
 
 - **Golden vs post-fork setup**: file state belongs in the bundle's `config` steps (runs
