@@ -1,0 +1,491 @@
+{
+  "suite": "agent_quality_pilot",
+  "meta": {
+    "generated_utc": "2026-06-11T08:13:20Z",
+    "git_commit": "b8da8e3",
+    "python": "3.13.9",
+    "host_os": "macOS 26.5.1",
+    "host_arch": "arm64",
+    "host_cpu": "Apple M4 Pro",
+    "host_cores": "14",
+    "host_mem_gib": 48.0,
+    "docker_server": "29.4.3",
+    "concurrent_containers": [],
+    "image": "shinken/sandbox-linux",
+    "image_arch": "linux/arm64",
+    "screen_geometry": "1280x800x24"
+  },
+  "mode": "pilot",
+  "agent": {
+    "kind": "model",
+    "model": "kimi-k2.6",
+    "endpoint": "openai-compatible chat completions (env-configured)",
+    "temperature": 0.0
+  },
+  "study_ready": true,
+  "note": "real-model episodes",
+  "max_steps": 10,
+  "seeds": 2,
+  "tiers": {
+    "png-native": {},
+    "q50-1024": {
+      "format": "jpeg",
+      "quality": 50,
+      "max_long_edge": 1024
+    },
+    "q10-768": {
+      "format": "jpeg",
+      "quality": 10,
+      "max_long_edge": 768
+    }
+  },
+  "per_tier": {
+    "png-native": {
+      "n": 4,
+      "successes": 4,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 2.25,
+      "frame_bytes_mean": 68088
+    },
+    "q50-1024": {
+      "n": 4,
+      "successes": 0,
+      "success_rate": 0.0,
+      "mean_steps_to_success": null,
+      "frame_bytes_mean": 22398
+    },
+    "q10-768": {
+      "n": 4,
+      "successes": 0,
+      "success_rate": 0.0,
+      "mean_steps_to_success": null,
+      "frame_bytes_mean": 10176
+    }
+  },
+  "episodes": [
+    {
+      "task": "code_prompt-normal",
+      "template": "code_prompt",
+      "font": "normal",
+      "tier": "png-native",
+      "seed": 0,
+      "agent": "model",
+      "reset_ms": 85.8,
+      "ready_s": 1.06,
+      "reward": 1.0,
+      "success": true,
+      "steps": 3,
+      "exit_reason": "task_complete",
+      "kind": "pass",
+      "parse_errors": 0,
+      "frame_bytes_mean": 73683,
+      "receipt": {
+        "passed": true,
+        "checks": [
+          {
+            "name": "answer matches",
+            "ok": true,
+            "evidence": {
+              "expected": "TXJ7-67AN",
+              "observed": [
+                "TXJ7-67AN"
+              ]
+            }
+          }
+        ]
+      },
+      "prompt_tokens": 4925,
+      "completion_tokens": 4211,
+      "wall_s": 54.3
+    },
+    {
+      "task": "code_prompt-normal",
+      "template": "code_prompt",
+      "font": "normal",
+      "tier": "png-native",
+      "seed": 1,
+      "agent": "model",
+      "reset_ms": 87.2,
+      "ready_s": 1.06,
+      "reward": 1.0,
+      "success": true,
+      "steps": 2,
+      "exit_reason": "task_complete",
+      "kind": "pass",
+      "parse_errors": 0,
+      "frame_bytes_mean": 72379,
+      "receipt": {
+        "passed": true,
+        "checks": [
+          {
+            "name": "answer matches",
+            "ok": true,
+            "evidence": {
+              "expected": "TXJ7-67AN",
+              "observed": [
+                "TXJ7-67AN"
+              ]
+            }
+          }
+        ]
+      },
+      "prompt_tokens": 3254,
+      "completion_tokens": 2522,
+      "wall_s": 33.9
+    },
+    {
+      "task": "code_prompt-normal",
+      "template": "code_prompt",
+      "font": "normal",
+      "tier": "q50-1024",
+      "seed": 0,
+      "agent": "model",
+      "reset_ms": 79.6,
+      "ready_s": 1.06,
+      "reward": 0.0,
+      "success": false,
+      "steps": 4,
+      "exit_reason": "task_complete",
+      "kind": "fail",
+      "parse_errors": 0,
+      "frame_bytes_mean": 23420,
+      "receipt": {
+        "passed": false,
+        "checks": [
+          {
+            "name": "answer matches",
+            "ok": false,
+            "evidence": {
+              "expected": "TXJ7-67AN",
+              "observed": [
+                "TX17-67AN",
+                "TX17-67AN"
+              ]
+            }
+          }
+        ]
+      },
+      "prompt_tokens": 4742,
+      "completion_tokens": 7817,
+      "wall_s": 93.1
+    },
+    {
+      "task": "code_prompt-normal",
+      "template": "code_prompt",
+      "font": "normal",
+      "tier": "q50-1024",
+      "seed": 1,
+      "agent": "model",
+      "reset_ms": 65.4,
+      "ready_s": 1.06,
+      "reward": 0.0,
+      "success": false,
+      "steps": 3,
+      "exit_reason": "task_complete",
+      "kind": "fail",
+      "parse_errors": 0,
+      "frame_bytes_mean": 23102,
+      "receipt": {
+        "passed": false,
+        "checks": [
+          {
+            "name": "answer matches",
+            "ok": false,
+            "evidence": {
+              "expected": "TXJ7-67AN",
+              "observed": [
+                "TX17-67AN"
+              ]
+            }
+          }
+        ]
+      },
+      "prompt_tokens": 3479,
+      "completion_tokens": 2116,
+      "wall_s": 29.7
+    },
+    {
+      "task": "code_prompt-normal",
+      "template": "code_prompt",
+      "font": "normal",
+      "tier": "q10-768",
+      "seed": 0,
+      "agent": "model",
+      "reset_ms": 73.8,
+      "ready_s": 1.06,
+      "reward": 0.0,
+      "success": false,
+      "steps": 2,
+      "exit_reason": "task_complete",
+      "kind": "fail",
+      "parse_errors": 0,
+      "frame_bytes_mean": 10469,
+      "receipt": {
+        "passed": false,
+        "checks": [
+          {
+            "name": "answer matches",
+            "ok": false,
+            "evidence": {
+              "expected": "TXJ7-67AN",
+              "observed": [
+                "TX17-67AN"
+              ]
+            }
+          }
+        ]
+      },
+      "prompt_tokens": 1588,
+      "completion_tokens": 5375,
+      "wall_s": 68.0
+    },
+    {
+      "task": "code_prompt-normal",
+      "template": "code_prompt",
+      "font": "normal",
+      "tier": "q10-768",
+      "seed": 1,
+      "agent": "model",
+      "reset_ms": 72.2,
+      "ready_s": 1.06,
+      "reward": 0.0,
+      "success": false,
+      "steps": 2,
+      "exit_reason": "task_complete",
+      "kind": "fail",
+      "parse_errors": 0,
+      "frame_bytes_mean": 10542,
+      "receipt": {
+        "passed": false,
+        "checks": [
+          {
+            "name": "answer matches",
+            "ok": false,
+            "evidence": {
+              "expected": "TXJ7-67AN",
+              "observed": [
+                "TX17-674M"
+              ]
+            }
+          }
+        ]
+      },
+      "prompt_tokens": 1589,
+      "completion_tokens": 970,
+      "wall_s": 19.4
+    },
+    {
+      "task": "key_value_lookup-small",
+      "template": "key_value_lookup",
+      "font": "small",
+      "tier": "png-native",
+      "seed": 0,
+      "agent": "model",
+      "reset_ms": 63.7,
+      "ready_s": 1.06,
+      "reward": 1.0,
+      "success": true,
+      "steps": 1,
+      "exit_reason": "task_complete",
+      "kind": "pass",
+      "parse_errors": 0,
+      "frame_bytes_mean": 63145,
+      "receipt": {
+        "passed": true,
+        "checks": [
+          {
+            "name": "answer matches",
+            "ok": true,
+            "evidence": {
+              "expected": "43RNC3",
+              "observed": [
+                "43RNC3"
+              ]
+            }
+          }
+        ]
+      },
+      "prompt_tokens": 1606,
+      "completion_tokens": 257,
+      "wall_s": 7.0
+    },
+    {
+      "task": "key_value_lookup-small",
+      "template": "key_value_lookup",
+      "font": "small",
+      "tier": "png-native",
+      "seed": 1,
+      "agent": "model",
+      "reset_ms": 83.4,
+      "ready_s": 1.06,
+      "reward": 1.0,
+      "success": true,
+      "steps": 3,
+      "exit_reason": "task_complete",
+      "kind": "pass",
+      "parse_errors": 0,
+      "frame_bytes_mean": 63145,
+      "receipt": {
+        "passed": true,
+        "checks": [
+          {
+            "name": "answer matches",
+            "ok": true,
+            "evidence": {
+              "expected": "43RNC3",
+              "observed": [
+                "43RNC3"
+              ]
+            }
+          }
+        ]
+      },
+      "prompt_tokens": 4930,
+      "completion_tokens": 431,
+      "wall_s": 16.1
+    },
+    {
+      "task": "key_value_lookup-small",
+      "template": "key_value_lookup",
+      "font": "small",
+      "tier": "q50-1024",
+      "seed": 0,
+      "agent": "model",
+      "reset_ms": 89.5,
+      "ready_s": 1.06,
+      "reward": 0.0,
+      "success": false,
+      "steps": 3,
+      "exit_reason": "task_complete",
+      "kind": "fail",
+      "parse_errors": 0,
+      "frame_bytes_mean": 21624,
+      "receipt": {
+        "passed": false,
+        "checks": [
+          {
+            "name": "answer matches",
+            "ok": false,
+            "evidence": {
+              "expected": "43RNC3",
+              "observed": [
+                "43TNC3"
+              ]
+            }
+          }
+        ]
+      },
+      "prompt_tokens": 3506,
+      "completion_tokens": 2085,
+      "wall_s": 36.8
+    },
+    {
+      "task": "key_value_lookup-small",
+      "template": "key_value_lookup",
+      "font": "small",
+      "tier": "q50-1024",
+      "seed": 1,
+      "agent": "model",
+      "reset_ms": 104.8,
+      "ready_s": 1.06,
+      "reward": 0.0,
+      "success": false,
+      "steps": 2,
+      "exit_reason": "task_complete",
+      "kind": "fail",
+      "parse_errors": 0,
+      "frame_bytes_mean": 21446,
+      "receipt": {
+        "passed": false,
+        "checks": [
+          {
+            "name": "answer matches",
+            "ok": false,
+            "evidence": {
+              "expected": "43RNC3",
+              "observed": []
+            }
+          }
+        ]
+      },
+      "prompt_tokens": 2293,
+      "completion_tokens": 481,
+      "wall_s": 12.5
+    },
+    {
+      "task": "key_value_lookup-small",
+      "template": "key_value_lookup",
+      "font": "small",
+      "tier": "q10-768",
+      "seed": 0,
+      "agent": "model",
+      "reset_ms": 82.3,
+      "ready_s": 1.06,
+      "reward": 0.0,
+      "success": false,
+      "steps": 3,
+      "exit_reason": "task_complete",
+      "kind": "fail",
+      "parse_errors": 0,
+      "frame_bytes_mean": 9825,
+      "receipt": {
+        "passed": false,
+        "checks": [
+          {
+            "name": "answer matches",
+            "ok": false,
+            "evidence": {
+              "expected": "43RNC3",
+              "observed": [
+                "120943"
+              ]
+            }
+          }
+        ]
+      },
+      "prompt_tokens": 2449,
+      "completion_tokens": 4879,
+      "wall_s": 55.6
+    },
+    {
+      "task": "key_value_lookup-small",
+      "template": "key_value_lookup",
+      "font": "small",
+      "tier": "q10-768",
+      "seed": 1,
+      "agent": "model",
+      "reset_ms": 90.6,
+      "ready_s": 1.06,
+      "reward": 0.0,
+      "success": false,
+      "steps": 3,
+      "exit_reason": "task_complete",
+      "kind": "fail",
+      "parse_errors": 0,
+      "frame_bytes_mean": 9868,
+      "receipt": {
+        "passed": false,
+        "checks": [
+          {
+            "name": "answer matches",
+            "ok": false,
+            "evidence": {
+              "expected": "43RNC3",
+              "observed": [
+                "452918"
+              ]
+            }
+          }
+        ]
+      },
+      "prompt_tokens": 2451,
+      "completion_tokens": 6287,
+      "wall_s": 76.8
+    }
+  ],
+  "tokens": {
+    "prompt": 36812,
+    "completion": 37431,
+    "model_calls": 31
+  }
+}

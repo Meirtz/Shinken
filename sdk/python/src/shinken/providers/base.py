@@ -2,10 +2,26 @@
 
 Providers own sandbox lifecycle. The ACI client owns the session once a provider
 returns an address and token for a running ``shinkend``.
+
+**Runtime-state canon (the one set of verbs — D5):**
+
+- ``snapshot(handle)`` — capture substrate state → a snapshot id (Docker disk tier:
+  ``docker commit`` → an image tag).
+- ``checkpoint(handle)`` — a NAMED restore point binding a snapshot to optional agent
+  state (the node in the checkpoint DAG) → a checkpoint id. A checkpoint *contains* a
+  snapshot; both ids are accepted wherever state is restored.
+- ``restore(id)`` — **the real verb**: materialize a NEW live sandbox from a
+  snapshot/checkpoint id. Restoring never mutates the source: restoring while the
+  source sandbox is alive mints a SIBLING.
+- ``fork(handle)`` — snapshot + restore of a LIVE sandbox in one call.
+- ``resume(id)`` — **deprecated alias of** ``restore`` (kept for back-compat). It has
+  RESTORE semantics, not pause/unpause semantics.
 """
 
 from __future__ import annotations
 
+import contextlib
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -54,6 +70,10 @@ class ProviderCapabilities:
     snapshot_kind: SnapshotKind = "none"
     tier: str = "unspecified"
     max_sessions: int | None = None
+    # Loud privilege posture: True when this provider's containers/VMs must run
+    # PRIVILEGED (e.g. in-container CRIU needs CAP_SYS_ADMIN) — a routing signal that
+    # the tier trades isolation for latency/state fidelity, never a security posture.
+    requires_privileged: bool = False
     notes: tuple[str, ...] = ()
 
 
@@ -78,9 +98,12 @@ class SandboxSpec:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(repr=False)
 class SandboxHandle:
-    """A running or externally managed sandbox endpoint."""
+    """A running or externally managed sandbox endpoint.
+
+    ``repr()`` REDACTS the bearer token (first four characters + ``…``), so handles
+    can be logged/printed without leaking the session credential."""
 
     provider: str
     sandbox_id: str
@@ -88,6 +111,29 @@ class SandboxHandle:
     token: str | None = None
     created_at: float | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __repr__(self) -> str:
+        token = f"{self.token[:4]}…" if self.token else self.token
+        return (
+            f"SandboxHandle(provider={self.provider!r}, sandbox_id={self.sandbox_id!r}, "
+            f"addr={self.addr!r}, token={token!r}, created_at={self.created_at!r}, "
+            f"metadata={self.metadata!r})"
+        )
+
+
+@dataclass
+class GcReport:
+    """What :meth:`SandboxProvider.gc` reclaimed: labeled ``containers`` removed,
+    snapshot ``images`` removed, and how many live-owner resources were ``skipped``
+    (left alone because their owning process is still running — pass ``force=True``
+    to reclaim those too)."""
+
+    containers: int = 0
+    images: int = 0
+    skipped: int = 0
+
+    def to_dict(self) -> dict:
+        return {"containers": self.containers, "images": self.images, "skipped": self.skipped}
 
 
 @dataclass
@@ -117,10 +163,36 @@ class SandboxProvider:
         to :func:`shinken.connect` (e.g. ``frame_cache=`` to share one
         :class:`~shinken.FrameCache` across a forked fleet, ``screenshot_dedup=``)."""
         env = connect(handle.addr, token=handle.token, **connect_kwargs)
-        # Attach the provider context so sandbox.checkpoint()/fork()/resume() can use
+        # Attach the provider context so sandbox.checkpoint()/spawn()/destroy() can use
         # the substrate lifecycle operations (#206).
         env._set_provider_context(self, handle)
         return env
+
+    @contextlib.contextmanager
+    def session(self, spec: SandboxSpec | None = None, **connect_kwargs: Any) -> Iterator[Sandbox]:
+        """The full sandbox lifecycle as ONE context manager: ``create`` + ``connect``
+        on enter, session close + ``destroy`` on exit — **even when the body raises**,
+        so a crashed run never leaks a substrate::
+
+            with provider.session() as env:
+                env.click(x=100, y=200)
+
+        ``spec`` and ``connect_kwargs`` are forwarded to :meth:`create` /
+        :meth:`connect`. Inherited by every provider from this base class."""
+        handle = self.create(spec)
+        try:
+            env = self.connect(handle, **connect_kwargs)
+        except BaseException:
+            with contextlib.suppress(Exception):
+                self.destroy(handle)
+            raise
+        try:
+            yield env
+        finally:
+            with contextlib.suppress(Exception):
+                env.close()
+            with contextlib.suppress(Exception):
+                self.destroy(handle)
 
     def health(self, handle: SandboxHandle) -> SandboxHealth:
         try:
@@ -157,10 +229,27 @@ class SandboxProvider:
     def destroy(self, handle: SandboxHandle) -> None:
         raise NotImplementedError
 
+    def list(self) -> list[SandboxHandle]:
+        """Enumerate the live sandboxes this provider (class) manages, as rebuilt
+        :class:`SandboxHandle`\\ s. Unsupported by default — providers that stamp
+        recoverable identity onto their substrate (labels) override it."""
+        raise UnsupportedProviderOperation(f"{self.capabilities.name} does not support list")
+
+    def gc(self, snapshots: bool = False, force: bool = False) -> GcReport:
+        """Garbage-collect leaked provider resources: containers (and, with
+        ``snapshots=True``, snapshot images) whose OWNING PROCESS is dead. Live-owner
+        resources are skipped (counted in ``GcReport.skipped``) unless ``force=True``.
+        Unsupported by default."""
+        raise UnsupportedProviderOperation(f"{self.capabilities.name} does not support gc")
+
     def snapshot(self, handle: SandboxHandle, name: str | None = None) -> str:
         raise UnsupportedProviderOperation(f"{self.capabilities.name} does not support snapshot")
 
     def restore(self, snapshot_id: str) -> SandboxHandle:
+        """**The real restore verb**: materialize a NEW live sandbox from a
+        snapshot/checkpoint id and return its handle. Restoring never mutates the
+        source — restoring while the source sandbox is alive mints a SIBLING.
+        Unsupported by default."""
         raise UnsupportedProviderOperation(f"{self.capabilities.name} does not support restore")
 
     def fork(self, handle: SandboxHandle) -> SandboxHandle:
@@ -181,6 +270,8 @@ class SandboxProvider:
         raise UnsupportedProviderOperation(f"{self.capabilities.name} does not support checkpoint")
 
     def resume(self, handle_or_checkpoint: SandboxHandle | str) -> SandboxHandle:
-        """Bring a paused/snapshotted sandbox (or a checkpoint id) back to a live,
-        connectable state. Unsupported by default."""
+        """**Deprecated alias of** :meth:`restore` — kept for back-compat. RESTORE
+        semantics, not pause/unpause: it materializes a NEW live sandbox from a
+        snapshot/checkpoint id, and calling it while the source sandbox is alive mints
+        a SIBLING, not the same sandbox. Unsupported by default."""
         raise UnsupportedProviderOperation(f"{self.capabilities.name} does not support resume")

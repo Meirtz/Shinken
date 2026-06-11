@@ -33,9 +33,9 @@ def clean_registry():
 
 def test_only_official_providers_registered_in_tree():
     names = set(providers.available())
-    assert {"docker", "external"} <= names
+    assert {"docker", "docker-criu", "external"} <= names
     # No private/non-official provider names ship in-tree.
-    assert names == {"docker", "external"}
+    assert names == {"docker", "docker-criu", "external"}
 
 
 def test_get_resolves_official_providers():
@@ -84,4 +84,4 @@ def test_empty_plugin_env_is_a_noop(clean_registry, monkeypatch):
     monkeypatch.delenv("SHINKEN_PROVIDER_PLUGINS", raising=False)
     providers._PLUGINS_LOADED = False
     providers.load_plugins()
-    assert set(providers.available()) == {"docker", "external"}
+    assert set(providers.available()) == {"docker", "docker-criu", "external"}

@@ -1,0 +1,321 @@
+{
+  "suite": "fork_resume_memory",
+  "meta": {
+    "generated_utc": "2026-06-11T08:04:12Z",
+    "git_commit": "b8da8e3",
+    "python": "3.13.9",
+    "host_os": "macOS 26.5.1",
+    "host_arch": "arm64",
+    "host_cpu": "Apple M4 Pro",
+    "host_cores": "14",
+    "host_mem_gib": 48.0,
+    "docker_server": "29.4.3",
+    "concurrent_containers": [],
+    "image": "shinken/sandbox-linux",
+    "image_arch": "linux/arm64",
+    "screen_geometry": "1280x800x24"
+  },
+  "mode": "memory",
+  "reps": 8,
+  "fanout": [
+    1,
+    4,
+    8
+  ],
+  "contended_host": false,
+  "datapoints": {
+    "cold_boot": [
+      {
+        "rep": 0,
+        "create_ms": 195.7,
+        "connect_ms": 1.6,
+        "first_obs_ms": 8.3,
+        "total_ms": 205.6
+      },
+      {
+        "rep": 1,
+        "create_ms": 238.5,
+        "connect_ms": 2.4,
+        "first_obs_ms": 9.0,
+        "total_ms": 250.0
+      },
+      {
+        "rep": 2,
+        "create_ms": 190.6,
+        "connect_ms": 1.6,
+        "first_obs_ms": 8.2,
+        "total_ms": 200.3
+      },
+      {
+        "rep": 3,
+        "create_ms": 222.7,
+        "connect_ms": 2.4,
+        "first_obs_ms": 8.2,
+        "total_ms": 233.3
+      },
+      {
+        "rep": 4,
+        "create_ms": 229.5,
+        "connect_ms": 2.6,
+        "first_obs_ms": 8.8,
+        "total_ms": 240.9
+      },
+      {
+        "rep": 5,
+        "create_ms": 216.6,
+        "connect_ms": 1.9,
+        "first_obs_ms": 9.8,
+        "total_ms": 228.3
+      },
+      {
+        "rep": 6,
+        "create_ms": 228.1,
+        "connect_ms": 2.3,
+        "first_obs_ms": 8.2,
+        "total_ms": 238.6
+      },
+      {
+        "rep": 7,
+        "create_ms": 211.6,
+        "connect_ms": 2.2,
+        "first_obs_ms": 8.5,
+        "total_ms": 222.4
+      }
+    ],
+    "checkpoint": [
+      {
+        "rep": 0,
+        "checkpoint_ms": 759.8
+      },
+      {
+        "rep": 1,
+        "checkpoint_ms": 704.1
+      },
+      {
+        "rep": 2,
+        "checkpoint_ms": 709.4
+      },
+      {
+        "rep": 3,
+        "checkpoint_ms": 715.9
+      },
+      {
+        "rep": 4,
+        "checkpoint_ms": 659.4
+      },
+      {
+        "rep": 5,
+        "checkpoint_ms": 680.6
+      },
+      {
+        "rep": 6,
+        "checkpoint_ms": 675.0
+      },
+      {
+        "rep": 7,
+        "checkpoint_ms": 683.2
+      }
+    ],
+    "fork_resume": [
+      {
+        "n": 1,
+        "replica": 0,
+        "resume_ms": 353.2,
+        "connect_ms": 2.1,
+        "first_obs_ms": 8.1,
+        "total_ms": 363.3,
+        "inherited_golden_state": true,
+        "pool_graft": false,
+        "memory_state_verified": true
+      },
+      {
+        "n": 4,
+        "replica": 0,
+        "resume_ms": 330.9,
+        "connect_ms": 3.1,
+        "first_obs_ms": 12.5,
+        "total_ms": 346.5,
+        "inherited_golden_state": true,
+        "pool_graft": false,
+        "memory_state_verified": true
+      },
+      {
+        "n": 4,
+        "replica": 1,
+        "resume_ms": 328.7,
+        "connect_ms": 4.4,
+        "first_obs_ms": 13.0,
+        "total_ms": 346.1,
+        "inherited_golden_state": true,
+        "pool_graft": false,
+        "memory_state_verified": true
+      },
+      {
+        "n": 4,
+        "replica": 2,
+        "resume_ms": 328.0,
+        "connect_ms": 4.4,
+        "first_obs_ms": 22.6,
+        "total_ms": 355.1,
+        "inherited_golden_state": true,
+        "pool_graft": false,
+        "memory_state_verified": true
+      },
+      {
+        "n": 4,
+        "replica": 3,
+        "resume_ms": 325.4,
+        "connect_ms": 4.6,
+        "first_obs_ms": 11.4,
+        "total_ms": 341.4,
+        "inherited_golden_state": true,
+        "pool_graft": false,
+        "memory_state_verified": true
+      },
+      {
+        "n": 8,
+        "replica": 0,
+        "resume_ms": 386.5,
+        "connect_ms": 3.3,
+        "first_obs_ms": 12.0,
+        "total_ms": 401.8,
+        "inherited_golden_state": true,
+        "pool_graft": false,
+        "memory_state_verified": true
+      },
+      {
+        "n": 8,
+        "replica": 1,
+        "resume_ms": 396.8,
+        "connect_ms": 1.6,
+        "first_obs_ms": 11.2,
+        "total_ms": 409.5,
+        "inherited_golden_state": true,
+        "pool_graft": false,
+        "memory_state_verified": true
+      },
+      {
+        "n": 8,
+        "replica": 2,
+        "resume_ms": 387.9,
+        "connect_ms": 2.2,
+        "first_obs_ms": 11.7,
+        "total_ms": 401.8,
+        "inherited_golden_state": true,
+        "pool_graft": false,
+        "memory_state_verified": true
+      },
+      {
+        "n": 8,
+        "replica": 3,
+        "resume_ms": 386.3,
+        "connect_ms": 3.3,
+        "first_obs_ms": 9.5,
+        "total_ms": 399.1,
+        "inherited_golden_state": true,
+        "pool_graft": false,
+        "memory_state_verified": true
+      },
+      {
+        "n": 8,
+        "replica": 4,
+        "resume_ms": 395.6,
+        "connect_ms": 2.1,
+        "first_obs_ms": 11.6,
+        "total_ms": 409.3,
+        "inherited_golden_state": true,
+        "pool_graft": false,
+        "memory_state_verified": true
+      },
+      {
+        "n": 8,
+        "replica": 5,
+        "resume_ms": 453.3,
+        "connect_ms": 1.6,
+        "first_obs_ms": 12.0,
+        "total_ms": 466.9,
+        "inherited_golden_state": true,
+        "pool_graft": false,
+        "memory_state_verified": true
+      },
+      {
+        "n": 8,
+        "replica": 6,
+        "resume_ms": 451.9,
+        "connect_ms": 1.8,
+        "first_obs_ms": 8.4,
+        "total_ms": 462.1,
+        "inherited_golden_state": true,
+        "pool_graft": false,
+        "memory_state_verified": true
+      },
+      {
+        "n": 8,
+        "replica": 7,
+        "resume_ms": 448.9,
+        "connect_ms": 1.5,
+        "first_obs_ms": 10.9,
+        "total_ms": 461.2,
+        "inherited_golden_state": true,
+        "pool_graft": false,
+        "memory_state_verified": true
+      }
+    ],
+    "fanout_walls": [
+      {
+        "n": 1,
+        "wall_ms": 669.0,
+        "wall_per_replica_ms": 669.0,
+        "all_inherited": true,
+        "pool_grafts": 0,
+        "infra_failures": 0,
+        "all_memory_verified": true
+      },
+      {
+        "n": 4,
+        "wall_ms": 957.7,
+        "wall_per_replica_ms": 239.4,
+        "all_inherited": true,
+        "pool_grafts": 0,
+        "infra_failures": 0,
+        "all_memory_verified": true
+      },
+      {
+        "n": 8,
+        "wall_ms": 1399.2,
+        "wall_per_replica_ms": 174.9,
+        "all_inherited": true,
+        "pool_grafts": 0,
+        "infra_failures": 0,
+        "all_memory_verified": true
+      }
+    ]
+  },
+  "summary": {
+    "cold_boot_total_ms": {
+      "n": 8,
+      "min": 200.3,
+      "p50": 233.3,
+      "mean": 227.425,
+      "max": 250.0
+    },
+    "checkpoint_ms": {
+      "n": 8,
+      "min": 659.4,
+      "p50": 704.1,
+      "mean": 698.425,
+      "max": 759.8
+    },
+    "fork_total_ms": {
+      "n": 13,
+      "min": 341.4,
+      "p50": 401.8,
+      "mean": 397.238,
+      "max": 466.9
+    },
+    "replicas_verified": 13,
+    "replicas_total": 13,
+    "infra_failures": 0,
+    "replicas_memory_verified": 13
+  }
+}

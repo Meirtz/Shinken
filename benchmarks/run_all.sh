@@ -14,7 +14,8 @@
 # install.
 #
 # Outputs: benchmarks/results/*.json + docs/assets/bench/*.png.
-# Total runtime is roughly 25-45 minutes on a laptop-class machine.
+# Total runtime is roughly 25-45 minutes on a laptop-class machine (+~30 min for
+# bench_obs_quality's host-side OCR judging when tesseract is installed).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -27,6 +28,17 @@ done
 echo "=== bench_fork (pool mode) ==="
 SHINKEN_BENCH_FORK_MODE=pool python3 benchmarks/bench_fork.py
 
+# fork suite, CRIU memory mode (S4c): live process+memory checkpoint/fork. Runs
+# PRIVILEGED containers and needs the criu image variant, so it is image-gated:
+#   docker build -f images/linux/Dockerfile.criu -t shinken/sandbox-linux-criu .
+CRIU_IMAGE="${SHINKEN_BENCH_CRIU_IMAGE:-shinken/sandbox-linux-criu}"
+if docker image inspect "$CRIU_IMAGE" >/dev/null 2>&1; then
+  echo "=== bench_fork (memory mode) ==="
+  SHINKEN_BENCH_FORK_MODE=memory python3 benchmarks/bench_fork.py
+else
+  echo "=== bench_fork memory mode skipped ($CRIU_IMAGE image not built) ==="
+fi
+
 # S10 (fleet-level observation dedup) needs a runtime + SDK that speak frame_dedup —
 # the image must be built FROM THIS CHECKOUT (like every suite); guard on the SDK
 # capability surface so an older environment skips instead of crashing mid-run.
@@ -35,6 +47,18 @@ if python3 -c "import sys; sys.path.insert(0, 'sdk/python/src'); import shinken;
   python3 benchmarks/bench_fork_dedup.py
 else
   echo "=== bench_fork_dedup skipped (SDK lacks FrameCache — rebuild from this checkout) ==="
+fi
+
+# S13 (observation legibility envelope) judges captured frames with host-side OCR —
+# it needs the tesseract binary + the pytesseract package, and skips cleanly without:
+#   brew install tesseract   (or apt-get install tesseract-ocr)
+#   pip install pytesseract
+if command -v tesseract >/dev/null 2>&1 \
+    && python3 -c "import pytesseract" >/dev/null 2>&1; then
+  echo "=== bench_obs_quality ==="
+  python3 benchmarks/bench_obs_quality.py
+else
+  echo "=== bench_obs_quality skipped (needs tesseract + pytesseract: brew install tesseract; pip install pytesseract) ==="
 fi
 
 # S7 (head-to-head vs OSWorld's guest server) needs the dual-server image variant:

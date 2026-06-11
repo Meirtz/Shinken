@@ -5,8 +5,8 @@
 > Date of survey: **2026-05-30**; amended **2026-06-10** (trycua/cua resurvey; trainer-side orchestrator camp, §2.14-§2.16).
 
 Shinken is the open infrastructure stack for computer-use agents: an AI-native, cross-platform
-sandbox **runtime + control plane + control panel** and streaming-first successor to OSWorld. It
-boots isolated desktops and browsers, drives them through one typed Agent-Computer Interface (ACI),
+sandbox **runtime + control plane + control panel** — the runtime that benchmarks and harnesses
+plug into. It boots isolated desktops and browsers, drives them through one typed Agent-Computer Interface (ACI),
 streams operations live, records them as a scrubbable/forkable event-sourced replay, scopes each
 Sandbox to the resources its task needs, moves artifacts, and exposes an eval
 layer on the same runtime. The question this document answers is: **who else is in this space, what

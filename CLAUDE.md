@@ -1,11 +1,12 @@
 # CLAUDE.md — guide for AI coding sessions in this repo
 
 Shinken is an **AI-native, cross-platform sandbox runtime + control plane + control panel for
-computer-use agents** (a streaming-first successor to OSWorld). See [README.md](README.md) and
+computer-use agents** — the runtime that benchmarks and harnesses plug into. See [README.md](README.md) and
 [`docs/`](docs/README.md). The design corpus is complete; the **implementation is a proven
 Linux/X11 vertical slice** — handshake/auth, pointer+keyboard actions, pixel observation
 (screenshot + real-time screencast + bandwidth levers + focused-window capture),
-Docker disk-tier checkpoint/fork/resume + `run_eval_forked`, a local capability-gateway shim,
+Docker disk-tier checkpoint/fork/resume + the privileged-only **CRIU memory tier**
+(live process+memory forks) + `run_eval_forked`, a local capability-gateway shim,
 the **guest structured-observation engine v1 (Linux/AT-SPI: `observe` with stable element ids,
 tree-text diff, settle; guest-side `element_ref` actions + `invoke_action`/`set_value`)**,
 and a Python SDK, all under live CI, plus a **macOS engine v1** (native CoreGraphics/CGEvent
@@ -46,7 +47,7 @@ committed is world-readable.
 | `sdk/python/` | ✅ | Python SDK and CLI (incl. `shinken/integrations/` — swerex/uni-agent, CUA-Gym, Agentix, ProRL-Agent-Server interop adapters) |
 | `images/linux/` | ✅ | Local Linux Sandbox image |
 | `examples/` | ✅ | Runnable interop examples (`gym_rollout.py`, `cua_gym_shinken.py`, `agentix_shinken.py`, `uniagent_shinken.py` — scripted, no model API) |
-| `benchmarks/` | ✅ | Rerunnable local benchmark suites (incl. `bench_client_scale.py` N=1024 client plane) + tracked raw results (`results/*.json`, one-off WAN CSVs in `results/remote/`); ALL figures land in `docs/assets/bench/` (regenerate: `replot.py` + `plot_remote.py`); methodology in `docs/engineering/benchmarks.md`, headline report in `docs/benchmarks/README.md` |
+| `benchmarks/` | ✅ | Rerunnable local benchmark suites (incl. `bench_client_scale.py` N=1024 client plane) + tracked raw results (`results/*.json`, one-off WAN CSVs in `results/remote/`); ALL figures land in `docs/assets/bench/` (regenerate: `replot.py` + `plot_remote.py`); methodology in `docs/engineering/benchmarks.md`, headline report in `docs/benchmarks/README.md`; plus the agent-quality STUDY harness (`bench_agent_quality.py` — codec tier × task success over fork-identical episodes, `docs/engineering/agent-quality-study.md`; not in `run_all.sh`, needs a model endpoint) |
 | `references/` | 🚫 git-ignored | 13 cloned prior-art repos studied for design (OSWorld, cua, codex, anthropic-quickstarts, neko, OpenAdapt, e2b-desktop, UI-TARS-desktop, OmniParser; + 2026-06: uni-agent, CUA-Gym, Agentix, ProRL-Agent-Server); provenance + re-clone in `references/README.md` (tracked) |
 
 ## Conventions
@@ -79,7 +80,10 @@ client-plane ceiling ~2.1×), and **XDamage event-driven capture** (idle ticks c
 ~0 guest CPU; damaged ticks fetch only the damaged region), all with live Xvfb/Docker CI smokes.
 String-form **XML tool calls** parse as first-class action input (`shinken.dialect.parse_actions`,
 `format="auto"|"xml"|"dialect"`). **Docker disk-tier
-checkpoint/fork/resume** (`docker commit`, #209) behind the provider interface, plus
+checkpoint/fork/resume** (`docker commit`, #209) behind the provider interface, the **CRIU
+memory tier** (S4c, opt-in `CriuDockerProvider`, `snapshot_kind="process"`, privileged-only:
+`criu dump --leave-running` + commit, restore = live process+memory replica in ~0.4 s,
+in-heap-marker-verified — a latency/state-fidelity tier, not an isolation posture), plus
 `eval.run_eval_forked` (golden→fork-N→score, #231) and the **fork-native gym adapter**
 (`shinken.gym`: trainer-facing `make/reset/step/evaluate` with reset()=fork, pool parallel
 reset, HF-datasets exporter, MultiTurnDataloader-shaped iterator), are built; a **local
@@ -114,8 +118,9 @@ The immediate work (per the recalibrated priorities):
    `docs/design/operation-layer.md`: `set_text_selection`/`scroll_element`, app/window scoping
    beyond `list_windows`, the in-guest CDP backend, the Browser Runtime); the Capability Manager
    (production enforcement beyond the local gateway
-   shim), `.skn` recording/playback, the memory (CRIU) + sub-ms CoW fork fast tiers
-   (CRIU spike now run: POSITIVE, 300 ms fork e2e ~25× — `spikes/criu-memory-tier/`; tier itself unbuilt),
+   shim), `.skn` recording/playback, the sub-ms CoW fork fast tier
+   (the CRIU **memory tier is now BUILT** — `CriuDockerProvider`, productized from the positive
+   `spikes/criu-memory-tier/` spike; only the CoW/microVM fast tier remains designed),
    control plane + concurrency, dual-channel WebRTC/NVENC, and the rest of cross-platform —
    **Windows** + **Wayland** + macOS AX/ScreenCaptureKit (the **macOS engine v1**
    capture+input slice IS built, local-only: `shinkend --backend macos`,

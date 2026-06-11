@@ -704,7 +704,7 @@ fn spawn_screencast(
                 continue; // clean tick — nothing was captured
             };
             // Idle suppression hashes the RAW encoded bytes — no base64 detour.
-            let hash = executor::fnv1a(&img.data);
+            let hash = executor::content_hash64(&img.data);
             if last_hash == Some(hash) {
                 // The screen matches the delivered frame: the pending damage was
                 // visually a no-op (e.g. redraw with identical pixels) — clear it.

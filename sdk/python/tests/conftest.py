@@ -195,6 +195,12 @@ def _record(state: dict, action: dict) -> None:
                 "y": tgt.get("y"),
             }
         )
+    elif verb == "screenshot":
+        # Capture-lever passthrough (scope/format/quality/max_long_edge): lets a test
+        # assert the requested codec/downscale really travelled over the wire.
+        state["screenshots"].append(
+            {k: action.get(k) for k in ("scope", "format", "quality", "max_long_edge")}
+        )
     elif verb == "type_text":
         state["typed"] += action.get("text", "")
     elif verb == "key":
@@ -353,6 +359,7 @@ async def _handler(
         "buttons": [],
         "element_calls": [],
         "execs": [],
+        "screenshots": [],
         "observes": 0,
         "clipboard": None,
         "launches": [],

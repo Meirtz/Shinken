@@ -5,9 +5,9 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from websockets.exceptions import ConnectionClosed
 
 from shinken.client import _parse_welcome, aconnect
+from shinken.errors import SessionClosed
 
 
 def _run(coro):
@@ -52,7 +52,10 @@ def test_async_close_then_rpc_fails(mock_shinkend):
     async def go():
         sb = await aconnect(mock_shinkend)
         await sb.close()
-        with pytest.raises((ConnectionClosed, ConnectionError)):  # closed → RPC can't complete
+        # API v2: a closed session raises the TYPED SessionClosed immediately — it
+        # used to surface as an obscure ConnectionClosed/ConnectionError from the
+        # dead socket (and could deadlock through the sync facade).
+        with pytest.raises(SessionClosed):
             await sb.query("screen_size")
 
     _run(go())

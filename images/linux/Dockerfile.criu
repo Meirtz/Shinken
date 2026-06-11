@@ -1,0 +1,32 @@
+# Shinken CRIU memory-tier Sandbox image — the standard Linux Sandbox image plus CRIU
+# and a dump-shaped boot: the whole desktop (Xvfb + openbox + xterm + shinkend) runs
+# under ONE supervised session (start-criu.sh) so `criu dump --tree` can checkpoint it
+# LIVE, while the container's main process stays an idle sleep. Consumed by
+# `shinken.providers.CriuDockerProvider` (snapshot_kind="process").
+#
+# ⚠ PRIVILEGED + ROOT, on purpose and out loud: in-container CRIU needs CAP_SYS_ADMIN
+# (run with `--privileged --init`), and the desktop tree runs as root (the spike-proven
+# dump/restore shape — spikes/criu-memory-tier/REPORT.md). This tier buys checkpoint/
+# fork LATENCY and process+memory STATE FIDELITY on commodity Docker; it is NOT an
+# isolation posture — the production isolation boundary stays the microVM tier (D1/D5,
+# docs/design/threat-model.md).
+#
+# Build (from repo root, after building images/linux/Dockerfile):
+#   docker build -f images/linux/Dockerfile -t shinken/sandbox-linux .
+#   docker build -f images/linux/Dockerfile.criu -t shinken/sandbox-linux-criu .
+# Run (what CriuDockerProvider does):
+#   docker run -d --rm --privileged --init -v <ckpt-volume>:/ckpt \
+#     -p 127.0.0.1:8765:8765 -e SHINKEND_TOKEN=... shinken/sandbox-linux-criu
+FROM shinken/sandbox-linux
+
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends criu \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY images/linux/start-criu.sh /usr/local/bin/start-criu.sh
+COPY images/linux/shinken-criu-bus.conf /usr/local/share/shinken/criu-bus.conf
+RUN chmod +x /usr/local/bin/start-criu.sh
+
+EXPOSE 8765
+ENV SHINKEND_ADDR=0.0.0.0:8765
+CMD ["/usr/local/bin/start-criu.sh"]

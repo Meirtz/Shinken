@@ -176,7 +176,10 @@ def test_docker_provider_cleans_up_if_readiness_fails(monkeypatch):
     assert removed[:3] == ["docker", "rm", "-f"]
 
 
-def test_docker_provider_cleanup_uses_labels(monkeypatch):
+def test_docker_provider_destroy_all_uses_labels(monkeypatch):
+    # destroy_all() is the RENAMED blunt sweep cleanup_orphans() used to be: every
+    # labeled container goes, including live siblings (cleanup_orphans is now
+    # owner-aware — see test_api_v2.py).
     commands: list[list[str]] = []
 
     def fake_run(cmd: list[str], timeout: float = 30.0):
@@ -188,7 +191,7 @@ def test_docker_provider_cleanup_uses_labels(monkeypatch):
     monkeypatch.setattr("shinken.providers.docker._run", fake_run)
     provider = DockerLocalProvider(name_prefix="test-sandbox")
 
-    assert provider.cleanup_orphans() == 2
+    assert provider.destroy_all() == 2
     assert "label=shinken.provider=docker-local" in commands[0]
     assert "label=shinken.name_prefix=test-sandbox" in commands[0]
     # cleanup selects by label only — the fragile substring `name=^prefix-` filter is

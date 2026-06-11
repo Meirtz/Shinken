@@ -122,7 +122,7 @@ The client-side adapter that drives a *Sandbox* for a given agent/model, and the
 
 ### OSWorld / OSWorld-Verified
 
-**OSWorld** is the de-facto computer-use benchmark (369 tasks, ~50× parallel on cloud VMs, ~1 h runs) and Shinken's spiritual predecessor — Shinken positions itself as a "production-grade, streaming-first successor to OSWorld." **OSWorld-Verified** is the cleaned-up release that fixed v1's 300+ grader/task bugs; it is the eval bar Shinken matches and ships as built-in conformance (**D7**). SOTA at date of record is reported around ~83% (above the human reference ~72.4%) (vendor-published, unverified). Lesson carried forward: graders are *tested artifacts*, versioned with their task and env. References: [OSWorld-Verified overview](https://benchlm.ai/blog/posts/osworld-verified-computer-use-benchmark), [cua OSWorld-Verified integration](https://cua.ai/docs/cua/guide/integrations/benchmarks/osworld-verified).
+**OSWorld** is the de-facto computer-use benchmark (369 tasks, ~50× parallel on cloud VMs, ~1 h runs) and the most load-bearing harness Shinken plugs into — Shinken is the runtime underneath such benchmarks, not a competing benchmark. **OSWorld-Verified** is the cleaned-up release that fixed v1's 300+ grader/task bugs; it is the eval bar Shinken matches and ships as built-in conformance (**D7**). SOTA at date of record is reported around ~83% (above the human reference ~72.4%) (vendor-published, unverified). Lesson carried forward: graders are *tested artifacts*, versioned with their task and env. References: [OSWorld-Verified overview](https://benchlm.ai/blog/posts/osworld-verified-computer-use-benchmark), [cua OSWorld-Verified integration](https://cua.ai/docs/cua/guide/integrations/benchmarks/osworld-verified).
 
 ### pass@k / pass^k
 
@@ -159,8 +159,8 @@ A WebRTC media topology that encodes a stream once and forwards it to many subsc
 ### Shinken
 
 The platform/product: the open infrastructure stack for computer-use agents — an AI-native,
-cross-platform **sandbox runtime + control plane + control panel** and a production-grade,
-streaming-first successor to OSWorld. North star: **one** full CUA substrate serving production
+cross-platform **sandbox runtime + control plane + control panel**; the runtime that benchmarks
+and harnesses plug into. North star: **one** full CUA substrate serving production
 agent deployment, evaluation, and trajectory-data capture. It boots *Sandboxes*, drives them
 through one typed *ACI*, streams live, names runnable *checkpoints* it can *fork* and *resume*,
 is designed to record an event-sourced *replay* ledger for evidence, moves

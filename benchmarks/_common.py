@@ -73,9 +73,7 @@ def env_meta() -> dict[str, Any]:
     leaking anything host-private beyond hardware model and tool versions."""
     meta: dict[str, Any] = {
         "generated_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "git_commit": _cmd(
-            ["git", "-C", str(REPO_ROOT), "rev-parse", "--short", "HEAD"]
-        ),
+        "git_commit": _cmd(["git", "-C", str(REPO_ROOT), "rev-parse", "--short", "HEAD"]),
         "python": platform.python_version(),
         "host_os": f"{platform.system()} {platform.release()}",
         "host_arch": platform.machine(),
@@ -89,9 +87,7 @@ def env_meta() -> dict[str, Any]:
         ver = _cmd(["sw_vers", "-productVersion"])
         if ver:
             meta["host_os"] = f"macOS {ver}"
-    meta["docker_server"] = _cmd(
-        ["docker", "version", "--format", "{{.Server.Version}}"]
-    )
+    meta["docker_server"] = _cmd(["docker", "version", "--format", "{{.Server.Version}}"])
     # Honesty marker: any non-suite containers running on the same daemon when the suite
     # finished. Byte numbers are robust to host contention; latency numbers less so.
     meta["concurrent_containers"] = [
@@ -168,6 +164,14 @@ def _wait_for_desktop_window(env, timeout_s: float = 15.0) -> None:
     )
 
 
+# Public alias: any suite that TYPES into a freshly created/resumed sandbox must
+# wait for a focused window first, or the keystrokes are silently discarded (the
+# openbox adoption race) — measured: a fleet "primed" 0.2 s after resume settled on
+# the default desktop with every keystroke lost, and only the identity metric
+# caught it.
+wait_for_desktop_window = _wait_for_desktop_window
+
+
 def fill_xterm(env, lines: int = 40, settle_timeout: float = 15.0) -> None:
     """Put realistic text content on the desktop: focus the xterm the image boots
     (80x24 at +20+20) and fill it, so codec benchmarks see a real UI frame rather
@@ -197,6 +201,124 @@ def fill_xterm(env, lines: int = 40, settle_timeout: float = 15.0) -> None:
     env.type_text(cmd)
     env.key("Return")
     time.sleep(1.5)  # let the shell paint
+
+
+# ---- fork state verifiers (state_verify: marker|pixels|fs) ----
+#
+# "Verified replica" must say WHAT was verified. Three levels, all reported in the
+# fork suites' JSONs (select with SHINKEN_BENCH_STATE_VERIFY, comma-separated):
+#
+# - marker: read one golden marker file back out of the replica (the original,
+#   weakest check — proves the fork materialized SOME of the checkpoint's files).
+# - pixels: the replica's settled frame_hash (runtime-computed xxh3-128 over raw
+#   pixels) equals the golden's stored hash at the same protocol point — pixel-level
+#   framebuffer identity. On the Docker disk tier the desktop REBOOTS on fork
+#   (files-only state), so this passes only where the protocol re-establishes the
+#   screen deterministically (bench_fork_dedup primes every replica with the same
+#   content) and is expected to FAIL for unprimed forks (bench_fork) — reported
+#   honestly either way; a memory-tier (CRIU) fork would be born pixel-identical.
+# - fs: a filesystem-delta digest — sha256 over the sorted (path, content-sha256)
+#   list of every regular file under /home + /tmp, computed in-guest through the
+#   typed exec channel, compared replica vs golden. Covers file paths + contents in
+#   the user-writable trees where task state lands. MISSES, by design: file
+#   metadata (mtime/permissions — a rebooted fork rewrites identical content with
+#   new mtimes), paths outside /home + /tmp (/etc, /var, package state), and all
+#   non-file state (processes, memory, sockets). Volatile boot artifacts are
+#   excluded (X11 sockets/locks, *.log, X authority files, the fontconfig cache —
+#   measured: xterm's first font access lazily writes ~/.cache/fontconfig a few
+#   seconds into a boot, so a replica's re-boot races the golden's checkpoint
+#   moment on pure cache regenerated from /usr/share/fonts) — they legitimately
+#   differ across boots of the SAME state and would only add noise.
+
+STATE_VERIFY_LEVELS = ("marker", "pixels", "fs")
+
+FS_DIGEST_CMD = (
+    "find /home /tmp -xdev -type f"
+    " ! -path '/tmp/.X11-unix/*' ! -name '.X*-lock'"
+    " ! -path '*/.cache/fontconfig/*'"
+    " ! -name '*.log' ! -name '.Xauthority' ! -name '.ICEauthority'"
+    " -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum | sha256sum"
+)
+
+
+def state_verify_levels() -> tuple[str, ...]:
+    """The verifier levels this run reports (``SHINKEN_BENCH_STATE_VERIFY``,
+    default: all three)."""
+    raw = os.environ.get("SHINKEN_BENCH_STATE_VERIFY", ",".join(STATE_VERIFY_LEVELS))
+    levels = tuple(part.strip() for part in raw.split(",") if part.strip())
+    unknown = [lv for lv in levels if lv not in STATE_VERIFY_LEVELS]
+    if unknown:
+        raise SystemExit(
+            f"SHINKEN_BENCH_STATE_VERIFY: unknown level(s) {unknown}; valid: {STATE_VERIFY_LEVELS}"
+        )
+    return levels
+
+
+def fs_digest(env) -> str | None:
+    """The in-guest filesystem-state digest (see FS_DIGEST_CMD). ``None`` when the
+    runtime doesn't offer the exec verb or the pipeline fails — recorded honestly,
+    never faked."""
+    try:
+        res = env.exec(shell=FS_DIGEST_CMD, timeout=60)
+    except Exception as exc:
+        print(f"fs_digest unavailable ({exc})", flush=True)
+        return None
+    if res.get("exit_code") != 0:
+        print(f"fs_digest failed: {res.get('stderr', '')[:200]}", flush=True)
+        return None
+    out = (res.get("stdout") or "").split()
+    return out[0] if out else None
+
+
+def settled_frame_hash(
+    env, *, fmt: dict | None = None, timeout_s: float = 20.0, interval_s: float = 0.4
+) -> str | None:
+    """Poll screenshots until two consecutive frames hash identically (the paint has
+    settled) and return that runtime-computed ``frame_hash`` — the pixels-level
+    verifier's measurement point. ``None`` if the screen never settles in time or
+    the runtime computes no hash (no raw capture)."""
+    deadline = time.time() + timeout_s
+    last = None
+    while time.time() < deadline:
+        h = env.screenshot(**(fmt or {})).get("frame_hash")
+        if h is not None and h == last:
+            return h
+        last = h
+        time.sleep(interval_s)
+    return last
+
+
+def verify_replica_state(
+    env,
+    levels: tuple[str, ...],
+    golden: dict,
+    *,
+    replica_frame_hash: str | None = None,
+) -> dict:
+    """Run the configured verifier levels against one replica and report each
+    outcome (True/False, or None = could not be measured). ``golden`` carries the
+    stored references: ``marker_file``/``marker``, ``frame_hash``, ``fs_digest``.
+    ``replica_frame_hash`` lets a suite that already settled the replica's screen
+    (e.g. after deterministic priming) reuse that hash instead of re-polling."""
+    out: dict = {}
+    if "marker" in levels:
+        ok = None
+        try:
+            dst = Path(tempfile.mkdtemp()) / "marker.txt"
+            env.get_file(golden["marker_file"], str(dst))
+            ok = dst.read_text().strip() == golden["marker"]
+        except Exception as exc:
+            print(f"marker verify unavailable ({exc})", flush=True)
+        out["marker"] = ok
+    if "pixels" in levels:
+        got = replica_frame_hash or settled_frame_hash(env)
+        out["pixels"] = (got == golden["frame_hash"]) if got and golden.get("frame_hash") else None
+        out["pixels_hash"] = got
+    if "fs" in levels:
+        got = fs_digest(env)
+        out["fs"] = (got == golden["fs_digest"]) if got and golden.get("fs_digest") else None
+        out["fs_digest"] = got
+    return out
 
 
 def _value_noise(rng, w: int, h: int, cells: int):
@@ -250,12 +372,7 @@ def synth_photo_ppm(w: int, h: int, seed: int = 42) -> bytes:
     hue = (_value_noise(rng, w, h, 4) + 0.4 * _value_noise(rng, w, h, 16)) / 1.4
     yy = np.linspace(0, 1, h)[:, None]
     xx = np.linspace(0, 1, w)[None, :]
-    lum = (
-        70
-        + 130 * fbm
-        + 35 * np.sin(2.2 * np.pi * yy + 1.0)
-        + 20 * np.sin(1.7 * np.pi * xx)
-    )
+    lum = 70 + 130 * fbm + 35 * np.sin(2.2 * np.pi * yy + 1.0) + 20 * np.sin(1.7 * np.pi * xx)
     sat = 60 * (0.4 + 0.6 * fbm)
     img = np.stack(
         [lum + sat * np.sin(2 * np.pi * hue + phase) for phase in (0.0, 2.1, 4.2)],
@@ -291,9 +408,7 @@ def show_photo(env, timeout_s: float = 30.0) -> int:
     finally:
         os.unlink(tmp)
     env.click(x=120, y=120)  # focus the xterm the image boots (80x24 at +20+20)
-    env.type_text(
-        "xloadimage -onroot -quiet /tmp/photo.ppm && xdotool getactivewindow windowunmap"
-    )
+    env.type_text("xloadimage -onroot -quiet /tmp/photo.ppm && xdotool getactivewindow windowunmap")
     env.key("Return")
     deadline = time.time() + timeout_s
     last = 0
@@ -373,9 +488,7 @@ def style() -> None:
     )
 
 
-def new_axes(
-    ncols: int = 1, *, height: float = 4.2, width: float = 6.4, nrows: int = 1
-):
+def new_axes(ncols: int = 1, *, height: float = 4.2, width: float = 6.4, nrows: int = 1):
     """Consistent matplotlib axes for every suite figure."""
     style()
     import matplotlib.pyplot as plt

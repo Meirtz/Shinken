@@ -1,7 +1,7 @@
 """S7 — head-to-head per-step loop cost: typed-WS ACI vs OSWorld's Flask/HTTP server.
 
-Shinken positions itself as a streaming-first successor to OSWorld's guest server; this
-suite is the direct measurement behind that claim. ONE sandbox (the
+OSWorld's guest server is the incumbent in-guest path most harnesses ship; this suite is
+the direct measurement of what replacing it with the typed ACI buys. ONE sandbox (the
 ``shinken/sandbox-linux-osworld`` image, built by ``images/linux/Dockerfile.osworld``)
 runs BOTH agent-facing servers against the SAME Xvfb display, same X session, same
 frame content:

@@ -10,7 +10,7 @@
 >
 > Shinken is a public, vendor-neutral open-source project: the open infrastructure stack for
 > computer-use agents — an AI-native, cross-platform **sandbox runtime + control plane + control
-> panel** and a streaming-first successor to OSWorld. NVIDIA GPUs are a *supported, optimized
+> panel**: the runtime that benchmarks and harnesses plug into. NVIDIA GPUs are a *supported, optimized
 > acceleration option*, never a dependency.
 >
 > **Status legend:** *Accepted* = committed for v1; *Accepted (phased)* = committed but
@@ -34,7 +34,7 @@
 | **D2** | ACI action schema = one typed tagged-union with version-pinned adapters | Accepted | ~16 verbs, `target` oneof, code-as-action off by default behind the policy boundary |
 | **D3** | Observation = screenshot-first baseline, structured upgrade | Accepted (screenshot baseline) / Provisional (structured-default upgrade, gated on spike #2) | v0.0.1 proves screenshot GUI loop plus reference structure; a11y/DOM diff → Set-of-Marks → region pixels optimize tree-rich apps |
 | **D4** | Streaming = single-PeerConnection WebRTC, dual-transport | Accepted | Reliable data channel = event stream (= the replay log); on-demand media track |
-| **D5** | Runtime state (checkpoint/fork/resume) is the headline; `.skn` replay is a supporting evidence ledger | Accepted | Immutable checkpoint DAG (snapshot/checkpoint/fork/resume) — implemented on the Docker disk tier (#209); the append-only `events.jsonl` / `.skn` replay surface is **removed/deferred per #216** (see [replay](../user/replay.md)). Reset and branch are one primitive |
+| **D5** | Runtime state (checkpoint/fork/resume) is the headline; `.skn` replay is a supporting evidence ledger | Accepted | Immutable checkpoint DAG (snapshot/checkpoint/fork/resume) — implemented on the Docker disk tier (#209) **and the CRIU memory tier** (`CriuDockerProvider`, `snapshot_kind="process"`, privileged-only — live process+memory forks on commodity Docker; the microVM tier stays the production isolation answer); the append-only `events.jsonl` / `.skn` replay surface is **removed/deferred per #216** (see [replay](../user/replay.md)). Reset and branch are one primitive |
 | **D6** | Capability scoping — a Sandbox is granted the resources its task needs (supporting runtime feature) | Accepted (mostly designed) | In-sandbox power is unscoped; boundary grants (egress/fs/GPU/credentials/…) are scoped + recorded; server-side resolution designed (D9) |
 | **D7** | Eval layer = thin orchestration on the runtime, inverting OSWorld | Accepted (phased) | Typed verifier DAG, golden snapshot per task, N≥5 forked replicas, readiness probes |
 | **D8** | Interfaces = native streaming SDK core + optional MCP facade | Accepted | One IDL → py/ts SDKs; MCP facade at two altitudes; never the hot loop over MCP |

@@ -9,8 +9,8 @@
 
 Shinken is the open infrastructure stack for computer-use agents: an AI-native, cross-platform
 **Sandbox runtime + Control Plane + Control Panel** that serves *production agent deployment*,
-*evaluation*, and *trajectory-data capture* on one runtime. It is a production-grade,
-streaming-first successor to OSWorld, but the product scope is broader than any single benchmark,
+*evaluation*, and *trajectory-data capture* on one runtime. It is the runtime that benchmarks
+and harnesses plug into, and the product scope is broader than any single benchmark,
 browser runner, or remote desktop: Shinken defines the CUA substrate for ACI actions, layered
 observation, sandbox capabilities, replay/data, artifact transfer, eval evidence, fleet management,
 and human supervision. This PRD enumerates the personas and their top journeys, then the

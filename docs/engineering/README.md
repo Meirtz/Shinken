@@ -17,6 +17,7 @@ aligned with the GitHub milestone and issues.
 - Sandbox/substrate workstream: [`sandbox-workstream.md`](sandbox-workstream.md)
 - Streaming bandwidth measurements: [`streaming-bandwidth.md`](streaming-bandwidth.md)
 - Local benchmark artifact (fork/resume, codec ladder, delta screencast, action latency, fan-out): [`benchmarks.md`](benchmarks.md)
+- Agent-quality study — codec tier × task success, fork-eliminated variance: [`agent-quality-study.md`](agent-quality-study.md)
 - Many-sandbox concurrency design (~1024 sandboxes/process): [`many-sandbox-concurrency.md`](many-sandbox-concurrency.md)
 - OSWorld evaluation bring-up: [`osworld-eval.md`](osworld-eval.md)
 - Testing guide: [`testing.md`](testing.md)

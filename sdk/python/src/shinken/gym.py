@@ -44,7 +44,6 @@ import contextlib
 import json
 import random
 import time
-from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
@@ -52,6 +51,7 @@ from typing import Any
 from .client import FrameCache, SharedLoop
 from .dialect import parse_actions
 from .errors import SandboxDied, ShinkenError, is_connection_loss
+from .eval import Task
 from .runtime.trajectory import Step, Trajectory
 
 __all__ = [
@@ -62,6 +62,7 @@ __all__ = [
     "MultiTurnDataloader",
     "ShinkenGymEnv",
     "ShinkenGymPool",
+    "Task",
     "episodes_to_records",
     "make",
     "to_hf_dataset",
@@ -83,20 +84,14 @@ class GymError(ShinkenError):
     """A gym lifecycle/contract violation (no live replica, no verifier, bad reward shape)."""
 
 
-@dataclass
-class GymTask:
-    """A gym task: ``setup`` runs ONCE into the golden state, ``verify`` judges a replica.
-
-    Duck-type-compatible with ``shinken.eval.Task`` (which also works directly — its
-    ``run`` is simply unused here because the *policy* drives ``step()``). ``verify`` may
-    return a ``VerifierReceipt``-shaped object (``.passed`` → reward 1.0/0.0) or a float
-    reward directly."""
-
-    name: str
-    instruction: str = ""
-    setup: Callable[[Any], None] | None = None
-    verify: Callable[[Any], Any] | None = None
-    metadata: dict = field(default_factory=dict)
+#: **Deprecated alias of the unified** :class:`shinken.eval.Task` — the one Task
+#: dataclass shared by eval and gym (the gym's ``instruction``/``metadata`` are
+#: optional fields on it; ``run`` is simply unused here because the *policy* drives
+#: ``step()``). ``verify`` may return a ``VerifierReceipt``-shaped object (``.passed``
+#: → reward 1.0/0.0) or a float reward directly. Construct extras by KEYWORD
+#: (``GymTask("name", instruction="…")``) — positionally, ``instruction`` would land
+#: in the unified Task's ``run`` slot.
+GymTask = Task
 
 
 def _reward_from(verdict: Any) -> float:
@@ -374,6 +369,14 @@ class ShinkenGymEnv:
     def __exit__(self, *_exc: object) -> None:
         self.dispose()
 
+    @property
+    def session(self) -> Any:
+        """The live replica's connected session (the same object ``task.verify`` sees).
+        Lets a harness run out-of-band readiness probes or auxiliary captures against the
+        current fork; raises :class:`GymError` when no replica is live (call ``reset()``).
+        """
+        return self._session()
+
     # --- internals ---------------------------------------------------------------------
 
     def _session(self) -> Any:
@@ -406,7 +409,11 @@ class ShinkenGymEnv:
         sess = self._session()
         if self.observation == "structured":
             return sess.observe(structured=True)
-        kw = {k: v for k, v in self.observe_args.items() if k in ("format", "quality", "dedup")}
+        kw = {
+            k: v
+            for k, v in self.observe_args.items()
+            if k in ("format", "quality", "max_long_edge", "dedup")
+        }
         return sess.screenshot(**kw)
 
     def _evaluate_for_done(self) -> tuple[float | None, str | None]:

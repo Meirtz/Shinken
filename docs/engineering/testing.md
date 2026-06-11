@@ -103,6 +103,15 @@ asserts element ids are stable across two `observe`s, clicks the entry **by elem
 (guest-side `element_ref` resolution), types, asserts the `observe` diff carries the change
 (`~ … Value:"…"`), and closes the dialog via `invoke_action` (the AX path).
 
+The CRIU memory-tier smoke (`scripts/criu_smoke.py`, **local-only — needs Docker + privileged
+containers + the `shinken/sandbox-linux-criu` image**, not wired into CI) proves the
+process-memory claim end-to-end: it plants an in-heap counter inside the checkpointed tree,
+checkpoints (`criu dump --leave-running` + commit), asserts the donor keeps serving AND its
+counter keeps beating, restores a replica, and asserts the replica answers with the **same pid,
+same nonce, and a counter ≥ the pre-dump reading** — the check no files-only tier can pass —
+plus the golden-file inheritance check. Offline unit coverage for the tier is
+`sdk/python/tests/test_criu_provider.py`.
+
 ## v0.0.1 Contract Tests Needed
 
 The v0.0.1 release gate should add tests for:

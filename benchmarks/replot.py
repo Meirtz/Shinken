@@ -22,6 +22,7 @@ SUITES = {
     "action_latency": "bench_action_latency",
     "fork_resume": "bench_fork",
     "fork_resume_pool": "bench_fork",
+    "fork_resume_memory": "bench_fork",
     "fork_dedup": "bench_fork_dedup",
     "local_fanout": "bench_fanout",
     "client_scale": "bench_client_scale",
@@ -31,6 +32,7 @@ SUITES = {
     "boot_waterfall": "bench_boot_waterfall",
     "step_pipeline": "bench_step_pipeline",
     "baseline_cua": "bench_baseline_cua",
+    "obs_quality": "bench_obs_quality",
 }
 
 

@@ -597,28 +597,21 @@ fn encode_jpeg(rgb: &[u8], w: u16, h: u16, quality: u8) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-/// FNV-1a 64-bit offset basis / prime.
-const FNV1A_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
-const FNV1A_PRIME: u64 = 0x0000_0100_0000_01b3;
-
-/// Fold `bytes` into a running FNV-1a 64 state (start from [`FNV1A_BASIS`]).
-fn fnv1a_fold(mut hash: u64, bytes: &[u8]) -> u64 {
-    for &b in bytes {
-        hash ^= b as u64;
-        hash = hash.wrapping_mul(FNV1A_PRIME);
-    }
-    hash
+/// XXH3-64 content hash — the cheap equality check behind screencast idle-frame
+/// suppression (over encoded bytes, comparing the current capture to the LAST
+/// DELIVERED frame only). 64 bits is enough there: each tick is a single pairwise
+/// comparison against one previous value (~2⁻⁶⁴ per tick, no accumulating set of
+/// candidates), the hash never leaves the process, and a false "unchanged" heals
+/// on the next real pixel change. The wire dedup identity uses the 128-bit form —
+/// see [`frame_hash_hex`].
+pub fn content_hash64(bytes: &[u8]) -> u64 {
+    xxhash_rust::xxh3::xxh3_64(bytes)
 }
 
-/// FNV-1a 64-bit hash — the cheap content hash behind idle-frame suppression
-/// (screencast, over encoded bytes) and screenshot dedup (over raw pixels).
-pub fn fnv1a(bytes: &[u8]) -> u64 {
-    fnv1a_fold(FNV1A_BASIS, bytes)
-}
-
-/// The wire `frame_hash` of a captured frame: FNV-1a 64 over the RAW RGB8 pixels
-/// (dims folded in first, so a row-shift between geometries can't alias), as 16
-/// lowercase hex chars.
+/// The wire `frame_hash` of a captured frame: **XXH3-128** over the RAW RGB8
+/// pixels, with the dims folded in as the seed (so a row-shift between geometries
+/// can't alias), as 32 lowercase hex chars. The value is an opaque string on the
+/// wire — clients echo it back verbatim as `if_none_match` and never parse it.
 ///
 /// The hash is deliberately computed over RAW pixels (post-scope/downscale,
 /// PRE-encode), not the encoded payload, so it is **codec-independent**: the same
@@ -627,11 +620,35 @@ pub fn fnv1a(bytes: &[u8]) -> u64 {
 /// identity fork fleets share — N replicas forked from one checkpoint have
 /// byte-identical framebuffers, while their *encoded* bytes could legally differ —
 /// so an `if_none_match` minted by one replica (or codec) matches any other.
+///
+/// # Collision failure-mode analysis
+///
+/// A `frame_hash` collision is the one silent-wrong-answer path in the dedup
+/// design: the runtime would answer `not_modified` for pixels that DIFFER from the
+/// cached frame, and the agent would act on a stale screen with no error anywhere.
+/// The original FNV-1a **64** had a real exposure: a shared fleet cache holds many
+/// candidate hashes, so the accidental-collision birthday bound is ~2³² frames,
+/// and FNV's algebraic structure makes colliding inputs easy to construct on
+/// purpose. XXH3-128 closes both: the accidental birthday bound moves to ~2⁶⁴
+/// frames (a fleet observing 10⁹ distinct screens over its lifetime accumulates
+/// ~10⁻²⁰ total collision probability — negligible against any other failure in
+/// the system), and no practical collision construction for XXH3-128 is published.
+/// XXH3 is still not a cryptographic hash; we accept that deliberately because
+/// frame content in this design is produced by the sandbox's own desktop for the
+/// session's own client — robustness against accidental or pathological content is
+/// the requirement, not resistance to a party engineering digests.
+///
+/// The paranoid alternative — verify-on-hit (runtime pins the raw pixels of every
+/// hash it has answered and memcmp's ~3 MB before each `not_modified`) — was
+/// considered and rejected: the hit is cross-SESSION by design (the fleet cache
+/// lives client-side, shared across replicas), so a single runtime cannot hold the
+/// frames other replicas minted; pinning raw frames per session costs ~3 MB each
+/// for a guard against a ~2⁻⁶⁴-per-candidate event; and the memcmp re-introduces
+/// most of the latency the dedup exists to remove.
 pub fn frame_hash_hex(rgb: &[u8], w: u16, h: u16) -> String {
-    let mut hash = fnv1a_fold(FNV1A_BASIS, &w.to_le_bytes());
-    hash = fnv1a_fold(hash, &h.to_le_bytes());
-    hash = fnv1a_fold(hash, rgb);
-    format!("{hash:016x}")
+    let seed = ((w as u64) << 16) | h as u64;
+    let hash = xxhash_rust::xxh3::xxh3_128_with_seed(rgb, seed);
+    format!("{hash:032x}")
 }
 
 /// Downscale (if requested) then encode an RGB8 frame per `opts`, returning the codec the
@@ -2577,19 +2594,48 @@ mod tests {
     }
 
     #[test]
-    fn fnv1a_distinguishes_and_repeats() {
-        assert_eq!(fnv1a(b"frame-a"), fnv1a(b"frame-a"));
-        assert_ne!(fnv1a(b"frame-a"), fnv1a(b"frame-b"));
+    fn content_hash64_distinguishes_and_repeats() {
+        assert_eq!(content_hash64(b"frame-a"), content_hash64(b"frame-a"));
+        assert_ne!(content_hash64(b"frame-a"), content_hash64(b"frame-b"));
+    }
+
+    /// Cost probe for the wire frame hash at the default capture geometry
+    /// (1280x800 RGB8 = 3,072,000 bytes/frame). Not a correctness test — run
+    /// explicitly with `cargo test --release frame_hash_cost_probe -- --ignored
+    /// --nocapture` to get ns/frame on the current host.
+    #[test]
+    #[ignore]
+    fn frame_hash_cost_probe() {
+        let (w, h) = (1280u16, 800u16);
+        let mut rgb = vec![0u8; w as usize * h as usize * 3];
+        for (i, b) in rgb.iter_mut().enumerate() {
+            *b = (i % 251) as u8; // non-trivial content; defeats zero-page shortcuts
+        }
+        // warmup
+        for _ in 0..10 {
+            std::hint::black_box(frame_hash_hex(&rgb, w, h));
+        }
+        let reps = 200u32;
+        let t0 = std::time::Instant::now();
+        for _ in 0..reps {
+            std::hint::black_box(frame_hash_hex(&rgb, w, h));
+        }
+        let per_frame = t0.elapsed() / reps;
+        println!(
+            "frame_hash_hex({w}x{h}): {} ns/frame ({:.2} GB/s)",
+            per_frame.as_nanos(),
+            rgb.len() as f64 / per_frame.as_secs_f64() / 1e9
+        );
     }
 
     /// frame_hash stability: same raw pixels+dims → same hex; any pixel or dimension
-    /// change → different hex. The hex form is 16 lowercase chars (fnv1a-64).
+    /// change → different hex. The hex form is 32 lowercase chars (xxh3-128).
     #[test]
     fn frame_hash_is_stable_and_dimension_sensitive() {
         let rgb = vec![9u8; 4 * 2 * 3];
         let h1 = frame_hash_hex(&rgb, 4, 2);
         assert_eq!(h1, frame_hash_hex(&rgb, 4, 2));
-        assert_eq!(h1.len(), 16);
+        assert_eq!(h1.len(), 32);
         assert!(h1
             .chars()
             .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
@@ -2622,7 +2668,7 @@ mod tests {
         assert_ne!(png.data, jpeg.data);
         assert_eq!(frame_hash_hex(&rgb, w, h), frame_hash_hex(&rgb, w, h));
         // and hashing the ENCODED payloads would NOT have matched:
-        assert_ne!(fnv1a(&png.data), fnv1a(&jpeg.data));
+        assert_ne!(content_hash64(&png.data), content_hash64(&jpeg.data));
     }
 
     #[test]

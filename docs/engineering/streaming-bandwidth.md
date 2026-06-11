@@ -78,6 +78,10 @@ proxy → SDK connect; then synchronized rounds of {observe JPEG q80 @1280 (~48 
 - **Bandwidth is feasible because of B1.** At 48 KiB/sandbox/round, 1024 sandboxes at 1 Hz ≈
   **~405 Mbps** — a datacenter NIC, not a heroic number. With full-res PNG (1804 KiB/frame) it
   would be ~15 Gbps, infeasible anywhere. JPEG is load-bearing for scale-out, not a nicety.
+  (The 48 KiB frame is q80 downscaled to 1280 from 1080p — ~0.67× scale, which the S13
+  legibility envelope ([`benchmarks.md`](benchmarks.md) §13) shows breaks small on-screen
+  text; for fleets whose agents must read small text, project with the native-scale q80
+  frame (~87 KiB → ~730 Mbps at N=1024) — still a datacenter NIC, same conclusion.)
 - **Per-step latency is WAN-bound** (~0.28–0.38 s round-trip) and begins creeping at N=16 as the
   thread pool contends — observation throughput per worker is dominated by RTT, so batching
   (`act_batch`) and observe/act coalescing matter at WAN distance.
@@ -89,8 +93,12 @@ proxy → SDK connect; then synchronized rounds of {observe JPEG q80 @1280 (~48 
 
 ## Recommendation
 
-1. **Default observation to JPEG (q80, downscaled to model input res) for eval/RL fleets;** keep
-   PNG for pixel-exact needs. (B1 — shipped.)
+1. **Default observation to JPEG q80 for eval/RL fleets — but downscale only within the
+   measured legibility envelope** ([`benchmarks.md`](benchmarks.md) §13: q80 at native scale
+   reads 100% on every measured text stratum; sub-native scales break small UI/terminal text
+   long before they break the byte budget, so match `max_long_edge` to the model's input
+   resolution only when the on-screen text is large or the task is not text-bound). Keep PNG
+   for pixel-exact needs. (B1 — shipped; envelope S13.)
 2. **Many sandboxes from one process — the async core IS the native fleet surface;
    `SharedLoop` for sync callers.** The thread-per-connection cost is an artifact of the sync
    facade, not the architecture:

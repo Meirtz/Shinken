@@ -421,6 +421,38 @@ resolution, for the agent loop; (2) **continuous video** for the human Control P
 **observation event** (`a11y` full→diff with stable element refs) is recorded alongside screenshots
 when available and can become the low-bandwidth default for tree-rich apps.
 
+**Content-negotiated screenshots (frame dedup, built).** A `frame_dedup` runtime stamps every
+one-shot screenshot with a `frame_hash` computed over the RAW pixels (post-scope/downscale,
+pre-encode — codec-independent, so a hash minted under PNG matches a JPEG request over the same
+framebuffer). A client echoes the last seen hash back as the screenshot action's `if_none_match`;
+on a match the runtime skips the encode and answers a compact `not_modified` observation instead
+of the payload. Capability-negotiated both ways (`capabilities.frame_dedup`), and the fleet form —
+one shared client-side `FrameCache` across N forked replicas — is what turns fork's
+pixel-identity-by-construction into an N× observation cut (see
+[benchmarks §10](../engineering/benchmarks.md)).
+
+- **The hash is an opaque token on the wire.** Clients MUST echo it verbatim and never parse it.
+  Current format: XXH3-128 as 32 lowercase hex chars, dims folded in as the seed (it was fnv1a-64 /
+  16 chars before v0.0.1 hardening); matching is string equality, so a hash minted under any other
+  format/version simply never matches and the answer degrades to a full frame — the safe direction.
+  Old-client/new-runtime and new-client/old-runtime mixes therefore need no negotiation beyond
+  `frame_dedup` itself.
+- **Collision failure mode, and why 128 bits.** A hash collision is the design's one
+  silent-wrong-answer path: the runtime would answer `not_modified` for pixels that differ from the
+  client's cached frame, and the agent would act on a stale screen with no error surfaced anywhere.
+  At 64 bits the accidental birthday bound across a fleet cache's accumulated candidates was ~2³²
+  frames — too close for a long-lived training fleet — and FNV-1a's algebraic structure made
+  colliding inputs easy to construct even without trying to be unlucky. At 128 bits the accidental
+  bound is ~2⁶⁴ frames (a fleet that observes 10⁹ distinct screens accumulates ~10⁻²⁰ total
+  collision probability); XXH3 is not a cryptographic hash, which is accepted deliberately: the
+  screen content here is produced by the sandbox's own desktop for the session's own client, so
+  robustness against accidental/pathological content is the requirement. **Verify-on-hit** (pin the
+  raw pixels behind every served hash and memcmp before each `not_modified`) is the paranoid
+  fallback if that posture ever changes; it was rejected for v0 because the hit is cross-session by
+  design (the fleet cache lives client-side — one runtime cannot hold the frames other replicas
+  minted), and pinning ~3 MB of raw pixels per session to guard a ~2⁻⁶⁴-per-candidate event
+  re-introduces the memory and latency the dedup exists to remove.
+
 ### 4.1 Structured observation contract (M1b, built for Linux/AT-SPI)
 
 The guest engine is wired as one verb plus an observation shape (schema:
@@ -533,7 +565,13 @@ The P0 deep-dive splits evidence from runnable state:
   deferred (#216/#217); the `.skn` wire form will be defined when that surface returns (see D5).
 - **(B) Runtime state**: provider snapshots, Shinken checkpoints, restore/resume operations, and
   fork-from-checkpoint. This is what makes a desktop live again. `.skn` points at it; `.skn` does not
-  replace it.
+  replace it. What a snapshot *captures* is advertised per provider as `snapshot_kind`
+  (`none | disk | memory | process | provider_managed`): the Docker reference tier is `disk`
+  (`docker commit`, files only), and the built CRIU tier is `process` — the live process tree
+  (memory, threads, FDs, X11 clients) paired with a disk commit, restored into a fresh privileged
+  container (`requires_privileged=True` is advertised alongside; a latency/state-fidelity tier,
+  not an isolation posture). Established TCP is closed at dump (`--tcp-close`); agent sessions
+  reconnect via the screencast `resume_stream` semantics (§ above).
 - **(C) qcow2 deterministic-eval VM** (the OSWorld-style eval path): a read-only golden qcow2 base
   per task-suite + per-task **backing-file overlays** (redirect-on-write) + `savevm/loadvm`. This
   needs **only snapshot-revert** — agent-trajectory replay is **deferred** here (P0).

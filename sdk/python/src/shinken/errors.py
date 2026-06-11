@@ -18,6 +18,38 @@ class ShinkenError(RuntimeError):
     """Base class for typed Shinken SDK errors."""
 
 
+class SessionClosed(ShinkenError):
+    """A method was called on a Sandbox/AsyncSandbox after ``close()``.
+
+    Raised IMMEDIATELY and typed — before this existed, a call on a closed sync
+    :class:`~shinken.Sandbox` scheduled a coroutine onto a stopped event loop and
+    blocked forever (the use-after-close deadlock). ``close()`` itself stays
+    idempotent: only the *other* methods raise."""
+
+
+class ConnectError(ShinkenError, ConnectionError):
+    """Could not establish a session to the runtime (dial/handshake transport failure).
+
+    One typed error for the whole zoo a dead address used to surface
+    (``ConnectionRefusedError``, ``OSError``, websockets' ``InvalidMessage``/
+    ``InvalidHandshake``, a handshake timeout). Subclasses :class:`ConnectionError`
+    too, so existing ``except ConnectionError`` callers keep working."""
+
+
+class UnknownVerb(ShinkenError):
+    """The runtime rejected an action because it does not know the verb (an older
+    runtime, or a typo'd verb name). Typed so a caller can branch
+    capability-negotiation fallback vs a genuine action failure without
+    string-matching the runtime's ``unknown verb: …`` message."""
+
+
+class ProviderRequired(ShinkenError):
+    """A runtime-state/lifecycle operation (``checkpoint``/``fork``/``spawn``/
+    ``destroy``) was called on a session with no managing provider attached. Open the
+    session via a provider's ``connect()``/``session()`` instead of a bare
+    ``shinken.connect()``."""
+
+
 class SandboxDied(ShinkenError):
     """The sandbox/runtime substrate died underneath a live session — infrastructure
     failure, not task failure. Carries the substrate exit detail when the provider can

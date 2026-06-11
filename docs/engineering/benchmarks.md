@@ -10,11 +10,13 @@ measured local datapoints.
 Everything here is reproducible from the repo:
 
 - **Suites** (scripts): [`benchmarks/`](../../benchmarks) — one standalone script per suite,
-  `benchmarks/run_all.sh` (or `make benchmarks`) runs them all serially in ~20–30 min. The
+  `benchmarks/run_all.sh` (or `make benchmarks`) runs them all serially in ~20–30 min
+  (the legibility suite §13 adds ~8 min — capture plus host-side OCR judging — when
+  `tesseract` is installed, and skips cleanly when it is not). The
   trycua/cua baseline suite (§12) runs separately because it needs the third-party stack
   installed (`pip install cua-sandbox==0.1.16` + their images).
 - **Raw datapoints** (tracked): [`benchmarks/results/*.json`](../../benchmarks/results) —
-  **~100k individual datapoints** across the suites (~10.9k excluding the high-volume
+  **~103k individual datapoints** across the suites (~14k excluding the high-volume
   client-scale suite S6), each JSON carrying the full environment fingerprint. No image
   payloads are stored, only numbers.
 - **Figures** (tracked, embedded below): [`docs/assets/bench/*.png`](../assets/bench),
@@ -40,18 +42,27 @@ eval loop, a trainer step) actually pays per call. Byte counts are decoded paylo
 **Honest caveats.** (1) This is a laptop-class host and Docker Desktop interposes a Linux VM —
 treat absolute numbers as one well-specified operating point, not a fleet projection.
 (2) Loopback removes the network: WAN adds its RTT on top of every round-trip number here
-(measured ~0.28 s in B1/B3). (3) The runtime-state suite exercises the **disk tier only**
-(`docker commit`); the memory (CRIU) and sub-ms CoW fork fast tiers are designed, not built
-(D5 — see [`status.md`](status.md)). (4) The guest content is scripted: "dense-text" bounds
+(measured ~0.28 s in B1/B3). (3) The runtime-state suite exercises the **disk tier** (`docker
+commit`) and — opt-in, in memory mode — the **CRIU memory tier** (`snapshot_kind="process"`,
+privileged containers); the sub-ms CoW fork fast tier is designed, not built (D5 — see
+[`status.md`](status.md)). (4) The guest content is scripted: "dense-text" bounds
 text-heavy UI content and the procedurally generated "photo" scenario (§2) covers
 photographic *stills*; motion/video content remains unmeasured locally.
 
 ## 1. Runtime-state checkpoint / fork / resume (S4 — `bench_fork.py`)
 
 The differentiating loop — reach a state once, checkpoint it, mint N live replicas — measured
-on the Docker disk tier, with **every replica verified to inherit the golden state** (the
-verifier reads a marker file back out of each fork; a timing row only counts if the fork was
-real). 16 cold boots, 16 checkpoints, verified forks across fan-outs N ∈ {1, 2, 4, 8, 16, 32},
+on the Docker disk tier, with **every replica marker-verified** (`state_verify=marker`: the
+golden marker file is read back out of each fork; a timing row only counts if the fork was
+real). The suite now reports three verifier levels per replica
+(`SHINKEN_BENCH_STATE_VERIFY`, default all): **marker** (file read-back — the gate),
+**pixels** (the replica's settled `frame_hash` vs the golden's stored hash — pixel-level
+framebuffer identity, which this files-only tier does NOT preserve: the desktop re-boots on
+fork, so this level is expected to fail here and documents the tier boundary; a memory-tier
+CRIU fork would pass it), and **fs** (an in-guest filesystem-delta digest — sha256 over the
+sorted path+content list under `/home` + `/tmp`, volatile boot artifacts excluded — vs the
+golden's at checkpoint; covers file paths+contents, misses metadata/paths outside those
+trees/process state). 16 cold boots, 16 checkpoints, verified forks across fan-outs N ∈ {1, 2, 4, 8, 16, 32},
 in two modes: **classic** (boot a fresh container from the committed image) and **warm-pool
 graft** (S4b: claim a pre-booted base container and apply the checkpoint's filesystem delta —
 `docker diff` adds/changes tarred in, deletions removed — files-only, the same state tier as
@@ -106,10 +117,58 @@ with zero flakes.
   mix silently — measured hit rate at these round sizes: 0.48). Each warm container costs
   one background cold boot and one idle desktop's RSS.
 - **Semantic limits of the graft (on purpose):** files only — identical state tier to
-  `docker commit` (no process/memory state; that is the CRIU tier, designed-only). The delta
+  `docker commit` (no process/memory state; that is the CRIU memory tier, below). The delta
   is applied onto a LIVE base desktop: live runtime state (`/run`, `/dev`, X sockets/locks)
   is excluded, and concurrent guest writes to grafted paths are last-writer-wins. A snapshot
   whose spec (image/geometry/limits) doesn't match the pool's falls back to classic restore.
+
+### 1b. The CRIU memory rung (S4c — `SHINKEN_BENCH_FORK_MODE=memory`)
+
+The same suite against the **built CRIU memory tier** (`CriuDockerProvider`,
+`snapshot_kind="process"` — productized from the positive spike,
+[`spikes/criu-memory-tier/`](../../spikes/criu-memory-tier/REPORT.md)): checkpoint =
+`criu dump --leave-running` of the supervised desktop tree **plus** `docker commit` of the
+donor (the donor keeps running — a true checkpoint); fork = a fresh **privileged** container
+booted idle off the committed image, PID counter parked, then `criu restore`. On top of the
+golden-file check, **every replica must pass the process-memory verifier**: a python planted
+inside the checkpointed tree (via `launch_app`, so it is a child of `shinkend` in the dumped
+session) holds a counter that exists only in its heap; after restore the SAME pid must answer
+with the same nonce and a counter ≥ the pre-dump reading. A files-only restore has no such
+process at all — this rung measures state the disk tier and the warm-pool graft *cannot*
+carry. Short-config validation run (REPS=8, N ∈ {1, 4, 8}; quiet host):
+
+| leg (memory tier) | p50 | n |
+|---|---:|---:|
+| cold boot → usable (criu image) | 0.233 s | 8 |
+| checkpoint (`criu dump --leave-running` + `docker commit`, donor stays live) | **0.70 s** | 8 |
+| fork → usable (privileged boot + `criu restore` + connect + first obs) | **0.40 s** | 13 |
+
+| memory fan-out from ONE checkpoint | wall-clock | wall / replica | file + memory verified |
+|---:|---:|---:|---|
+| N=1 | 0.67 s | 0.67 s | 1/1 + 1/1 |
+| N=4 | 0.96 s | 0.239 s | 4/4 + 4/4 |
+| N=8 | 1.40 s | **0.175 s** | 8/8 + 8/8 |
+
+![cold boot vs memory-tier fork, and fan-out scaling](../assets/bench/fork_resume_memory.png)
+
+**Reads:**
+- **A memory-tier fork is ~0.4 s to a usable replica that carries LIVE process+memory
+  state** — open apps, mid-task processes, X11 clients, in-heap program state — proven per
+  replica by the in-memory marker (13/13 here, plus the live smoke `scripts/criu_smoke.py`).
+  The warm-pool graft is ~3× faster to *a* replica (~0.12 s) but files-only; this rung is
+  what "resume exactly where the agent was" actually costs on commodity Docker.
+- **Checkpointing stays sub-second (~0.70 s) and the donor keeps running** (`--leave-running`)
+  — the donor's marker keeps beating across the dump. Established TCP connections are closed
+  at dump (`--tcp-close`) by design: agent WebSocket sessions reconnect (the documented
+  `resume_stream` semantics); replicas restore the *listening* socket and accept new
+  connections within ~1–2 ms of restore.
+- **Honest caveats:** every container on this tier runs `--privileged` with a root desktop
+  tree (in-container CRIU needs CAP_SYS_ADMIN) — this is a **latency/state-fidelity feature,
+  not an isolation posture**; the production isolation answer remains D5's microVM tier. The
+  a11y stack runs launcher-less (one bus + `at-spi2-registryd`, `AT_SPI_BUS_ADDRESS`) because
+  CRIU 3.17 cannot dump the stock `at-spi-bus-launcher`'s pidfd; structured observation was
+  live-verified across dump/restore. No incremental dumps or lazy restore on this kernel
+  (no SOFT_DIRTY/USERFAULTFD).
 
 ## 2. Observation codec ladder (S1 — `bench_codec_ladder.py`)
 
@@ -158,11 +217,16 @@ in the repo. Condensed table (mean bytes, p50 loopback round-trip; full grid in 
 - **JPEG q95 is a trap on text and only on text: 1.53 MiB — 2.1× LARGER than lossless PNG**
   (and 28.4 ms). On photo content the same q95 *beats* PNG 3.0× (761 vs 2258 KiB) — the
   quality ceiling flips with content; if near-lossless is needed on UI/text, use PNG.
-- **Downscale is the strongest single lever and it compounds:** dense-text PNG 748 → 126 KiB
-  at @512 (5.9×); stacking JPEG q50@512 reaches 61 KiB — **12.3×** vs native PNG with a
-  ~3× faster round-trip (13.4 → 4.5 ms). On photo content the stack is even steeper: q50@512
-  is 9.0 KiB — **251×** vs native PNG. Matching `max_long_edge` to the model's real input
-  resolution is free money on any content.
+- **Downscale is the strongest single *byte* lever and it compounds:** dense-text PNG
+  748 → 126 KiB at @512 (5.9×); stacking JPEG q50@512 reaches 61 KiB — **12.3×** vs native
+  PNG with a ~3× faster round-trip (13.4 → 4.5 ms). On photo content the stack is even
+  steeper: q50@512 is 9.0 KiB — **251×** vs native PNG. **But these ratios are byte floors,
+  not recommended text operating points: downscale is also the first lever to destroy text
+  legibility.** §13 measures what each cell leaves readable — on 6×13 terminal text even
+  q80@1024 drops the OCR judge to 25% per-element legibility and q50@512 reads **nothing**
+  on any text stratum, while JPEG q80 at native scale stays 100% legible everywhere. Match
+  `max_long_edge` to the model's real input resolution only within the §13 envelope; on
+  small-text screens that means native scale.
 - **Latency tracks bytes** (per-cell ms in the table; per-rep raws in the JSON): everything
   stays in the 2–28 ms loopback envelope,
   so at local/colo distance the observation is never the step bottleneck — see §4.
@@ -388,9 +452,9 @@ the ceiling.
 
 ## 7. Head-to-head: typed-WS ACI vs OSWorld's HTTP server (S7 — `bench_osworld_loop.py`)
 
-Shinken positions itself as a successor to OSWorld's guest server; this suite is the direct
-measurement behind that claim — the **per-step act-then-observe loop cost of both interfaces
-on the SAME guest**. One sandbox (`images/linux/Dockerfile.osworld`) runs both agent-facing
+OSWorld's guest server is the incumbent in-guest path most harnesses ship; this suite is the
+direct measurement of what replacing it with the typed ACI buys — the **per-step
+act-then-observe loop cost of both interfaces on the SAME guest**. One sandbox (`images/linux/Dockerfile.osworld`) runs both agent-facing
 servers against one Xvfb display: `shinkend` on :8765, and OSWorld's
 `desktop_env/server/main.py` (Flask + pyautogui) on :5000 — fetched at image build time from
 the public [OSWorld repo](https://github.com/xlang-ai/OSWorld) (Apache-2.0) at pinned commit
@@ -453,7 +517,8 @@ cell × 10 cells = 1,500 datapoints, 5 warm-up reps per cell discarded.
   scrot/PIL path re-encodes at deflate's slower, denser settings, while `shinkend`'s encoder
   is speed-tuned — and the ACI currently adds ~33% base64/JSON wire overhead on top. The ACI
   closes the wire gap with the levers the other suites measure (JPEG q50 @512 ≈ 11 KiB on
-  comparable content in §2; the delta screencast's ~2.4 KiB/frame in §3) and the designed
+  comparable content in §2 — a bytes-floor comparison only; that cell is far outside the §13
+  text-legibility envelope; the delta screencast's ~2.4 KiB/frame in §3) and the designed
   binary frames remove the 33%; the **default-PNG encode density itself is a real, open
   `shinkend` gap this suite documents rather than hides**.
 - **Caveats.** Loopback only (WAN RTT adds ~0.28 s to every round-trip on both sides,
@@ -582,50 +647,86 @@ frame N times per round. **Content-negotiated observation** closes that: the run
 every screenshot with a `frame_hash` computed over **raw pixels** (post-scope/downscale,
 pre-encode — codec-independent, so a hash minted under PNG matches a JPEG request over the
 same framebuffer), the SDK echoes the last seen hash back as `if_none_match`, and on a match
-the runtime skips the encode and answers a ~120-byte `not_modified` instead of the payload.
+the runtime skips the encode and answers a ~135-byte `not_modified` instead of the payload.
 One shared `shinken.FrameCache` across the fleet's sessions is what makes it *fleet-level*:
 the first replica's full frame answers every other replica's observe. Capability-negotiated
 (`capabilities.frame_dedup`): old runtimes and old clients are byte-for-byte unaffected.
 Only a runtime that owns fork can line this up — the replicas share pixel identity *by
 construction* (the provider also pins the guest hostname, so a fork can't silently diverge
-from its golden via the shell prompt).
+from its golden via the shell prompt). The hash is **XXH3-128** (upgraded from fnv1a-64,
+which had a ~2³² accidental-collision birthday bound across a long-lived fleet cache — a
+collision would silently serve WRONG pixels; the new hash is also ~25× faster per frame,
+118 µs vs 2.9 ms at 1280×800). Mixed-version mixes degrade safely: a stale-format hash never
+matches → full frame. The collision failure-mode analysis (and why verify-on-hit was
+rejected) is in [`aci-spec.md`](../design/aci-spec.md) §4 and `shinkend/src/executor.rs`.
 
 Protocol: golden checkpoint → fork N ∈ {4, 8, 16} (the S4 fan-out) → prime every replica
-with the same deterministic xterm content → 6 observe-all rounds (JPEG q80) with dedup OFF,
-then 6 with dedup ON against one shared FrameCache; mid-way through the ON phase **two
-replicas type different text** — the honest divergence event. Fleet pixel identity is
-verified per run (modal `frame_hash` share), since dedup can only win on replicas that
-really render identical screens: measured **4/4, 7/8, 16/16**.
+with the same deterministic xterm content → **four measured modes** per fleet (all JPEG q80,
+one shared FrameCache per mode): (1) 6 observe-all rounds with dedup **off** (baseline
+bytes); (2) 6 **sequential** rounds with dedup on, two replicas typing different text
+mid-way — the **static ceiling** (best case: an almost-identical fleet observed one at a
+time); (3) 6 **concurrent** rounds — the real trainer shape, the whole fleet observing at
+once via `asyncio.gather`, fresh cache, so first-touch RACES are measured; (4) 8
+**policy-driven divergence** rounds — after 2 warm-up rounds EVERY replica takes a distinct
+scripted action path each round and keeps diverging. Fleet pixel identity is verified per
+run (modal `frame_hash` share): measured **4/4, 8/8, 16/16**, and every replica is
+state-verified at all three levels — **marker 28/28, pixels 28/28** (settled `frame_hash` ==
+the golden's stored post-prime hash), **fs 28/28** (in-guest filesystem-delta digest == the
+golden's at checkpoint; see §1 for what each level covers/misses).
+
+**Static ceiling (sequential, labeled as such — the mechanism's best case):**
 
 | | dedup off | dedup on |
 |---|---:|---:|
-| wire per observe-all round, N=16 (identical fleet, steady state) | 1,371 KiB | **1.9 KiB (~725×)** |
-| wire per round, N=16 (first-touch round: one full frame serves the fleet) | 1,371 KiB | 87.5 KiB (~N×) |
-| whole suite, ALL dedup rounds incl. warmup + divergence (N ∈ {4,8,16}) | 14.4 MiB | **0.94 MiB (15.2×)** |
-| dedup hit rate over the suite | — | **93.5%** (157/168 observes) |
+| wire per observe-all round, N=16 (identical fleet, steady state) | 1,375 KiB | **2.1 KiB (~654×)** |
+| wire per round, N=16 (first-touch round: one full frame serves the fleet) | 1,375 KiB | 88.0 KiB (~N×) |
+| whole suite, ALL dedup-on sequential rounds incl. warmup + 2-of-N divergence (N ∈ {4,8,16}) | 14.1 MiB | **0.76 MiB (18.6×)** |
+| dedup hit rate over the sequential mode | — | **94.6%** |
 
-The divergence curve behaves exactly as designed: when 2 of N replicas stop matching the
-fleet, the hit rate dips to (N−2)/N for ONE round (each diverged replica pays one full
-frame), then returns to N/N — a diverged replica re-converges against its **own** new
-content (the session-local candidate is preferred over the shared one), while the clean
-replicas never stop hitting. The N=8 run's 7/8 identity row shows the same mechanism
-absorbing real-world imperfection: the one replica whose paint differed simply became its
-own dedup domain after one miss.
+The 2-of-N divergence curve behaves exactly as designed: when 2 of N replicas stop matching
+the fleet, the hit rate dips to (N−2)/N for ONE round (each diverged replica pays one full
+frame — N=16: 14/16 hits, 167.6 KiB), then returns to N/N — a diverged replica re-converges
+against its **own** new content (the session-local candidate is preferred over the shared
+one), while the clean replicas never stop hitting.
+
+**Concurrent observes (the trainer shape, measured not assumed):** with the whole fleet
+issuing `screenshot` at once against a fresh shared cache, round 0 is a clean sweep of
+misses — **0/28 hits across all three fleets** (every concurrent request dispatches before
+any full frame lands in the cache, so the fleet pays N full frames: 1,375 KiB at N=16,
+exactly the dedup-off round). From round 1 on the fleet is at **16/16 hits, 2.1 KiB/round**
+— identical to the sequential steady state (651.9× vs the off baseline) — and the concurrent
+observe-all wall is ~7–9 ms vs ~33–42 ms sequential at N=16. So concurrency costs exactly
+one fleet-wide warm-up round and nothing after; a first-frame barrier (observe one replica
+before releasing the fleet) would remove even that, at the cost of orchestration the SDK
+deliberately leaves to the consumer.
+
+**Policy-driven divergence (every replica, every round):** the honest decay curve. Hit-rate
+per round at N=16: **0.94 → 1.0 → 0.0 → 0.0 → 0.0 → 0.0 → 0.0 → 0.0** (same shape at N=4/8) —
+once every replica's screen changes every round, the hit rate collapses to ZERO and stays
+there; diverged rounds move ~0.9× of the dedup-off baseline (1,126–1,336 KiB vs 1,375 KiB at
+N=16 — slightly under only because the post-action screens JPEG-encode a little smaller),
+plus ~70 B/observe of hash overhead. Dedup's value is therefore **bounded by how often
+screens repeat**: it pays for fork fleets at reset/branch points, idle/settled screens, and
+k-action steps between observes — not for a fleet in which every replica's screen mutates
+between every observe.
 
 ![forked-fleet observation dedup](../assets/bench/fork_dedup.png)
 
-**Honest caveats.** (1) Run on a **contended host** (`contended_host: true` — another
-benchmark series was using the same Docker daemon), so round wall-clock numbers are
-indicative only; the byte counts are exact (`wire_len` of every reply, binary framing).
-(2) The steady-state ~725× is the static-identical-fleet ceiling — it measures payload vs
-`not_modified` size, not codec quality; a fleet whose screens *change identically* every
-round would re-fetch one full frame per round (the ~N× row), and a fully diverged fleet
-degrades to ~1× plus a few tens of bytes per observe of hash overhead. (3) Replicas are primed by typing
-the same content because the disk-tier fork re-boots the desktop (files-only state); a
-memory-tier (CRIU) fork would be born pixel-identical and skip the priming step entirely —
-this suite's mechanism is what that tier will inherit. (4) Observes are issued sequentially
-within a round; concurrent observes would turn the first-touch round into N misses (no
-winner yet) but leave steady state unchanged.
+**Honest caveats.** (1) Byte counts are exact (`wire_len` of every reply, binary framing);
+wall-clock numbers are one laptop-class operating point (this run: no other containers on
+the daemon, `concurrent_containers: []`, 0 infra failures). (2) The ~654× steady state is
+the static-identical-fleet **ceiling** — it measures payload vs `not_modified` size, not
+codec quality; the concurrent mode shows the realistic warm-up cost (one full N-frame
+round), and the policy mode shows the floor (≈1× — dedup buys nothing when every screen
+changes every round). (3) Replicas are primed by typing the same content because the
+disk-tier fork re-boots the desktop (files-only state); a memory-tier (CRIU) fork would be
+born pixel-identical and skip the priming step entirely — this suite's mechanism is what
+that tier will inherit. Priming is focus-gated (`wait_for_desktop_window`): an early run
+that typed ~0.2 s after resume lost every keystroke to the WM adoption race and the fleet
+"settled" on the unprimed default desktop — caught by the identity metric, fixed, rerun.
+(4) The policy actions are scripted single-line typings; a real policy emits richer action
+mixes, but any action that repaints the screen has the same effect on dedup (miss), so the
+zero-floor generalizes.
 
 ## 11. Pipelined step under emulated WAN (S11 — `bench_step_pipeline.py`)
 
@@ -758,6 +859,86 @@ Docker on macOS — not measured here.
   head-to-head with cua lives at this runtime/interface layer; their substrate breadth is
   complementary (see [`landscape.md §2.17`](../design/landscape.md)).
 
+## 13. Observation legibility envelope — what the cheap tiers leave readable (S13 — `bench_obs_quality.py`)
+
+Every byte number above (and the remote B1 ladder) proves a `(quality, scale)` cell is
+*small*; none of it proves an agent can still **read** the screen that cell delivers. S13
+closes that gap with zero model cost: **scripted ground-truth text at known screen regions,
+judged by host-side OCR** (tesseract 5.5.2) on the exact cells the byte stories quote —
+PNG@native (control), JPEG q80@1280, q80@1024, q50@1024, q10@768, q50@512 — plus **one
+composited delta-JPEG-q80 stream cell** (keyframe + dirty tiles composited client-side, then
+judged: bounds compositing drift). 867 datapoints (774 OCR-judged element measurements over
+40 ground-truth elements × 3 frames/cell + 93 frame rows).
+
+**Scenes** (fresh sandbox each): the S1 content classes — sparse `desktop` (one xterm, the
+6×13 bitmap font), `dense-text` (near-fullscreen xterm, 59 rows of ANSI-colored filler with
+9 scripted truth rows), `photo` (no text; SSIM anchor) — plus a **text-stratified scene**
+(three xterms at DejaVu Sans Mono `-fs` 8/11/16 → 14/19/27 px cells; small text breaks
+first) and a **`gui-zenity` dialog whose ground truth comes from the structured observation**
+(`observe(structured=True)`: per-element text + bbox from the guest a11y engine). Terminal
+truth bboxes derive from `list_windows` geometry + the character grid (verified
+pixel-accurate). **Metrics per element:** (a) *legibility* — normalized edit distance of OCR
+on the bbox crop at the tier's resolution vs the scripted truth (legible ⇔ ≤ 0.2);
+(b) *resolvability* — OCR word boxes over the whole frame must place the element's unique
+token's centroid inside the true bbox (could an agent still *locate* its click target?);
+(c) *text-region SSIM* vs the lossless control crop.
+
+**Control conditioning held perfectly: zero elements excluded** — the judge read every
+element with zero failures in the PNG control *and* in JPEG q80@native, so every failure
+below is codec/scale damage, not OCR weakness.
+
+| stratum (n/cell) | PNG @1280 | q80 @1280 | q80 @1024 | q50 @1024 | q10 @768 | q50 @512 | delta-q80 stream |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| xterm 6×13 — sparse desktop (24) | **100%** | **100%** | 25% | 12% | 0% | 0% | — |
+| xterm 6×13 — dense screen (27) | **100%** | **100%** | 11% | 11% | 0% | 0% | — |
+| DejaVu Mono fs8, 14 px cell (18) | **100%** | **100%** | 67% | 67% | 0% | 0% | **100%** |
+| DejaVu Mono fs11, 19 px cell (18) | **100%** | **100%** | 67% | 83% | 0% | 0% | **100%** |
+| DejaVu Mono fs16, 27 px cell (18) | **100%** | **100%** | **100%** | **100%** | **100%** | 33% | **100%** |
+| GTK dialog text, zenity (15) | **100%** | **100%** | 80% | 60% | 0% | 0% | — |
+
+(% of element measurements legible, control-conditioned. A **safe** cell is one with zero
+failures at that n — at n=15–27 per cell, "≥99%" and "no failures observed" coincide; the
+raw per-element rows, the resolvability and SSIM columns, and the OCR transcripts are all in
+`obs_quality.json`.)
+
+![legibility vs bytes Pareto and the per-font-size breakdown](../assets/bench/obs_quality.png)
+
+**Reads:**
+- **The safe operating envelope: JPEG *quality* is cheap, *downscale* is what kills text.**
+  Every stratum reads 100% at JPEG q80 native scale — the codec leg of the §2 ladder (the
+  ~19–20× photo win, ~1–1.4× on text) is free for legibility. The moment the frame leaves
+  native scale, small text starts dying: 6×13 terminal text drops to **25% at q80@1024**
+  (0.8× scale!) and GTK dialog text to 80%; by @768/@512 every stratum except large fs16
+  text reads **0%**. The only cells safe for *all* measured text: **native-scale PNG,
+  native-scale JPEG q80, and the composited delta-JPEG stream** (the stream measured on the
+  three font strata); fs16 (27 px cells) additionally survives q80@1024, q50@1024, and even
+  q10@768.
+- **Resolvability tracks the same cliff** — usually a bit more forgiving (6×13 @1024: 43%
+  resolvable vs 25% legible; fs16 q50@512: 83% vs 33%), occasionally stricter (fs16 q10@768:
+  83% resolvable vs 100% legible — q10 artifacts spray junk words across the frame): an
+  agent loses the ability to *read* a target at roughly the same cells where it starts
+  failing to *find* it. Text-region SSIM corroborates with no OCR in the loop: 1.00 → 0.27
+  (6×13 @1024 q50) → 0.15 (@512).
+- **The advertised cheap cells are NOT text-reading tiers.** q50@512 (the **12.3×**/**251×**
+  §2 headline cell, the 13 KiB S6 operating point) read **zero** scripted elements on every
+  text stratum but fs16 (33%); q10@768 reads zero on everything except fs16 — which it fully
+  preserves (100%): **scale dominates quality** — 27 px text survives brutal q10 at 768
+  better than moderate q50 at 512. The cheap-cell ratios stay honest as *byte floors* for
+  photo/layout-class consumption — §2's read and the fleet-egress projection
+  (`docs/benchmarks/README.md` §2d) are now qualified accordingly.
+- **The delta-JPEG composited stream shows no compositing penalty:** keyframe + 92 lossy
+  tiles per replay composited client-side read **100%** on all three font strata with
+  text-region SSIM equal to the single-shot q80 frame (0.97) — tile-over-keyframe drift is
+  not the thing that breaks legibility; downscale is.
+- **Honest scope.** The judge is one OCR engine with a fixed, deterministic pipeline — a
+  conservative, model-free proxy for "can an agent read this", not a VLM study: a
+  spot-check shows the marginal @1024 terminal cells are still partially human-readable
+  (mangled but guessable), while the 0% cells are genuinely mush. Treat sub-100% cells as
+  *do not ship for text-reading agents*, not as "literally invisible". And if a model
+  ingests frames at ≤1024 long edge anyway, this loss happens inside the model's own
+  preprocessing — the envelope bounds what *any* consumer of that resolution can read; the
+  `max_long_edge` lever just makes the loss explicit (and cheaper on the wire).
+
 ## Reproducing
 
 ```sh
@@ -769,6 +950,9 @@ docker build -f images/linux/Dockerfile -t shinken/sandbox-linux .
 #     plus OSWorld's server, fetched at build time from the public OSWorld repo
 #     at a pinned commit — no OSWorld code is vendored into this repo
 docker build -f images/linux/Dockerfile.osworld -t shinken/sandbox-linux-osworld .
+
+# 1c. (optional, enables S4c — the CRIU memory rung; PRIVILEGED containers)
+docker build -f images/linux/Dockerfile.criu -t shinken/sandbox-linux-criu .
 
 # 2. run everything (serial, ~20-30 min), or any single suite
 make benchmarks                    # == bash benchmarks/run_all.sh
@@ -782,7 +966,20 @@ python3 benchmarks/replot.py
 ```
 
 Suites need `matplotlib` + `websockets` on the host Python and a running Docker daemon (S6
-alone needs no Docker); the in-repo SDK is bootstrapped automatically. Each JSON embeds the
+alone needs no Docker); the in-repo SDK is bootstrapped automatically. S13 additionally needs
+the host-side OCR judge — the `tesseract` binary (`brew install tesseract` /
+`apt-get install tesseract-ocr`) plus `pip install pytesseract` — and `run_all.sh` skips it
+with a clear message when either is missing. Each JSON embeds the
 host/image fingerprint of the run that produced it, so divergent reruns are diagnosable.
 Containers, snapshot images, and checkpoint registries are cleaned up by each suite on exit
 (`name_prefix="shinken-bench"`).
+
+## Related: the agent-quality study (separate artifact)
+
+The codec ladder above (§2) measures bytes; the **agent-quality study** measures whether a
+real vision agent's *task success* survives those same tiers — 16 read-from-screen-critical
+tasks, every tier × seed episode forked from one golden checkpoint per task (env variance
+eliminated by construction), deterministic exec-state verifiers, Wilson-CI non-inferiority
+analysis. It is a study, not a suite (needs a model endpoint; not in `run_all.sh`):
+[`agent-quality-study.md`](agent-quality-study.md) /
+[`benchmarks/bench_agent_quality.py`](../../benchmarks/bench_agent_quality.py).

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from shinken.providers import DockerLocalProvider, ExternalProvider
+from shinken.providers import CriuDockerProvider, DockerLocalProvider, ExternalProvider
 from shinken.providers.base import (
     ProviderCapabilities,
     SandboxHandle,
@@ -20,7 +20,11 @@ from shinken.providers.base import (
 )
 
 # All concrete providers, constructed without connecting to any runtime.
-PROVIDERS: list[SandboxProvider] = [DockerLocalProvider(), ExternalProvider()]
+PROVIDERS: list[SandboxProvider] = [
+    DockerLocalProvider(),
+    CriuDockerProvider(),
+    ExternalProvider(),
+]
 _KNOWN_RESET_STRATEGIES = {"recreate", "provider_managed", "snapshot_restore", "fork_from_snapshot"}
 _KNOWN_SNAPSHOT_KINDS = {"none", "disk", "memory", "process", "provider_managed"}
 
@@ -46,6 +50,7 @@ def test_descriptor_is_complete(provider: SandboxProvider) -> None:
         "supports_egress_policy",
         "supports_checkpoint",
         "supports_resume",
+        "requires_privileged",
     ):
         assert isinstance(getattr(caps, field), bool), f"{caps.name}.{field} must be bool"
     assert caps.reset_strategy in _KNOWN_RESET_STRATEGIES, (

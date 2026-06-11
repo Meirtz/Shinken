@@ -1087,11 +1087,30 @@ mod tests {
 
         // Stale hash → full frame again (with the current hash attached).
         let v = obs_json(s.on_text(
-            r#"{"type":"action","call_id":"c3","action":{"verb":"screenshot","if_none_match":"0000000000000000"}}"#,
+            r#"{"type":"action","call_id":"c3","action":{"verb":"screenshot","if_none_match":"00000000000000000000000000000000"}}"#,
         ));
         assert!(v["image"]["ref"].is_string());
         assert_eq!(v["frame_hash"], hash.as_str());
         assert!(v.get("not_modified").is_none());
+    }
+
+    /// Mixed-version safety: a client holding a frame_hash minted by a pre-xxh3
+    /// runtime (16-char fnv1a-64 hex) against THIS runtime (32-char xxh3-128 hex).
+    /// The wire value is opaque and matched by string equality, so the stale
+    /// format can never collide with a current hash — the answer degrades to a
+    /// full frame (never a wrong `not_modified`), and the observation carries the
+    /// current-format hash for the client to re-key on.
+    #[test]
+    fn if_none_match_from_an_old_hash_format_safely_misses() {
+        let mut s = Session::new(None, Arc::new(StaticRawExec));
+        s.on_text(HELLO);
+        let v = obs_json(s.on_text(
+            r#"{"type":"action","call_id":"c1","action":{"verb":"screenshot","if_none_match":"cbf29ce484222325"}}"#,
+        ));
+        assert!(v["image"]["ref"].is_string(), "must serve the full frame");
+        assert!(v.get("not_modified").is_none());
+        let fresh = v["frame_hash"].as_str().unwrap();
+        assert_eq!(fresh.len(), 32, "current wire hash is xxh3-128 hex");
     }
 
     /// The dedup identity is codec-independent: a hash minted under PNG matches a

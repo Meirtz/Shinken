@@ -16,6 +16,21 @@ from typing import Any
 
 from .errors import SandboxDied, ScorerError, ShinkenError, is_connection_loss
 
+__all__ = [
+    "RECEIPT_SCHEMA",
+    "EvalSummary",
+    "RunResult",
+    "ScorerError",
+    "SetupError",
+    "Task",
+    "VerifierReceipt",
+    "check",
+    "click_then_type_task",
+    "key_sequence_task",
+    "run_eval",
+    "run_eval_forked",
+]
+
 
 class SetupError(ShinkenError):
     """Raised by a task's setup/readiness step — reported distinctly from a task
@@ -110,15 +125,49 @@ class VerifierReceipt:
         return {"passed": self.passed, "checks": self.checks}
 
 
+def _coerce_receipt(verdict: Any) -> VerifierReceipt:
+    """Eagerly validate a verifier's return into a :class:`VerifierReceipt`.
+
+    Accepts a real receipt, or anything receipt-SHAPED — an object/dict with a boolean
+    ``passed`` (+ optional ``checks``) is coerced, so a verifier returning a plain
+    ``{"passed": True, "checks": [...]}`` dict scores normally instead of surfacing as
+    a baffling ``agent_error`` (the audit's repro: a dict return showed up as
+    ``agent_error`` with ``setup_errors=n``). Anything else raises the typed
+    :class:`~shinken.errors.ScorerError` (``kind="garbage"``) → the run records
+    ``exit_reason="scorer_error"``, never a fake verdict."""
+    if isinstance(verdict, VerifierReceipt):
+        return verdict
+    passed = getattr(verdict, "passed", None)
+    checks = getattr(verdict, "checks", None)
+    if passed is None and isinstance(verdict, dict):
+        passed = verdict.get("passed")
+        checks = verdict.get("checks")
+    if isinstance(passed, bool):
+        return VerifierReceipt(passed, list(checks or []))
+    raise ScorerError(
+        f"verifier returned {type(verdict).__name__!r}; expected a VerifierReceipt "
+        "(or a receipt-shaped object/dict with a boolean `passed`)",
+        kind="garbage",
+    )
+
+
 @dataclass
 class Task:
-    """A deterministic eval task: ``run`` drives the session, ``verify`` judges it from
-    the live session or external task state, ``setup`` prepares/readiness-checks the env."""
+    """A deterministic task — **the ONE dataclass shared by ``shinken.eval`` and
+    ``shinken.gym``** (``shinken.gym.GymTask`` is a deprecated alias of this).
+
+    ``run`` drives the session (eval-harness flows; unused by the gym, where the
+    *policy* drives ``step()``), ``verify`` judges it from the live session or
+    external task state, ``setup`` prepares/readiness-checks the env (the gym runs it
+    once into the golden checkpoint). The gym's extra fields are optional here:
+    ``instruction`` (the natural-language goal handed to a policy) and ``metadata``."""
 
     name: str
-    run: Callable[[Any], None]
-    verify: Callable[[Any], VerifierReceipt]
+    run: Callable[[Any], None] | None = None
+    verify: Callable[[Any], Any] | None = None
     setup: Callable[[Any], None] | None = None
+    instruction: str = ""
+    metadata: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -210,7 +259,13 @@ def run_eval(
 ) -> EvalSummary:
     """Run ``task`` ``n`` times, each in a fresh session from ``connect_factory``, verify
     each run, and summarize. ``out_dir`` is reserved for future artifacts; setup/readiness
-    failures are reported via ``RunResult.error``, distinct from verifier failures."""
+    failures are reported via ``RunResult.error``, distinct from verifier failures.
+    Verifier returns are validated EAGERLY: a receipt-shaped dict/object is coerced into
+    a :class:`VerifierReceipt`, and a garbage return classifies that run as the typed
+    :class:`~shinken.errors.ScorerError` (``exit_reason="scorer_error"``) — never a
+    fake verdict."""
+    if task.run is None or task.verify is None:
+        raise ValueError(f"task {task.name!r} needs both run and verify for run_eval()")
     out_dir = out_dir or tempfile.mkdtemp(prefix="shinken-eval-")
     os.makedirs(out_dir, exist_ok=True)
     results: list[RunResult] = []
@@ -232,7 +287,7 @@ def run_eval(
             task.run(env)
             steps = max(0, getattr(env, "actions_dispatched", 0) - actions_before)
             wall = time.perf_counter() - t0
-            receipt = task.verify(env)
+            receipt = _coerce_receipt(task.verify(env))
             passed = receipt.passed
             kind = "pass" if passed else "fail"
         except Exception as exc:  # noqa: BLE001 — classify, never crash the eval loop
@@ -331,7 +386,7 @@ def _score_replica(i: int, env: Any, task: Task) -> RunResult:
         task.run(env)
         steps = max(0, getattr(env, "actions_dispatched", 0) - before)
         wall = time.perf_counter() - t0
-        receipt = task.verify(env)
+        receipt = _coerce_receipt(task.verify(env))
         passed = receipt.passed
         kind = "pass" if passed else "fail"
     except Exception as exc:  # noqa: BLE001 — classify, never raise into the fork loop
@@ -358,6 +413,8 @@ def run_eval_forked(
 
     This is what makes high-N eval cheap and is the seam training reuses (best-of-N / tree-search):
     one golden state, many cheap forks, each scored independently."""
+    if task.run is None or task.verify is None:
+        raise ValueError(f"task {task.name!r} needs both run and verify for run_eval_forked()")
     out_dir = out_dir or tempfile.mkdtemp(prefix="shinken-fork-eval-")
     os.makedirs(out_dir, exist_ok=True)
     base = provider.create(spec)

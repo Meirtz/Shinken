@@ -43,6 +43,21 @@ def test_screenshot_format_and_quality_travel_the_wire(mock_shinkend):
         assert "png" not in shot
 
 
+def test_screenshot_max_long_edge_travels_the_wire(mock_shinkend):
+    """`max_long_edge` is the same downscale lever the screencast and the pipelined
+    step() observe dict expose; the on-demand screenshot must carry it too. Asserted
+    from the mock's RECORDED wire action, not from the request's own inputs."""
+    with shinken.connect(mock_shinkend) as env:
+        env.screenshot(format="jpeg", quality=50, max_long_edge=768)
+        sent = env.query("state")["screenshots"][-1]
+        assert sent["format"] == "jpeg"
+        assert sent["quality"] == 50
+        assert sent["max_long_edge"] == 768
+        # omitted levers stay off the wire (a pre-downscale runtime never sees them)
+        env.screenshot()
+        assert env.query("state")["screenshots"][-1]["max_long_edge"] is None
+
+
 def test_target_builder():
     assert _target(None, 5, 6) == {"kind": "point_px", "x": 5, "y": 6}
     assert _target("e1", None, None) == {"kind": "element_ref", "ref": "e1"}

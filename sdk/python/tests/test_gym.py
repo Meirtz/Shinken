@@ -115,6 +115,34 @@ def test_step_before_reset_is_typed(mock_shinkend):
         env.step({"verb": "click", "target": {"kind": "point_px", "x": 1, "y": 1}})
 
 
+def test_session_property_exposes_the_live_replica(mock_shinkend):
+    """`env.session` is the public handle a harness uses for out-of-band probes
+    (readiness waits, auxiliary captures) against the current fork."""
+    env = g.ShinkenGymEnv(_typed_hi_task(), _ForkProvider(mock_shinkend))
+    with pytest.raises(g.GymError, match="reset"):
+        _ = env.session
+    with env:
+        env.reset()
+        assert env.session.query("platform") == "linux"  # the same live session verify sees
+
+
+def test_observe_args_codec_levers_reach_the_wire_on_reset(mock_shinkend):
+    """The reset observation honors the full screenshot lever set — format, quality AND
+    max_long_edge — so a codec-tier study serves the model the tier's settings from the
+    very first frame (asserted from the mock's recorded wire action)."""
+    env = g.ShinkenGymEnv(
+        _typed_hi_task(),
+        _ForkProvider(mock_shinkend),
+        observe_args={"format": "jpeg", "quality": 50, "max_long_edge": 768},
+    )
+    with env:
+        env.reset()
+        sent = env.session.query("state")["screenshots"][-1]
+        assert sent["format"] == "jpeg"
+        assert sent["quality"] == 50
+        assert sent["max_long_edge"] == 768
+
+
 # ------------------------------------------------------------------------- step routing
 
 

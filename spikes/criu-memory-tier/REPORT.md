@@ -1,5 +1,16 @@
 # Spike #3 — CRIU memory-tier checkpoint/restore of the desktop tree (REPORT)
 
+> **PRODUCTIZED (2026-06):** this spike's positive result is now a built provider tier —
+> `shinken.CriuDockerProvider` (`sdk/python/src/shinken/providers/criu.py`,
+> `images/linux/Dockerfile.criu` + `start-criu.sh`), with a live smoke
+> (`scripts/criu_smoke.py`: an in-process-memory marker survives restore, donor stays live)
+> and measured numbers (`benchmarks/bench_fork.py` memory mode →
+> [benchmarks §1b](../../docs/engineering/benchmarks.md)). One pitfall found beyond this
+> report during productization: the stock `at-spi-bus-launcher` holds a glib child-watch
+> **pidfd**, which CRIU 3.17 cannot dump — the tier runs a launcher-less single-bus a11y
+> stack instead (see `images/linux/shinken-criu-bus.conf`). This report below is the
+> original spike evidence, kept as-is.
+
 **Decision it informs:** the **memory checkpoint tier** (`snapshot_kind="process"`) of the
 runtime-state design ([D5](../../docs/design/tech-decisions.md),
 [runtime-state](../../docs/user/runtime-state.md), [status](../../docs/engineering/status.md)

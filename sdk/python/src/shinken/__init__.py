@@ -18,18 +18,36 @@ later milestones (see docs/10-phase0-plan.md).
 from .client import (
     AsyncSandbox,
     Capabilities,
+    Checkpoint,
     FrameCache,
     Sandbox,
+    SandboxFleet,
     SharedLoop,
     aconnect,
     connect,
 )
 from .dialect import DialectError, parse_actions, parse_xml_actions
-from .errors import ACTION_STATUSES, SandboxDied, ShinkenError, classify_exception
+from .errors import (
+    ACTION_STATUSES,
+    ConnectError,
+    ProviderRequired,
+    SandboxDied,
+    ScorerError,
+    SessionClosed,
+    ShinkenError,
+    UnknownVerb,
+    classify_exception,
+)
 from .gateway import CapabilityDenied
-from .providers import DockerLocalProvider, ExternalProvider, SandboxSpec
+from .providers import (
+    CriuDockerProvider,
+    DockerLocalProvider,
+    ExternalProvider,
+    GcReport,
+    SandboxSpec,
+)
 
-__version__ = "0.0.0"
+__version__ = "0.1.0"
 __all__ = [
     "connect",
     "aconnect",
@@ -37,17 +55,26 @@ __all__ = [
     "AsyncSandbox",
     "SharedLoop",
     "Capabilities",
+    "Checkpoint",
     "FrameCache",
+    "SandboxFleet",
     "CapabilityDenied",
     "ShinkenError",
+    "SessionClosed",
+    "ConnectError",
+    "UnknownVerb",
+    "ProviderRequired",
     "SandboxDied",
+    "ScorerError",
     "ACTION_STATUSES",
     "classify_exception",
     "parse_actions",
     "parse_xml_actions",
     "DialectError",
+    "CriuDockerProvider",
     "DockerLocalProvider",
     "ExternalProvider",
+    "GcReport",
     "SandboxSpec",
     "__version__",
 ]

@@ -17,6 +17,7 @@ import os
 from collections.abc import Callable
 
 from .base import (
+    GcReport,
     ProviderCapabilities,
     ProviderError,
     SandboxHandle,
@@ -25,6 +26,7 @@ from .base import (
     SandboxSpec,
     UnsupportedProviderOperation,
 )
+from .criu import CriuDockerProvider
 from .docker import DockerLocalProvider
 from .external import ExternalProvider
 
@@ -68,11 +70,14 @@ def available() -> list[str]:
 
 # Official providers — the only provider names that ever appear in a tracked file.
 register("docker", DockerLocalProvider)
+register("docker-criu", CriuDockerProvider)
 register("external", ExternalProvider)
 
 __all__ = [
+    "CriuDockerProvider",
     "DockerLocalProvider",
     "ExternalProvider",
+    "GcReport",
     "ProviderCapabilities",
     "ProviderError",
     "SandboxHandle",

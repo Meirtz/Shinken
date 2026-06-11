@@ -67,6 +67,8 @@ If a provider cannot restore or fork, it must say so (the contract tests enforce
 operation is actually wired, not a raising stub). The **Docker** provider now advertises
 `supports_snapshot/fork/checkpoint/resume = True` with `snapshot_kind="disk"`; note its `reset()`
 is still `recreate` (a fresh container), distinct from `fork()` (a new branch off a snapshot).
+A provider whose substrate must run privileged says so too (`requires_privileged=True` — the CRIU
+memory tier below), so routing can treat it as a latency tier rather than an isolation boundary.
 
 ## Current Status
 
@@ -74,7 +76,18 @@ The **Docker disk tier is implemented** (#209): `provider.snapshot()` (`docker c
 `restore()` / `resume()` / `fork()` (snapshot + restore, disk copy-on-write) / `checkpoint()`.
 The SDK exposes provider-managed `sandbox.checkpoint()`, `sandbox.fork()`, and `sandbox.resume()`.
 
-**Not yet built:** the **CRIU memory** checkpoint tier (`snapshot_kind="process"`) and the
-**sub-second CoW fork-from-snapshot fast tier** (Firecracker/QEMU, Phase-1, gated on a first-party
-latency spike). See
+The **CRIU memory tier is implemented too** (opt-in `shinken.CriuDockerProvider`,
+`snapshot_kind="process"`, Linux/Docker only): checkpoint = `criu dump --leave-running` of the
+supervised desktop tree + `docker commit` (the donor keeps running); restore/fork = a fresh
+**privileged** container + `criu restore`. Replicas carry **live process+memory+filesystem
+state** — open apps, mid-task processes, X11 clients, in-heap program state (verified per fork
+by an in-memory marker) — with one designed exception: established TCP connections are closed
+at dump (`--tcp-close`), so agent WebSocket sessions reconnect via the documented
+`resume_stream` semantics. ⚠ Every container on this tier runs `--privileged` (in-container
+CRIU needs CAP_SYS_ADMIN): it is a **latency/state-fidelity feature, not an isolation
+posture** — the production isolation answer remains the microVM tier (D1/D5). Measured
+numbers: [`../engineering/benchmarks.md`](../engineering/benchmarks.md) §1b.
+
+**Not yet built:** the **sub-second CoW fork-from-snapshot fast tier** (Firecracker/QEMU,
+Phase-1, gated on a first-party latency spike). See
 [`../engineering/status.md`](../engineering/status.md).

@@ -443,7 +443,7 @@ def _docker_cleanup(ns: dict) -> None:
         with contextlib.suppress(Exception):
             p.cleanup_snapshots()
         with contextlib.suppress(Exception):
-            p.cleanup_orphans()
+            p.destroy_all()  # the blunt label sweep (cleanup_orphans is owner-aware now)
 
 
 @pytest.mark.skipif(

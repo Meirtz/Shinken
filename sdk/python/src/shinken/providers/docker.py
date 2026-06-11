@@ -25,6 +25,7 @@ from typing import Any
 from ..artifacts import ArtifactRef, FileScopeError, HashMismatch, sha256_file
 from ..errors import SandboxDied
 from .base import (
+    GcReport,
     ProviderCapabilities,
     ProviderError,
     SandboxHandle,
@@ -40,6 +41,31 @@ def _free_port(host: str = "127.0.0.1") -> int:
     port = sock.getsockname()[1]
     sock.close()
     return int(port)
+
+
+def _pid_alive(pid: int) -> bool:
+    """Whether ``pid`` is a live process on THIS host (signal-0 probe). A pid we
+    cannot signal (another user's) counts as alive — the conservative answer for
+    ownership checks: never reclaim what might still be someone's session."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:  # PermissionError etc. — the process exists
+        return True
+    return True
+
+
+def _maybe_int(value: str) -> int | None:
+    value = value.strip()
+    return int(value) if value.lstrip("-").isdigit() else None
+
+
+def _maybe_float(value: str) -> float | None:
+    try:
+        return float(value.strip())
+    except (ValueError, AttributeError):
+        return None
 
 
 # Mask secret env values when rendering a command for an error/log (#153). Matches a
@@ -200,9 +226,37 @@ class DockerLocalProvider(SandboxProvider):
         raise AssertionError("unreachable")  # pragma: no cover
 
     def _create_once(self, spec: SandboxSpec) -> SandboxHandle:
-        token = secrets.token_hex(16)
+        handle = self._launch_container(spec)
+        try:
+            self._wait_ready(handle)
+        except Exception:
+            self.destroy(handle)
+            raise
+        return handle
+
+    def _tier_run_args(self, spec: SandboxSpec) -> list[str]:
+        """Extra ``docker run`` flags a derived tier needs on EVERY container (e.g. the
+        CRIU memory tier's ``--privileged``/``--init``/images-volume trio). Base: none."""
+        return []
+
+    def _launch_container(
+        self,
+        spec: SandboxSpec,
+        *,
+        command: tuple[str, ...] = (),
+        token: str | None = None,
+    ) -> SandboxHandle:
+        """``docker run`` one sandbox container and return its handle WITHOUT waiting
+        for readiness — callers gate readiness themselves (``create()`` immediately;
+        the CRIU memory tier only after ``criu restore`` brings the process tree back).
+        ``command`` overrides the image CMD (a memory-tier restore target must boot
+        IDLE so nothing races the restored desktop for the display/port/PIDs);
+        ``token`` reuses an existing runtime token (a restored ``shinkend`` keeps the
+        token it held in memory at dump time)."""
+        token = token or secrets.token_hex(16)
         port = _free_port(self.host)
         name = f"{self.name_prefix}-{uuid.uuid4().hex[:10]}"
+        created_at = time.time()
         cmd = [
             self.docker_bin,
             "run",
@@ -216,6 +270,13 @@ class DockerLocalProvider(SandboxProvider):
             "shinken.provider=docker-local",
             "--label",
             f"shinken.name_prefix={self.name_prefix}",
+            # Ownership stamp: which PROCESS created this sandbox and when — what makes
+            # cleanup_orphans()/gc() owner-aware (a dead owner pid = a reclaimable
+            # orphan; a live one is never touched without force).
+            "--label",
+            f"shinken.owner_pid={os.getpid()}",
+            "--label",
+            f"shinken.created_at={created_at}",
             "-e",
             # Dev-only: the token is delivered via env, so it is readable by any process
             # in the guest (and from /proc) — not a real boundary (#153). It is redacted
@@ -246,9 +307,10 @@ class DockerLocalProvider(SandboxProvider):
             cmd += ["--pids-limit", str(spec.pids_limit)]
         if spec.shm_size:
             cmd += ["--shm-size", spec.shm_size]
+        cmd += self._tier_run_args(spec)
         cmd.append(spec.image or self.image)
+        cmd += list(command)
 
-        created_at = time.time()
         result = _run(cmd, timeout=self.startup_timeout)
         handle = SandboxHandle(
             provider=self.capabilities.name,
@@ -274,11 +336,6 @@ class DockerLocalProvider(SandboxProvider):
                 },
             },
         )
-        try:
-            self._wait_ready(handle)
-        except Exception:
-            self.destroy(handle)
-            raise
         return handle
 
     def check_alive(self, handle: SandboxHandle) -> None:
@@ -463,6 +520,12 @@ class DockerLocalProvider(SandboxProvider):
         except subprocess.TimeoutExpired as exc:
             raise ProviderError(f"timed out destroying sandbox {handle.sandbox_id}") from exc
         handle.metadata["destroyed"] = True
+        # fork() records its intermediate commit on the child handle; reclaim it with
+        # the child (the container is gone, so `docker rmi` actually frees the layer)
+        # — fork no longer leaks one shinken-snap:* image per call.
+        fork_snapshot = handle.metadata.get("fork_snapshot")
+        if fork_snapshot:
+            self.delete_snapshot(str(fork_snapshot))
 
     # --- runtime-state primitives (disk tier, #206) -----------------------------------
     # Reference implementation on Docker's filesystem layer via `docker commit` (no live
@@ -489,7 +552,10 @@ class DockerLocalProvider(SandboxProvider):
             metadata={
                 k: v
                 for k, v in handle.metadata.items()
-                if k not in {"container_id", "port", "destroyed"}
+                # per-container state must not propagate into descendants: most
+                # importantly fork_snapshot — inheriting it would let a grandchild's
+                # destroy() reclaim an image its parent generation still needs.
+                if k not in {"container_id", "port", "destroyed", "fork_snapshot", "pool_graft"}
             },
         )
 
@@ -501,7 +567,22 @@ class DockerLocalProvider(SandboxProvider):
         onto a pre-booted container instead of cold-booting the committed image."""
         tag = f"shinken-snap:{name or uuid.uuid4().hex[:12]}"
         cid = self._container_of(handle)
-        commit = [self.docker_bin, "commit", cid, tag]
+        # Stamp the snapshot image with the same ownership labels containers get at
+        # create (#leaks): shinken.snapshot=true makes every committed image findable
+        # globally (not just via this instance's in-memory registry), and the
+        # owner/created labels make gc(snapshots=True) owner-aware.
+        commit = [
+            self.docker_bin,
+            "commit",
+            "-c",
+            "LABEL shinken.snapshot=true",
+            "-c",
+            f"LABEL shinken.owner_pid={os.getpid()}",
+            "-c",
+            f"LABEL shinken.created_at={time.time()}",
+            cid,
+            tag,
+        ]
         _run(commit, timeout=self.startup_timeout)
         self._snapshots[tag] = self._spec_from_handle(handle)
         if self._pool is not None:
@@ -545,17 +626,46 @@ class DockerLocalProvider(SandboxProvider):
             with contextlib.suppress(OSError):
                 os.remove(delta["tar"])
 
+    def snapshot_spec(self, snapshot_or_checkpoint_id: str) -> SandboxSpec | None:
+        """The originating :class:`SandboxSpec` recorded when this provider instance
+        took the snapshot/checkpoint (geometry + resource limits — the spec-compat
+        info a :class:`~shinken.Checkpoint` carries), or ``None`` when unknown."""
+        key = str(snapshot_or_checkpoint_id)
+        image = self._checkpoints.get(key, {}).get("snapshot_id", key)
+        return self._snapshots.get(image)
+
     def cleanup_snapshots(self) -> int:
-        """Reclaim every snapshot image this provider committed (`docker rmi`). Returns the
-        count removed. Pairs with cleanup_orphans() (which only removes containers)."""
-        tags = list(self._snapshots)
+        """Reclaim the snapshot images THIS PROCESS committed (`docker rmi`): the
+        in-memory registry plus — global-by-label — every image stamped
+        ``shinken.snapshot=true`` with this process's ``shinken.owner_pid``, so a
+        re-created provider instance (whose registry is empty) still reclaims its own
+        process's commits. Returns the count removed. Cross-process reclamation (dead
+        owners) is :meth:`gc` with ``snapshots=True``."""
+        tags = set(self._snapshots)
+        with contextlib.suppress(ProviderError):
+            result = _run(
+                [
+                    self.docker_bin,
+                    "images",
+                    "--filter",
+                    "label=shinken.snapshot=true",
+                    "--filter",
+                    f"label=shinken.owner_pid={os.getpid()}",
+                    "--format",
+                    "{{.Repository}}:{{.Tag}}",
+                ]
+            )
+            tags |= {line.strip() for line in result.stdout.splitlines() if line.strip()}
         for tag in tags:
             self.delete_snapshot(tag)
         return len(tags)
 
     def resume(self, handle_or_checkpoint: SandboxHandle | str) -> SandboxHandle:
-        """Bring a snapshot/checkpoint back live. Docker containers are ephemeral (`--rm`),
-        so resume takes a snapshot/checkpoint id, not a live handle."""
+        """**Deprecated alias of** :meth:`restore` — kept for back-compat. RESTORE
+        semantics, plainly: it launches a NEW live sandbox from the snapshot/checkpoint
+        id; it does NOT un-pause anything, and calling it while the source sandbox is
+        alive mints a SIBLING, not the same sandbox. Docker containers are ephemeral
+        (`--rm`), so only snapshot/checkpoint ids are accepted, never a live handle."""
         if isinstance(handle_or_checkpoint, str):
             return self.restore(handle_or_checkpoint)
         raise ProviderError(
@@ -565,8 +675,15 @@ class DockerLocalProvider(SandboxProvider):
 
     def fork(self, handle: SandboxHandle) -> SandboxHandle:
         """Branch a new live sandbox from the current state: snapshot + restore. Disk CoW
-        via the new container's writable layer (~0.3–0.5 s) — not the sub-ms fast tier."""
-        return self.restore(self.snapshot(handle))
+        via the new container's writable layer (~0.3–0.5 s) — not the sub-ms fast tier.
+
+        The intermediate commit is recorded on the child handle (``fork_snapshot``
+        metadata) and reclaimed by :meth:`destroy` along with the child — fork no
+        longer leaks one ``shinken-snap:*`` image per call."""
+        snapshot_id = self.snapshot(handle)
+        child = self.restore(snapshot_id)
+        child.metadata["fork_snapshot"] = snapshot_id
+        return child
 
     def checkpoint(
         self,
@@ -588,11 +705,12 @@ class DockerLocalProvider(SandboxProvider):
         }
         return ckpt_id
 
-    def cleanup_orphans(self) -> int:
-        # Select strictly by the labels we stamp at create time (#157). Docker's `name`
-        # filter is substring-based, not the anchored regex `name=^prefix-` implies, so
-        # it could miss intended containers (or match unintended ones) and leave orphans;
-        # the two labels already identify our containers precisely.
+    def _labeled_container_ids(self) -> list[str]:
+        """Ids of every container stamped with this provider's labels at create time
+        (#157). Selecting strictly by label: Docker's `name` filter is substring-based,
+        not the anchored regex `name=^prefix-` implies, so it could miss intended
+        containers (or match unintended ones) and leave orphans; the two labels
+        already identify our containers precisely."""
         result = _run(
             [
                 self.docker_bin,
@@ -604,17 +722,190 @@ class DockerLocalProvider(SandboxProvider):
                 f"label=shinken.name_prefix={self.name_prefix}",
             ]
         )
-        ids = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+        return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+    def _ownership_rows(self, ids: list[str], *, image: bool = False) -> list[dict[str, Any]]:
+        """``[{id, owner_pid, created_at}]`` for containers (or, with ``image=True``,
+        images) — the ownership stamp read back from the labels. A missing label
+        (an older SDK's resource) yields ``None`` for that field."""
+        if not ids:
+            return []
+        fmt = (
+            "{{.Id}}\t"
+            '{{index .Config.Labels "shinken.owner_pid"}}\t'
+            '{{index .Config.Labels "shinken.created_at"}}'
+        )
+        cmd = [self.docker_bin]
+        if image:
+            cmd.append("image")
+        cmd += ["inspect", "-f", fmt, *ids]
+        result = _run(cmd, timeout=30.0)
+        rows: list[dict[str, Any]] = []
+        for line in result.stdout.splitlines():
+            parts = line.split("\t")
+            if len(parts) != 3:
+                continue
+            rows.append(
+                {
+                    "id": parts[0].strip(),
+                    "owner_pid": _maybe_int(parts[1]),
+                    "created_at": _maybe_float(parts[2]),
+                }
+            )
+        return rows
+
+    def cleanup_orphans(self, max_age_s: float | None = None) -> int:
+        """Reclaim **orphaned** containers only — never a live owner's session.
+
+        An orphan is a labeled container whose owning process (the
+        ``shinken.owner_pid`` stamped at create) is dead, OR — when ``max_age_s`` is
+        given, an explicit operator opt-in (e.g. a CI janitor) — one older than
+        ``max_age_s`` seconds regardless of owner. With the default ``max_age_s=None``
+        a live owner's sandboxes are NEVER touched, so two SDK processes sharing one
+        Docker daemon can each clean up without killing the other's sessions.
+        Containers without ownership labels (an older SDK) are only reclaimed by age.
+        Returns the count removed. The old reclaim-everything-labeled sweep this
+        method used to be is :meth:`destroy_all`."""
+        now = time.time()
+        doomed: list[str] = []
+        for row in self._ownership_rows(self._labeled_container_ids()):
+            pid, created = row["owner_pid"], row["created_at"]
+            dead_owner = pid is not None and not _pid_alive(pid)
+            expired = max_age_s is not None and created is not None and (now - created) > max_age_s
+            if dead_owner or expired:
+                doomed.append(row["id"])
+        if doomed:
+            _run([self.docker_bin, "rm", "-f", *doomed], timeout=60.0)
+        return len(doomed)
+
+    def destroy_all(self) -> int:
+        """Force-remove EVERY container carrying this provider's labels — **including
+        live sessions owned by other processes** (the blunt sweep
+        :meth:`cleanup_orphans` used to be; renamed because a label sweep kills
+        sibling runs). For routine cleanup prefer :meth:`cleanup_orphans` (owner-aware)
+        or :meth:`gc`. Returns the count removed."""
+        ids = self._labeled_container_ids()
         if not ids:
             return 0
         _run([self.docker_bin, "rm", "-f", *ids], timeout=30.0)
         return len(ids)
 
+    def list(self) -> list[SandboxHandle]:
+        """Rebuild a :class:`SandboxHandle` for every RUNNING labeled container, from
+        Docker state alone (no in-memory registry needed — works across processes):
+        the address from the published port map, ``created_at`` from the ownership
+        label, and the token from the container's environment (``SHINKEND_TOKEN``).
+
+        **Token recovery requires local Docker access**: the dev token is delivered
+        via the container env (#153), so anyone who can `docker inspect` can read it —
+        the same trust boundary as the env delivery itself; `list()` adds no new
+        exposure (and :class:`SandboxHandle`'s repr redacts it)."""
+        result = _run(
+            [
+                self.docker_bin,
+                "ps",
+                "-q",
+                "--filter",
+                "label=shinken.provider=docker-local",
+                "--filter",
+                f"label=shinken.name_prefix={self.name_prefix}",
+            ]
+        )
+        ids = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+        if not ids:
+            return []
+        inspected = _run([self.docker_bin, "inspect", *ids], timeout=30.0)
+        try:
+            data = json.loads(inspected.stdout)
+        except json.JSONDecodeError as exc:
+            raise ProviderError(f"docker inspect returned unparseable JSON: {exc}") from exc
+        handles: list[SandboxHandle] = []
+        for item in data:
+            config = item.get("Config") or {}
+            labels = config.get("Labels") or {}
+            env_list = config.get("Env") or []
+            token = next(
+                (e.split("=", 1)[1] for e in env_list if e.startswith("SHINKEND_TOKEN=")),
+                None,
+            )
+            ports = ((item.get("NetworkSettings") or {}).get("Ports") or {}).get("8765/tcp") or []
+            addr = ""
+            port: int | None = None
+            if ports:
+                host = ports[0].get("HostIp") or self.host
+                host_port = ports[0].get("HostPort")
+                if host_port:
+                    port = int(host_port)
+                    addr = f"{host}:{host_port}"
+            name = (item.get("Name") or "").lstrip("/")
+            handles.append(
+                SandboxHandle(
+                    provider=self.capabilities.name,
+                    sandbox_id=name or str(item.get("Id", ""))[:12],
+                    addr=addr,
+                    token=token,
+                    created_at=_maybe_float(labels.get("shinken.created_at") or ""),
+                    metadata={
+                        "container_id": item.get("Id"),
+                        "image": config.get("Image"),
+                        "port": port,
+                        "owner_pid": _maybe_int(labels.get("shinken.owner_pid") or ""),
+                        "rebuilt_from_labels": True,
+                    },
+                )
+            )
+        return handles
+
+    def gc(self, snapshots: bool = False, force: bool = False) -> GcReport:
+        """Garbage-collect labeled Shinken containers (and, with ``snapshots=True``,
+        labeled ``shinken.snapshot=true`` images): reclaim those whose OWNING PROCESS
+        is dead; skip live owners — and unknown owners (resources from an SDK that
+        predates the ownership labels) — unless ``force=True``. Containers go first so
+        the images they reference are reclaimable. Returns a
+        :class:`~shinken.providers.base.GcReport` with the counts."""
+        report = GcReport()
+        doomed: list[str] = []
+        for row in self._ownership_rows(self._labeled_container_ids()):
+            pid = row["owner_pid"]
+            if force or (pid is not None and not _pid_alive(pid)):
+                doomed.append(row["id"])
+            else:
+                report.skipped += 1
+        if doomed:
+            _run([self.docker_bin, "rm", "-f", *doomed], timeout=60.0)
+        report.containers = len(doomed)
+        if snapshots:
+            result = _run(
+                [self.docker_bin, "images", "-q", "--filter", "label=shinken.snapshot=true"]
+            )
+            image_ids = list(
+                dict.fromkeys(  # `images -q` repeats an id per tag; dedupe, keep order
+                    line.strip() for line in result.stdout.splitlines() if line.strip()
+                )
+            )
+            img_doomed: list[str] = []
+            for row in self._ownership_rows(image_ids, image=True):
+                pid = row["owner_pid"]
+                if force or (pid is not None and not _pid_alive(pid)):
+                    img_doomed.append(row["id"])
+                else:
+                    report.skipped += 1
+            for image_id in img_doomed:
+                subprocess.run(
+                    [self.docker_bin, "rmi", "-f", image_id],
+                    check=False,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=30,
+                )
+            report.images = len(img_doomed)
+        return report
+
     # --- warm-pool state graft (opt-in, S8) -------------------------------------------
     # fork→usable without a cold boot: pre-booted base-image containers + the snapshot's
     # filesystem delta applied in place. SEMANTIC LIMITS (documented, on purpose):
     # files only — exactly the state tier `docker commit` already captures (no process/
-    # memory state; that is the CRIU tier); the delta is the `docker diff` set at
+    # memory state; that is CriuDockerProvider's tier); the delta is the `docker diff` set at
     # snapshot time, applied as tar-extract (adds/changes, as root) + rm (deletions),
     # which is the operational equivalent of applying the commit layer's .wh. whiteouts;
     # live runtime state (/run, /var/run, /dev, X sockets/locks, /proc, /sys) is

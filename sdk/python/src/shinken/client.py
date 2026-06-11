@@ -22,22 +22,42 @@ import uuid
 import weakref
 from collections import OrderedDict, deque
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 
 from websockets.asyncio.client import connect as _ws_connect
 from websockets.exceptions import ConnectionClosed as _WsConnectionClosed
+from websockets.exceptions import InvalidHandshake as _WsInvalidHandshake
+from websockets.exceptions import InvalidURI as _WsInvalidURI
 
 from .artifacts import LocalArtifactStore
-from .errors import classify_exception
+from .errors import (
+    ConnectError,
+    ProviderRequired,
+    SessionClosed,
+    ShinkenError,
+    UnknownVerb,
+    classify_exception,
+)
 from .gateway import CapabilityDenied, check_file_transfer, decide_action
 
-__all__ = ["connect", "aconnect", "Sandbox", "AsyncSandbox", "Capabilities", "FrameCache"]
+__all__ = [
+    "connect",
+    "aconnect",
+    "Sandbox",
+    "AsyncSandbox",
+    "Capabilities",
+    "Checkpoint",
+    "FrameCache",
+    "SandboxFleet",
+    "SharedLoop",
+]
 
 _log = logging.getLogger("shinken.client")
 
 DEFAULT_ADDR = "127.0.0.1:8765"
-_CLIENT = {"name": "shinken-py", "version": "0.0.0"}
+_CLIENT = {"name": "shinken-py", "version": "0.1.0"}
 _FRAME_QUEUE_MAX = 32
 # Bound inbound WebSocket frames (#136): generous enough for 4K screenshots / large a11y
 # trees, but not unbounded — a malformed or hostile peer can't force unbounded buffering.
@@ -269,6 +289,18 @@ def _parse_welcome(welcome: dict) -> tuple[Capabilities, str]:
     )
 
 
+def _action_error(reply: dict, verb: str) -> RuntimeError:
+    """Build the typed exception for a nacked action: the runtime's
+    ``unknown verb: …`` / ``unsupported verb: …`` rejections become
+    :class:`~shinken.errors.UnknownVerb` (so capability-negotiation fallbacks can
+    branch on type), everything else stays the historical :class:`RuntimeError`."""
+    msg = reply.get("error") or f"action {verb!r} failed"
+    low = msg.lower()
+    if "unknown verb" in low or "unsupported verb" in low or "unrecognized verb" in low:
+        return UnknownVerb(msg)
+    return RuntimeError(msg)
+
+
 def _observation_dict(reply: dict) -> dict:
     """Shape one image-bearing ``observation`` message into the dict the SDK returns
     for screenshots and act-returns-observation: ``{'bytes', 'format', 'w', 'h',
@@ -368,7 +400,7 @@ class FrameCache:
         # raw pixels (codec-independent), so the same screen under png and jpeg
         # shares a hash while the cached payload bytes differ.
         self._entries: OrderedDict[tuple[str, str], dict] = OrderedDict()
-        # params_key (scope|format|quality) -> the hash most recently SEEN under those
+        # params_key (scope|format|quality|max_long_edge) -> the hash most recently SEEN under those
         # params (stored or matched), i.e. the best if_none_match candidate for a
         # session that has no frame of its own yet.
         self._last: dict[str, str] = {}
@@ -532,6 +564,10 @@ class AsyncSandbox:
         self._queued_bytes: deque[int] = deque()
         self._budget_state: dict | None = None
         self._reader: asyncio.Task | None = None
+        # Set by close() (idempotent); every subsequent wire-touching method raises the
+        # typed SessionClosed immediately instead of failing obscurely (or, on the sync
+        # facade, deadlocking against a stopped loop).
+        self._closed = False
         self._rpc_timeout = 30.0  # per-RPC reply deadline (#142); async callers never hang
         self._stream_scope = "screen"  # capture region of the active screencast (#143)
         # Logical stream id of the active screencast (#56): seeded with the resumed id
@@ -549,6 +585,14 @@ class AsyncSandbox:
     def _next_id(self) -> str:
         self._seq += 1
         return f"c{self._id_prefix}-{self._seq}"
+
+    def _ensure_open(self) -> None:
+        """Raise the typed :class:`~shinken.errors.SessionClosed` if close() ran."""
+        if self._closed:
+            raise SessionClosed(
+                "session is closed (close() was already called); open a new session "
+                "via connect()/provider.connect()"
+            )
 
     def _start_reader(self) -> None:
         self._reader = asyncio.ensure_future(self._read_loop())
@@ -710,6 +754,7 @@ class AsyncSandbox:
         """Send a call_id-bearing message and await its correlated reply, bounded by a
         timeout (#142) so a missing, dropped, or uncorrelated reply can't hang an async
         caller; the pending future is also failed on connection close (``_fail_pending``)."""
+        self._ensure_open()
         timeout = self._rpc_timeout if timeout is None else timeout
         call_id = msg["call_id"]
         fut: asyncio.Future = asyncio.get_running_loop().create_future()
@@ -737,6 +782,7 @@ class AsyncSandbox:
     async def ping(self) -> float:
         """Round-trip time to the runtime, in seconds. Bounded by the RPC timeout (#142),
         so an async caller can't hang forever if the server never pongs."""
+        self._ensure_open()
         fut: asyncio.Future = asyncio.get_running_loop().create_future()
         self._pong_waiters.append(fut)
         t0 = time.perf_counter()
@@ -901,7 +947,7 @@ class AsyncSandbox:
             # tool-call routed through act()/act_batch() must not be treated as a failure.
             ok = True if reply.get("type") == "observation" else reply.get("ok")
             if not ok:
-                raise RuntimeError(reply.get("error", f"action {verb!r} failed"))
+                raise _action_error(reply, verb)
         except BaseException:
             # A nacked/failed action never gets a follow-up — drop the orphan future.
             if obs_fut is not None:
@@ -1036,6 +1082,7 @@ class AsyncSandbox:
         True when every action row carries a deliberate outcome (``ok``/``error``; no
         ``timeout``/``sandbox_died``), and ``failure_kind`` mirrors the first failing
         row's status like continue-mode :meth:`act_batch`."""
+        self._ensure_open()
         sid = step_id or f"step-{uuid.uuid4().hex[:8]}"
         if observe is not None:
             self._check_image_format(observe.get("format"))
@@ -1308,7 +1355,7 @@ class AsyncSandbox:
         if argv is not None and (not isinstance(argv, list | tuple) or len(argv) == 0):
             raise ValueError("exec argv must be a non-empty list of strings")
         if "exec" not in (self.capabilities.verbs or []):
-            raise RuntimeError(
+            raise UnknownVerb(
                 "exec verb not advertised by this runtime (pre-exec shinkend): "
                 "fall back to the substrate's out-of-band channel"
             )
@@ -1491,6 +1538,7 @@ class AsyncSandbox:
         *,
         format: str | None = None,
         quality: int | None = None,
+        max_long_edge: int | None = None,
         dedup: bool | None = None,
     ) -> dict:
         """Capture pixels on demand.
@@ -1498,6 +1546,9 @@ class AsyncSandbox:
         ``format`` selects the wire codec: ``None``/``"png"`` (lossless default) or
         ``"jpeg"`` (the bandwidth lever — a 1080p desktop is ~1.8 MB as PNG vs ~0.1 MB as
         quality-80 JPEG). ``quality`` (1–100) tunes JPEG; ignored for PNG.
+        ``max_long_edge`` caps the frame's longer edge (px) — the downscale bandwidth
+        lever, same as on :meth:`astart_screencast` (the runtime has always accepted it
+        on the ``screenshot`` action; the facade simply lacked the parameter).
 
         ``dedup`` turns on content-negotiated observation: the request carries
         ``if_none_match`` with the last seen ``frame_hash`` (this session's, or — with
@@ -1527,16 +1578,20 @@ class AsyncSandbox:
             action["format"] = format
         if quality is not None:
             action["quality"] = quality
+        if max_long_edge is not None:
+            action["max_long_edge"] = max_long_edge
         # Content negotiation, capability-gated: only a frame_dedup runtime ever sees
         # if_none_match (older ones reject unknown action fields). Prefer this
         # session's own last frame (fast re-convergence after divergence), then the
         # shared cache's candidate (the cross-replica fleet case). The candidate
         # frame reference is held across the RPC, so a concurrent LRU eviction can
-        # never strand a not_modified answer.
+        # never strand a not_modified answer. The cache key carries every parameter
+        # that changes the encoded frame — including max_long_edge, so a downscaled
+        # request can never be served a cached native-resolution frame.
         use_dedup = (self._dedup_default if dedup is None else bool(dedup)) and bool(
             self.capabilities.frame_dedup
         )
-        key = f"{scope}|{format or 'png'}|{quality}"
+        key = f"{scope}|{format or 'png'}|{quality}|{max_long_edge}"
         candidate: tuple[str, dict] | None = None
         if use_dedup:
             candidate = self._last_shot.get(key) or self._frame_cache.candidate(key)
@@ -1729,7 +1784,11 @@ class AsyncSandbox:
         no ``'bytes'``/``'png'`` keys. Each tile's ``bytes`` is one image encoded in
         the stream's format/quality, positioned at (x, y) in the last full keyframe's
         resolution. The SDK passes tiles through RAW: compositing them onto the last
-        keyframe is the consumer's job (the SDK takes no imaging dependency)."""
+        keyframe is the consumer's job (the SDK takes no imaging dependency).
+
+        Deliberately NOT gated on ``close()``: the stream sentinels stay readable
+        after close, so a consumer still observes the END/LOST signal instead of a
+        :class:`~shinken.errors.SessionClosed` masking how the stream ended."""
         try:
             item = (
                 await asyncio.wait_for(self._frames.get(), timeout)
@@ -1798,38 +1857,76 @@ class AsyncSandbox:
         self._provider = provider
         self._handle = handle
 
+    @property
+    def handle(self) -> Any:
+        """The provider :class:`~shinken.providers.base.SandboxHandle` managing this
+        session (attached by ``provider.connect()``), or ``None`` on a bare
+        ``aconnect()`` with no provider behind it."""
+        return self._handle
+
+    def _require_provider(self, op: str) -> tuple[Any, Any]:
+        if self._provider is None or self._handle is None:
+            raise ProviderRequired(
+                f"{op} needs a provider-managed session; open it via a provider's "
+                "connect()/session() instead of a bare connect()"
+            )
+        return self._provider, self._handle
+
     async def checkpoint(
         self, name: str | None = None, *, agent_state_ref: str | None = None
-    ) -> str:
-        """Create a runtime checkpoint of this sandbox (#206).
+    ) -> Checkpoint:
+        """Create a runtime checkpoint of this sandbox (#206) and return a first-class
+        :class:`Checkpoint` handle.
 
-        The provider snapshots substrate state and returns the checkpoint id.
+        The provider snapshots substrate state; the returned :class:`Checkpoint` is a
+        ``str`` subclass equal to the checkpoint id (every legacy str-consumer keeps
+        working) and carries the provider + spec-compat info, with ``spawn()`` /
+        ``spawn_many()`` / ``delete()`` methods.
 
-        Requires a provider-managed session (use a provider's ``connect()``)."""
-        if self._provider is None or self._handle is None:
-            raise RuntimeError(
-                "checkpoint() needs a provider-managed session; open it via a provider's connect()"
-            )
+        Requires a provider-managed session (use a provider's ``connect()``), else
+        raises the typed :class:`~shinken.errors.ProviderRequired`."""
+        provider, handle = self._require_provider("checkpoint()")
         checkpoint_id = await asyncio.to_thread(
-            self._provider.checkpoint,
-            self._handle,
+            provider.checkpoint,
+            handle,
             name=name,
             event_seq=None,
             agent_state_ref=agent_state_ref,
         )
-        return checkpoint_id
+        spec = None
+        spec_of = getattr(provider, "snapshot_spec", None)
+        if spec_of is not None:
+            with contextlib.suppress(Exception):
+                spec = spec_of(checkpoint_id)
+        return Checkpoint(checkpoint_id, provider=provider, name=name, spec=spec)
 
     async def fork(self) -> Any:
-        """Fork the current provider-managed sandbox and return the new provider handle."""
-        if self._provider is None or self._handle is None:
-            raise RuntimeError("fork() needs a provider-managed session")
-        return await asyncio.to_thread(self._provider.fork, self._handle)
+        """Fork the current provider-managed sandbox and return the new provider handle
+        (see the sync facade's :meth:`Sandbox.spawn` for the fork-and-connect one-liner).
+        Raises :class:`~shinken.errors.ProviderRequired` without a provider context."""
+        provider, handle = self._require_provider("fork()")
+        return await asyncio.to_thread(provider.fork, handle)
 
     async def resume(self, handle_or_checkpoint: Any) -> Any:
-        """Resume a provider handle or checkpoint id and return a live provider handle."""
+        """**Deprecated alias of the provider's** ``restore`` **verb** — kept for
+        back-compat. RESTORE semantics: materializes a NEW live sandbox from a
+        snapshot/checkpoint id and returns its provider handle. It does **not**
+        un-pause this session — calling it while the source sandbox is alive mints a
+        SIBLING, not the same sandbox. Prefer ``Checkpoint.spawn()`` /
+        ``provider.restore()``."""
         if self._provider is None:
-            raise RuntimeError("resume() needs a provider-managed session")
+            raise ProviderRequired("resume() needs a provider-managed session")
         return await asyncio.to_thread(self._provider.resume, handle_or_checkpoint)
+
+    async def destroy(self) -> None:
+        """Tear the sandbox down for real: close the WS session, then ask the managing
+        provider to destroy the substrate (``provider.destroy(handle)``). ``close()``
+        alone only ends the session — the sandbox keeps running. Raises the typed
+        :class:`~shinken.errors.ProviderRequired` when no provider context is attached
+        (a bare ``aconnect()``), leaving the session untouched."""
+        provider, handle = self._require_provider("destroy()")
+        await self.close()
+        await asyncio.to_thread(provider.destroy, handle)
 
     def _transfer(self) -> Any:
         """The active file-transfer backend: a provider-attached guest transport (#154)
@@ -1859,6 +1956,7 @@ class AsyncSandbox:
         """Copy a host file into the sandbox, hash it, and record the transfer (#85).
 
         Returns the artifact ref (path / sha256 / size / scope / direction)."""
+        self._ensure_open()
         scope = self._gate_file("put_file", sandbox_path)
         ref = self._transfer().put(local_path, sandbox_path, scope=scope)
         return ref.to_event()
@@ -1870,6 +1968,7 @@ class AsyncSandbox:
 
         Raises :class:`~shinken.artifacts.HashMismatch` if ``expect_sha256`` is given and
         the fetched content does not match."""
+        self._ensure_open()
         scope = self._gate_file("get_file", sandbox_path)
         ref = self._transfer().get(
             sandbox_path, local_path, expect_sha256=expect_sha256, scope=scope
@@ -1877,6 +1976,14 @@ class AsyncSandbox:
         return ref.to_event()
 
     async def close(self) -> None:
+        """End the session (idempotent — a second close returns immediately). After
+        close, wire-touching methods raise the typed
+        :class:`~shinken.errors.SessionClosed`; :meth:`next_frame` still drains the
+        stream-end sentinels. The substrate keeps running — :meth:`destroy` is the
+        teardown that also reclaims it."""
+        if self._closed:
+            return
+        self._closed = True
         if self._reader is not None:
             self._reader.cancel()
             # awaiting a cancelled task raises CancelledError (a BaseException, so plain
@@ -1947,7 +2054,13 @@ async def aconnect(
     ws_kwargs: dict[str, Any] = {"max_size": _MAX_WS_MESSAGE}
     if ping_jitter > 0:
         ws_kwargs["ping_interval"] = _PING_INTERVAL + random.uniform(0.0, ping_jitter)
-    ws = await _ws_connect(_to_uri(addr), **ws_kwargs)
+    try:
+        ws = await _ws_connect(_to_uri(addr), **ws_kwargs)
+    except (OSError, _WsInvalidHandshake, _WsInvalidURI, asyncio.TimeoutError, TimeoutError) as exc:
+        # One typed error for the whole dial-failure zoo (dead addr →
+        # ConnectionRefusedError, half-open port → InvalidMessage, bad scheme →
+        # InvalidURI, …), still a ConnectionError subclass for legacy handlers.
+        raise ConnectError(f"could not connect to shinkend at {addr}: {exc}") from exc
     hello: dict = {"type": "hello", "v": 0, "client": _CLIENT}
     if binary_frames:
         hello["accept"] = {"binary_frames": True}
@@ -1959,9 +2072,16 @@ async def aconnect(
         # can't hang aconnect() forever.
         welcome = json.loads(await asyncio.wait_for(ws.recv(), _HANDSHAKE_TIMEOUT))
         capabilities, platform = _parse_welcome(welcome)
-    except Exception:
+    except Exception as exc:
         with contextlib.suppress(Exception):
             await ws.close()
+        # Transport-shaped handshake failures classify as ConnectError too; a server
+        # that REJECTED the handshake (bad token, version mismatch — _parse_welcome's
+        # RuntimeError) keeps its actionable message and type.
+        if isinstance(exc, asyncio.TimeoutError | TimeoutError):
+            raise ConnectError(f"handshake with {addr} timed out: {exc}") from exc
+        if isinstance(exc, _WsConnectionClosed | ConnectionError):
+            raise ConnectError(f"connection lost during handshake with {addr}: {exc}") from exc
         raise
     sandbox = AsyncSandbox(
         ws,
@@ -1983,6 +2103,7 @@ class _BackgroundLoop:
 
     def __init__(self) -> None:
         self.loop = asyncio.new_event_loop()
+        self._closed = False
         self._thread = threading.Thread(target=self._run, name="shinken-loop", daemon=True)
         self._thread.start()
 
@@ -1991,6 +2112,16 @@ class _BackgroundLoop:
         self.loop.run_forever()
 
     def run(self, coro: Any, timeout: float | None = None) -> Any:
+        # Use-after-close guard: scheduling onto a stopped loop would park the caller
+        # on a future that can never resolve (the historical deadlock — any method on
+        # a closed Sandbox blocked forever). Raise the typed SessionClosed instead.
+        if self._closed:
+            if asyncio.iscoroutine(coro):
+                coro.close()  # suppress the 'coroutine was never awaited' warning
+            raise SessionClosed(
+                "the session loop is stopped (Sandbox.close()/SharedLoop.close() was "
+                "called); open a new session via connect()"
+            )
         # No outer ceiling by default: liveness comes from the inner per-RPC timeout
         # (#142) and connection-close fan-out (_fail_pending), so legitimately long
         # operations (multi-`wait` batches, docker-commit checkpoint/fork/resume) are
@@ -1998,6 +2129,8 @@ class _BackgroundLoop:
         return asyncio.run_coroutine_threadsafe(coro, self.loop).result(timeout)
 
     def stop(self) -> None:
+        self._closed = True
+
         # Cancel lingering loop tasks (e.g. the websockets keepalive) before stopping,
         # so teardown is clean and doesn't warn "Task was destroyed but it is pending".
         async def _drain() -> None:
@@ -2094,7 +2227,7 @@ class _Screencast:
         # the ones this Sandbox started the stream with (#56) — resume continues
         # stream identity + seq only, never the capture parameters.
         if self._resume_stream is not None:
-            self._sb._loop.run(
+            self._sb._run(
                 self._sb._inner.aresume_screencast(
                     self._resume_stream,
                     self._fps,
@@ -2106,7 +2239,7 @@ class _Screencast:
                 )
             )
         else:
-            self._sb._loop.run(
+            self._sb._run(
                 self._sb._inner.astart_screencast(
                     self._fps,
                     self._max_long_edge,
@@ -2126,7 +2259,7 @@ class _Screencast:
         if self._limit is not None and self._count >= self._limit:
             raise StopIteration
         outer = None if self._timeout is None else self._timeout + 5.0
-        frame = self._sb._loop.run(self._sb._inner.next_frame(self._timeout), timeout=outer)
+        frame = self._sb._run(self._sb._inner.next_frame(self._timeout), timeout=outer)
         if frame is None:
             raise StopIteration
         self._count += 1
@@ -2135,7 +2268,7 @@ class _Screencast:
     def __exit__(self, *_exc: object) -> None:
         if self._started:
             with contextlib.suppress(Exception):
-                self._sb._loop.run(self._sb._inner.astop_screencast())
+                self._sb._run(self._sb._inner.astop_screencast())
 
 
 class Sandbox:
@@ -2156,6 +2289,19 @@ class Sandbox:
         # are runtime-side ids, so element actions dispatch as element_ref targets
         # (resolved guest-side against the live tree) instead of local bbox math.
         self._elements_from_guest = False
+
+    def _run(self, coro: Any, timeout: float | None = None) -> Any:
+        """Run a session coroutine on the background loop, raising the typed
+        :class:`~shinken.errors.SessionClosed` IMMEDIATELY when this Sandbox is closed
+        — never scheduling onto a (possibly stopped) loop, which used to deadlock."""
+        if self._closed:
+            if asyncio.iscoroutine(coro):
+                coro.close()  # suppress the 'coroutine was never awaited' warning
+            raise SessionClosed(
+                "Sandbox is closed (close() was already called); open a new session "
+                "via connect()/provider.connect()"
+            )
+        return self._loop.run(coro, timeout)
 
     @property
     def capabilities(self) -> Capabilities:
@@ -2186,15 +2332,15 @@ class Sandbox:
         self._inner.gate_capability(cap_name, label)
 
     def ping(self) -> float:
-        return self._loop.run(self._inner.ping())
+        return self._run(self._inner.ping())
 
     def screen_size(self) -> dict:
-        return self._loop.run(self._inner.screen_size())
+        return self._run(self._inner.screen_size())
 
     def query(self, q: str) -> Any:
         """Ask the runtime for a property (e.g. ``platform``, ``screen_size``). Used by
         eval verifiers to read observed environment state."""
-        return self._loop.run(self._inner.query(q))
+        return self._run(self._inner.query(q))
 
     @property
     def actions_dispatched(self) -> int:
@@ -2204,13 +2350,13 @@ class Sandbox:
     def act(
         self, verb: str, target: dict | None = None, observe: Any = None, **kwargs: Any
     ) -> dict:
-        return self._loop.run(self._inner.act(verb, target, observe=observe, **kwargs))
+        return self._run(self._inner.act(verb, target, observe=observe, **kwargs))
 
     def act_batch(
         self, actions: list[dict], *, stop_on_error: bool = True, batch_id: str | None = None
     ) -> dict:
         """Execute an ordered batch of ACI actions serially (#73)."""
-        return self._loop.run(
+        return self._run(
             self._inner.act_batch(actions, stop_on_error=stop_on_error, batch_id=batch_id)
         )
 
@@ -2232,7 +2378,7 @@ class Sandbox:
         failure semantics: actions already on the wire after a failure execute
         server-side regardless, so each row reports its real outcome and the observation
         still returns after a mid-step per-action error."""
-        return self._loop.run(self._inner.step(actions, observe=observe, step_id=step_id))
+        return self._run(self._inner.step(actions, observe=observe, step_id=step_id))
 
     def click(
         self,
@@ -2248,7 +2394,7 @@ class Sandbox:
         observe=True)["bytes"]``. ``observe`` may also be a dict of the capture levers
         (``format``/``quality``/``max_long_edge``/``scope``). Same on every other
         mutating verb below."""
-        return self._loop.run(self._inner.click(target, x=x, y=y, observe=observe))
+        return self._run(self._inner.click(target, x=x, y=y, observe=observe))
 
     def double_click(
         self,
@@ -2258,7 +2404,7 @@ class Sandbox:
         y: float | None = None,
         observe: Any = None,
     ):
-        return self._loop.run(self._inner.double_click(target, x=x, y=y, observe=observe))
+        return self._run(self._inner.double_click(target, x=x, y=y, observe=observe))
 
     def right_click(
         self,
@@ -2268,7 +2414,7 @@ class Sandbox:
         y: float | None = None,
         observe: Any = None,
     ):
-        return self._loop.run(self._inner.right_click(target, x=x, y=y, observe=observe))
+        return self._run(self._inner.right_click(target, x=x, y=y, observe=observe))
 
     def move(
         self,
@@ -2278,7 +2424,7 @@ class Sandbox:
         y: float | None = None,
         observe: Any = None,
     ):
-        return self._loop.run(self._inner.move(target, x=x, y=y, observe=observe))
+        return self._run(self._inner.move(target, x=x, y=y, observe=observe))
 
     def drag(
         self,
@@ -2295,7 +2441,7 @@ class Sandbox:
     ):
         """Drag from a source to a destination (pointer down → interpolated moves →
         up); see :meth:`AsyncSandbox.drag`."""
-        return self._loop.run(
+        return self._run(
             self._inner.drag(
                 target,
                 to,
@@ -2319,9 +2465,7 @@ class Sandbox:
         observe: Any = None,
     ):
         """Press (and hold) a pointer button — see :meth:`AsyncSandbox.mouse_down`."""
-        return self._loop.run(
-            self._inner.mouse_down(target, x=x, y=y, button=button, observe=observe)
-        )
+        return self._run(self._inner.mouse_down(target, x=x, y=y, button=button, observe=observe))
 
     def mouse_up(
         self,
@@ -2333,9 +2477,7 @@ class Sandbox:
         observe: Any = None,
     ):
         """Release a pointer button — see :meth:`AsyncSandbox.mouse_up`."""
-        return self._loop.run(
-            self._inner.mouse_up(target, x=x, y=y, button=button, observe=observe)
-        )
+        return self._run(self._inner.mouse_up(target, x=x, y=y, button=button, observe=observe))
 
     def scroll(
         self,
@@ -2346,13 +2488,13 @@ class Sandbox:
         dy: float = 0.0,
         observe: Any = None,
     ):
-        return self._loop.run(self._inner.scroll(target, x=x, y=y, dy=dy, observe=observe))
+        return self._run(self._inner.scroll(target, x=x, y=y, dy=dy, observe=observe))
 
     def list_windows(self) -> list[dict]:
         """Enumerate visible top-level windows (``{id, title, pid, x, y, w, h,
         focused}`` each; ``id`` is usable as the ``window:<id>`` capture scope) — see
         :meth:`AsyncSandbox.list_windows`."""
-        return self._loop.run(self._inner.list_windows())
+        return self._run(self._inner.list_windows())
 
     def exec(
         self,
@@ -2370,7 +2512,7 @@ class Sandbox:
         (no-shell) form, ``shell=`` the explicit opt-in; a nonzero exit code is
         returned, not raised; timeouts kill the guest process group and report
         ``timed_out=True``."""
-        return self._loop.run(
+        return self._run(
             self._inner.exec(argv, shell=shell, cwd=cwd, env=env, timeout=timeout, stdin=stdin)
         )
 
@@ -2393,31 +2535,31 @@ class Sandbox:
         try:
             while True:
                 try:
-                    yield self._loop.run(agen.__anext__())
+                    yield self._run(agen.__anext__())
                 except StopAsyncIteration:
                     return
         finally:
             with contextlib.suppress(Exception):
-                self._loop.run(agen.aclose())
+                self._run(agen.aclose())
 
     def clipboard_get(self) -> str:
         """Read the guest clipboard as text — see :meth:`AsyncSandbox.clipboard_get`."""
-        return self._loop.run(self._inner.clipboard_get())
+        return self._run(self._inner.clipboard_get())
 
     def clipboard_set(self, text: str, *, observe: Any = None):
         """Set the guest clipboard text — see :meth:`AsyncSandbox.clipboard_set`."""
-        return self._loop.run(self._inner.clipboard_set(text, observe=observe))
+        return self._run(self._inner.clipboard_set(text, observe=observe))
 
     def launch_app(self, app: str, args: list[str] | None = None, *, observe: Any = None):
         """Start an app on the sandbox desktop — see :meth:`AsyncSandbox.launch_app`."""
-        return self._loop.run(self._inner.launch_app(app, args, observe=observe))
+        return self._run(self._inner.launch_app(app, args, observe=observe))
 
     def activate_window(
         self, window_id: int | None = None, *, app: str | None = None, observe: Any = None
     ):
         """Raise + focus a window by id or app/title — see
         :meth:`AsyncSandbox.activate_window`."""
-        return self._loop.run(self._inner.activate_window(window_id, app=app, observe=observe))
+        return self._run(self._inner.activate_window(window_id, app=app, observe=observe))
 
     def screenshot(
         self,
@@ -2425,10 +2567,33 @@ class Sandbox:
         *,
         format: str | None = None,
         quality: int | None = None,
+        max_long_edge: int | None = None,
         dedup: bool | None = None,
     ) -> dict:
-        return self._loop.run(
-            self._inner.screenshot(scope, format=format, quality=quality, dedup=dedup)
+        """Capture pixels on demand and return the screenshot dict.
+
+        ``scope`` selects the capture region (``screen``, ``active_window``, or
+        ``window:<id>``); ``format`` (``png`` default / ``jpeg``) + ``quality`` pick
+        the wire codec; ``max_long_edge`` caps the frame's longer edge in pixels (the
+        downscale bandwidth lever — same as on :meth:`screencast`); ``dedup`` turns on
+        content-negotiated observation (see :meth:`AsyncSandbox.screenshot`).
+
+        Returns ``{'bytes', 'format', 'w', 'h', 'wire_len', 'deduped', …}`` —
+        **``bytes`` is the canonical key** (the raw encoded image; ``format`` says
+        which codec). ``'png'`` is a **deprecated back-compat alias** of ``bytes``,
+        present ONLY when the codec really is PNG, so legacy code blindly reading
+        ``shot['png']`` fails loudly rather than mislabeling JPEG bytes as PNG.
+
+        Raises :class:`ValueError` before sending if ``format`` is not among the
+        runtime's advertised ``capabilities.image_formats``."""
+        return self._run(
+            self._inner.screenshot(
+                scope,
+                format=format,
+                quality=quality,
+                max_long_edge=max_long_edge,
+                dedup=dedup,
+            )
         )
 
     def observe(
@@ -2571,10 +2736,10 @@ class Sandbox:
         return self.act("set_value", {"kind": "element_ref", "ref": ref}, text=value)
 
     def type_text(self, text: str, *, observe: Any = None):
-        return self._loop.run(self._inner.type_text(text, observe=observe))
+        return self._run(self._inner.type_text(text, observe=observe))
 
     def key(self, keys: str, *, observe: Any = None):
-        return self._loop.run(self._inner.key(keys, observe=observe))
+        return self._run(self._inner.key(keys, observe=observe))
 
     def screencast(
         self,
@@ -2682,19 +2847,100 @@ class Sandbox:
         """Attach the managing provider + handle (provider.connect(), #206)."""
         self._inner._set_provider_context(provider, handle)
 
-    def checkpoint(self, name: str | None = None, *, agent_state_ref: str | None = None) -> str:
-        """Create a runtime checkpoint and return its checkpoint id.
+    @property
+    def handle(self) -> Any:
+        """The provider :class:`~shinken.providers.base.SandboxHandle` managing this
+        session (attached by ``provider.connect()``), or ``None`` on a bare
+        ``shinken.connect()`` with no provider behind it."""
+        return self._inner._handle
 
-        Requires a provider's connect()."""
-        return self._loop.run(self._inner.checkpoint(name, agent_state_ref=agent_state_ref))
+    def checkpoint(
+        self, name: str | None = None, *, agent_state_ref: str | None = None
+    ) -> Checkpoint:
+        """Create a runtime checkpoint and return a first-class :class:`Checkpoint`.
+
+        The returned :class:`Checkpoint` is a ``str`` subclass equal to the checkpoint
+        id (today's str-consumers keep working verbatim) carrying the provider, the
+        optional ``name``, and spec-compat info — with ``spawn()`` (restore + connect),
+        ``spawn_many(n)`` (a :class:`SandboxFleet`), and ``delete()``.
+
+        Requires a provider's ``connect()``; raises the typed
+        :class:`~shinken.errors.ProviderRequired` otherwise."""
+        return self._run(self._inner.checkpoint(name, agent_state_ref=agent_state_ref))
 
     def fork(self) -> Any:
-        """Fork the current provider-managed sandbox and return the new provider handle."""
-        return self._loop.run(self._inner.fork())
+        """Fork the current provider-managed sandbox and return the new provider
+        HANDLE (not a session) — see :meth:`spawn` for the fork-and-connect one-liner."""
+        return self._run(self._inner.fork())
+
+    def spawn(self, **connect_kwargs: Any) -> Sandbox:
+        """Fork this provider-managed sandbox and return a CONNECTED sibling
+        :class:`Sandbox` — the one-liner for ``provider.connect(provider.fork(handle))``.
+        Extra keyword arguments pass through to the provider's ``connect()`` (e.g.
+        ``frame_cache=`` to dedup observations across the forked fleet). Raises the
+        typed :class:`~shinken.errors.ProviderRequired` without a provider context and
+        :class:`~shinken.errors.SessionClosed` after ``close()``."""
+        provider = self._inner._provider
+        if provider is None or self._inner._handle is None:
+            raise ProviderRequired(
+                "spawn() needs a provider-managed session; open it via a provider's "
+                "connect()/session()"
+            )
+        return provider.connect(self.fork(), **connect_kwargs)
 
     def resume(self, handle_or_checkpoint: Any) -> Any:
-        """Resume a provider handle or checkpoint id and return a live provider handle."""
-        return self._loop.run(self._inner.resume(handle_or_checkpoint))
+        """**Deprecated alias of the provider's** ``restore`` **verb** — kept for
+        back-compat. RESTORE semantics: materializes a NEW live sandbox from a
+        snapshot/checkpoint id and returns its provider handle. It does **not**
+        un-pause this session — calling it while the source sandbox is alive mints a
+        SIBLING, not the same sandbox. Prefer ``Checkpoint.spawn()`` /
+        ``provider.restore()``."""
+        return self._run(self._inner.resume(handle_or_checkpoint))
+
+    def destroy(self) -> None:
+        """Tear the sandbox down for real: close the WS session, then ask the managing
+        provider to destroy the substrate (``provider.destroy(handle)``). ``close()``
+        alone only ends the session — the sandbox keeps running. Raises the typed
+        :class:`~shinken.errors.ProviderRequired` when no provider context is attached
+        (a bare ``shinken.connect()``), leaving the session untouched. Safe after
+        ``close()`` (the close half is idempotent)."""
+        provider, handle = self._inner._provider, self._inner._handle
+        if provider is None or handle is None:
+            raise ProviderRequired(
+                "destroy() needs a provider-managed session; close() only ends the "
+                "WS session — open the session via a provider's connect()/session()"
+            )
+        self.close()
+        provider.destroy(handle)
+
+    def act_model(self, adapter, tool_call: Any) -> dict:
+        """One model tool-call, end to end, in ~one round trip: translate it through
+        the adapter (``adapter.to_aci_action(tool_call)``; adapters exposing the plural
+        ``to_aci_actions`` work too), execute via the pipelined :meth:`step` with a
+        fused post-step observation, and render the observation back into the model's
+        tool-result shape (``adapter.to_tool_result(observation)``)::
+
+            result = env.act_model(AnthropicComputerUseAdapter(), tool_use["input"])
+
+        Raises the adapter's :class:`~shinken.adapters.base.AdapterError` on an
+        untranslatable call, and :class:`~shinken.errors.ShinkenError` when an action
+        fails or the post-step observation is unavailable."""
+        to_action = getattr(adapter, "to_aci_action", None)
+        if to_action is not None:
+            actions = [to_action(tool_call)]
+        else:
+            actions = list(adapter.to_aci_actions(tool_call))
+        res = self.step(actions, observe={})
+        bad = next((r for r in res["results"] if r is not None and not r["ok"]), None)
+        if bad is not None:
+            raise ShinkenError(f"act_model: action {bad.get('verb')!r} failed: {bad.get('error')}")
+        observation = res.get("observation")
+        if observation is None:
+            raise ShinkenError(
+                f"act_model: no post-step observation "
+                f"({res.get('observation_error') or 'observation missing'})"
+            )
+        return adapter.to_tool_result(observation)
 
     def put_file(self, local_path: str, sandbox_path: str) -> dict:
         """Upload a host file into the sandbox; return its content-addressed ref (#85)."""
@@ -2707,10 +2953,17 @@ class Sandbox:
         return self._inner.get_file(sandbox_path, local_path, expect_sha256=expect_sha256)
 
     def close(self) -> None:
+        """End the session and (when this Sandbox owns its loop) stop the background
+        loop thread. Idempotent — a second close returns immediately. Any OTHER method
+        called after close raises the typed :class:`~shinken.errors.SessionClosed`
+        instead of deadlocking against the stopped loop. The substrate keeps running;
+        :meth:`destroy` is the teardown that also reclaims it."""
         if self._closed:
             return
         self._closed = True
         with contextlib.suppress(Exception):
+            # direct loop call (not _run): _closed is already set, but the loop is
+            # still alive here — the inner session must really close before the stop.
             self._loop.run(self._inner.close())
         if self._owns_loop:
             self._loop.stop()
@@ -2782,3 +3035,180 @@ def connect(
             bg.stop()  # never tear down a caller-owned shared loop on one failed dial
         raise
     return Sandbox(inner, bg, owns_loop=owns_loop)
+
+
+# --- first-class checkpoint + fleet (API v2) -------------------------------------------
+
+
+class Checkpoint(str):
+    """A first-class checkpoint handle — **a** ``str`` **subclass equal to its id**, so
+    every legacy str-consumer (``provider.resume(ckpt)``, dict keys, ``startswith``,
+    JSON serialization, ``==`` against the raw id) keeps working verbatim, while the
+    object also carries the managing ``provider``, the optional human ``name``, and
+    spec-compat info (``spec`` — the originating
+    :class:`~shinken.providers.base.SandboxSpec` when the provider recorded one, so a
+    spawn boots at the golden geometry/limits, not provider defaults).
+
+    The runtime-state one-liners::
+
+        ckpt = env.checkpoint("golden")
+        sibling = ckpt.spawn()                 # restore + connect, provider-managed
+        with ckpt.spawn_many(8) as fleet:      # N replicas as a SandboxFleet
+            fleet.map(lambda env: env.click(x=1, y=2))
+        ckpt.delete()                          # reclaim the snapshot image
+    """
+
+    provider: Any
+    name: str | None
+    spec: Any
+
+    def __new__(
+        cls,
+        id: str,
+        *,
+        provider: Any = None,
+        name: str | None = None,
+        spec: Any = None,
+    ) -> Checkpoint:
+        obj = super().__new__(cls, id)
+        obj.provider = provider
+        obj.name = name
+        obj.spec = spec
+        return obj
+
+    @property
+    def id(self) -> str:
+        """The checkpoint id (== ``str(self)``)."""
+        return str(self)
+
+    def __repr__(self) -> str:  # the plain str repr would hide that this is typed
+        return f"Checkpoint({str(self)!r}, name={self.name!r}, provider={_provider_name(self)!r})"
+
+    def _require_provider(self) -> Any:
+        if self.provider is None:
+            raise ProviderRequired(
+                "this Checkpoint has no managing provider attached; restore it through "
+                "the provider that took it (provider.restore(checkpoint_id))"
+            )
+        return self.provider
+
+    def spawn(self, **connect_kwargs: Any) -> Sandbox:
+        """Materialize ONE new live sandbox from this checkpoint and connect to it
+        (provider-managed): ``provider.connect(provider.restore(ckpt))``. RESTORE
+        semantics — every spawn is a fresh sibling; spawning never mutates the
+        checkpoint or any live session. Extra keyword arguments pass through to the
+        provider's ``connect()``."""
+        provider = self._require_provider()
+        return provider.connect(provider.restore(str(self)), **connect_kwargs)
+
+    def spawn_many(self, n: int, **connect_kwargs: Any) -> SandboxFleet:
+        """Materialize ``n`` replicas from this checkpoint **concurrently** and return
+        them as a :class:`SandboxFleet` (a context manager that destroys all of them on
+        exit). The fleet's sessions share ONE :class:`SharedLoop` (a single client IO
+        thread for the whole fleet) unless ``connect_kwargs`` carries an explicit
+        ``loop=``. On a partial failure every already-spawned replica is destroyed
+        before the error propagates — no half-fleet leaks."""
+        if n < 1:
+            raise ValueError("spawn_many needs n >= 1")
+        provider = self._require_provider()
+        loop: SharedLoop | None = None
+        if "loop" not in connect_kwargs:
+            loop = SharedLoop()
+            connect_kwargs = {**connect_kwargs, "loop": loop}
+
+        def _one(_i: int) -> Sandbox:
+            return provider.connect(provider.restore(str(self)), **connect_kwargs)
+
+        envs: list[Sandbox] = []
+        errors: list[BaseException] = []
+        with ThreadPoolExecutor(max_workers=n, thread_name_prefix="shinken-spawn") as pool:
+            for fut in [pool.submit(_one, i) for i in range(n)]:
+                try:
+                    envs.append(fut.result())
+                except BaseException as exc:  # noqa: BLE001 — collected, re-raised below
+                    errors.append(exc)
+        if errors:
+            for env in envs:
+                with contextlib.suppress(Exception):
+                    env.destroy()
+            if loop is not None:
+                loop.close()
+            raise errors[0]
+        return SandboxFleet(envs, loop=loop)
+
+    def delete(self) -> None:
+        """Reclaim this checkpoint's snapshot image (``provider.delete_snapshot``).
+        Idempotent and best-effort, like the provider call underneath."""
+        provider = self._require_provider()
+        delete = getattr(provider, "delete_snapshot", None)
+        if delete is None:
+            raise ProviderRequired(f"provider {_provider_name(self)!r} has no delete_snapshot()")
+        delete(str(self))
+
+
+def _provider_name(ckpt: Checkpoint) -> str | None:
+    caps = getattr(ckpt.provider, "capabilities", None)
+    return getattr(caps, "name", None) if caps is not None else None
+
+
+class SandboxFleet:
+    """A context manager OWNING ``n`` connected sandboxes (the shape
+    :meth:`Checkpoint.spawn_many` returns) — destroy-all on exit, concurrent
+    :meth:`map` over the members::
+
+        with ckpt.spawn_many(8) as fleet:
+            shots = fleet.map(lambda env: env.screenshot())
+
+    ``map`` fans the callable out on a worker thread per member (the session IO
+    itself stays multiplexed on the fleet's single :class:`SharedLoop`) — it is a
+    real concurrent fan-out, NOT a serial comprehension. Exit destroys every member
+    (session closed + substrate reclaimed via ``env.destroy()``) and stops the
+    fleet-owned loop."""
+
+    def __init__(self, envs: list[Sandbox], *, loop: SharedLoop | None = None) -> None:
+        #: The member sandboxes, in spawn order.
+        self.envs = list(envs)
+        self._loop = loop  # fleet-owned SharedLoop (None when the caller supplied one)
+        self._closed = False
+
+    def __len__(self) -> int:
+        return len(self.envs)
+
+    def __iter__(self):
+        return iter(self.envs)
+
+    def map(self, fn: Callable[[Sandbox], Any]) -> list[Any]:
+        """Run ``fn(env)`` over every member **concurrently** (one worker thread per
+        member; session IO multiplexed on the shared loop) and return the results in
+        member order. An exception from any member propagates after all workers
+        finish their submission round."""
+        if not self.envs:
+            return []
+        with ThreadPoolExecutor(
+            max_workers=len(self.envs), thread_name_prefix="shinken-fleet"
+        ) as pool:
+            return list(pool.map(fn, self.envs))
+
+    def close(self) -> None:
+        """Destroy every member (close + provider destroy; falls back to plain close
+        for members without a provider context) and stop the fleet-owned loop.
+        Idempotent."""
+        if self._closed:
+            return
+        self._closed = True
+        for env in self.envs:
+            try:
+                env.destroy()
+            except ProviderRequired:
+                with contextlib.suppress(Exception):
+                    env.close()
+            except Exception:  # noqa: BLE001 — teardown is best-effort, never raises
+                _log.debug("fleet member destroy failed", exc_info=True)
+        if self._loop is not None:
+            self._loop.close()
+
+    def __enter__(self) -> SandboxFleet:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
