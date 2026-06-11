@@ -5,7 +5,7 @@
 // `connect()` wires a runtime WebSocket to it.
 
 import * as build from "./builders.js";
-import type { AciMessage, Action, Capabilities, ClientInfo, Observation, Platform, Target } from "./types.js";
+import type { AciMessage, Action, Capabilities, ClientInfo, ExecResult, Observation, Platform, Target } from "./types.js";
 
 /** A bidirectional text channel the client sends on; inbound frames are delivered to
  *  {@link AciClient.feed}. Abstracted so the client can be driven by a real WebSocket
@@ -140,6 +140,33 @@ export class AciClient {
       throw new Error(reply.type === "ack" ? (reply.error ?? "screenshot failed") : "screenshot: unexpected reply");
     }
     return reply;
+  }
+
+  /** Typed in-guest exec (buffered form): run argv (default, no shell) or an explicit
+   * shell line inside the Sandbox; resolves to the typed ExecResult — a nonzero exit
+   * code is the command's outcome, returned, not thrown. The streamed form
+   * (`stream: true` + `exec_output`/`exec_exit` events) is not surfaced by this
+   * client yet; the Python SDK's `exec_stream` is the reference consumer. */
+  async exec(opts: {
+    argv?: string[];
+    shell?: string;
+    cwd?: string;
+    env?: Record<string, string>;
+    timeout_ms?: number;
+    stdin?: string;
+  }): Promise<ExecResult> {
+    if ((opts.argv === undefined) === (opts.shell === undefined)) {
+      throw new Error("exec takes exactly one of argv (default) or shell (explicit opt-in)");
+    }
+    const callId = this.nextId();
+    const reply = await this.rpc(callId, {
+      type: "action",
+      call_id: callId,
+      action: { verb: "exec", ...opts },
+    });
+    if (reply.type === "result" && reply.ok) return reply.value as ExecResult;
+    const error = reply.type === "result" || reply.type === "ack" ? reply.error : undefined;
+    throw new Error(error ?? "exec failed");
   }
 
   /** Round-trip latency in milliseconds. */

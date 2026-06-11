@@ -112,12 +112,27 @@ DEFAULT_SANDBOX_CAPABILITIES: dict[str, Any] = {
     "input_automation": True,
     "screenshot": True,
     "a11y": True,
+    # In-guest exec (G1): granted by default like input automation — eval/setup flows
+    # are the primary consumer. Set "ask" for approval-gated runs or False to deny;
+    # every decision is recorded with the argv/shell in the event's `detail`.
+    "exec": True,
+    # Starting desktop apps (launch_app) is core task behavior, granted by default
+    # like input; deny it per-session when a workload must not spawn processes.
+    "app_launch": True,
     "fs_scope": "session",
     "egress": False,
     "credentials": False,
+    # The clipboard is a data channel (boundary-ish): both clipboard_get and
+    # clipboard_set gate on this, default-off.
     "clipboard": False,
     "privileged_install": False,
 }
+
+#: Runtime-side default exec deadline (mirrors shinkend's DEFAULT_TIMEOUT_MS) — used
+#: to size the SDK's reply wait when the caller passes no timeout.
+DEFAULT_EXEC_TIMEOUT = 60.0
+#: Grace added on top of the exec deadline before the SDK gives up on the reply.
+_EXEC_RPC_GRACE = 30.0
 
 
 @dataclass
@@ -307,6 +322,11 @@ def _parse_binary_frame(raw: bytes) -> dict:
         img["data"] = _slice(img.pop("off", 0), img.pop("len", payload_len))
     for tile in msg.get("tiles") or []:
         tile["data"] = _slice(tile.pop("off"), tile.pop("len"))
+    # exec_output binary frames (G1): the chunk bytes live at data.off/len — replace
+    # the locator dict with the raw bytes, the shape the stream consumer reads.
+    data = msg.get("data")
+    if isinstance(data, dict) and "off" in data:
+        msg["data"] = _slice(data["off"], data["len"])
     msg["wire_len"] = len(raw)
     return msg
 
@@ -503,6 +523,9 @@ class AsyncSandbox:
         # (the follow-up), so the strictly-ordered wire can never race a re-register.
         self._pending_obs: dict[str, asyncio.Future] = {}
         self._pong_waiters: deque[asyncio.Future] = deque()
+        # Streamed-exec demux (G1): call_id -> queue of exec_output/exec_exit events
+        # (or a ConnectionError on close). Registered by exec_stream BEFORE the send.
+        self._exec_streams: dict[str, asyncio.Queue] = {}
         self._frames: asyncio.Queue = asyncio.Queue(maxsize=_FRAME_QUEUE_MAX)
         # Frame-budget accounting (GLOBAL_FRAME_BUDGET_BYTES): resident size of each queued
         # FRAME in queue order (sentinels untracked), plus this loop's shared state (lazy).
@@ -632,6 +655,15 @@ class AsyncSandbox:
         if kind == "observation" and msg.get("stream") is not None:
             self._push_frame(msg)
             return
+        # Streamed-exec events (G1): routed to their exec's queue by `cause`. The
+        # queue is registered BEFORE the action is sent, so no event can slip by.
+        if kind in ("exec_output", "exec_exit"):
+            q = self._exec_streams.get(msg.get("cause"))
+            if q is not None:
+                q.put_nowait(msg)
+            else:
+                _log.debug("dropping exec event for unknown cause %s", msg.get("cause"))
+            return
         if kind == "pong":
             while self._pong_waiters:
                 fut = self._pong_waiters.popleft()
@@ -668,6 +700,11 @@ class AsyncSandbox:
             fut = self._pong_waiters.popleft()
             if not fut.done():
                 fut.set_exception(exc)
+        # Wake live exec streams: the consumer reads the exception off its queue, so
+        # a connection death mid-stream surfaces instead of hanging until timeout.
+        for q in self._exec_streams.values():
+            q.put_nowait(exc)
+        self._exec_streams.clear()
 
     async def _rpc(self, msg: dict, timeout: float | None = None) -> dict:
         """Send a call_id-bearing message and await its correlated reply, bounded by a
@@ -732,42 +769,51 @@ class AsyncSandbox:
         return self._action_count
 
     def _record_decision(
-        self, capability: str, subject: str, decision: str, granted: bool, reason: str | None
+        self,
+        capability: str,
+        subject: str,
+        decision: str,
+        granted: bool,
+        reason: str | None,
+        detail: dict | None = None,
     ) -> None:
         """Append one capability/permission decision event (#83/E4). ``decision`` is the
         gateway verdict (``allow``/``ask``/``deny``); ``granted`` is whether the action was
-        ultimately permitted (an ``ask`` resolves to granted or not via ``on_ask``)."""
-        self._capability_events.append(
-            {
-                "type": "capability",
-                "capability": capability,
-                "subject": subject,
-                "decision": decision,
-                "granted": granted,
-                "reason": reason,
-                "ts": time.time(),
-            }
-        )
+        ultimately permitted (an ``ask`` resolves to granted or not via ``on_ask``).
+        ``detail`` is the verb-specific audit payload — exec records its argv/shell."""
+        event = {
+            "type": "capability",
+            "capability": capability,
+            "subject": subject,
+            "decision": decision,
+            "granted": granted,
+            "reason": reason,
+            "ts": time.time(),
+        }
+        if detail is not None:
+            event["detail"] = detail
+        self._capability_events.append(event)
 
-    def _gate(self, verb: str) -> None:
+    def _gate(self, verb: str, detail: dict | None = None) -> None:
         """Action Gateway check (#84/#7): when enforcing, decide allow / deny / **ask**
         before dispatch — so a denied or unapproved verb never reaches shinkend, and record
         the decision as a capability event (#83). A capability valued ``"ask"`` is *risky*:
         it pauses for approval via the ``on_ask`` handler (default: deny). GUI input passes
-        when input_automation is granted (the default)."""
+        when input_automation is granted (the default). ``detail`` rides the recorded
+        event (exec puts its argv/shell there, so the audit shows WHAT was run)."""
         if not self._enforce:
             return
         decision, cap, reason = decide_action(verb, self.sandbox_capabilities)
         if decision == "allow":
-            self._record_decision(cap, verb, "allow", True, None)
+            self._record_decision(cap, verb, "allow", True, None, detail)
             return
         if decision == "ask":
             granted = bool(self._on_ask(verb, cap, reason)) if self._on_ask else False
-            self._record_decision(cap, verb, "ask", granted, None if granted else reason)
+            self._record_decision(cap, verb, "ask", granted, None if granted else reason, detail)
             if not granted:
                 raise CapabilityDenied(f"{verb}: approval denied ({cap})")
             return
-        self._record_decision(cap, verb, "deny", False, reason)
+        self._record_decision(cap, verb, "deny", False, reason, detail)
         raise CapabilityDenied(f"{verb}: {reason}")
 
     def gate_capability(self, cap_name: str, label: str) -> None:
@@ -1239,6 +1285,193 @@ class AsyncSandbox:
         guest-side). Each entry is ``{id, title, pid, x, y, w, h, focused}``; ``id`` is
         usable as the ``window:<id>`` capture scope."""
         return await self.query("list_windows")
+
+    def _exec_action(
+        self,
+        argv: Any,
+        shell: str | None,
+        cwd: str | None,
+        env: dict | None,
+        timeout: float | None,
+        stdin: str | None,
+        stream: bool = False,
+    ) -> tuple[dict, float]:
+        """Validate + gate one exec request (G1) BEFORE anything goes on the wire;
+        returns ``(action dict, reply deadline seconds)``. Typed failures: exactly one
+        of argv/shell, a runtime that doesn't advertise the verb, a gateway denial
+        (recorded with the argv/shell in the event's ``detail``)."""
+        if (argv is None) == (shell is None):
+            raise ValueError(
+                "exec takes exactly one of argv (the default, no shell) or "
+                "shell (the explicit opt-in)"
+            )
+        if argv is not None and (not isinstance(argv, list | tuple) or len(argv) == 0):
+            raise ValueError("exec argv must be a non-empty list of strings")
+        if "exec" not in (self.capabilities.verbs or []):
+            raise RuntimeError(
+                "exec verb not advertised by this runtime (pre-exec shinkend): "
+                "fall back to the substrate's out-of-band channel"
+            )
+        detail = {"argv": [str(a) for a in argv]} if argv is not None else {"shell": str(shell)}
+        self._gate("exec", detail=detail)
+        action: dict = {"verb": "exec", **detail}
+        if cwd is not None:
+            action["cwd"] = str(cwd)
+        if env:
+            action["env"] = {str(k): str(v) for k, v in env.items()}
+        if timeout is not None:
+            action["timeout_ms"] = max(1, int(timeout * 1000))
+        if stdin is not None:
+            action["stdin"] = stdin
+        if stream:
+            action["stream"] = True
+        # The reply can take as long as the command runs: wait out the guest-side
+        # deadline (the runtime default when unspecified) plus a grace, never less
+        # than the ordinary RPC timeout.
+        deadline = (timeout if timeout is not None else DEFAULT_EXEC_TIMEOUT) + _EXEC_RPC_GRACE
+        return action, max(self._rpc_timeout, deadline)
+
+    async def exec(
+        self,
+        argv: list[str] | None = None,
+        *,
+        shell: str | None = None,
+        cwd: str | None = None,
+        env: dict | None = None,
+        timeout: float | None = None,
+        stdin: str | None = None,
+    ) -> dict:
+        """Run one command **inside the Sandbox** over the ACI (the typed in-band exec
+        channel, G1) and return its typed result.
+
+        ``argv`` (default form) executes the program directly — no shell
+        interpretation; ``shell`` is the explicit opt-in, run via the guest's
+        ``/bin/sh -c``. Exactly one of the two. ``cwd``/``env`` shape the child;
+        ``timeout`` (seconds) is the guest-side kill-the-process-group deadline
+        (runtime default 60 s); ``stdin`` is written to the child and closed.
+
+        Returns ``{'exit_code', 'signal', 'timed_out', 'stdout', 'stderr',
+        'stdout_truncated', 'stderr_truncated', 'duration_ms'}`` — a NONZERO exit
+        code is the command's outcome, returned, not raised; a timeout is reported
+        honestly (``timed_out=True``, ``exit_code=None``). stdout/stderr are UTF-8
+        with lossy replacement and per-channel caps (use :meth:`exec_stream` on a
+        binary-framed session for byte-exact output). Raises :class:`RuntimeError`
+        on a runtime that doesn't advertise the verb or a spawn failure, and
+        :class:`~shinken.gateway.CapabilityDenied` when the ``exec`` capability is
+        not granted (the decision event records the argv/shell)."""
+        action, deadline = self._exec_action(argv, shell, cwd, env, timeout, stdin)
+        reply = await self._rpc(
+            {"type": "action", "call_id": self._next_id(), "action": action},
+            timeout=deadline,
+        )
+        if reply.get("type") == "result" and reply.get("ok"):
+            self._action_count += 1
+            return reply.get("value") or {}
+        raise RuntimeError(reply.get("error", "exec failed"))
+
+    async def exec_stream(
+        self,
+        argv: list[str] | None = None,
+        *,
+        shell: str | None = None,
+        cwd: str | None = None,
+        env: dict | None = None,
+        timeout: float | None = None,
+        stdin: str | None = None,
+    ):
+        """Run one in-guest command with **incremental output** (G1 streamed form):
+        an async iterator of chunk dicts ``{'channel': 'stdout'|'stderr', 'data':
+        bytes, 'seq': int}`` (raw bytes — base64-decoded on text sessions, sliced
+        straight out of binary frames on a binary-negotiated one), terminated by one
+        ``{'channel': 'exit', 'exit_code', 'signal', 'timed_out', 'duration_ms',
+        'truncated'}``. ``truncated`` means the runtime's total output budget dropped
+        later chunks. Raises like :meth:`exec` (plus a typed error when the spawn
+        fails after the ack, and :class:`ConnectionError` if the session dies
+        mid-stream)."""
+        action, deadline = self._exec_action(argv, shell, cwd, env, timeout, stdin, stream=True)
+        call_id = self._next_id()
+        # Register the event queue BEFORE the send: the wire orders ack before the
+        # first exec_output, and the demux must already know the cause either way.
+        q: asyncio.Queue = asyncio.Queue()
+        self._exec_streams[call_id] = q
+        try:
+            reply = await self._rpc({"type": "action", "call_id": call_id, "action": action})
+            if not reply.get("ok"):
+                raise RuntimeError(reply.get("error", "exec failed"))
+            self._action_count += 1
+            while True:
+                try:
+                    item = await asyncio.wait_for(q.get(), deadline)
+                except asyncio.TimeoutError:
+                    raise TimeoutError(
+                        f"exec stream ({call_id}) produced no event within {deadline}s"
+                    ) from None
+                if isinstance(item, Exception):
+                    raise item
+                if item.get("type") == "exec_output":
+                    data = item.get("data")
+                    if data is None:
+                        data = base64.b64decode(item.get("data_b64", ""))
+                    yield {
+                        "channel": item.get("channel"),
+                        "data": bytes(data),
+                        "seq": item.get("seq"),
+                    }
+                    continue
+                # exec_exit — the terminal event (a spawn failure raises typed).
+                if item.get("error"):
+                    raise RuntimeError(item["error"])
+                yield {
+                    "channel": "exit",
+                    "exit_code": item.get("exit_code"),
+                    "signal": item.get("signal"),
+                    "timed_out": bool(item.get("timed_out", False)),
+                    "duration_ms": item.get("duration_ms"),
+                    "truncated": bool(item.get("truncated", False)),
+                }
+                return
+        finally:
+            self._exec_streams.pop(call_id, None)
+
+    async def clipboard_get(self) -> str:
+        """Read the guest clipboard as text (the ``clipboard_get`` verb; v1 is
+        text-only and size-capped guest-side). The runtime answers with a typed
+        ``result`` carrying ``{text}``; an empty clipboard or an unsupported backend
+        raises with the runtime's typed error. Gated on the ``clipboard``
+        capability (default-off) when enforcing."""
+        reply = await self.act("clipboard_get")
+        return (reply.get("value") or {}).get("text", "")
+
+    async def clipboard_set(self, text: str, *, observe: Any = None):
+        """Set the guest clipboard to ``text`` (Linux v1: shinkend becomes the X11
+        CLIPBOARD selection owner — no xclip). Mutating: supports
+        ``observe`` (act-returns-observation). Gated on the ``clipboard``
+        capability (default-off) when enforcing."""
+        return await self.act("clipboard_set", text=text, observe=observe)
+
+    async def launch_app(self, app: str, args: list[str] | None = None, *, observe: Any = None):
+        """Start an application on the sandbox desktop: ``app`` is an executable
+        name (guest PATH) or absolute path, ``args`` the argv tail — spawned
+        detached with the session environment ($DISPLAY + session D-Bus), never
+        through a shell. Find the new window via :meth:`list_windows` (title /
+        ``pid``). Mutating: supports ``observe``. Gated on the ``app_launch``
+        capability when enforcing."""
+        return await self.act("launch_app", app=app, args=args, observe=observe)
+
+    async def activate_window(
+        self,
+        window_id: int | None = None,
+        *,
+        app: str | None = None,
+        observe: Any = None,
+    ):
+        """Raise + focus a window: by ``window_id`` (a :meth:`list_windows` id) or by
+        ``app`` (the first window whose title contains it, case-insensitive). Linux
+        v1 sends the EWMH ``_NET_ACTIVE_WINDOW`` client message, with a raise+focus
+        fallback on WM-less displays. Mutating: supports ``observe``."""
+        if window_id is None and app is None:
+            raise ValueError("activate_window requires window_id or app")
+        return await self.act("activate_window", window_id=window_id, app=app, observe=observe)
 
     def _check_image_format(self, format: str | None) -> None:
         """Codec negotiation: reject a requested ``format`` the runtime's welcome did
@@ -2120,6 +2353,71 @@ class Sandbox:
         focused}`` each; ``id`` is usable as the ``window:<id>`` capture scope) — see
         :meth:`AsyncSandbox.list_windows`."""
         return self._loop.run(self._inner.list_windows())
+
+    def exec(
+        self,
+        argv: list[str] | None = None,
+        *,
+        shell: str | None = None,
+        cwd: str | None = None,
+        env: dict | None = None,
+        timeout: float | None = None,
+        stdin: str | None = None,
+    ) -> dict:
+        """Run one command inside the Sandbox over the ACI and return its typed
+        result — ``env.exec(["ls", "-la"])`` → ``{'exit_code', 'stdout', 'stderr',
+        'timed_out', …}``. See :meth:`AsyncSandbox.exec`: argv is the default
+        (no-shell) form, ``shell=`` the explicit opt-in; a nonzero exit code is
+        returned, not raised; timeouts kill the guest process group and report
+        ``timed_out=True``."""
+        return self._loop.run(
+            self._inner.exec(argv, shell=shell, cwd=cwd, env=env, timeout=timeout, stdin=stdin)
+        )
+
+    def exec_stream(
+        self,
+        argv: list[str] | None = None,
+        *,
+        shell: str | None = None,
+        cwd: str | None = None,
+        env: dict | None = None,
+        timeout: float | None = None,
+        stdin: str | None = None,
+    ):
+        """Streamed in-guest exec as a sync iterator of chunk dicts (``{'channel',
+        'data', 'seq'}``; final item ``channel='exit'`` with the typed exit) — see
+        :meth:`AsyncSandbox.exec_stream`."""
+        agen = self._inner.exec_stream(
+            argv, shell=shell, cwd=cwd, env=env, timeout=timeout, stdin=stdin
+        )
+        try:
+            while True:
+                try:
+                    yield self._loop.run(agen.__anext__())
+                except StopAsyncIteration:
+                    return
+        finally:
+            with contextlib.suppress(Exception):
+                self._loop.run(agen.aclose())
+
+    def clipboard_get(self) -> str:
+        """Read the guest clipboard as text — see :meth:`AsyncSandbox.clipboard_get`."""
+        return self._loop.run(self._inner.clipboard_get())
+
+    def clipboard_set(self, text: str, *, observe: Any = None):
+        """Set the guest clipboard text — see :meth:`AsyncSandbox.clipboard_set`."""
+        return self._loop.run(self._inner.clipboard_set(text, observe=observe))
+
+    def launch_app(self, app: str, args: list[str] | None = None, *, observe: Any = None):
+        """Start an app on the sandbox desktop — see :meth:`AsyncSandbox.launch_app`."""
+        return self._loop.run(self._inner.launch_app(app, args, observe=observe))
+
+    def activate_window(
+        self, window_id: int | None = None, *, app: str | None = None, observe: Any = None
+    ):
+        """Raise + focus a window by id or app/title — see
+        :meth:`AsyncSandbox.activate_window`."""
+        return self._loop.run(self._inner.activate_window(window_id, app=app, observe=observe))
 
     def screenshot(
         self,

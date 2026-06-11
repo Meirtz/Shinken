@@ -198,6 +198,9 @@ class ShinkenRuntime(_BaseRuntime):  # type: ignore[valid-type,misc]
         self._push_session_dir = bool(kwargs.get("push_session_dir_on_exec", False))
         self._provider: Any = None
         self._handle: Any = None
+        # Cached ACI session for the typed in-band `exec` verb (G1) — the preferred
+        # channel; None until first use, or when the runtime predates the verb.
+        self._aci_sess: Any = None
 
     # -- identity & capabilities ----------------------------------------------------
 
@@ -278,6 +281,10 @@ class ShinkenRuntime(_BaseRuntime):  # type: ignore[valid-type,misc]
         if self._destroyed:
             return
         self._destroyed = True
+        if self._aci_sess is not None:
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(self._aci_sess.close)
+            self._aci_sess = None
         if self._provider is not None and self._handle is not None:
             await asyncio.to_thread(self._provider.destroy, self._handle)
 
@@ -302,20 +309,59 @@ class ShinkenRuntime(_BaseRuntime):  # type: ignore[valid-type,misc]
         env: dict[str, str] | None = None,
         timeout_sec: float | None = None,
     ) -> Any:
-        """Run one command in the sandbox via the container substrate (``bash -lc``)."""
-        cid = self._container()
+        """Run one command in the sandbox (``bash -lc``): PREFERRING the typed
+        in-band ACI ``exec`` verb (G1 — substrate-agnostic, no host docker CLI),
+        falling back to ``docker exec`` against a pre-exec runtime."""
         if self._push_session_dir:
             await self._push_session_dir_to_guest()
-        argv = [self._docker_bin(), "exec"]
         workdir = cwd or getattr(self.spec, "workdir", None) or self.runtime_session_dir
-        argv += ["-w", str(workdir)]
         merged_env = dict(env or {})
         merged_env.setdefault("SHINKEND_ADDR", GUEST_ACI_ADDR)
+        sess = await self._aci_exec_session()
+        if sess is not None:
+            r = await asyncio.to_thread(
+                sess.exec,
+                ["bash", "-lc", command],
+                cwd=str(workdir),
+                env=merged_env,
+                timeout=timeout_sec,
+            )
+            if r.get("timed_out"):
+                # upstream timeout convention: rc -1, no output (gateway maps to "timeout")
+                return _make_exec_result(None, None, -1)
+            rc = r.get("exit_code")
+            if rc is None:  # killed by a signal — report like a shell would
+                rc = 128 + int(r.get("signal") or 1)
+            return _make_exec_result(r.get("stdout"), r.get("stderr"), rc)
+        cid = self._container()
+        argv = [self._docker_bin(), "exec", "-w", str(workdir)]
         for key, value in merged_env.items():
             argv += ["-e", f"{key}={value}"]
         argv += [cid, "bash", "-lc", command]
         rc, out, err = await self._run_host(*argv, timeout=timeout_sec)
         return _make_exec_result(out, err, rc)
+
+    async def _aci_exec_session(self) -> Any:
+        """The cached ACI session for in-band exec, or None when unavailable (no
+        provider yet, connect failed, or a pre-exec runtime that doesn't advertise
+        the verb — those fall back to the ``docker exec`` channel)."""
+        if self._aci_sess is not None:
+            return self._aci_sess
+        if self._provider is None or self._handle is None:
+            return None
+        try:
+            sess = await asyncio.to_thread(self._provider.connect, self._handle)
+        except Exception:
+            return None
+        # Duck-typed probe: anything without a verbs-advertising session shape (or a
+        # runtime that predates the verb) falls back to the docker exec channel.
+        verbs = getattr(getattr(sess, "capabilities", None), "verbs", None) or []
+        if "exec" not in verbs:
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(sess.close)
+            return None
+        self._aci_sess = sess
+        return sess
 
     # -- file transfer (guest paths validated: absolute, no `..`) ---------------------
 

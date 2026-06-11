@@ -25,6 +25,7 @@ from __future__ import annotations
 import subprocess
 import sys
 import threading
+import os
 import time
 
 from _common import boot as _boot_default
@@ -201,7 +202,11 @@ def run() -> dict:
             env.click(x=120, y=120)  # focus the xterm
             pids = _guest_pids(str(cid))
             hz = _clk_tck(str(cid))
-            time.sleep(1.0)  # let boot-time churn settle
+            # Let the boot tail fully drain before any idle window: start.sh
+            # re-asserts the root paint at 1 Hz for 30 s (the focus/paint fixes),
+            # and each re-paint fires a damage event — an idle window inside that
+            # tail measures the tail, not idle.
+            time.sleep(float(os.environ.get("SHINKEN_BENCH_BOOT_SETTLE_S", "33")))
 
             # no-stream baseline (idle desktop, no screencast)
             cell = _measure_window(env, str(cid), pids, hz, None, "idle")
@@ -240,7 +245,10 @@ def plot(payload: dict) -> None:
         labels = [f"fps {int(f)}" for f in payload["fps_levels"]]
         x = range(len(labels))
         width = 0.38
-        for off, mode, color in ((-width / 2, "poll", "C3"), (width / 2, "damage", "C2")):
+        for off, mode, color in (
+            (-width / 2, "poll", "C3"),
+            (width / 2, "damage", "C2"),
+        ):
             ys = []
             for f in payload["fps_levels"]:
                 row = next(
@@ -266,7 +274,10 @@ def plot(payload: dict) -> None:
             if c["fps"] is None
         ]
         ax.axhline(
-            sum(base) / len(base), linestyle=":", color="gray", linewidth=1,
+            sum(base) / len(base),
+            linestyle=":",
+            color="gray",
+            linewidth=1,
             label="no-stream baseline",
         )
         ax.set_xticks(list(x))

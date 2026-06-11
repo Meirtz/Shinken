@@ -158,9 +158,10 @@ priority order. None of this touches the waist — all are consumers/composition
    `Step` already reserves the optional fields (`prompt_token_ids`, `response_token_ids`,
    `response_mask` with 1=model/0=tool, `finish_reason` — all default `None`, populated by no
    current code path) and `Trajectory.exit_reason` covers `traj_exit_reason`, so the conversion is
-   lossless once a token-level adapter fills them. The
-   train Workload exposes an HTTP gym facade (`/reset`, `/step`, `/evaluate`) because that is the
-   shape verl/TRL-style trainers consume. The cheapest interop deliverable — a swerex-shaped
+   lossless once a token-level adapter fills them. The gym shape verl/TRL-style trainers consume
+   **now ships in-process** — `shinken.gym` with reset()-as-fork (see the fork-native gym facade
+   subsection below); the HTTP facade over it (`/reset`, `/step`, `/evaluate`) remains the train
+   Workload's transport deliverable. The cheapest interop deliverable — a swerex-shaped
    deployment backend whose `start()` can fork from a golden checkpoint instead of cold-booting —
    **now ships in-tree** (`shinken.integrations.swerex`; see the subsection below).
    <https://github.com/verl-project/uni-agent>
@@ -233,6 +234,30 @@ golden-checkpoint → fork-N → score loop — so rollouts reset from a golden 
 cold-booting per episode (the cold-boot pattern uni-agent/CUA-Gym/Agentix all ship today, see
 [status](../engineering/status.md)). Runnable wiring: `examples/uniagent_shinken.py`; protocol-shape
 unit tests + a Docker-gated live test: `sdk/python/tests/test_swerex_integration.py`.
+
+### Consumers: the fork-native gym facade (trainer-facing shape — built)
+
+`shinken.gym` is **the trainer-facing shape over the narrow waist**: the
+`make/reset/step/evaluate` surface every RL stack already consumes (cua-bench, CUA-Gym, OSWorld
+wrappers all ship one), with the runtime-state semantics underneath instead of the
+sandbox-re-provision every one of them pays per episode (cua-bench's own `Environment.reset()`
+closes the session and creates a brand-new VM — `notes/cua-teardown.md` §4/§7):
+
+| gym surface | composition of core primitives |
+|---|---|
+| `make(task, provider)` | `provider.create` → `task.setup` ONCE → `provider.checkpoint` (the golden state); a warm-pool provider captures the delta so resets are boot-free |
+| `reset()` | **a fork**: `provider.resume(golden)` + connect; the measured fork→connected latency is exposed as `info["reset_ms"]` (live-gated p50 < 1.5 s; measured ~60–120 ms on the warm-pool Docker disk tier) |
+| `step(action)` | canonical ACI dicts OR **raw model text** through `shinken.dialect.parse_actions` (tag dialect + the wild-type XML tool-call grammars); screenshot observation fuses with the actions in ~1 RTT via the pipelined `Sandbox.step`; a `structured` knob returns the guest a11y tree instead |
+| `evaluate()` | the task verifier (`shinken.eval` receipt plumbing → float reward; scorer faults are typed, never a fake 0.0) |
+| `ShinkenGymPool(task, provider, n)` | N envs, ONE golden checkpoint, one `SharedLoop` + one `FrameCache`, **parallel reset** — the fan-out fork |
+| `MultiTurnDataloader(pool)` | a cua-bench-`MultiTurnDataloader`-shaped collection iterator (duck-typed, **no TRL/torch dep**): observation batches out, raw responses in via `async_step`, auto-reset = re-fork, unparseable output typed as `agent_error` |
+| `episodes_to_records` / `to_hf_dataset` | every episode is the existing typed `Trajectory`; the exporter flattens to the HF-`datasets` dict-of-lists shape (one row per step, images as PNG bytes, `exit_reason`/taxonomy columns) — `datasets` is lazily imported, plain-dict fallback |
+
+Nothing of this touches the waist: tasks are duck-typed (`shinken.eval.Task` works as-is),
+sessions come from any provider, and the gym attaches reward/episode semantics strictly on the
+consumer side (the `Trajectory` itself stays verdict-free). Runnable wiring:
+`examples/gym_rollout.py`; fixture tests + a Docker-gated live latency/state-inheritance gate:
+`sdk/python/tests/test_gym.py`.
 
 ## 6. Desensitization — structural, not disciplinary
 

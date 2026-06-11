@@ -99,7 +99,7 @@ target = oneof{ point_px{x,y} | point_norm{x,y∈0..1} | element_ref{ref, source
 ```
 
 Every observation carries a `CoordinateSpace {origin, w, h, dpr}`; coordinate normalization lives in
-the protocol, once. v0 verbs (**17**, matching the `Verb` enum in
+the protocol, once. v0 verbs (**22**, matching the `Verb` enum in
 [`../../schema/aci.schema.json`](../../schema/aci.schema.json) and the runtime's advertised
 capabilities):
 
@@ -111,6 +111,8 @@ capabilities):
 | Pixel observation | `screenshot`, `start_screencast`, `stop_screencast` |
 | Structured observation (D13/M1b) | `observe` |
 | Element (AX path, D13/M1b) | `invoke_action`, `set_value` |
+| In-guest exec (G1, §3.4) | `exec` |
+| Desktop (G2+G3) | `clipboard_get`, `clipboard_set`, `launch_app`, `activate_window` |
 | Timing | `wait` |
 
 `drag` is the composed
@@ -119,14 +121,44 @@ gesture — pointer down at `target`, interpolated moves, up at `to`, with optio
 decomposed halves for free-form gestures (down → moves → up), `target` optional (absent = act at
 the current pointer position). `observe` captures the structured (a11y) tree with stable element
 ids, diff rendering, and settle (§4.1); `invoke_action`/`set_value` drive an element's
-accessibility interface directly (the AX-path fallback to physical events — §3.2 router).
-**Code-as-action** (`run`/bash/edit) is a separate,
-**off-by-default** capability class behind the policy boundary (D6) — expressive, but gated and
-auditable.
+accessibility interface directly (the AX-path fallback to physical events — §3.2 router);
+`exec` is the typed in-guest exec channel (§3.4 — argv default, shell opt-in, buffered or
+streamed output, gateway-audited). The broader **code-as-action** class (`run`/bash/edit
+profiles) remains a separate, **off-by-default** capability class behind the policy boundary
+(D6) — expressive, but gated and auditable.
+
+**Desktop verbs (G2+G3, task parity).** A large share of OSWorld-class tasks touch the clipboard
+or start an application; without typed verbs, workloads shell out around the ACI and the
+typed-contract story leaks. Four verbs close that gap:
+
+- `clipboard_get` → the runtime answers a typed `result` whose value is `{text}` (the read's data
+  channel — an `ack` carries no payload). `clipboard_set {text}` acks. **v1 is text-only and
+  size-capped guest-side** (1 MiB; an INCR/oversized transfer is a typed error, never a silent
+  truncation); binary clipboard formats are future targets. Linux v1 speaks the ICCCM selection
+  protocol itself (`shinkend` owns the `CLIPBOARD` selection on a dedicated worker thread and
+  serves `TARGETS`/`UTF8_STRING`/`STRING`; reads via `ConvertSelection` with a bounded wait and one
+  `STRING` retry) — **no `xclip` subprocess dance**. The clipboard is a data channel, so the SDK
+  gateway gates BOTH directions on the envelope's `clipboard` capability (default-off).
+- `launch_app {app, args?}` spawns `app` (a PATH name or absolute path; `args` verbatim — never
+  through a shell) detached with the session environment (Linux v1: `$DISPLAY` + the session D-Bus
+  address `shinkend` itself runs under, so the app lands on the sandbox desktop and its a11y tree
+  reaches the session bus). The ack carries no window: find it via `list_windows` (title /
+  `_NET_WM_PID`). Gateway capability: `app_launch` (default-granted, deniable per session).
+- `activate_window {window_id | app}` raises + focuses a window — by `list_windows` id, or by `app`
+  (first case-insensitive title substring match). Linux v1 sends the EWMH `_NET_ACTIVE_WINDOW`
+  client message (source = pager/user); on a WM-less display (bare Xvfb) it falls back to
+  raise + set-input-focus, and `active_window` (the capture scope and the `focused` flag) gains the
+  matching input-focus fallback so activation is observable without a WM.
+
+macOS v1 answers all four with a **typed unsupported error** (the native paths need
+NSPasteboard/NSWorkspace via AppKit bindings the v1 engine does not carry — see
+[macos-engine.md](../engineering/macos-engine.md)); the verbs stay advertised as vocabulary, and
+backend support is a runtime condition answered honestly, like AT-SPI availability.
 
 **Act-returns-observation (`observe` argument).** Every *mutating* verb (the schema's
-`MutatingVerb` set — pointer/keyboard/gesture plus the element verbs, not
-`screenshot`/screencast/`observe`/`wait`) accepts an optional `observe` object carrying
+`MutatingVerb` set — pointer/keyboard/gesture, the element verbs, and the desktop writes
+`clipboard_set`/`launch_app`/`activate_window`; not
+`screenshot`/screencast/`observe`/`wait`/`clipboard_get`) accepts an optional `observe` object carrying
 the screenshot-shaped capture levers (`scope`, `format`, `quality`, `max_long_edge`). The runtime
 then follows the action's `ack` with a fresh `observation` whose `cause` is the SAME `call_id` —
 one round trip instead of act + screenshot, the same correlation rule as the one-shot screenshot
@@ -185,12 +217,15 @@ This gives Shinken four distinct action classes:
   resource attachment. These use the artifact/file-transfer channel, not the low-latency GUI action
   path.
 
-**v0.0.1 scope (settled 2026-06, D2):** CLI/code actions and file transfer are **not** ACI wire verbs
-in v0.0.1 — they ride the substrate's own channel (the OSWorld controller's `/execute`, `docker
-cp`/`exec`, the inject transport; the SDK's `put_file`/`get_file` are substrate-side, not wire
-messages). Typed `exec`/`put_file`/`get_file`/`launch` wire verbs are deferred post-v0.0.1, added
-behind the code-as-action capability class when a Workload must do setup/scoring purely through the
-ACI. `element_ref` resolution is **guest-side on Linux** as of the M1b observation engine: the
+**v0.0.1 scope (settled 2026-06, D2; amended 2026-06-11):** the typed in-guest **`exec` wire verb
+is now BUILT** (§3.4 — the first slice of the CLI/code-action class, behind the gateway's `exec`
+capability with the argv/shell recorded in the audit event); every benchmark family's setup/verify
+(OSWorld, CUA-Gym verifiers, swerex sessions) can now flow in-band instead of leaking through the
+substrate channel, and the integrations prefer it when advertised (the `docker exec`/inject
+fallback is kept for pre-exec runtimes). The GUI-shaped `launch_app` (spawn an app on the desktop,
+no output channel) also shipped as a typed verb in §3. File transfer stays substrate-side (the
+SDK's `put_file`/`get_file` are not wire messages); typed `put_file`/`get_file` wire verbs
+remain deferred. `element_ref` resolution is **guest-side on Linux** as of the M1b observation engine: the
 runtime resolves a live ref from the session's last structured observation to its bbox centre and
 fires a physical XTEST event there (the SDK-side `point_px` resolution remains the fallback for
 pre-engine runtimes); `invoke_action` is the AX-path alternative for geometry-less elements. A
@@ -231,13 +266,14 @@ OSWorld's pyautogui action space runs unchanged.
 ### 3.3 Operation-layer verb family (D13 — built core + designed remainder)
 
 The operation layer ([operation-layer.md](operation-layer.md), D13) extends the original v0
-11-verb enum with an **element verb family**. The core of it is now **built and in the 17-verb
-enum** (§3): `drag`, the `observe` wire verb, and the element verbs — shipped under the shorter
-wire names `invoke_action`/`set_value` (the canon's `invoke_element_action`/`set_element_value`),
+11-verb enum with an **element verb family**. The core of it is now **built and in the 22-verb
+enum** (§3): `drag`, the `observe` wire verb, the element verbs — shipped under the shorter
+wire names `invoke_action`/`set_value` (the canon's `invoke_element_action`/`set_element_value`) —
+and the G2+G3 desktop verbs (`clipboard_get`/`clipboard_set`, `launch_app`, `activate_window`),
 with `windows` shipped as the `list_windows` query. The **remainder is designed-only** — additive,
 capability-negotiated (`welcome.capabilities.verbs`), absent from `schema/aci.schema.json` until
-built: `set_text_selection`, `scroll_element`, the `apps` query, and per-app/key-window observe
-scoping. Illustrative, schema-ready shapes (designed forms; the built verbs use the §3/§4.1 wire
+built: `set_text_selection`, `scroll_element`, the `apps` query, and the per-app observe
+selector. Illustrative, schema-ready shapes (designed forms; the built verbs use the §3/§4.1 wire
 shapes):
 
 ```jsonc
@@ -310,6 +346,47 @@ loop is one observation per turn:
   "observe": { "include": ["tree"], "tree_mode": "auto" } }
 // → result { "status": "ok", "observation": { …ViewObservation (§4.1), tree.mode = "diff"… } }
 ```
+
+### 3.4 Typed in-guest exec channel (built)
+
+The **`exec` verb** runs a command inside the Sandbox as a child of `shinkend`, over the SAME
+WebSocket as every other action — one protocol, no second surface — so setup/verify works on any
+substrate a runtime runs on (a remote `shinkend` over WS where `docker exec` does not exist).
+Discipline: **`argv` is the default form** (the program is executed directly — no shell
+interpretation, no silent injection surface); **`shell` is the explicit opt-in** (`/bin/sh -c`),
+mutually exclusive with `argv`. `cwd`/`env` shape the child; `timeout_ms` (runtime default 60 s,
+hard-capped) kills the child's **whole process group** on expiry and is reported honestly
+(`timed_out: true`, null exit code — never disguised as an exit status); `stdin` is written and
+closed. Concurrency is runtime-bounded (a small semaphore; saturation is a nack). Two reply forms:
+
+```jsonc
+// buffered (default): one typed `result` — ok:true even on a nonzero exit code
+// (the COMMAND failed, not the action); value = $defs.ExecResult
+{ "verb": "exec", "argv": ["python3", "/tmp/reward.py"], "cwd": "/home/user",
+  "env": {"TASK_ID": "t1"}, "timeout_ms": 30000 }
+// → { "type": "result", "ok": true, "value": { "exit_code": 0, "signal": null,
+//     "timed_out": false, "stdout": "REWARD: 1.0\n", "stderr": "",
+//     "stdout_truncated": false, "stderr_truncated": false, "duration_ms": 412.7 } }
+
+// streamed: ack, then incremental `exec_output` events on the existing demux
+// (same plane as screencast frames; raw-byte binary frames on a binary-negotiated
+// session, base64 `data_b64` text events otherwise), terminated by ONE `exec_exit`
+{ "verb": "exec", "shell": "make test 2>&1", "stream": true }
+// → ack, then: { "type": "exec_output", "cause": "<call_id>", "seq": 0,
+//                "channel": "stdout", "data_b64": "…" } …
+// → { "type": "exec_exit", "cause": "<call_id>", "exit_code": 2, "timed_out": false,
+//     "duration_ms": 9120.4, "truncated": false }
+```
+
+Output is budgeted honestly: the buffered form caps each channel (256 KiB) with per-channel
+truncation flags; the streamed form caps chunks (64 KiB) and the total (8 MiB), flags `truncated`
+on the exit event, and always drains the pipes so the child never deadlocks. `seq` is monotonic
+across BOTH channels, so total output order is reconstructible. The gateway maps the verb to the
+**`exec` capability** and records the argv/shell in the decision event's `detail`, so the
+permission audit shows *what* was run. **`pty` is a reserved field** (only `false` validates):
+PTY allocation is the designed follow-up — a stream kind over these same events, not a second
+protocol. SDK surface: `env.exec(["ls","-la"])` → the typed result dict;
+`env.exec_stream(...)` → a sync/async iterator of byte chunks ending in the exit item.
 
 ---
 

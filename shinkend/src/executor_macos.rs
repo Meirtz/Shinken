@@ -533,7 +533,7 @@ pub(crate) fn plan_action(a: &ActionSpec, w: u16, h: u16) -> Result<(Vec<Planned
             Ok((ev, format!("scrolled {},{} px", dx as i64, dy as i64)))
         }
         "drag" => {
-            // Schema shape (the 17-verb ACI `drag`): down at `target`, interpolated
+            // Schema shape (the 22-verb ACI `drag`): down at `target`, interpolated
             // drag motion, up at the `to` target. `duration_ms` is accepted but the
             // pacing is the planner's fixed EVENT_SETTLE per step in v1; CG only has
             // a LeftMouseDragged event type, so a non-left `button` is an honest nack.
@@ -636,6 +636,19 @@ pub(crate) fn plan_action(a: &ActionSpec, w: u16, h: u16) -> Result<(Vec<Planned
         "screenshot" => bail!("screenshot is handled via the capture path"),
         // `wait` is the serve loop's bounded async sleep (connection::dispatch_action).
         "wait" => bail!("wait is handled by the serve loop (connection::dispatch_action)"),
+        // Desktop verbs (G2+G3): honestly unsupported on macOS v1. The native
+        // implementations need AppKit bindings this build deliberately doesn't carry
+        // (clipboard = NSPasteboard, launch/activate = NSWorkspace/AX raise — all
+        // objc2-app-kit territory; the CoreGraphics crates used here don't reach
+        // them). TODO(macos-engine v2): wire NSPasteboard general-pasteboard text +
+        // NSWorkspace openApplicationAtURL/activate via objc2 — see
+        // docs/engineering/macos-engine.md. clipboard_get answers the Executor
+        // trait's typed default for the same reason.
+        "clipboard_set" | "launch_app" | "activate_window" => bail!(
+            "{} not supported by the macos backend yet (v1 is capture+input; \
+             needs NSPasteboard/NSWorkspace via objc2-app-kit)",
+            a.verb
+        ),
         other => bail!("unknown verb: {other}"),
     }
 }
@@ -1336,6 +1349,27 @@ mod tests {
         assert!(plan_action(&spec(r#"{"verb":"screenshot"}"#), 100, 100).is_err());
         assert!(plan_action(&spec(r#"{"verb":"wait","ms":5}"#), 100, 100).is_err());
         assert!(plan_action(&spec(r#"{"verb":"bogus"}"#), 100, 100).is_err());
+    }
+
+    /// The desktop verbs (G2+G3) are honestly unsupported on macOS v1: a typed
+    /// "not supported by the macos backend" — never a silent no-op ack, and never
+    /// the misleading "unknown verb" (the vocabulary knows them; the backend can't
+    /// serve them without AppKit bindings).
+    #[test]
+    fn desktop_verbs_answer_typed_unsupported() {
+        for action in [
+            r#"{"verb":"clipboard_set","text":"x"}"#,
+            r#"{"verb":"launch_app","app":"Calculator"}"#,
+            r#"{"verb":"activate_window","window_id":42}"#,
+        ] {
+            let err = plan_action(&spec(action), 100, 100)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("not supported by the macos backend"),
+                "{action} → {err}"
+            );
+        }
     }
 
     // ---- capture conversion (TCC-free: synthesized CGImage, no screen read) ----

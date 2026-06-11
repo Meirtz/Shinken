@@ -38,6 +38,30 @@ def _plan() -> list[list[dict]]:
     ]
 
 
+def _wait_for_focused_window(env, timeout_s: float = 20.0) -> None:
+    """Readiness fires when the desktop paints/maps — keyboard focus converges a
+    beat later (openbox's click-to-focus grabs + start.sh's activate loop). Typing
+    before that lands in openbox's no-focus fallback and silently vanishes, which
+    is exactly what slow CI runners hit. Poll for a focused window, re-clicking
+    the xterm as a nudge."""
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        try:
+            wins = env.list_windows()
+        except Exception:
+            return  # pre-list_windows runtime: best effort
+        if any(w.get("focused") for w in wins):
+            return
+        if wins:
+            env.click(x=120, y=120)
+        time.sleep(0.25)
+    print(
+        "warning: no focused window within "
+        f"{timeout_s:.0f}s; typed input may be dropped",
+        flush=True,
+    )
+
+
 def main() -> int:
     prov = DockerLocalProvider(image="shinken/sandbox-linux")
     handle = prov.create(SandboxSpec(screen_geometry="1280x800x24"))
@@ -45,20 +69,27 @@ def main() -> int:
     try:
         env = prov.connect(handle)
         try:
+            _wait_for_focused_window(env)
             res = drive(env, ScriptedAgent(_plan()), max_steps=10)
-            print(f"drive: steps={res.steps} actions={res.actions} stopped={res.stopped}")
+            print(
+                f"drive: steps={res.steps} actions={res.actions} stopped={res.stopped}"
+            )
             time.sleep(1.0)  # let the shell flush the redirect before we read it back
             out = Path(tempfile.mkdtemp()) / "e1.txt"
             ref = env.get_file(GUEST_FILE, str(out))
             content = out.read_text().strip()
-            print(f"guest file {GUEST_FILE!r} -> {content!r} (sha {ref['sha256'][:12]})")
+            print(
+                f"guest file {GUEST_FILE!r} -> {content!r} (sha {ref['sha256'][:12]})"
+            )
             ok = content == MARKER
         finally:
             env.close()
     finally:
         with __import__("contextlib").suppress(Exception):
             prov.destroy(handle)
-    print("E1 PASS: real-app scripted task verified via guest state" if ok else "E1 FAIL")
+    print(
+        "E1 PASS: real-app scripted task verified via guest state" if ok else "E1 FAIL"
+    )
     return 0 if ok else 1
 
 

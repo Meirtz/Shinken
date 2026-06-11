@@ -1,0 +1,786 @@
+"""Fork-native gym adapter — the trainer-facing ``make/reset/step/evaluate`` shape.
+
+RL stacks consume environments through a gym-style surface (cua-bench, CUA-Gym, OSWorld
+wrappers all ship one), and in every one of them ``reset()`` re-provisions the sandbox —
+cua-bench's own ``Environment.reset()`` closes the session and creates a brand-new VM per
+episode (see ``notes/cua-teardown.md`` §4/§7). This module ships the same API shape with
+the runtime-state semantics underneath (D5): **reset() IS a fork from the task's golden
+checkpoint** — task setup runs exactly once, every episode starts from the byte-identical
+golden state, and on the Docker disk tier with the warm pool enabled a reset is ~0.1–0.6 s
+instead of a cold boot per episode (measured: ``docs/engineering/benchmarks.md`` §1).
+
+Everything here is a *consumer* of the narrow waist (``docs/design/agent-runtime.md``):
+sessions come from a provider, episodes are recorded as the existing typed
+:class:`~shinken.runtime.trajectory.Trajectory`, and no scorer/reward semantics leak into
+the runtime. The pieces:
+
+- :class:`ShinkenGymEnv` — one task on one provider: ``make()`` (boot base → ``task.setup``
+  once → golden checkpoint), ``reset()`` (fork-from-golden; ``info["reset_ms"]`` is the
+  measured fork→connected latency), ``step(action)`` (canonical ACI dicts **or raw model
+  text** routed through :func:`shinken.dialect.parse_actions` — incl. the wild-type XML
+  tool-call grammars), ``evaluate()`` (the task verifier, ``shinken.eval`` receipt
+  plumbing), ``close()``/``dispose()``.
+- :class:`ShinkenGymPool` — N envs sharing ONE golden checkpoint, one
+  :class:`~shinken.SharedLoop` (one client thread for all sessions) and one
+  :class:`~shinken.FrameCache` (cross-replica frame dedup), with **parallel reset** — the
+  fan-out fork.
+- :func:`episodes_to_records` / :func:`to_hf_dataset` — the HF-``datasets``-shaped exporter
+  (dict-of-lists, one row per step, images as PNG bytes) trainers ingest directly, with the
+  ``exit_reason``/failure-taxonomy columns the poll-and-recreate stacks lack.
+- :class:`MultiTurnDataloader` — a cua-bench-``MultiTurnDataloader``-shaped iterator
+  (duck-typed; **no TRL/torch/tokenizer dependency**) yielding observation batches from the
+  pool and applying raw model responses via ``async_step``, auto-resetting (= re-forking)
+  finished envs.
+
+A *task* is duck-typed to ``shinken.eval.Task``: ``.name``, optional ``.setup(session)``
+(run once into the golden state), optional ``.verify(session)`` (returns a
+``VerifierReceipt``-shaped object or a float reward), plus an optional ``.instruction``
+string (:class:`GymTask` adds it; ``eval.Task`` works as-is).
+"""
+
+from __future__ import annotations
+
+import contextlib
+import json
+import random
+import time
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
+from typing import Any
+
+from .client import FrameCache, SharedLoop
+from .dialect import parse_actions
+from .errors import SandboxDied, ShinkenError, is_connection_loss
+from .runtime.trajectory import Step, Trajectory
+
+__all__ = [
+    "EXPORT_COLUMNS",
+    "Episode",
+    "GymError",
+    "GymTask",
+    "MultiTurnDataloader",
+    "ShinkenGymEnv",
+    "ShinkenGymPool",
+    "episodes_to_records",
+    "make",
+    "to_hf_dataset",
+]
+
+#: Control verbs that terminate an episode instead of dispatching to the runtime
+#: (``shinken.dialect.DONE`` and its ``<stop/>`` sibling).
+_CONTROL_VERBS = ("done", "stop")
+
+#: terminal sentinel -> trajectory ``exit_reason`` (the rollout-loop mapping, #56).
+_EXIT_REASON_FOR_TERMINAL = {
+    "done": "task_complete",
+    "stopped": "task_complete",
+    "max_steps": "max_steps",
+}
+
+
+class GymError(ShinkenError):
+    """A gym lifecycle/contract violation (no live replica, no verifier, bad reward shape)."""
+
+
+@dataclass
+class GymTask:
+    """A gym task: ``setup`` runs ONCE into the golden state, ``verify`` judges a replica.
+
+    Duck-type-compatible with ``shinken.eval.Task`` (which also works directly — its
+    ``run`` is simply unused here because the *policy* drives ``step()``). ``verify`` may
+    return a ``VerifierReceipt``-shaped object (``.passed`` → reward 1.0/0.0) or a float
+    reward directly."""
+
+    name: str
+    instruction: str = ""
+    setup: Callable[[Any], None] | None = None
+    verify: Callable[[Any], Any] | None = None
+    metadata: dict = field(default_factory=dict)
+
+
+def _reward_from(verdict: Any) -> float:
+    """Normalize a verifier's return into a float reward: float/int pass through,
+    ``VerifierReceipt``-shaped objects (``.passed`` or ``{"passed": …}``) map to 1.0/0.0.
+    Anything else is a typed error — never a silent 0.0."""
+    if isinstance(verdict, bool):  # bool before int: True is an int subclass
+        return 1.0 if verdict else 0.0
+    if isinstance(verdict, int | float):
+        return float(verdict)
+    passed = getattr(verdict, "passed", None)
+    if passed is None and isinstance(verdict, dict):
+        passed = verdict.get("passed")
+    if isinstance(passed, bool):
+        return 1.0 if passed else 0.0
+    raise GymError(
+        f"verifier returned {type(verdict).__name__!r}; expected a float reward or a "
+        "VerifierReceipt-shaped object with a boolean .passed"
+    )
+
+
+@dataclass
+class Episode:
+    """One finished episode: the typed :class:`Trajectory` plus the consumer-attached
+    verdict (reward) and the runtime-state receipt (which checkpoint, how fast the fork
+    was). The trajectory itself stays verdict-free by design — the reward lives here."""
+
+    index: int
+    task: str
+    instruction: str
+    trajectory: Trajectory
+    reward: float | None
+    reset_ms: float
+    info: dict = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        return {
+            "index": self.index,
+            "task": self.task,
+            "instruction": self.instruction,
+            "trajectory": self.trajectory.to_dict(),
+            "reward": self.reward,
+            "reset_ms": round(self.reset_ms, 3),
+            "info": self.info,
+        }
+
+
+# ------------------------------------------------------------------------------ the env
+
+
+class ShinkenGymEnv:
+    """One task as a gym environment over a Shinken provider, with **fork-native reset**.
+
+    Lifecycle::
+
+        env = shinken.gym.make(task, provider)   # boot base → setup once → golden ckpt
+        obs, info = env.reset()                  # fork replica; info["reset_ms"]
+        obs, reward, done, info = env.step(model_text_or_actions)
+        reward = env.evaluate()                  # the task verifier, on demand
+        env.dispose()                            # replica + golden snapshot reclaimed
+
+    ``observation`` knob: ``"screenshot"`` (default — the screenshot dict, with actions
+    and the post-step frame fused into ~1 RTT via the pipelined ``Sandbox.step``) or
+    ``"structured"`` (the guest a11y tree observation — ``tree_text``/``elements``).
+
+    ``step(action)`` accepts a canonical ACI action dict, a list of them, or **raw model
+    text** parsed by :func:`shinken.dialect.parse_actions` with ``action_format``
+    (``"auto"`` routes the XML tool-call grammars too); a ``<done/>``/``<stop/>`` control
+    action ends the episode without dispatching. A malformed text action raises the typed
+    ``DialectError`` (a teaching error for the policy loop — see
+    :meth:`MultiTurnDataloader.async_step` for the collection-loop handling).
+
+    Every episode is recorded as a typed :class:`Trajectory` and appended to
+    :attr:`episodes` (as an :class:`Episode`, carrying the reward out-of-band) when it
+    ends — on ``done``, on the next ``reset()``, on :meth:`abort`, or on ``close()``.
+
+    With a warm-pool provider (``DockerLocalProvider(warm_pool_size=K)``) the golden
+    checkpoint taken by :meth:`make` captures its filesystem delta, so every reset is
+    served by the pre-booted pool (graft, no boot) and falls back to the classic
+    boot-from-committed-image path on a pool miss — same disk-tier semantics either way.
+    """
+
+    def __init__(
+        self,
+        task: Any,
+        provider: Any,
+        *,
+        spec: Any = None,
+        observation: str = "screenshot",
+        action_format: str = "auto",
+        max_steps: int | None = None,
+        observe_args: dict | None = None,
+        connect_kwargs: dict | None = None,
+    ) -> None:
+        if observation not in ("screenshot", "structured"):
+            raise GymError(f"unknown observation kind {observation!r}")
+        self.task = task
+        self.provider = provider
+        self.spec = spec
+        self.observation = observation
+        self.action_format = action_format
+        self.max_steps = max_steps
+        self.observe_args = dict(observe_args or {})
+        self.connect_kwargs = dict(connect_kwargs or {})
+        self.golden_checkpoint: str | None = None
+        #: False when the checkpoint is shared/borrowed (pool siblings): dispose() then
+        #: never deletes the underlying snapshot.
+        self.owns_checkpoint = True
+        self.episodes: list[Episode] = []
+        self.last_receipt: Any = None
+        self._handle: Any = None  # current replica
+        self._sess: Any = None  # connected session for the current replica
+        self._steps: list[Step] = []  # in-flight episode
+        self._episode_open = False
+        self._reset_ms = 0.0
+        self._done = False
+
+    # --- lifecycle ---------------------------------------------------------------------
+
+    def make(self) -> ShinkenGymEnv:
+        """Build the golden checkpoint (idempotent): create a base sandbox, run
+        ``task.setup`` once, ``checkpoint``, destroy the base. Every subsequent
+        :meth:`reset` materializes a replica from this single checkpoint."""
+        if self.golden_checkpoint is not None:
+            return self
+        base = self.provider.create(self.spec)
+        try:
+            sess = self.provider.connect(base, **self.connect_kwargs)
+            try:
+                setup = getattr(self.task, "setup", None)
+                if setup is not None:
+                    setup(sess)
+                self.golden_checkpoint = self.provider.checkpoint(base)
+            finally:
+                with contextlib.suppress(Exception):
+                    sess.close()
+        finally:
+            with contextlib.suppress(Exception):
+                self.provider.destroy(base)
+        return self
+
+    def reset(self) -> tuple[dict, dict]:
+        """Start a fresh episode by **forking the golden checkpoint** (building it first
+        if :meth:`make` was never called) and return ``(observation, info)``.
+        ``info["reset_ms"]`` is the measured fork→connected latency — the number that is
+        a sandbox re-provision in every other gym."""
+        self.make()
+        self._finalize_episode(terminal="stopped")  # an un-done episode is "stopped"
+        self._teardown_replica()
+        t0 = time.perf_counter()
+        self._handle = self.provider.resume(self.golden_checkpoint)
+        self._sess = self.provider.connect(self._handle, **self.connect_kwargs)
+        self._reset_ms = (time.perf_counter() - t0) * 1000.0
+        self._steps = []
+        self._episode_open = True
+        self._done = False
+        obs = self._observe()
+        info = {
+            "task": getattr(self.task, "name", ""),
+            "instruction": getattr(self.task, "instruction", "") or "",
+            "reset_ms": self._reset_ms,
+            "episode": len(self.episodes),
+            "golden_checkpoint": self.golden_checkpoint,
+        }
+        return obs, info
+
+    # --- the step loop -----------------------------------------------------------------
+
+    def step(self, action: str | dict | list[dict]) -> tuple[dict, float | None, bool, dict]:
+        """Apply one policy turn and return ``(observation, reward, done, info)``.
+
+        ``action`` is a canonical ACI dict, an ordered list of them, or raw model text
+        (parsed via ``parse_actions(text, format=self.action_format)`` — the Shinken tag
+        dialect and the XML tool-call grammars both work). ``reward`` is ``None`` until
+        the episode ends; on ``done`` the task verifier runs (when present) and its
+        reward is returned and attached to the episode. ``done`` is set by a
+        ``<done/>``/``<stop/>`` control action or the ``max_steps`` budget.
+
+        Infrastructure death is typed: a dead replica raises
+        :class:`~shinken.errors.SandboxDied` after recording the episode with
+        ``exit_reason="sandbox_died"`` (retry by calling :meth:`reset` — a fresh fork)."""
+        sess = self._session()
+        if self._done:
+            raise GymError("episode is done — call reset() for a fresh fork")
+        raw_text = action if isinstance(action, str) else None
+        actions = self._coerce_actions(action)
+        dispatch = [a for a in actions if a.get("verb") not in _CONTROL_VERBS]
+        done = len(dispatch) < len(actions)  # a control action ends the episode
+        terminal = "done" if done else None
+        info: dict = {}
+        try:
+            obs, results = self._dispatch_and_observe(sess, dispatch)
+        except Exception as exc:
+            reason = (
+                "sandbox_died"
+                if isinstance(exc, SandboxDied) or is_connection_loss(exc)
+                else "agent_error"
+            )
+            self._finalize_episode(terminal="aborted", exit_reason=reason, error=f"{reason}: {exc}")
+            raise
+        if results is not None:
+            info["results"] = results["results"]
+            if results.get("failure_kind") == "sandbox_died":
+                err = next((r.get("error") for r in results["results"] if not r["ok"]), "")
+                self._finalize_episode(
+                    terminal="aborted", exit_reason="sandbox_died", error=f"sandbox_died: {err}"
+                )
+                raise SandboxDied(f"replica died mid-step: {err}")
+        step_info: dict = {}
+        if raw_text is not None:
+            step_info["raw_text"] = raw_text
+        step_index = len(self._steps)
+        episode_index = len(self.episodes)
+        self._steps.append(
+            Step(index=step_index, observation=obs, actions=dispatch, info=step_info)
+        )
+        if not done and self.max_steps is not None and len(self._steps) >= self.max_steps:
+            done, terminal = True, "max_steps"
+        reward: float | None = None
+        if done:
+            reward, scorer_error = self._evaluate_for_done()
+            if scorer_error is not None:
+                info["scorer_error"] = scorer_error
+            self._finalize_episode(
+                terminal=terminal,
+                reward=reward,
+                exit_reason="scorer_error" if scorer_error is not None else None,
+                error=scorer_error,
+            )
+            self._done = True
+            info["terminal"] = terminal
+        info["step"] = step_index
+        info["episode"] = episode_index
+        return obs, reward, done, info
+
+    def evaluate(self) -> float:
+        """Run the task verifier against the live replica and return the reward (float
+        passthrough, or 1.0/0.0 from a ``VerifierReceipt``-shaped ``.passed``). The raw
+        verdict is kept in :attr:`last_receipt`. Typed errors, never a silent 0.0."""
+        verify = getattr(self.task, "verify", None)
+        if verify is None:
+            raise GymError(f"task {getattr(self.task, 'name', '?')!r} has no verifier")
+        verdict = verify(self._session())
+        self.last_receipt = verdict
+        return _reward_from(verdict)
+
+    def abort(self, error: str, *, exit_reason: str = "agent_error") -> None:
+        """Record the in-flight episode as aborted (default ``agent_error`` — e.g. the
+        policy emitted unparseable actions) without tearing the replica down; the next
+        :meth:`reset` forks fresh."""
+        self._finalize_episode(terminal="aborted", exit_reason=exit_reason, error=error)
+        self._done = True
+
+    def close(self) -> None:
+        """Finalize any in-flight episode and destroy the current replica. The golden
+        checkpoint survives — ``reset()`` works again; :meth:`dispose` reclaims it."""
+        self._finalize_episode(terminal="stopped")
+        self._teardown_replica()
+
+    def dispose(self) -> None:
+        """Full cleanup: the replica AND (when owned) the golden snapshot image."""
+        self.close()
+        if (
+            self.golden_checkpoint is not None
+            and self.owns_checkpoint
+            and hasattr(self.provider, "delete_snapshot")
+        ):
+            with contextlib.suppress(Exception):
+                self.provider.delete_snapshot(self.golden_checkpoint)
+        self.golden_checkpoint = None
+
+    def __enter__(self) -> ShinkenGymEnv:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.dispose()
+
+    # --- internals ---------------------------------------------------------------------
+
+    def _session(self) -> Any:
+        if self._sess is None:
+            raise GymError("no live replica — call reset() first")
+        return self._sess
+
+    def _coerce_actions(self, action: str | dict | list[dict]) -> list[dict]:
+        if isinstance(action, str):
+            return parse_actions(action, format=self.action_format)
+        if isinstance(action, dict):
+            return [action]
+        if isinstance(action, list):
+            return list(action)
+        raise GymError(f"unsupported action type {type(action).__name__!r}")
+
+    def _dispatch_and_observe(self, sess: Any, dispatch: list[dict]) -> tuple[dict, dict | None]:
+        """Run the actions and capture the post-step observation. On the screenshot knob
+        the pipelined ``Sandbox.step`` fuses both into ~1 RTT; the structured knob pays
+        ``act_batch`` + a guest ``observe``."""
+        if self.observation == "screenshot" and dispatch:
+            res = sess.step(dispatch, observe=self.observe_args or {})
+            if res.get("observation") is not None:
+                return res["observation"], res
+            return self._observe(), res  # fused frame denied/missing — observe explicitly
+        results = sess.act_batch(dispatch) if dispatch else None
+        return self._observe(), results
+
+    def _observe(self) -> dict:
+        sess = self._session()
+        if self.observation == "structured":
+            return sess.observe(structured=True)
+        kw = {k: v for k, v in self.observe_args.items() if k in ("format", "quality", "dedup")}
+        return sess.screenshot(**kw)
+
+    def _evaluate_for_done(self) -> tuple[float | None, str | None]:
+        """Episode-end reward: the verifier's verdict, or ``(None, error)`` when the
+        verifier itself failed (a scorer fault is typed, never a fake 0.0)."""
+        if getattr(self.task, "verify", None) is None:
+            return None, None
+        try:
+            return self.evaluate(), None
+        except Exception as exc:  # noqa: BLE001 — classify into the episode, never crash
+            return None, f"scorer_error: {exc}"
+
+    def _finalize_episode(
+        self,
+        *,
+        terminal: str | None,
+        reward: float | None = None,
+        exit_reason: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        """Close the in-flight episode into a typed :class:`Trajectory` + :class:`Episode`.
+        No-op when no episode is open (back-to-back resets stay clean)."""
+        if not self._episode_open:
+            return
+        self._episode_open = False
+        if not self._steps and error is None:
+            return  # a reset that saw no steps and no fault leaves no empty record
+        reason = exit_reason or _EXIT_REASON_FOR_TERMINAL.get(terminal or "", "task_complete")
+        meta = {
+            "task": getattr(self.task, "name", ""),
+            "instruction": getattr(self.task, "instruction", "") or "",
+            "golden_checkpoint": self.golden_checkpoint,
+            "reset_ms": round(self._reset_ms, 3),
+        }
+        if error is not None:
+            meta["error"] = error
+        traj = Trajectory(steps=self._steps, terminal=terminal, exit_reason=reason, metadata=meta)
+        self.episodes.append(
+            Episode(
+                index=len(self.episodes),
+                task=meta["task"],
+                instruction=meta["instruction"],
+                trajectory=traj,
+                reward=reward,
+                reset_ms=self._reset_ms,
+                info={"receipt": _receipt_dict(self.last_receipt)} if reward is not None else {},
+            )
+        )
+        self._steps = []
+
+    def _teardown_replica(self) -> None:
+        if self._sess is not None:
+            with contextlib.suppress(Exception):
+                self._sess.close()
+            self._sess = None
+        if self._handle is not None:
+            with contextlib.suppress(Exception):
+                self.provider.destroy(self._handle)
+            self._handle = None
+
+
+def _receipt_dict(receipt: Any) -> Any:
+    if receipt is None:
+        return None
+    to_dict = getattr(receipt, "to_dict", None)
+    return to_dict() if callable(to_dict) else receipt
+
+
+def make(task: Any, provider: Any, **kwargs: Any) -> ShinkenGymEnv:
+    """Module-level ``make()`` (the gym entry point trainers expect): construct the env
+    and build the golden checkpoint eagerly — boot base, run ``task.setup`` once,
+    checkpoint. With a warm-pool provider the pool is primed in the provider's own
+    background thread, so the first ``reset()`` already forks warm."""
+    return ShinkenGymEnv(task, provider, **kwargs).make()
+
+
+# ------------------------------------------------------------------------------ the pool
+
+
+class ShinkenGymPool:
+    """N gym envs over ONE golden checkpoint with **parallel fork-reset** — the fan-out.
+
+    All sessions share one :class:`~shinken.SharedLoop` (a single client IO thread, the
+    measured 16→1 thread collapse) and one :class:`~shinken.FrameCache` (cross-replica
+    screenshot dedup over the forked fleet). ``reset()`` forks all N replicas from the
+    single golden checkpoint concurrently; ``step()``/``evaluate()`` fan the per-env calls
+    out on the same worker threads (the IO itself is multiplexed on the shared loop).
+
+    The provider is caller-owned (size its ``warm_pool_size`` to N for boot-free resets);
+    the pool owns the golden snapshot and reclaims it on :meth:`close`."""
+
+    def __init__(self, task: Any, provider: Any, n: int, **env_kwargs: Any) -> None:
+        if n < 1:
+            raise GymError("pool needs n >= 1 envs")
+        self._loop = SharedLoop()
+        self._cache = FrameCache()
+        connect_kwargs = dict(env_kwargs.pop("connect_kwargs", None) or {})
+        connect_kwargs.setdefault("loop", self._loop)
+        connect_kwargs.setdefault("frame_cache", self._cache)
+        self.envs = [
+            ShinkenGymEnv(task, provider, connect_kwargs=connect_kwargs, **env_kwargs)
+            for _ in range(n)
+        ]
+        for env in self.envs[1:]:
+            env.owns_checkpoint = False  # one snapshot, owned by envs[0] / the pool
+        self._pool = ThreadPoolExecutor(max_workers=n, thread_name_prefix="shinken-gym")
+        self._closed = False
+
+    def __len__(self) -> int:
+        return len(self.envs)
+
+    @property
+    def episodes(self) -> list[Episode]:
+        """All finished episodes across the pool (env-major, stable order)."""
+        return [ep for env in self.envs for ep in env.episodes]
+
+    def make(self) -> ShinkenGymPool:
+        """Build the golden checkpoint ONCE (env 0 runs ``task.setup``) and share it with
+        every sibling env — N envs, one setup, one snapshot."""
+        ckpt = self.envs[0].make().golden_checkpoint
+        for env in self.envs[1:]:
+            env.golden_checkpoint = ckpt
+        return self
+
+    def reset(self) -> list[tuple[dict, dict]]:
+        """Fork all N replicas from the golden checkpoint **in parallel** and return the
+        per-env ``(observation, info)`` pairs (each ``info`` carries its ``reset_ms``)."""
+        self.make()
+        return list(self._pool.map(lambda env: env.reset(), self.envs))
+
+    def step(self, actions: list[Any]) -> list[tuple[dict, float | None, bool, dict]]:
+        """Apply one action (dict/list/raw text) per env, in parallel; aligned results."""
+        if len(actions) != len(self.envs):
+            raise GymError(f"expected {len(self.envs)} actions, got {len(actions)}")
+        pairs = zip(self.envs, actions, strict=True)
+        return list(self._pool.map(lambda ea: ea[0].step(ea[1]), pairs))
+
+    def evaluate(self) -> list[float]:
+        """Run the task verifier on every live replica, in parallel; aligned rewards."""
+        return list(self._pool.map(lambda env: env.evaluate(), self.envs))
+
+    def close(self) -> None:
+        """Tear down every replica, reclaim the shared golden snapshot, stop the worker
+        threads and the shared client loop. Idempotent."""
+        if self._closed:
+            return
+        self._closed = True
+        for env in self.envs:
+            with contextlib.suppress(Exception):
+                env.close()
+        with contextlib.suppress(Exception):
+            self.envs[0].dispose()  # the snapshot owner reclaims it
+        self._pool.shutdown(wait=True)
+        self._loop.close()
+
+    def __enter__(self) -> ShinkenGymPool:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
+
+
+# ------------------------------------------------------------------- trajectory exporter
+
+#: Exporter columns — one row per step, dict-of-lists (the HF ``Dataset.from_dict`` shape).
+#: ``image`` is raw PNG/JPEG bytes (or None on the structured knob, which fills
+#: ``tree_text`` instead); ``reward`` is the episode reward broadcast to its rows;
+#: ``terminal``/``exit_reason`` carry the typed failure taxonomy (so a trainer drops
+#: ``sandbox_died`` rollouts without poisoning the reward signal).
+EXPORT_COLUMNS = (
+    "episode",
+    "step",
+    "task",
+    "instruction",
+    "image",
+    "tree_text",
+    "actions_json",
+    "raw_text",
+    "note",
+    "reward",
+    "done",
+    "terminal",
+    "exit_reason",
+    "reset_ms",
+)
+
+
+def episodes_to_records(episodes: list[Episode]) -> dict[str, list]:
+    """Flatten episodes into the training-native dict-of-lists shape (columns:
+    :data:`EXPORT_COLUMNS`; one row per step, episode fields broadcast). Pure and
+    dependency-free — feed it to ``datasets.Dataset.from_dict`` or any columnar sink."""
+    records: dict[str, list] = {c: [] for c in EXPORT_COLUMNS}
+    for ep in episodes:
+        steps = ep.trajectory.steps
+        for step in steps:
+            obs = step.observation or {}
+            records["episode"].append(ep.index)
+            records["step"].append(step.index)
+            records["task"].append(ep.task)
+            records["instruction"].append(ep.instruction)
+            records["image"].append(obs.get("png") or obs.get("bytes"))
+            records["tree_text"].append(obs.get("tree_text"))
+            records["actions_json"].append(json.dumps(step.actions))
+            records["raw_text"].append(step.info.get("raw_text"))
+            records["note"].append(step.note)
+            records["reward"].append(ep.reward)
+            records["done"].append(step.index == steps[-1].index)
+            records["terminal"].append(ep.trajectory.terminal)
+            records["exit_reason"].append(ep.trajectory.exit_reason)
+            records["reset_ms"].append(round(ep.reset_ms, 3))
+    return records
+
+
+def to_hf_dataset(episodes: list[Episode]) -> Any:
+    """Episodes as a Hugging Face ``datasets.Dataset`` (lazy import — ``datasets`` is
+    NEVER a dependency). Without the package installed this returns the plain
+    dict-of-lists from :func:`episodes_to_records`, which is the same columnar shape."""
+    records = episodes_to_records(episodes)
+    try:
+        import datasets  # noqa: PLC0415 — deliberate lazy import, optional dependency
+    except ImportError:
+        return records
+    return datasets.Dataset.from_dict(records)
+
+
+# ----------------------------------------------------------------------- the dataloader
+
+
+class MultiTurnDataloader:
+    """A cua-bench-``MultiTurnDataloader``-shaped collection iterator over a
+    :class:`ShinkenGymPool` — duck-typed to the surface TRL-GRPO-style loops drive
+    (``__iter__``/``__next__`` yielding observation batches, ``async_step`` applying the
+    model's responses, an episode buffer to sample from) with **no TRL/torch/tokenizer
+    dependency**: batches are plain dict-of-lists carrying raw observations, and
+    responses are raw model text (routed through ``parse_actions``) or action dicts.
+
+    The loop::
+
+        loader = MultiTurnDataloader(pool, total_episodes=32)
+        for batch in loader:                        # {"env_id", "image", "observation", …}
+            responses = policy(batch)               # one raw-text response per row
+            loader.async_step({"env_id": batch["env_id"], "responses": responses})
+        dataset = to_hf_dataset(loader.episodes)
+
+    Where cua-bench's loader spawns a worker subprocess per env and its env re-creates
+    the sandbox per episode, here every env rides the pool's shared loop and every
+    episode boundary is a **fork from the golden checkpoint** (``auto_reset``). A
+    response that fails to parse aborts that env's episode as ``agent_error`` (typed,
+    recorded, auto-reset) instead of crashing the collection loop."""
+
+    def __init__(
+        self,
+        pool: ShinkenGymPool,
+        *,
+        batch_size: int | None = None,
+        total_episodes: int | None = None,
+        auto_reset: bool = True,
+    ) -> None:
+        self.pool = pool
+        self.num_envs = len(pool.envs)
+        self.batch_size = batch_size or self.num_envs
+        if self.batch_size > self.num_envs:
+            raise GymError("each env cannot run more than one step per batch")
+        self.total_episodes = total_episodes
+        self.auto_reset = auto_reset
+        self._pending: dict[int, dict] = {}  # env index -> observation awaiting a response
+        self._completed = 0
+        self._started = False
+
+    @property
+    def episodes(self) -> list[Episode]:
+        return self.pool.episodes
+
+    def __iter__(self) -> MultiTurnDataloader:
+        return self
+
+    def __next__(self) -> dict:
+        """The next observation batch (dict-of-lists): ``env_id``, ``observation`` (full
+        dicts), ``image`` (PNG/JPEG bytes or None), ``instruction``, ``step``, ``task``.
+        Raises ``StopIteration`` once ``total_episodes`` have completed."""
+        if self.total_episodes is not None and self._completed >= self.total_episodes:
+            raise StopIteration
+        if not self._started:
+            self.pool.make()
+            self._started = True
+        for i, env in enumerate(self.pool.envs):
+            if i not in self._pending and (env._sess is None or env._done):
+                if self._budget_left() <= self._in_flight():
+                    continue  # don't fork episodes the budget can never finish
+                obs, _info = env.reset()
+                self._pending[i] = obs
+        ready = sorted(self._pending)[: self.batch_size]
+        if not ready:
+            raise StopIteration  # budget exhausted mid-flight
+        batch: dict[str, list] = {
+            "env_id": [],
+            "observation": [],
+            "image": [],
+            "instruction": [],
+            "step": [],
+            "task": [],
+        }
+        for i in ready:
+            obs = self._pending.pop(i)
+            env = self.pool.envs[i]
+            batch["env_id"].append(i)
+            batch["observation"].append(obs)
+            batch["image"].append(obs.get("png") or obs.get("bytes"))
+            batch["instruction"].append(getattr(env.task, "instruction", "") or "")
+            batch["step"].append(len(env._steps))
+            batch["task"].append(getattr(env.task, "name", ""))
+        return batch
+
+    def async_step(self, batch_return: dict) -> list[dict]:
+        """Apply the model's responses for a previously yielded batch (their
+        ``async_step`` shape: a dict carrying the batch's ids + ``responses``). Accepts
+        ``env_id`` (ours) or ``worker_id`` (theirs). Returns one
+        ``{"env_id", "reward", "done", "info"}`` row per response; a ``DialectError``
+        aborts that env's episode as ``agent_error`` and reports ``done=True``."""
+        env_ids = batch_return.get("env_id")
+        if env_ids is None:
+            env_ids = batch_return.get("worker_id")
+        responses = batch_return["responses"]
+        if env_ids is None or len(env_ids) != len(responses):
+            raise GymError("batch_return needs aligned env_id (or worker_id) and responses")
+        return [self.step(i, r) for i, r in zip(env_ids, responses, strict=False)]
+
+    def step(self, env_id: int, response: Any) -> dict:
+        """Apply one response to one env; on episode end count it (and auto-reset =
+        re-fork) — see :meth:`async_step` for the batch form."""
+        env = self.pool.envs[env_id]
+        try:
+            obs, reward, done, info = env.step(response)
+        except SandboxDied as exc:
+            # Infra death is typed and retry-eligible: the episode was recorded with
+            # exit_reason="sandbox_died"; a fresh fork continues collection.
+            self._episode_finished(env_id)
+            return {"env_id": env_id, "reward": None, "done": True, "info": {"error": str(exc)}}
+        except ValueError as exc:  # DialectError is a ValueError: unparseable model output
+            env.abort(f"agent_error: {exc}")
+            self._episode_finished(env_id)
+            return {"env_id": env_id, "reward": None, "done": True, "info": {"error": str(exc)}}
+        if done:
+            self._episode_finished(env_id)
+        else:
+            self._pending[env_id] = obs
+        return {"env_id": env_id, "reward": reward, "done": done, "info": info}
+
+    def sample_episodes(self, batch_size: int | None = None) -> list[Episode]:
+        """A random batch of finished episodes (their ``sample_from_buffer`` analog —
+        the buffer here is the pool's typed episode list)."""
+        eps = self.episodes
+        if batch_size is None or batch_size >= len(eps):
+            return list(eps)
+        return random.sample(eps, batch_size)
+
+    def close(self) -> None:
+        self.pool.close()
+
+    # --- internals ---------------------------------------------------------------------
+
+    def _budget_left(self) -> int:
+        if self.total_episodes is None:
+            return len(self.pool.envs)  # effectively unbounded per scheduling round
+        return max(0, self.total_episodes - self._completed)
+
+    def _in_flight(self) -> int:
+        """Episodes currently open (forked and not yet finished) — counts envs awaiting
+        a response too, not just the ones holding a pending observation."""
+        return sum(1 for env in self.pool.envs if env._episode_open)
+
+    def _episode_finished(self, env_id: int) -> None:
+        self._completed += 1
+        self._pending.pop(env_id, None)
+        if self.auto_reset and self._budget_left() > self._in_flight():
+            obs, _info = self.pool.envs[env_id].reset()
+            self._pending[env_id] = obs

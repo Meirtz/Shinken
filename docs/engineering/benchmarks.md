@@ -257,20 +257,24 @@ daemon-stall outlier; this quiet-host run replaces it — the tracked JSON is th
 
 ## 5. Local many-sandbox fan-out (S5 — `bench_fanout.py`)
 
-One process drives N ∈ {1, 2, 4, 8, 16, 32, 64} local sandboxes with ALL sync sessions
+One process drives N ∈ {1, 2, 4, 8, 16, 32, 64, 128} local sandboxes with ALL sync sessions
 multiplexed on **one `SharedLoop`** (the §3-B3 recommendation, here measured), running 10
-synchronized rounds of {observe JPEG q80 @1024 + click} per tier. 1,347 datapoints (1,270
-individual observations + 70 round walls + 7 tier resource rows).
+synchronized rounds of {observe JPEG q80 @1024 + click} per tier. 2,718 datapoints (2,550
+individual observations + 80 round walls + 8 tier resource rows).
 
-| N | observe round wall p50 | per-sandbox observe p50 / p90 | click round wall p50 | host process RSS | guest RSS / sandbox | boot wall (8 workers) |
+| N | observe round wall p50 | per-sandbox observe p50 | click round wall p50 | host RSS | guest RSS / sandbox | boot wall (8 workers) |
 |---:|---:|---:|---:|---:|---:|---:|
-| 1 | 7.5 ms | 7.2 / 10.7 ms | 1.1 ms | 44.4 MiB | 157.0 MiB¹ | 9.2 s |
-| 2 | 6.1 ms | 6.0 / 6.9 ms | 0.7 ms | 55.2 MiB | 39.5 MiB | 7.7 s |
-| 4 | 8.8 ms | 8.2 / 12.0 ms | 1.5 ms | 78.9 MiB | 39.2 MiB | 7.7 s |
-| 8 | 7.9 ms | 7.3 / 10.3 ms | 1.9 ms | 111.6 MiB | 40.2 MiB | 7.6 s |
-| 16 | 14.0 ms | 10.4 / 13.6 ms | 2.2 ms | 139.8 MiB | 41.4 MiB | 16.5 s |
-| 32 | 24.6 ms | 20.9 / 24.3 ms | 4.7 ms | 165.3 MiB | 39.3 MiB | 32.8 s |
-| 64 | **50.7 ms** | 42.6 / 60.3 ms | 5.5 ms | 63.5 MiB² | 36.2 MiB | 66.4 s |
+| 1 | 7.6 ms | 7.6 ms | 0.7 ms | 38.9 MiB | 41.5 MiB | 0.20 s |
+| 2 | 8.4 ms | 7.8 ms | 1.1 ms | 39.8 MiB | 41.0 MiB | 0.20 s |
+| 4 | 10.1 ms | 9.0 ms | 1.4 ms | 40.8 MiB | 43.0 MiB | 0.25 s |
+| 8 | 11.3 ms | 10.0 ms | 2.3 ms | 42.1 MiB | 44.7 MiB | 0.34 s |
+| 16 | 19.7 ms | 14.6 ms | 3.6 ms | 43.4 MiB | 41.5 MiB | 0.75 s |
+| 32 | 36.6 ms | 27.8 ms | 4.6 ms | 46.9 MiB | 40.6 MiB | 1.46 s |
+| 64 | 69.4 ms | 56.9 ms | 9.3 ms | 47.9 MiB | 40.6 MiB | 2.98 s |
+| **128** | **141.6 ms** | 120.2 ms | 24.8 ms | 52.4 MiB | 39.7 MiB | **7.26 s** |
+
+(128/128 materialized, zero boot infra-failures across all 255 boots in the run — the boot
+flake trio is fixed, and the per-replica boot is ~57 ms amortized at N=128.)
 
 ¹ first-boot settling artifact (the desktop is still paging in when sampled); steady state is
 ~36–41 MiB. ² the N=64 host-RSS reading is depressed by macOS memory compression mid-sample;
@@ -424,7 +428,7 @@ cell × 10 cells = 1,500 datapoints, 5 warm-up reps per cell discarded.
 | input action — type 1 char | 158.8 ms | 1.13 ms | ~140× |
 | observe — full-screen screenshot PNG | 36.3 ms | 4.62 ms | ~7.9× |
 | observe — screenshot JPEG q80 | — | 8.91 ms | — |
-| **full agent step (act + observe PNG)** | **191.8 ms** (p99 212) | **5.37 ms** (p99 9.2) | **~36×** |
+| **full agent step (act + observe PNG)** | **193.2 ms** (p99 212) | **13.4 ms** (p99 9.2) | **~14×** |
 | full agent step (act + observe JPEG q80) | — | 9.53 ms (p99 15.4) | ~20× |
 
 | bytes per step (mean) | wire KiB | decoded image KiB |
@@ -445,7 +449,7 @@ cell × 10 cells = 1,500 datapoints, 5 warm-up reps per cell discarded.
   that either leaves the CPU idle or, in RL/eval fleets, multiplies directly into
   sandbox-hours.
 - **Bytes/step is honestly mixed and favors OSWorld at default codecs.** OSWorld's PNG of
-  this text-on-desktop frame is ~3.5× smaller than `shinkend`'s (19.1 vs 67.5 KiB): its
+  this text-on-desktop frame is ~3.5× smaller than `shinkend`'s (20.9 vs 72.4 KiB): its
   scrot/PIL path re-encodes at deflate's slower, denser settings, while `shinkend`'s encoder
   is speed-tuned — and the ACI currently adds ~33% base64/JSON wire overhead on top. The ACI
   closes the wire gap with the levers the other suites measure (JPEG q50 @512 ≈ 11 KiB on
@@ -472,15 +476,23 @@ before/after. The no-stream baseline is ~0% for both processes.
 
 | fps | workload | poll-diff: shinkend + Xvfb | damage: shinkend + Xvfb | reduction |
 |---:|---|---:|---:|---:|
-| 5 | idle | 4.5 + 2.0 = 6.5 % | 0.25 + 0.0 = **0.25 %** | 26× |
-| 10 | idle | 3.2 + 1.1 = 4.4 % | 0.12 + 0.0 = **0.12 %** | 36× |
-| 30 | idle | 6.4 + 2.2 = 8.6 % | 0.62 + 0.0 = **0.62 %** | 14× |
-| 5 | typing | 5.8 + 2.1 = 8.0 % | 1.9 + 0.4 = **2.2 %** | 3.5× |
-| 10 | typing | 4.1 + 1.2 = 5.4 % | 2.7 + 0.3 = **3.0 %** | 1.8× |
-| 30 | typing | 19.9 + 7.2 = **27.1 %** | 3.8 + 0.4 = **4.2 %** | 6.4× |
+| 5 | idle | 4.5 + 2.1 = 6.6 % | 0.25 + 0.0 = **0.25 %** | 26× |
+| 10 | idle | 8.6 + 4.0 = 12.6 % | 0.37 + 0.0 = **0.37 %** | 34× |
+| 30 | idle | 20.2 + 7.6 = 27.8 % | 1.00 + 0.0 = **1.0 %** | 28× |
+| 5 | typing | 5.7 + 2.5 = 8.2 % | 1.8 + 0.4 = **2.2 %** | 3.7× |
+| 10 | typing | 10.3 + 4.0 = 14.3 % | 3.2 + 0.4 = **3.6 %** | 4.0× |
+| 30 | typing | 24.1 + 9.8 = **33.9 %** | 4.4 + 0.6 = **5.0 %** | 6.8× |
 
 (CPU = % of one guest core over the window; frames delivered were identical between modes
-per cell — 1 keyframe idle, 42/83/94-95 frames typing.)
+per cell — 1 keyframe idle, 42/83/93-95 frames typing. The suite now settles past the boot's
+30 s root-repaint tail before measuring, so idle windows measure idle, not the tail.)
+
+**A regression this suite caught:** after a merge, the deployed lazy X11 wrapper stopped
+forwarding `damage_cursor`/`damage_since` — the trait defaults silently degraded every
+screencast back to full poll-capture per tick (idle ≈ poll cost, scaling with fps) while
+bytes stayed suppressed, masking it everywhere except here. Fixed by forwarding the damage
+API through the wrapper; the lesson (wrapper types must forward every trait method or pin it
+with a test) is now part of the review checklist.
 
 ![guest capture CPU, poll vs damage, idle and typing](../assets/bench/guest_cpu.png)
 
@@ -545,13 +557,22 @@ painted** (sampled root pixels non-black) — the image's xterm maps ~0.4 s late
 `fill_xterm` (the content-scenario helper) now probes the xterm before filling it. (4) The
 before/after delta also folds in one behavioral fix: `Xvfb -noreset` (a server regeneration
 triggered by short-lived boot clients could wipe the root paint and kill mid-connect clients
-once the listener stopped being desktop-gated). (5) **Known issue:** a residual boot flake
-remains at roughly 1% of boots under heavy container churn on this Docker Desktop VM — the
-guest reports `x11_up: true` but the root never samples non-black within the 45 s readiness
-timeout (i.e. the desktop bring-up stalls; shinkend reports it honestly). It surfaces as a
-typed `ProviderError` after `startup_timeout`, and the fork suite records it as an explicit
-`infra_failure` row. 122 consecutive instrumented single boots reproduced zero occurrences;
-root-cause work continues.
+once the listener stopped being desktop-gated). (5) **Root-caused and fixed** (formerly: a
+~1%-of-boots readiness flake under heavy container churn — `x11_up: true` but the root never
+sampled non-black within the 45 s readiness timeout). A live autopsy of flaked boots found
+three compounding causes: the image's root paint had **never** worked (`xsetroot` ships in
+`x11-xserver-utils`, which the image didn't install — the rc=127 failure was silenced by
+`>/dev/null || true`, so "readiness = wallpaper painted" was actually riding on the booted
+xterm covering a sample point); under parallel-boot CPU storms the concurrent
+`openbox & xterm &` launch hits the WM **adoption race**, which can leave the xterm
+permanently withdrawn (black screen, zero windows — the flake) or mapped-but-unfocused
+(keystrokes silently discarded); and the deployed lazy X11 backend lacked the
+mapped-windows readiness fallback (it had landed only on the inner executor's never-called
+trait method). Fixed in the image (install `xsetroot`, surface paint failures in
+desktop.log, launch the xterm only once the WM's EWMH check window is up, then converge
+keyboard focus with bounded EWMH activation) and the runtime (one `readiness_checked`
+implementation shared by both X11 backends). Verified: three consecutive
+`SHINKEN_BENCH_NS=8,16` fan-out runs (8-way parallel boots) with zero `infra_failure` rows.
 
 ## 10. Fleet-level observation dedup over a forked fleet (S10 — `bench_fork_dedup.py`)
 

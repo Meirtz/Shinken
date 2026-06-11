@@ -187,10 +187,51 @@ class CuaGymTaskSource:
 # --------------------------------------------------------------------------- guest exec
 
 #: ``guest_exec(argv, *, timeout, workdir, detach) -> (returncode, stdout, stderr)`` — the
-#: substrate's out-of-band exec channel. exec/file-transfer are deliberately NOT ACI wire
-#: verbs in v0 (docs/design/tech-decisions.md, D2 sub-decision): setup/scoring flow over
-#: the provider's own channel, exactly as CUA-Gym drives OSWorld's ``/setup/execute``.
+#: guest exec channel. The PREFERRED transport is the typed in-band ACI ``exec`` verb
+#: (:class:`_AciExec` — substrate-agnostic: works wherever a shinkend runs, no host
+#: docker CLI required); ``docker exec`` (:class:`_DockerExec`) remains the out-of-band
+#: fallback for pre-exec runtimes, exactly as CUA-Gym drives OSWorld's ``/setup/execute``.
 GuestExec = Callable[..., tuple[int, str, str]]
+
+
+def _session_supports_exec(sess: Any) -> bool:
+    """Whether the connected session's runtime advertises the typed ``exec`` verb."""
+    try:
+        return "exec" in (sess.capabilities.verbs or [])
+    except Exception:
+        return False
+
+
+class _AciExec:
+    """In-band exec channel over the typed ACI ``exec`` verb (G1) — the preferred
+    transport: setup/verify flows over the SAME WebSocket as actions/observations,
+    so it works on substrates where ``docker exec`` does not exist (a remote
+    shinkend over WS, non-Docker providers)."""
+
+    def __init__(self, session: Any) -> None:
+        self.session = session
+
+    def __call__(
+        self,
+        argv: list[str],
+        *,
+        timeout: float = 60.0,
+        workdir: str | None = None,
+        detach: bool = False,
+    ) -> tuple[int, str, str]:
+        if detach:
+            # mirror `docker exec -d`: fire-and-forget via an explicit shell opt-in
+            line = " ".join(shlex.quote(str(a)) for a in argv)
+            self.session.exec(shell=f"({line}) >/dev/null 2>&1 &", cwd=workdir, timeout=timeout)
+            return (0, "", "")
+        r = self.session.exec(list(argv), cwd=workdir, timeout=timeout)
+        if r.get("timed_out"):
+            # the _DockerExec timeout convention: rc 124 + a typed stderr message
+            return (124, r.get("stdout", ""), f"timeout after {timeout}s")
+        rc = r.get("exit_code")
+        if rc is None:  # killed by a signal without a timeout — report like a shell
+            rc = 128 + int(r.get("signal") or 1)
+        return (rc, r.get("stdout", ""), r.get("stderr", ""))
 
 
 class _DockerExec:
@@ -296,8 +337,18 @@ class ShinkenCuaGymEnv:
         self._teardown_replica()
         self._handle = self.provider.resume(self.golden_checkpoint)
         self._sess = self.provider.connect(self._handle)
-        self._exec = self.exec_factory(self.provider, self._handle)
+        self._exec = self._exec_channel(self._sess, self._handle)
         return {"instruction": self.task.instruction, "screenshot": self.screenshot()}
+
+    def _exec_channel(self, sess: Any, handle: Any) -> GuestExec:
+        """The guest exec channel for one connected replica: PREFER the typed in-band
+        ACI ``exec`` verb when the runtime advertises it (substrate-agnostic — no host
+        docker CLI), falling back to the configured out-of-band factory (``docker
+        exec`` by default) for pre-exec runtimes. An explicitly-passed ``exec_factory``
+        is caller intent and always wins."""
+        if self.exec_factory is default_exec_factory and _session_supports_exec(sess):
+            return _AciExec(sess)
+        return self.exec_factory(self.provider, handle)
 
     def _build_golden(self) -> str:
         """Create the base sandbox, replay the bundle's setup steps once, checkpoint the
@@ -306,7 +357,7 @@ class ShinkenCuaGymEnv:
         try:
             sess = self.provider.connect(base)
             try:
-                run = self.exec_factory(self.provider, base)
+                run = self._exec_channel(sess, base)
                 for step in self.task.setup_steps:
                     self._apply_setup_step(step, sess, run)
                 return self.provider.checkpoint(base)

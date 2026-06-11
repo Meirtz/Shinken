@@ -1140,6 +1140,7 @@ dependencies = [
  "core-graphics",
  "futures-util",
  "jpeg-encoder",
+ "libc",
  "png",
  "serde",
  "serde_json",

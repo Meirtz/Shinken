@@ -11,7 +11,9 @@
 
 #[cfg(target_os = "linux")]
 mod atspi_source;
+mod clipboard;
 mod connection;
+mod exec;
 mod executor;
 #[cfg(all(target_os = "macos", feature = "macos-native"))]
 mod executor_macos;
@@ -240,6 +242,8 @@ async fn main() -> Result<()> {
     let exec = executor::executor_for(backend.as_deref())?;
     let connections = Arc::new(Semaphore::new(MAX_CONNECTIONS));
     let screencasts = Arc::new(Semaphore::new(MAX_SCREENCASTS));
+    // In-guest exec channel (G1): bound concurrently running children runtime-wide.
+    let execs = Arc::new(Semaphore::new(exec::MAX_EXECS));
     let streams = Arc::new(StreamRegistry::default());
     // Structured observation (M1b): ONE AT-SPI worker thread shared by every
     // session (per-session ids/diff state lives in each Session). It dials the
@@ -282,11 +286,12 @@ async fn main() -> Result<()> {
         let exec = exec.clone();
         let token = token.clone();
         let screencasts = screencasts.clone();
+        let execs = execs.clone();
         let streams = streams.clone();
         let tree = tree.clone();
         tokio::spawn(async move {
             let _conn_permit = conn_permit;
-            if let Err(e) = serve(stream, exec, token, screencasts, streams, tree).await {
+            if let Err(e) = serve(stream, exec, token, screencasts, execs, streams, tree).await {
                 eprintln!("connection {peer} closed with error: {e}");
             }
         });
@@ -311,6 +316,7 @@ async fn serve(
     exec: Arc<dyn Executor>,
     token: Option<String>,
     screencasts: Arc<Semaphore>,
+    execs: Arc<Semaphore>,
     streams: Arc<StreamRegistry>,
     tree: Option<Arc<dyn observe::TreeSource>>,
 ) -> Result<()> {
@@ -346,6 +352,9 @@ async fn serve(
         session = session.with_tree_source(tree);
     }
     let mut screencast: Option<JoinHandle<()>> = None;
+    // In-flight exec tasks (G1). Tracked so a connection drop aborts them — the
+    // children are spawned with kill_on_drop, so aborting reaps the process too.
+    let mut exec_tasks: Vec<JoinHandle<()>> = Vec::new();
     let started = tokio::time::Instant::now();
 
     let outcome: Result<()> = loop {
@@ -427,6 +436,48 @@ async fn serve(
                 // after the delay; yields to other connections, never blocks the runtime.
                 if step.delay_ms > 0 {
                     tokio::time::sleep(Duration::from_millis(step.delay_ms)).await;
+                }
+                // Typed in-guest exec (G1): run the validated spec in a bounded async
+                // task feeding the same writer channel. Exclusive with StreamCtl —
+                // an exec action never carries a stream side effect.
+                if let Some(espec) = step.exec {
+                    match execs.clone().try_acquire_owned() {
+                        Ok(permit) => {
+                            // The streamed form's ack must hit the writer BEFORE the
+                            // task can emit its first exec_output, so send it here,
+                            // then spawn. (Buffered form: reply is None — the task's
+                            // typed `result` is the only answer.)
+                            if let Some(reply) = step.reply {
+                                if out.send(ws_reply(reply)).await.is_err() {
+                                    break Ok(());
+                                }
+                            }
+                            exec_tasks.retain(|h| !h.is_finished());
+                            exec_tasks.push(spawn_exec(espec, out.clone(), permit));
+                        }
+                        Err(_) => {
+                            // Build via serde so a hostile call_id can't break the JSON.
+                            let nack = serde_json::to_string(&protocol::Message::Ack {
+                                call_id: espec.call_id.clone(),
+                                ok: false,
+                                error: Some(format!(
+                                    "max concurrent execs reached ({})",
+                                    exec::MAX_EXECS
+                                )),
+                            })
+                            .unwrap_or_else(|_| {
+                                protocol::error_result_text(
+                                    &espec.call_id,
+                                    "max concurrent execs reached",
+                                )
+                            });
+                            let _ = out.send(WsMessage::Text(nack)).await;
+                        }
+                    }
+                    if step.close {
+                        break Ok(());
+                    }
+                    continue;
                 }
                 match step.stream {
                     StreamCtl::Start(mut spec) => {
@@ -533,6 +584,10 @@ async fn serve(
     if let Some(h) = screencast.take() {
         h.abort();
     }
+    // Abort in-flight execs: kill_on_drop reaps their children with them.
+    for h in exec_tasks {
+        h.abort();
+    }
     drop(out); // let the writer task drain and finish
                // Bound the drain: a stalled peer must not let the writer (and thus the connection
                // slot) outlive the connection — abort if it can't flush within WRITE_TIMEOUT.
@@ -544,6 +599,35 @@ async fn serve(
         writer.abort();
     }
     outcome
+}
+
+/// Run one validated in-guest exec (G1) as an async task feeding the connection's
+/// writer channel: the buffered form answers with one typed `result`
+/// ([`protocol::exec_result`] — ok even on a nonzero exit code; spawn/wait failures
+/// are error results); the streamed form pushes `exec_output` events and one
+/// terminal `exec_exit` (see [`exec::run_streamed`]). The semaphore permit rides
+/// the task, releasing on completion or abort.
+fn spawn_exec(
+    spec: exec::ExecSpec,
+    out: mpsc::Sender<WsMessage>,
+    permit: tokio::sync::OwnedSemaphorePermit,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let _permit = permit;
+        if spec.stream {
+            exec::run_streamed(spec, out).await;
+            return;
+        }
+        let call_id = spec.call_id.clone();
+        let text = match exec::run_buffered(spec).await {
+            Ok(outcome) => serde_json::to_string(&protocol::exec_result(&call_id, &outcome))
+                .unwrap_or_else(|_| {
+                    protocol::error_result_text(&call_id, "failed to encode exec result")
+                }),
+            Err(e) => protocol::error_result_text(&call_id, &e),
+        };
+        let _ = out.send(WsMessage::Text(text)).await;
+    })
 }
 
 /// Stream screencast frames for `spec` into the connection's writer channel until
@@ -988,6 +1072,7 @@ mod tests {
     async fn spawn_server_with(
         screencasts: Arc<Semaphore>,
         streams: Arc<StreamRegistry>,
+        execs: Arc<Semaphore>,
     ) -> std::net::SocketAddr {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -1001,10 +1086,12 @@ mod tests {
                 let (stream, _) = listener.accept().await.unwrap();
                 let exec = exec.clone();
                 let screencasts = screencasts.clone();
+                let execs = execs.clone();
                 let streams = streams.clone();
                 let tree = tree.clone();
                 tokio::spawn(async move {
-                    let _ = serve(stream, exec, None, screencasts, streams, Some(tree)).await;
+                    let _ =
+                        serve(stream, exec, None, screencasts, execs, streams, Some(tree)).await;
                 });
             }
         });
@@ -1015,6 +1102,7 @@ mod tests {
         spawn_server_with(
             Arc::new(Semaphore::new(MAX_SCREENCASTS)),
             Arc::new(StreamRegistry::default()),
+            Arc::new(Semaphore::new(exec::MAX_EXECS)),
         )
         .await
     }
@@ -1411,6 +1499,111 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&obs).unwrap();
         assert_eq!(v["type"], "observation");
         assert!(v["image"]["ref"].is_string(), "text path keeps base64 ref");
+    }
+
+    // ---- typed in-guest exec channel (G1) ----
+
+    /// End-to-end buffered exec over a real WS: argv echo answers one typed
+    /// `result` (ok=true, ExecResult value) — no executor backend involved, so it
+    /// runs on the virtual backend like any other substrate.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn exec_buffered_answers_typed_result_over_websocket() {
+        let addr = spawn_server().await;
+        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}"))
+            .await
+            .unwrap();
+        ws.send(WsMessage::Text(HELLO.into())).await.unwrap();
+        assert!(
+            text(&mut ws).await.contains("\"exec\""),
+            "welcome advertises exec"
+        );
+        ws.send(WsMessage::Text(
+            r#"{"type":"action","call_id":"x1","action":{"verb":"exec","argv":["echo","over","ws"]}}"#
+                .into(),
+        ))
+        .await
+        .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&text(&mut ws).await).unwrap();
+        assert_eq!(v["type"], "result");
+        assert_eq!(v["call_id"], "x1");
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["value"]["exit_code"], 0);
+        assert_eq!(v["value"]["stdout"], "over ws\n");
+        assert_eq!(v["value"]["timed_out"], false);
+    }
+
+    /// End-to-end streamed exec: ack first, then seq-ordered exec_output events,
+    /// terminated by exactly one exec_exit.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn exec_streamed_acks_then_pushes_output_and_exit() {
+        let addr = spawn_server().await;
+        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}"))
+            .await
+            .unwrap();
+        ws.send(WsMessage::Text(HELLO.into())).await.unwrap();
+        let _ = text(&mut ws).await; // welcome
+        ws.send(WsMessage::Text(
+            r#"{"type":"action","call_id":"x2","action":{"verb":"exec","shell":"echo one; echo two 1>&2","stream":true}}"#
+                .into(),
+        ))
+        .await
+        .unwrap();
+        let ack = text(&mut ws).await;
+        assert!(
+            ack.contains("\"type\":\"ack\"") && ack.contains("\"ok\":true"),
+            "the ack must precede any exec_output: {ack}"
+        );
+        let mut last_seq: i64 = -1;
+        let mut channels = Vec::new();
+        loop {
+            let v: serde_json::Value = serde_json::from_str(&text(&mut ws).await).unwrap();
+            if v["type"] == "exec_exit" {
+                assert_eq!(v["cause"], "x2");
+                assert_eq!(v["exit_code"], 0);
+                assert_eq!(v["truncated"], false);
+                break;
+            }
+            assert_eq!(v["type"], "exec_output");
+            assert_eq!(v["cause"], "x2");
+            let seq = v["seq"].as_i64().unwrap();
+            assert!(seq > last_seq, "seq must be monotonic");
+            last_seq = seq;
+            channels.push(v["channel"].as_str().unwrap().to_string());
+        }
+        assert!(channels.contains(&"stdout".to_string()));
+        assert!(channels.contains(&"stderr".to_string()));
+    }
+
+    /// Exec saturation: with the exec semaphore exhausted, the action is nacked
+    /// (addressed to the request call_id), never silently queued.
+    #[tokio::test]
+    async fn exec_saturation_is_nacked() {
+        let addr = spawn_server_with(
+            Arc::new(Semaphore::new(MAX_SCREENCASTS)),
+            Arc::new(StreamRegistry::default()),
+            Arc::new(Semaphore::new(0)), // exec slots exhausted
+        )
+        .await;
+        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}"))
+            .await
+            .unwrap();
+        ws.send(WsMessage::Text(HELLO.into())).await.unwrap();
+        let _ = text(&mut ws).await; // welcome
+        ws.send(WsMessage::Text(
+            r#"{"type":"action","call_id":"x3","action":{"verb":"exec","argv":["true"]}}"#.into(),
+        ))
+        .await
+        .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&text(&mut ws).await).unwrap();
+        assert_eq!(v["type"], "ack");
+        assert_eq!(v["call_id"], "x3");
+        assert_eq!(v["ok"], false);
+        assert!(v["error"]
+            .as_str()
+            .unwrap()
+            .contains("max concurrent execs"));
     }
 
     // ---- XDamage-driven capture (change-proportional pipeline, half B) ----
@@ -1903,7 +2096,12 @@ mod tests {
         let screencasts = Arc::new(Semaphore::new(0)); // exhausted
         let streams = Arc::new(StreamRegistry::default());
         streams.register("old-stream", 7); // a live logical stream to resume
-        let addr = spawn_server_with(screencasts, streams).await;
+        let addr = spawn_server_with(
+            screencasts,
+            streams,
+            Arc::new(Semaphore::new(exec::MAX_EXECS)),
+        )
+        .await;
 
         let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}"))
             .await

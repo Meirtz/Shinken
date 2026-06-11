@@ -45,7 +45,7 @@ committed is world-readable.
 | `shinkend/` | ✅ | Rust Guest Runtime (`shinkend`) |
 | `sdk/python/` | ✅ | Python SDK and CLI (incl. `shinken/integrations/` — swerex/uni-agent, CUA-Gym, Agentix, ProRL-Agent-Server interop adapters) |
 | `images/linux/` | ✅ | Local Linux Sandbox image |
-| `examples/` | ✅ | Runnable interop examples (`cua_gym_shinken.py`, `agentix_shinken.py`, `uniagent_shinken.py` — scripted, no model API) |
+| `examples/` | ✅ | Runnable interop examples (`gym_rollout.py`, `cua_gym_shinken.py`, `agentix_shinken.py`, `uniagent_shinken.py` — scripted, no model API) |
 | `benchmarks/` | ✅ | Rerunnable local benchmark suites (incl. `bench_client_scale.py` N=1024 client plane) + tracked raw results (`results/*.json`, one-off WAN CSVs in `results/remote/`); ALL figures land in `docs/assets/bench/` (regenerate: `replot.py` + `plot_remote.py`); methodology in `docs/engineering/benchmarks.md`, headline report in `docs/benchmarks/README.md` |
 | `references/` | 🚫 git-ignored | 13 cloned prior-art repos studied for design (OSWorld, cua, codex, anthropic-quickstarts, neko, OpenAdapt, e2b-desktop, UI-TARS-desktop, OmniParser; + 2026-06: uni-agent, CUA-Gym, Agentix, ProRL-Agent-Server); provenance + re-clone in `references/README.md` (tracked) |
 
@@ -64,18 +64,26 @@ committed is world-readable.
 
 ## Status & next steps
 
-**Built & proven (Linux/X11):** M0 transport/auth + M1 act-and-observe are done — the **17-verb
+**Built & proven (Linux/X11):** M0 transport/auth + M1 act-and-observe are done — the **22-verb
 ACI surface** (pointer+keyboard incl. `drag`/`mouse_down`/`mouse_up`, act-returns-observation via
 the per-action `observe` argument, the `observe`/`invoke_action`/`set_value` structured family,
-`list_windows`), screenshot, real-time screencast (server-push) with idle-suppression + downscale,
+the G2+G3 desktop verbs — `clipboard_get`/`clipboard_set` via native X11 selections (no xclip),
+`launch_app`, `activate_window` (EWMH + WM-less fallback) — `list_windows`, and the **typed
+in-guest `exec` channel** (G1) — argv default + `shell` opt-in, buffered typed result or streamed
+`exec_output`/`exec_exit`, process-group-killed timeouts, gateway-audited with argv/shell in the
+decision event; the swerex/CUA-Gym/ProRL integrations prefer it over `docker exec` when
+advertised, `pty` reserved as the designed follow-up),
+screenshot, real-time screencast (server-push) with idle-suppression + downscale,
 focused-window/`window:<id>` capture, **binary WS media frames** (negotiated; wire −25%,
 client-plane ceiling ~2.1×), and **XDamage event-driven capture** (idle ticks capture nothing —
 ~0 guest CPU; damaged ticks fetch only the damaged region), all with live Xvfb/Docker CI smokes.
 String-form **XML tool calls** parse as first-class action input (`shinken.dialect.parse_actions`,
 `format="auto"|"xml"|"dialect"`). **Docker disk-tier
 checkpoint/fork/resume** (`docker commit`, #209) behind the provider interface, plus
-`eval.run_eval_forked` (golden→fork-N→score, #231), are built; a **local capability-gateway shim**
-(`sdk/python/src/shinken/gateway.py` + tests) is built. **Push-based boot readiness (S9)** is
+`eval.run_eval_forked` (golden→fork-N→score, #231) and the **fork-native gym adapter**
+(`shinken.gym`: trainer-facing `make/reset/step/evaluate` with reset()=fork, pool parallel
+reset, HF-datasets exporter, MultiTurnDataloader-shaped iterator), are built; a **local
+capability-gateway shim** (`sdk/python/src/shinken/gateway.py` + tests) is built. **Push-based boot readiness (S9)** is
 built: the guest-side `ready` query + lazy/self-healing X11 connect in `shinkend` + a 15 ms
 single-connection SDK readiness loop took `provider.create()` from ~7.7 s to ~0.19 s p50, and the
 opt-in **warm-pool fork graft** (pre-booted containers + `docker diff` delta) serves

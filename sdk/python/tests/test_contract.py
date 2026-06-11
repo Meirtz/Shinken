@@ -91,6 +91,16 @@ def _act(verb, **kw):
         _act("invoke_action", target={"kind": "element_ref", "ref": "e7"}),
         _act("set_value", target={"kind": "element_ref", "ref": "e3"}, text="hello"),
         _act("click", target={"kind": "element_ref", "ref": "e2"}),
+        # desktop verbs (G2+G3): clipboard + app launch/activate
+        _act("clipboard_get"),
+        _act("clipboard_set", text="copy me"),
+        _act("clipboard_set", text="copy me", observe={}),  # mutating → observe admitted
+        _act("launch_app", app="xclock"),
+        _act("launch_app", app="/usr/bin/xclock", args=["-geometry", "200x200"]),
+        _act("launch_app", app="xterm", observe={"format": "jpeg"}),
+        _act("activate_window", window_id=42),
+        _act("activate_window", app="xclock"),
+        _act("activate_window", window_id=42, observe={}),
         # the structured observation reply: tree_text + full elements + revision
         {
             "type": "observation",
@@ -185,10 +195,100 @@ def _act(verb, **kw):
                 "frame_dedup": True,
             },
         },
+        # typed in-guest exec (G1): argv default form, shell opt-in, streamed form
+        _act("exec", argv=["ls", "-la"]),
+        _act(
+            "exec",
+            shell="ls /tmp | wc -l",
+            cwd="/tmp",
+            env={"A": "b"},
+            timeout_ms=5000,
+            stdin="hi\n",
+        ),
+        _act("exec", argv=["cat"], stream=True, pty=False),
+        # streamed exec events: output chunk + clean exit + signal kill + spawn error
+        {"type": "exec_output", "cause": "x1", "seq": 0, "channel": "stdout", "data_b64": "aGk="},
+        {"type": "exec_output", "cause": "x1", "seq": 3, "channel": "stderr", "data_b64": ""},
+        {
+            "type": "exec_exit",
+            "cause": "x1",
+            "exit_code": 0,
+            "timed_out": False,
+            "duration_ms": 4.2,
+            "truncated": False,
+        },
+        {
+            "type": "exec_exit",
+            "cause": "x1",
+            "exit_code": None,
+            "signal": 9,
+            "timed_out": True,
+            "duration_ms": 60000,
+            "truncated": True,
+        },
+        {
+            "type": "exec_exit",
+            "cause": "x1",
+            "exit_code": None,
+            "timed_out": False,
+            "duration_ms": 0.3,
+            "truncated": False,
+            "error": "exec_spawn_failed: No such file or directory",
+        },
     ],
 )
 def test_aci_wire_vocab_validates(msg):
     protocol.validate(msg)
+
+
+def test_exec_result_value_matches_published_shape():
+    """The buffered exec's result.value is schema-open on the wire, but the runtime
+    emits exactly $defs.ExecResult — pin instances against the published $def so the
+    Rust emitter and the SDK's returned dict share one shape."""
+    schema = dict(protocol.aci_schema())
+    ref = {"$ref": "#/$defs/ExecResult", "$defs": schema["$defs"]}
+    jsonschema.validate(
+        {
+            "exit_code": 0,
+            "signal": None,
+            "timed_out": False,
+            "stdout": "hello\n",
+            "stderr": "",
+            "stdout_truncated": False,
+            "stderr_truncated": False,
+            "duration_ms": 3.1,
+        },
+        ref,
+    )
+    # timeout kill: exit_code null + signal, honestly flagged
+    jsonschema.validate(
+        {
+            "exit_code": None,
+            "signal": 9,
+            "timed_out": True,
+            "stdout": "partial",
+            "stderr": "",
+            "stdout_truncated": True,
+            "stderr_truncated": False,
+            "duration_ms": 60000.0,
+        },
+        ref,
+    )
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({"exit_code": 0}, ref)  # truncation flags are required
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(
+            {
+                "exit_code": "0",  # exit_code is integer-or-null, never a string
+                "timed_out": False,
+                "stdout": "",
+                "stderr": "",
+                "stdout_truncated": False,
+                "stderr_truncated": False,
+                "duration_ms": 1.0,
+            },
+            ref,
+        )
 
 
 @pytest.mark.parametrize(
@@ -260,6 +360,17 @@ def test_aci_wire_vocab_validates(msg):
         _act("set_value", target={"kind": "element_ref", "ref": "e3"}),
         _act("invoke_action"),
         _act("set_value", text="orphan value"),
+        # desktop verbs: required params + field gating + the read is non-mutating
+        _act("clipboard_set"),  # missing text
+        _act("launch_app"),  # missing app
+        _act("activate_window"),  # needs window_id or app
+        _act("clipboard_get", observe={}),  # a read never admits observe
+        _act("launch_app", app="xclock", args="42"),  # args is a string LIST
+        _act("launch_app", app="xclock", window_id=42),  # window_id gated to activate
+        _act("activate_window", window_id=42, args=["-x"]),  # args gated to launch
+        _act("click", target={"kind": "point_px", "x": 1, "y": 2}, app="xclock"),
+        _act("activate_window", window_id=-1),  # ids are non-negative
+        _act("launch_app", app=""),  # empty app is not a launchable name
         # observe knobs are strictly typed
         _act("observe", structured="yes"),
         _act("observe", settle_ms=-5),
@@ -287,6 +398,37 @@ def test_aci_wire_vocab_validates(msg):
             "stream": "s",
             "seq": 0,
             "tiles": [],
+        },
+        # exec (G1): exactly ONE of argv/shell — never both, never neither
+        _act("exec", argv=["ls"], shell="ls"),
+        _act("exec"),
+        _act("exec", argv=[]),  # argv must be non-empty
+        # pty is RESERVED: only false validates until the PTY follow-up ships
+        _act("exec", argv=["bash"], pty=True),
+        # the exec argument family is gated to the exec verb
+        _act("click", target={"kind": "point_px", "x": 1, "y": 2}, argv=["ls"]),
+        _act("screenshot", stream=True),
+        _act("wait", ms=5, timeout_ms=100),
+        # exec_output: channel is a closed enum; chunks are base64 strings
+        {"type": "exec_output", "cause": "x", "seq": 0, "channel": "stdmix", "data_b64": "aGk="},
+        {"type": "exec_output", "cause": "x", "seq": 0, "channel": "stdout", "data_b64": 7},
+        {"type": "exec_output", "cause": "x", "channel": "stdout", "data_b64": "aGk="},  # no seq
+        # exec_exit: exit_code is REQUIRED (null when killed) — omitting it is drift,
+        # and timed_out/truncated are strict booleans
+        {
+            "type": "exec_exit",
+            "cause": "x",
+            "timed_out": False,
+            "duration_ms": 1,
+            "truncated": False,
+        },
+        {
+            "type": "exec_exit",
+            "cause": "x",
+            "exit_code": 0,
+            "timed_out": "no",
+            "duration_ms": 1,
+            "truncated": False,
         },
         {  # tiles INSTEAD of image — never both
             "type": "observation",
@@ -414,6 +556,58 @@ def test_binary_frame_header_validates(header):
 def test_binary_frame_header_invalid_rejected(header):
     with pytest.raises(jsonschema.ValidationError):
         _validate_binary_header(header)
+
+
+@pytest.mark.parametrize(
+    "header,ok",
+    [
+        # the binary exec_output header: kind discriminator + data.off/len locator
+        (
+            {
+                "type": "exec_output",
+                "cause": "x1",
+                "seq": 0,
+                "channel": "stdout",
+                "data": {"off": 0, "len": 4096},
+            },
+            True,
+        ),
+        (
+            {
+                "type": "exec_output",
+                "cause": "x1",
+                "seq": 9,
+                "channel": "stderr",
+                "data": {"off": 0, "len": 0},
+            },
+            True,
+        ),
+        # base64 does not belong in a binary header
+        (
+            {"type": "exec_output", "cause": "x1", "seq": 0, "channel": "stdout", "data_b64": "x"},
+            False,
+        ),
+        # the locator requires both off and len
+        (
+            {
+                "type": "exec_output",
+                "cause": "x1",
+                "seq": 0,
+                "channel": "stdout",
+                "data": {"off": 0},
+            },
+            False,
+        ),
+    ],
+)
+def test_binary_exec_output_header_contract(header, ok):
+    schema = dict(protocol.aci_schema())
+    ref = {"$ref": "#/$defs/BinaryExecOutputHeader", "$defs": schema["$defs"]}
+    if ok:
+        jsonschema.validate(header, ref)
+    else:
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(header, ref)
 
 
 def test_binary_negotiation_fields_validate():

@@ -115,7 +115,7 @@ observation (pixels now, hybrid structured designed) → typed action → verifi
 
 ## Measured results
 
-First-party numbers; **~100k tracked datapoints** across thirteen rerunnable local suites plus
+First-party numbers; **~102k tracked datapoints** across thirteen rerunnable local suites plus
 audited one-off WAN runs. Full tables, provenance, and evidence-class labels:
 [`docs/benchmarks/`](docs/benchmarks/README.md); methodology:
 [`docs/engineering/benchmarks.md`](docs/engineering/benchmarks.md).
@@ -123,13 +123,14 @@ audited one-off WAN runs. Full tables, provenance, and evidence-class labels:
 **Head-to-head vs OSWorld's guest server — same guest, same display, same frames.** Both
 servers in one sandbox, OSWorld's unmodified Flask/pyautogui server driven exactly as its own
 client drives it (pinned commit, frame parity verified at **0.0 mean pixel delta**): a full
-act-then-observe agent step costs **191.8 ms p50 over OSWorld's HTTP interface vs 5.37 ms over
-the ACI (~36×)** — ~5.2 vs ~186 steps/s of pure runtime overhead. Bytes/step at default codecs
+act-then-observe agent step costs **193.2 ms p50 over OSWorld's HTTP interface vs 13.4 ms over
+the ACI (~14×)** — ~5.2 vs ~74 steps/s of pure runtime overhead. Bytes/step at default codecs
 honestly favors OSWorld (its PIL-encoded PNG is denser than `shinkend`'s speed-tuned encoder);
 the ACI takes the wire game back with the measured JPEG/downscale/delta levers below.
 
 **Concurrency — real sandboxes first, then the client-plane ceiling.** One process drives
-**64 real Docker desktops** (~1,260 observations/s aggregate, 2 OS threads). To measure the
+**128 real Docker desktops** — 128/128 booted in **7.3 s** (~57 ms/replica amortized, zero
+boot failures), observe-all across the fleet at 142 ms p50, 2 OS threads. To measure the
 client plane past one host's guest RAM, the same SDK then holds **1,024 concurrent live ACI
 sessions on one event-loop thread** — real handshake, real WebSockets, protocol-faithful
 loopback peers serving synthetic frames sized to measured codec operating points — sustaining
@@ -207,6 +208,14 @@ shipped, same host, same window, pinned versions
 Adapters that plug Shinken under stacks that already exist (duck-typed protocol shapes, no
 hard dependency on the target framework; each ships fixture tests + a runnable example):
 
+- **Gym for TRL/GRPO-style trainers** — `shinken.gym`: the `make/reset/step/evaluate` shape
+  trainers consume, with **reset() = fork from the task's golden checkpoint** (setup runs once;
+  `info["reset_ms"]` measured ~60–120 ms on the warm-pool Docker tier — every other shipped gym
+  re-provisions the sandbox per episode). `step()` takes canonical ACI dicts or raw model text
+  (XML tool-call grammars included); episodes are typed Trajectories with an
+  HF-`datasets`-shaped exporter; `ShinkenGymPool(n)` forks N replicas in parallel and a
+  cua-`MultiTurnDataloader`-shaped iterator collects episodes (no TRL/torch dependency).
+  Example: [`examples/gym_rollout.py`](examples/gym_rollout.py).
 - **OSWorld** — a `DesktopEnv`-shaped shim (`shinken.osworld`) + OSWorld-as-a-Workload
   (`osworld-eval`): OSWorld-format pyautogui/computer_13 actions actuate over the typed ACI,
   OSWorld's own evaluator scores (alpha gate passed at score 1.0).
@@ -239,11 +248,11 @@ numbers behind every "measured" are in [`docs/benchmarks/`](docs/benchmarks/READ
 
 | area | state | what exists |
 |---|---|---|
-| ACI v0 (typed actions + observation) | ✅ built | handshake/auth, pointer+keyboard via X11/XTEST (incl. `drag` + `mouse_down`/`mouse_up`), screenshot, act-returns-observation (`observe`), real-time screencast (idle-suppress, downscale, reconnect), focused-window capture, `list_windows` enumeration; **17 verbs**, contract-tested |
+| ACI v0 (typed actions + observation) | ✅ built | handshake/auth, pointer+keyboard via X11/XTEST (incl. `drag` + `mouse_down`/`mouse_up`), screenshot, act-returns-observation (`observe`), real-time screencast (idle-suppress, downscale, reconnect), focused-window capture, `list_windows` enumeration, typed in-guest `exec` (argv/shell, buffered + streamed, gateway-audited), desktop verbs (`clipboard_get`/`clipboard_set` via native X11 selections, `launch_app`, `activate_window`); **22 verbs**, contract-tested |
 | Structured observation (Linux v1) | ✅ built | guest `observe` engine in `shinkend` (AT-SPI): stable element ids, `tree_text` diff rendering, settle; guest-resolved `element_ref` targets + `invoke_action`/`set_value`; live Docker smoke |
 | Observation codec | ✅ built + measured | PNG lossless default; JPEG lever **~1–21× content-dependent** (PNG can win; ~131× stacked with downscale on content-rich frames); **lossless dirty-tile delta ~11× on text** |
 | Runtime state | ✅ built + measured | Docker disk-tier **checkpoint / fork / resume** behind a provider interface; `run_eval_forked`; checkpoint ~0.57 s; fork→usable ~0.7 s classic / **~0.1 s warm-pool graft** (state-verified); boot→usable ~0.2 s after S9 push-based readiness |
-| Concurrency | ✅ built + measured | async core + `SharedLoop`: **64 real sandboxes** on 2 threads; client plane held to **1,024 live ACI sessions on one loop thread** (~884 Mbps sustained ingest, protocol-faithful synthetic peers); `ping_jitter` fleet decorrelation |
+| Concurrency | ✅ built + measured | async core + `SharedLoop`: **128 real sandboxes** on 2 threads (128/128 in 7.3 s); client plane held to **1,024 live ACI sessions on one loop thread** (~884 Mbps sustained ingest, protocol-faithful synthetic peers); `ping_jitter` fleet decorrelation |
 | Eval | ✅ built | tiny verifier harness, OSWorld-as-a-Workload, typed exit-reason, subprocess scorer isolation; **single-task OSWorld gate passed (score 1.0; no conformance sweep yet)** |
 | SDK + adapters | ✅ built | Python SDK (sync + async), TypeScript SDK, Anthropic/OpenAI/Kimi-VL adapters → canonical ACI |
 | Structured a11y/DOM default (D3) | ⏳ provisional | coverage measured (E5): hybrid per-window structured + pixel fallback, *not* structured-by-default |

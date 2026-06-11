@@ -38,6 +38,13 @@ _MOCK_VERBS = {
     "observe",
     "invoke_action",
     "set_value",
+    # typed in-guest exec channel (G1)
+    "exec",
+    # desktop verbs (G2+G3) — clipboard + app launch/activate
+    "clipboard_get",
+    "clipboard_set",
+    "launch_app",
+    "activate_window",
 }
 
 # The fixed window list the mock answers `query q="list_windows"` with — shaped like
@@ -204,6 +211,15 @@ def _record(state: dict, action: dict) -> None:
                 "text": action.get("text"),
             }
         )
+    elif verb == "clipboard_set":
+        # Desktop verbs (G2): the mock keeps a real clipboard so set→get roundtrips.
+        state["clipboard"] = action.get("text", "")
+    elif verb == "launch_app":
+        state["launches"].append({"app": action.get("app"), "args": action.get("args")})
+    elif verb == "activate_window":
+        state["activations"].append(
+            {"window_id": action.get("window_id"), "app": action.get("app")}
+        )
     elif verb == "start_screencast":
         # The capture params each start/resume actually carried over the wire, so a
         # test can assert a resume re-sent the ORIGINAL fps/max_long_edge/scope (#56).
@@ -220,6 +236,96 @@ def _record(state: dict, action: dict) -> None:
         )
 
 
+def _emulate_exec(action: dict) -> dict:
+    """The mock's deterministic exec emulation (no real process runs): ``echo``
+    behaves like echo, ``false`` exits 1, ``sleepy`` simulates a guest-side timeout
+    kill; anything else answers a JSON dump of the received parameters on stdout
+    (plus a fixed stderr probe), so tests can assert the full plumbing."""
+    argv = action.get("argv")
+    if argv and argv[0] == "echo":
+        return {"rc": 0, "stdout": " ".join(argv[1:]) + "\n", "stderr": ""}
+    if argv and argv[0] == "false":
+        return {"rc": 1, "stdout": "", "stderr": ""}
+    if argv and argv[0] == "sleepy":
+        return {"rc": None, "stdout": "", "stderr": "", "timed_out": True, "signal": 9}
+    echo = {k: action.get(k) for k in ("argv", "shell", "cwd", "env", "stdin")}
+    return {"rc": 0, "stdout": json.dumps(echo), "stderr": "err-probe\n"}
+
+
+async def _send_exec_reply(ws, cid: str, action: dict, binary: bool) -> None:
+    """Answer one mock exec action the way the real runtime does: the buffered form
+    with a typed ``result`` (value = ExecResult), the streamed form with an ack,
+    seq-ordered ``exec_output`` events (binary frames on a binary session — header
+    ``data.off/len`` + raw payload), and one terminal ``exec_exit``."""
+    emu = _emulate_exec(action)
+    if not action.get("stream"):
+        await ws.send(
+            json.dumps(
+                {
+                    "type": "result",
+                    "call_id": cid,
+                    "ok": True,
+                    "value": {
+                        "exit_code": emu["rc"],
+                        "signal": emu.get("signal"),
+                        "timed_out": emu.get("timed_out", False),
+                        "stdout": emu["stdout"],
+                        "stderr": emu["stderr"],
+                        "stdout_truncated": False,
+                        "stderr_truncated": False,
+                        "duration_ms": 1.5,
+                    },
+                }
+            )
+        )
+        return
+    await ws.send(json.dumps({"type": "ack", "call_id": cid, "ok": True}))
+    out_bytes = emu["stdout"].encode()
+    half = max(1, len(out_bytes) // 2)
+    # two stdout chunks (so consumers must reassemble in seq order) + one stderr
+    chunks = [("stdout", out_bytes[:half]), ("stdout", out_bytes[half:])]
+    chunks.append(("stderr", emu["stderr"].encode()))
+    seq = 0
+    for channel, data in chunks:
+        if not data:
+            continue
+        if binary:
+            header = {
+                "type": "exec_output",
+                "cause": cid,
+                "seq": seq,
+                "channel": channel,
+                "data": {"off": 0, "len": len(data)},
+            }
+            await ws.send(_binary_frame(header, [data]))
+        else:
+            await ws.send(
+                json.dumps(
+                    {
+                        "type": "exec_output",
+                        "cause": cid,
+                        "seq": seq,
+                        "channel": channel,
+                        "data_b64": base64.b64encode(data).decode(),
+                    }
+                )
+            )
+        seq += 1
+    await ws.send(
+        json.dumps(
+            {
+                "type": "exec_exit",
+                "cause": cid,
+                "exit_code": emu["rc"],
+                "signal": emu.get("signal"),
+                "timed_out": emu.get("timed_out", False),
+                "duration_ms": 1.5,
+                "truncated": False,
+            }
+        )
+    )
+
+
 def _mock_frame_hash(state: dict) -> str:
     """The mock's screen-content identity: a deterministic function of the observed
     effects, so typing/clicking 'changes the screen' (the hash) like a real desktop
@@ -233,6 +339,7 @@ async def _handler(
     support_binary: bool = True,
     support_dedup: bool = True,
     support_structured: bool = True,
+    support_exec: bool = True,
 ) -> None:
     cast: asyncio.Task | None = None
     state = {
@@ -245,7 +352,11 @@ async def _handler(
         "drags": [],
         "buttons": [],
         "element_calls": [],
+        "execs": [],
         "observes": 0,
+        "clipboard": None,
+        "launches": [],
+        "activations": [],
     }
     # Resume registry (#56): logical stream id -> next seq. Server-instance scoped
     # (shared across this mock's connections, so a reconnecting client can resume).
@@ -293,6 +404,19 @@ async def _handler(
                     )
                 )
                 continue
+            if not support_exec and verb == "exec":
+                # simulate a pre-exec runtime: ActionSpec rejects the unknown fields
+                await ws.send(
+                    json.dumps(
+                        {
+                            "type": "ack",
+                            "call_id": msg.get("call_id", "?"),
+                            "ok": False,
+                            "error": "bad action: unknown field `argv`",
+                        }
+                    )
+                )
+                continue
             if verb not in _MOCK_VERBS:
                 await ws.send(
                     json.dumps(
@@ -309,7 +433,7 @@ async def _handler(
             binary = support_binary and bool((msg.get("accept") or {}).get("binary_frames"))
             capabilities = {
                 "schema_version": 0,
-                "verbs": sorted(_MOCK_VERBS),
+                "verbs": sorted(_MOCK_VERBS - (set() if support_exec else {"exec"})),
                 "targets": ["point_px", "element_ref"],
                 "observation_types": ["a11y", "screenshot", "screencast"],
                 "max_long_edge": 2576,
@@ -470,6 +594,11 @@ async def _handler(
                         "focus: e3"
                     )
                 await ws.send(json.dumps(obs))
+            elif verb == "exec":
+                # Typed in-guest exec (G1): record the request (so verifiers can read
+                # back WHAT was asked) and answer like the real runtime would.
+                state["execs"].append({k: v for k, v in action.items() if k != "verb"})
+                await _send_exec_reply(ws, cid, action, binary)
             elif verb == "start_screencast":
                 if cast is not None:
                     cast.cancel()
@@ -506,6 +635,31 @@ async def _handler(
                         await cast
                     cast = None
                 await ws.send(json.dumps({"type": "ack", "call_id": cid, "ok": True}))
+            elif verb == "clipboard_get":
+                # The read answers a typed `result` carrying {text} (an ack has no
+                # payload); an empty clipboard nacks, like the real runtime.
+                if state["clipboard"] is None:
+                    await ws.send(
+                        json.dumps(
+                            {
+                                "type": "ack",
+                                "call_id": cid,
+                                "ok": False,
+                                "error": "clipboard is empty (nothing set this session)",
+                            }
+                        )
+                    )
+                else:
+                    await ws.send(
+                        json.dumps(
+                            {
+                                "type": "result",
+                                "call_id": cid,
+                                "ok": True,
+                                "value": {"text": state["clipboard"]},
+                            }
+                        )
+                    )
             else:
                 await ws.send(json.dumps({"type": "ack", "call_id": cid, "ok": True}))
                 # Act-returns-observation: a mutating action with `observe` gets a
@@ -521,7 +675,10 @@ async def _handler(
 
 
 def _start_mock_server(
-    support_binary: bool = True, support_dedup: bool = True, support_structured: bool = True
+    support_binary: bool = True,
+    support_dedup: bool = True,
+    support_structured: bool = True,
+    support_exec: bool = True,
 ) -> tuple[str, object, object]:
     """Start one mock shinkend on its own loop/thread; return (addr, loop, thread)."""
     port = _free_port()
@@ -537,6 +694,7 @@ def _start_mock_server(
                 support_binary=support_binary,
                 support_dedup=support_dedup,
                 support_structured=support_structured,
+                support_exec=support_exec,
             ),
             "127.0.0.1",
             port,
@@ -600,6 +758,20 @@ def mock_shinkend_no_structured():
     capability in the welcome and the observe family answers ``unknown verb`` —
     the SDK must fall back to its co-located structured path."""
     addr, loop, thread = _start_mock_server(support_structured=False)
+    try:
+        yield addr
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(timeout=2)
+
+
+@pytest.fixture
+def mock_shinkend_no_exec():
+    """A mock that simulates a PRE-EXEC runtime: ``exec`` is absent from the
+    welcome's verbs and an exec action is hard-nacked (the real old runtime's
+    deny_unknown_fields behavior) — so a test passes only if the SDK's verb gate
+    kept exec off the wire and consumers fell back to the out-of-band channel."""
+    addr, loop, thread = _start_mock_server(support_exec=False)
     try:
         yield addr
     finally:

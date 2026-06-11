@@ -31,13 +31,18 @@ FROM debian:bookworm-slim
 ENV DEBIAN_FRONTEND=noninteractive DISPLAY=:0
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        xvfb x11-utils openbox xdotool x11-apps \
+        xvfb x11-utils x11-xserver-utils openbox xdotool x11-apps \
         at-spi2-core dbus-x11 \
         python3 python3-gi gir1.2-atspi-2.0 \
         zenity \
         xterm \
         xloadimage \
     && rm -rf /var/lib/apt/lists/*
+# x11-xserver-utils: provides `xsetroot`, which start.sh uses to paint the root window —
+# the boot-progress beacon the guest `ready` query samples. It is NOT in x11-utils
+# (xdpyinfo/xwininfo/xprop); without it the paint fails rc=127 into /dev/null and the
+# wallpaper readiness signal silently never works (readiness then rides on the xterm
+# happening to cover a sample point — found via a parallel-boot flake autopsy).
 # xloadimage: tiny X11 image viewer (~0.7 MB installed, zero new deps on this base) used
 # by the codec-ladder "photo" benchmark scenario to paint a procedurally generated
 # photographic frame onto the root window (benchmarks/bench_codec_ladder.py). feh was

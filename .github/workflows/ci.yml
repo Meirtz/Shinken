@@ -183,6 +183,10 @@ jobs:
             test "$X" = "640" && test "$Y" = "360" && echo "✅ live drag verified (pointer parked at the drop point)"
             echo "✅ live action surface verified (drag + mouse_down/up + observe + list_windows)"
           fi
+          if [ -f scripts/clipboard_app_smoke.py ]; then
+            python scripts/clipboard_app_smoke.py
+            echo "✅ live desktop verbs verified (clipboard set→get + launch→list_windows→activate, WM-less fallback paths)"
+          fi
       - if: steps.present.outputs.go == 'false'
         run: echo "::error::shinkend or a smoke script is missing — this gate must not be skipped"; exit 1
 
@@ -262,6 +266,10 @@ jobs:
           fi
           if [ -f scripts/observe_smoke.py ]; then
             SHK_TOKEN="$TOKEN" SHK_CONTAINER=shk python scripts/observe_smoke.py || { docker logs shk; docker exec shk cat /tmp/atspi.log /tmp/zen.log 2>/dev/null || true; exit 1; }
+          fi
+          if [ -f scripts/clipboard_app_smoke.py ]; then
+            # the WM-ful shape: openbox serves the EWMH _NET_ACTIVE_WINDOW paths
+            SHK_TOKEN="$TOKEN" python scripts/clipboard_app_smoke.py || { docker logs shk; exit 1; }
           fi
           docker rm -f shk
       - if: steps.present.outputs.go == 'true'

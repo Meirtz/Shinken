@@ -19,7 +19,7 @@ default = ["macos-native"]
 macos-native = []
 
 [dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "signal", "time", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "signal", "time", "sync", "process"] }
 tokio-tungstenite = "0.21"
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 serde = { version = "1", features = ["derive"] }
@@ -36,6 +36,11 @@ base64 = "0.22"
 # Structured observation (M1b): AT-SPI over D-Bus, pure Rust (zbus), tokio backend —
 # all bus work runs on one dedicated worker thread (src/atspi_source.rs).
 atspi = { version = "0.30.0", default-features = false, features = ["connection", "proxies", "tokio", "wrappers", "zbus"] }
+
+# Typed exec channel (G1): the timeout kill must reach the child's whole PROCESS
+# GROUP (killpg), which std/tokio expose no API for — one libc call, unix-only.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 # macOS native executor (feature `macos-native`): CoreGraphics/Quartz capture +
 # CGEvent input synthesis. v1 uses the CG APIs (CGDisplayCreateImage /

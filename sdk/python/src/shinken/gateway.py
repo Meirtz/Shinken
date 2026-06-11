@@ -31,6 +31,18 @@ VERB_CAPABILITY: dict[str, str | None] = {
     "observe": "a11y",
     "invoke_action": "input_automation",
     "set_value": "input_automation",
+    # typed in-guest exec channel (G1): its own capability — command execution is a
+    # distinct boundary power from GUI input, and the audit event records argv/shell.
+    "exec": "exec",
+    # Desktop verbs (G2+G3). The clipboard is boundary-ish — a data channel between
+    # the agent and whatever the desktop holds — so BOTH directions gate on the
+    # envelope's `clipboard` capability (default-off). Launching a binary is
+    # exec-adjacent and gets its own `app_launch` flag; activating a window is plain
+    # GUI input.
+    "clipboard_get": "clipboard",
+    "clipboard_set": "clipboard",
+    "launch_app": "app_launch",
+    "activate_window": "input_automation",
 }
 
 
@@ -53,6 +65,11 @@ CAPABILITY_EVENT_SCHEMA: dict = {
         "granted": {"type": "boolean"},
         "reason": {"type": ["string", "null"]},
         "ts": {"type": "number"},
+        "detail": {
+            "type": ["object", "null"],
+            "description": "verb-specific audit payload — exec records its argv/shell "
+            "command here, so the envelope shows WHAT was run, not just that exec fired",
+        },
     },
 }
 

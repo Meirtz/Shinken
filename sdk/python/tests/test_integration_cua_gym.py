@@ -311,6 +311,60 @@ def test_default_exec_factory_requires_a_docker_shape():
         cg.default_exec_factory(_NoExecProvider(), object())
 
 
+# ------------------------------------------------------------------ in-band exec preference
+
+
+def test_env_prefers_inband_exec_when_advertised(bundle_root, mock_shinkend):
+    """With the DEFAULT exec factory and a runtime advertising the typed `exec` verb,
+    the env's guest-exec channel is the in-band ACI one — setup/verify flow over the
+    session's WebSocket, no host docker CLI involved (substrate-agnostic)."""
+    src = cg.CuaGymTaskSource(bundle_root)
+    env = cg.ShinkenCuaGymEnv(src.get("task_a"), _FakeForkProvider(mock_shinkend))
+    try:
+        env.reset()
+        assert isinstance(env._exec, cg._AciExec)
+        res = env.execute("ls -la")
+        assert res["returncode"] == 0
+        sent = env._sess.query("state")["execs"]
+        assert sent[-1]["argv"] == ["sh", "-c", "ls -la"], "execute rides the ACI exec verb"
+        # launch() takes the detach path: an explicit shell opt-in, fire-and-forget
+        env.launch("xterm -e top")
+        sent = env._sess.query("state")["execs"]
+        assert "xterm" in sent[-1]["shell"] and sent[-1]["shell"].endswith("&")
+    finally:
+        env.dispose()
+
+
+def test_explicit_exec_factory_wins_over_inband(bundle_root, mock_shinkend):
+    """An explicitly-passed exec_factory is caller intent: it is used even when the
+    runtime advertises the exec verb."""
+    src = cg.CuaGymTaskSource(bundle_root)
+    fake = _FakeExec()
+    env = _env(src.get("task_a"), _FakeForkProvider(mock_shinkend), fake)
+    try:
+        env.reset()
+        assert env._exec is fake
+        env.execute("ls")
+        assert fake.calls, "the explicit channel must carry the commands"
+    finally:
+        env.dispose()
+
+
+def test_default_factory_falls_back_out_of_band_for_pre_exec_runtime(
+    bundle_root, mock_shinkend_no_exec
+):
+    """Against a runtime that does NOT advertise exec, the default path falls back to
+    the out-of-band factory — which on this provider-shaped fake (no docker_bin)
+    raises the typed factory error, proving the in-band path was not taken."""
+    src = cg.CuaGymTaskSource(bundle_root)
+    env = cg.ShinkenCuaGymEnv(src.get("task_a"), _FakeForkProvider(mock_shinkend_no_exec))
+    try:
+        with pytest.raises(cg.CuaGymError, match="exec_factory"):
+            env.reset()
+    finally:
+        env.dispose()
+
+
 # ---------------------------------------------------------------------------- live (Docker)
 
 requires_docker = pytest.mark.skipif(

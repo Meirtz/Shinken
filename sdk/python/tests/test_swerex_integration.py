@@ -20,10 +20,13 @@ from pathlib import Path
 
 import pytest
 
+import shinken
 from shinken.artifacts import ArtifactRef, sha256_file
 from shinken.integrations.swerex import (
+    AciExecutor,
     CommandTimeoutError,
     DeploymentNotStartedError,
+    DockerExecExecutor,
     NonZeroExitCodeError,
     SessionNotInitializedError,
     ShinkenDeployment,
@@ -368,6 +371,82 @@ def test_config_shape_builds_a_docker_backed_deployment():
     assert dep.provider.capabilities.name == "docker-local"
     assert dep.spec.image == "shinken/sandbox-linux"
     assert dep.run_id == "run-1"
+
+
+# --- in-band exec preference (typed ACI exec verb, G1) ---
+
+
+def test_deployment_prefers_inband_aci_executor(mock_shinkend, tmp_path):
+    """With no explicit executor and a runtime advertising the typed `exec` verb,
+    the deployment auto-attaches the in-band AciExecutor — the swerex surface then
+    works over the session's WebSocket on ANY substrate (no host docker CLI)."""
+    provider = FakeProvider(mock_shinkend, tmp_path / "guest-fs")
+    dep = ShinkenDeployment(provider, retry_backoff=0.0)
+
+    async def drive():
+        await dep.start()
+        try:
+            rt = dep.runtime
+            assert isinstance(rt.executor, AciExecutor)
+            cr = await rt.execute(Command(command=["echo", "in-band"]))
+            assert cr.exit_code == 0 and cr.stdout == "in-band\n"
+            # the command really travelled the ACI: the mock runtime recorded it
+            sent = dep.sandbox.query("state")["execs"]
+            assert {"argv": ["echo", "in-band"]} in [
+                {k: v for k, v in e.items() if k == "argv"} for e in sent
+            ]
+            # run_in_session keeps bash -lc fidelity (argv form invoking bash)
+            r = await rt.run_in_session(BashAction(command="true"))
+            assert r.exit_code == 0
+            assert any(
+                e.get("argv", [None])[0] == "/bin/bash" for e in dep.sandbox.query("state")["execs"]
+            )
+        finally:
+            await dep.stop()
+
+    asyncio.run(drive())
+
+
+def test_deployment_falls_back_for_pre_exec_runtime(mock_shinkend_no_exec, tmp_path):
+    """Against a runtime that does NOT advertise exec, the executor selection falls
+    back out-of-band: a docker-shaped handle gets DockerExecExecutor, a handle with
+    no container channel cleanly gets none (exec ops error with the actionable
+    message). Selection is tested directly — really driving `docker exec` against a
+    fake container id is the live test's job."""
+    provider = FakeProvider(mock_shinkend_no_exec, tmp_path / "guest-fs")
+    sandbox = shinken.connect(mock_shinkend_no_exec)
+    try:
+        dep = ShinkenDeployment(provider, retry_backoff=0.0)
+        dep.sandbox = sandbox
+        # docker-shaped handle (metadata carries the container id) → docker exec
+        dep.handle = SandboxHandle(
+            provider="fake",
+            sandbox_id="ext-1",
+            addr=mock_shinkend_no_exec,
+            metadata={"container_id": "cid-ext"},
+        )
+        executor = dep._default_executor()
+        assert isinstance(executor, DockerExecExecutor)
+        assert executor.container_id == "cid-ext"
+        # no container channel → None (exec-backed operations cleanly errored)
+        dep.handle = SandboxHandle(provider="fake", sandbox_id="ext-2", addr=mock_shinkend_no_exec)
+        assert dep._default_executor() is None
+    finally:
+        sandbox.close()
+
+
+def test_aci_executor_maps_timeout_to_the_protocol_contract(mock_shinkend):
+    """AciExecutor raises TimeoutError on a guest-side timeout kill (the GuestExecutor
+    contract), and maps a signal kill to the shell's 128+N convention."""
+    env = shinken.connect(mock_shinkend)
+    try:
+        executor = AciExecutor(env)
+        with pytest.raises(TimeoutError):
+            executor.run_argv(["sleepy"], timeout=1.0)  # the mock's simulated timeout
+        rc, out, _err = executor.run_argv(["echo", "ok"])
+        assert (rc, out) == (0, "ok\n")
+    finally:
+        env.close()
 
 
 # --- live end-to-end over Docker (opt-in, like the other live smokes) ---

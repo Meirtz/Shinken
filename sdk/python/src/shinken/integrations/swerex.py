@@ -19,11 +19,12 @@ swerex operation                  Shinken surface
                                   ``provider.resume(<golden checkpoint>)`` (D5/#206)
 ``Deployment.stop()``             session ``close()`` + ``provider.destroy(handle)``
 ``Deployment.is_alive()``         session ``ping()`` (ACI control plane)
-``runtime.create_session``        registered bash session emulated over substrate exec
+``runtime.create_session``        registered bash session emulated over guest exec
                                   (env + cwd persisted in a guest state file)
-``runtime.run_in_session``        substrate exec ``bash -lc`` (the same channel
-                                  ``shinken.inject`` uses), exit code + output captured
-``runtime.execute``               one-shot substrate exec (argv or shell)
+``runtime.run_in_session``        guest exec ``bash -lc`` — the typed in-band ACI
+                                  ``exec`` verb when advertised (:class:`AciExecutor`,
+                                  substrate-agnostic), else ``docker exec`` fallback
+``runtime.execute``               one-shot guest exec (argv or shell)
 ``runtime.read_file``             ``sandbox.get_file`` (hash-verified transfer, #85)
 ``runtime.write_file``            ``sandbox.put_file`` (+ ``mkdir -p`` of the parent)
 ``runtime.upload``                ``sandbox.put_file`` per file (dirs walked)
@@ -62,6 +63,7 @@ __all__ = [
     "ShinkenDeployment",
     "ShinkenDeploymentConfig",
     "ShinkenRuntime",
+    "AciExecutor",
     "DockerExecExecutor",
     "GuestExecutor",
 ]
@@ -239,8 +241,47 @@ class GuestExecutor(Protocol):
 
 
 @dataclass
+class AciExecutor:
+    """Substrate exec over the typed in-band ACI ``exec`` verb (G1) — the PREFERRED
+    channel: commands flow over the same WebSocket as actions/observations, so the
+    swerex surface works on any substrate a shinkend runs on (a remote runtime over
+    WS, non-Docker providers — no host docker CLI required). ``run_script`` invokes
+    the guest's bash explicitly (argv form), preserving ``bash -lc`` fidelity with
+    :class:`DockerExecExecutor` (the session scripts use bash-isms like
+    ``printf %q``)."""
+
+    sandbox: Any
+    shell: str = "/bin/bash"
+
+    def _result(self, r: dict, timeout: float | None) -> tuple[int, str, str]:
+        if r.get("timed_out"):
+            raise TimeoutError(f"command timed out after {timeout}s")
+        rc = r.get("exit_code")
+        if rc is None:  # killed by a signal — report like a shell would
+            rc = 128 + int(r.get("signal") or 1)
+        return rc, r.get("stdout", ""), r.get("stderr", "")
+
+    def run_argv(self, argv: list[str], *, timeout: float | None = None) -> tuple[int, str, str]:
+        return self._result(self.sandbox.exec(list(argv), timeout=timeout), timeout)
+
+    def run_script(self, script: str, *, timeout: float | None = None) -> tuple[int, str, str]:
+        return self._result(
+            self.sandbox.exec([self.shell, "-lc", script], timeout=timeout), timeout
+        )
+
+
+def _sandbox_supports_exec(sandbox: Any) -> bool:
+    """Whether the connected session's runtime advertises the typed ``exec`` verb."""
+    try:
+        return "exec" in (sandbox.capabilities.verbs or [])
+    except Exception:
+        return False
+
+
+@dataclass
 class DockerExecExecutor:
-    """Substrate exec over ``docker exec`` — the channel :mod:`shinken.inject` proves."""
+    """Substrate exec over ``docker exec`` — the out-of-band fallback for pre-exec
+    runtimes (the channel :mod:`shinken.inject` proves)."""
 
     container_id: str
     docker_bin: str = "docker"
@@ -646,8 +687,13 @@ class ShinkenDeployment:
             )
 
     def _default_executor(self) -> GuestExecutor | None:
-        """Docker-backed handles get the `docker exec` channel automatically; other
-        substrates supply ``executor=`` (returning None leaves exec ops cleanly errored)."""
+        """PREFER the typed in-band ACI ``exec`` channel when the connected runtime
+        advertises the verb (substrate-agnostic — works over WS to any shinkend);
+        Docker-backed handles fall back to ``docker exec`` for pre-exec runtimes;
+        other substrates supply ``executor=`` (returning None leaves exec ops
+        cleanly errored)."""
+        if self.sandbox is not None and _sandbox_supports_exec(self.sandbox):
+            return AciExecutor(self.sandbox)
         meta = getattr(self.handle, "metadata", None) or {}
         container = meta.get("container_id") or (
             getattr(self.handle, "sandbox_id", None)

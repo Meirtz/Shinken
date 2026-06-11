@@ -15,9 +15,9 @@ use base64::Engine as _;
 use serde::Deserialize;
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{
-    AtomEnum, ConnectionExt as _, ImageFormat as XImageFormat, MapState, Window,
-    BUTTON_PRESS_EVENT, BUTTON_RELEASE_EVENT, KEY_PRESS_EVENT, KEY_RELEASE_EVENT,
-    MOTION_NOTIFY_EVENT,
+    AtomEnum, ClientMessageEvent, ConfigureWindowAux, ConnectionExt as _, EventMask,
+    ImageFormat as XImageFormat, InputFocus, MapState, StackMode, Window, BUTTON_PRESS_EVENT,
+    BUTTON_RELEASE_EVENT, KEY_PRESS_EVENT, KEY_RELEASE_EVENT, MOTION_NOTIFY_EVENT,
 };
 use x11rb::protocol::xtest::ConnectionExt as _;
 
@@ -129,6 +129,47 @@ pub struct ActionSpec {
     /// total settle wait is hard-capped runtime-side.
     #[serde(default)]
     pub settle_ms: Option<u64>,
+    /// For `exec`: the program + arguments, executed directly (no shell) — the
+    /// DEFAULT form. Exactly one of `argv`/`shell` is required (see `crate::exec`).
+    #[serde(default)]
+    pub argv: Option<Vec<String>>,
+    /// For `exec`: a shell command line run via `/bin/sh -c` — the explicit opt-in
+    /// alternative to `argv` (shell parsing is a choice, never a silent default).
+    #[serde(default)]
+    pub shell: Option<String>,
+    /// For `exec`: the child's working directory (guest path).
+    #[serde(default)]
+    pub cwd: Option<String>,
+    /// For `exec`: extra environment variables merged over the runtime's.
+    #[serde(default)]
+    pub env: Option<HashMap<String, String>>,
+    /// For `exec`: kill-the-process-group deadline (ms, clamped runtime-side).
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
+    /// For `exec`: text written to the child's stdin, then closed.
+    #[serde(default)]
+    pub stdin: Option<String>,
+    /// For `exec`: streamed form (`exec_output` events + `exec_exit`) instead of
+    /// the buffered `result`.
+    #[serde(default)]
+    pub stream: Option<bool>,
+    /// For `exec`: RESERVED — PTY allocation is a designed follow-up; only `false`
+    /// is accepted (the schema pins `const: false`, the runtime nacks `true`).
+    #[serde(default)]
+    pub pty: Option<bool>,
+    /// For `launch_app`: the executable to start (PATH name or absolute path, spawned
+    /// detached with the session environment — never through a shell). For
+    /// `activate_window`: a window selector — the first window whose title contains
+    /// this string (case-insensitive) is activated.
+    #[serde(default)]
+    pub app: Option<String>,
+    /// For `launch_app`: argv tail passed verbatim to the executable.
+    #[serde(default)]
+    pub args: Option<Vec<String>>,
+    /// For `activate_window`: the window to raise+focus — an `id` from the
+    /// `list_windows` query (also usable as the `window:<id>` capture scope).
+    #[serde(default)]
+    pub window_id: Option<u32>,
 }
 
 /// Act-returns-observation parameters (schema `$defs.ObserveSpec`): the same capture
@@ -347,6 +388,14 @@ pub trait Executor: Send + Sync {
             "list_windows not supported by the {} backend",
             self.backend()
         )
+    }
+
+    /// Read the desktop clipboard as text (the `clipboard_get` verb; G2). The write
+    /// side (`clipboard_set`) rides [`Executor::execute`] like every other mutating
+    /// verb — only the read needs its own channel for the returned `{text}`.
+    /// Default: unsupported (typed error, never a fabricated empty string).
+    fn clipboard_get(&self) -> Result<String> {
+        bail!("clipboard not supported by the {} backend", self.backend())
     }
 }
 
@@ -1166,6 +1215,9 @@ pub struct X11Executor {
     /// XDamage change tracker (own X connection), when the display supports it and
     /// `SHINKEND_DAMAGE` doesn't disable it. `None` → capture loops poll every tick.
     damage: Option<Mutex<DamageTracker>>,
+    /// CLIPBOARD selection worker (own X connection + owner window), spawned lazily
+    /// on the first clipboard verb — see [`crate::clipboard`].
+    clipboard: crate::clipboard::SharedClipboard,
 }
 
 impl X11Executor {
@@ -1226,6 +1278,7 @@ impl X11Executor {
             height,
             keymap,
             damage,
+            clipboard: crate::clipboard::SharedClipboard::default(),
         })
     }
 
@@ -1257,6 +1310,34 @@ impl X11Executor {
         Ok(false)
     }
 
+    /// Guest readiness with connection-level errors SURFACED: `Err` means the X
+    /// connection itself failed (a root `GetImage` cannot otherwise fail — the
+    /// server restarted), so a caller that owns the connection lifecycle
+    /// ([`LazyX11Executor`]) can drop the dead connection and redial. This is the
+    /// ONE readiness implementation for both X11 backends — the windows-mapped
+    /// fallback must apply on the deployed lazy path too (it once lived only on
+    /// this type's `Executor::readiness`, which the lazy wrapper never called, so
+    /// the deployed `x11_xtest` backend silently lacked it).
+    ///
+    /// A black wallpaper is not an unusable desktop: if client windows are already
+    /// mapped (xterm/WM up), observations are meaningful — some boots lose the
+    /// root paint while the desktop is fine. Either signal flips ready;
+    /// `root_nonblack` stays honestly what was sampled.
+    fn readiness_checked(&self) -> Result<Readiness> {
+        let nonblack = self.sample_root_nonblack()?;
+        let windows_up = nonblack
+            || self
+                .list_windows_x11()
+                .map(|w| !w.is_empty())
+                .unwrap_or(false);
+        Ok(Readiness {
+            ready: nonblack || windows_up,
+            x11_up: true,
+            root_nonblack: Some(nonblack),
+            permissions_pending: None,
+        })
+    }
+
     /// Resolve a [`Scope`] to captured RGB8 + dimensions.
     fn capture_scope(&self, scope: Scope) -> Result<(Vec<u8>, u16, u16)> {
         match scope {
@@ -1270,20 +1351,42 @@ impl X11Executor {
         }
     }
 
-    /// The EWMH `_NET_ACTIVE_WINDOW`, if the window manager publishes one.
+    /// The active window: the EWMH `_NET_ACTIVE_WINDOW` when a window manager
+    /// publishes one, else (WM-less display — bare Xvfb) the X input focus walked up
+    /// to its top-level ancestor. The fallback keeps `active_window`-scoped capture,
+    /// the `list_windows` focused flag, and `activate_window` verification meaningful
+    /// without a WM, where the EWMH property never exists.
     fn active_window(&self) -> Result<Option<Window>> {
         let conn = self.conn.lock().expect("x11 conn lock");
         let atom = conn.intern_atom(true, b"_NET_ACTIVE_WINDOW")?.reply()?.atom;
-        if atom == 0 {
+        if atom != 0 {
+            let prop = conn
+                .get_property(false, self.root, atom, AtomEnum::WINDOW, 0, 1)?
+                .reply()?;
+            if let Some(w) = prop
+                .value32()
+                .and_then(|mut it| it.next())
+                .filter(|w| *w != 0)
+            {
+                return Ok(Some(w));
+            }
+        }
+        // Input-focus fallback. 0 = None, 1 = PointerRoot — neither names a window.
+        let focus = conn.get_input_focus()?.reply()?.focus;
+        if focus == 0 || focus == 1 || focus == self.root {
             return Ok(None);
         }
-        let prop = conn
-            .get_property(false, self.root, atom, AtomEnum::WINDOW, 0, 1)?
-            .reply()?;
-        Ok(prop
-            .value32()
-            .and_then(|mut it| it.next())
-            .filter(|w| *w != 0))
+        // Apps often focus a subwindow; walk to the top-level (direct child of root),
+        // bounded so a pathological tree can never spin this loop.
+        let mut win = focus;
+        for _ in 0..64 {
+            let tree = conn.query_tree(win)?.reply()?;
+            if tree.parent == self.root || tree.parent == 0 {
+                break;
+            }
+            win = tree.parent;
+        }
+        Ok(Some(win))
     }
 
     /// Capture one window by id, sized to its current geometry.
@@ -1471,6 +1574,65 @@ impl X11Executor {
             });
         }
         Ok(out)
+    }
+
+    /// Activate (raise + focus) a window (G3): by `window_id` (a `list_windows` id),
+    /// or by `app` — the first window whose title contains it, case-insensitive.
+    /// With a running EWMH window manager the request is the standard
+    /// `_NET_ACTIVE_WINDOW` client message to the root (source = pager/user, so the
+    /// WM honors it); on a WM-less display (bare Xvfb) it falls back to doing what
+    /// the WM would have: raise the window and set the X input focus directly.
+    fn activate_window_x11(&self, a: &ActionSpec) -> Result<Window> {
+        let target = match (a.window_id, a.app.as_deref()) {
+            (Some(id), _) => id,
+            (None, Some(app)) => {
+                let windows = self.list_windows_x11()?;
+                find_window_by_app(&windows, app).with_context(|| {
+                    format!(
+                        "activate_window: no window title matches app {app:?} \
+                         (of {} enumerated)",
+                        windows.len()
+                    )
+                })?
+            }
+            (None, None) => bail!("activate_window requires `window_id` or `app`"),
+        };
+        let current = self.active_window()?.unwrap_or(0);
+        let conn = self.conn.lock().expect("x11 conn lock");
+        // The id must name a live window — refuse rather than message a ghost.
+        conn.get_window_attributes(target)?
+            .reply()
+            .with_context(|| format!("activate_window: window {target:#x} not found"))?;
+        let net_active = conn.intern_atom(true, b"_NET_ACTIVE_WINDOW")?.reply()?.atom;
+        let wm_check = conn
+            .intern_atom(true, b"_NET_SUPPORTING_WM_CHECK")?
+            .reply()?
+            .atom;
+        let wm_present = wm_check != 0
+            && conn
+                .get_property(false, self.root, wm_check, AtomEnum::WINDOW, 0, 1)?
+                .reply()?
+                .value32()
+                .and_then(|mut it| it.next())
+                .filter(|w| *w != 0)
+                .is_some();
+        if wm_present && net_active != 0 {
+            let ev = build_activate_message(net_active, target, current);
+            conn.send_event(
+                false,
+                self.root,
+                EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+                ev,
+            )?;
+        } else {
+            conn.configure_window(
+                target,
+                &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE),
+            )?;
+            conn.set_input_focus(InputFocus::PARENT, target, x11rb::CURRENT_TIME)?;
+        }
+        conn.flush()?;
+        Ok(target)
     }
 
     fn resolve(&self, target: Option<&Target>) -> Result<(i16, i16)> {
@@ -1681,6 +1843,55 @@ fn key_keysym(key: &str) -> Option<u32> {
     }
 }
 
+/// Build the EWMH `_NET_ACTIVE_WINDOW` client message (sent to the root with the
+/// substructure-redirect mask): data = [source, timestamp, requestor's currently
+/// active window, 0, 0]. Source 2 = "pager/direct user action", which window
+/// managers honor without focus-stealing-prevention heuristics. Pure, so the
+/// message shape is unit-testable without a display.
+pub(crate) fn build_activate_message(
+    net_active_window: u32,
+    target: Window,
+    current_active: Window,
+) -> ClientMessageEvent {
+    ClientMessageEvent::new(32, target, net_active_window, [2, 0, current_active, 0, 0])
+}
+
+/// Resolve an `app` selector against an enumeration: the first window whose title
+/// contains the selector, case-insensitive. Deliberately simple for v1 — titles are
+/// what `list_windows` already exposes; WM_CLASS matching can come later if needed.
+pub(crate) fn find_window_by_app(windows: &[WindowInfo], app: &str) -> Option<u32> {
+    let needle = app.to_lowercase();
+    windows
+        .iter()
+        .find(|w| w.title.to_lowercase().contains(&needle))
+        .map(|w| w.id)
+}
+
+/// Spawn `app` (a PATH name or absolute path; `args` passed verbatim — never through
+/// a shell) detached from the runtime's stdio, inheriting the session environment
+/// (`$DISPLAY` + the session D-Bus address shinkend itself runs under, so the app
+/// lands on the sandbox desktop and its a11y tree reaches the session bus). A
+/// background reaper `wait()`s the child so an exited app never zombifies. Returns
+/// the child pid (correlatable with `list_windows`' `_NET_WM_PID`).
+pub(crate) fn spawn_app(app: &str, args: &[String]) -> Result<u32> {
+    ensure!(
+        !app.trim().is_empty(),
+        "launch_app requires a non-empty `app`"
+    );
+    let mut child = std::process::Command::new(app)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .with_context(|| format!("launch_app: failed to spawn {app:?}"))?;
+    let pid = child.id();
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(pid)
+}
+
 /// Split `"ctrl+shift+s"` into (`["ctrl","shift"]`, `"s"`) — shared by every
 /// keyboard-synthesizing backend (X11, macOS).
 pub(crate) fn parse_combo(combo: &str) -> (Vec<&str>, &str) {
@@ -1751,26 +1962,23 @@ impl Executor for X11Executor {
     }
 
     fn readiness(&self) -> Readiness {
-        let nonblack = self.sample_root_nonblack().unwrap_or(false);
-        // A black wallpaper is not an unusable desktop: if client windows are already
-        // mapped (xterm/WM up), observations are meaningful — some boots lose the
-        // xsetroot paint (e.g. Xvfb in TCP-only fallback) while the desktop is fine.
-        // Either signal flips ready; root_nonblack stays honestly what was sampled.
-        let windows_up = nonblack
-            || self
-                .list_windows_x11()
-                .map(|w| !w.is_empty())
-                .unwrap_or(false);
-        Readiness {
-            ready: nonblack || windows_up,
-            x11_up: true,
-            root_nonblack: Some(nonblack),
+        // A connection-level failure means X is not usable RIGHT NOW — report it
+        // honestly (a caller that owns the connection lifecycle uses
+        // `readiness_checked` directly and redials instead).
+        self.readiness_checked().unwrap_or(Readiness {
+            ready: false,
+            x11_up: false,
+            root_nonblack: None,
             permissions_pending: None,
-        }
+        })
     }
 
     fn list_windows(&self) -> Result<Vec<WindowInfo>> {
         self.list_windows_x11()
+    }
+
+    fn clipboard_get(&self) -> Result<String> {
+        self.clipboard.get()
     }
 
     fn execute(&self, a: &ActionSpec) -> Result<String> {
@@ -1869,6 +2077,23 @@ impl Executor for X11Executor {
                 let keys = a.keys.as_deref().context("key requires `keys`")?;
                 self.key_combo(keys)?;
                 Ok(format!("key {keys}"))
+            }
+            // Desktop verbs (G2+G3). clipboard_get is NOT here — it returns data, so
+            // the dispatcher routes it through Executor::clipboard_get to a `result`.
+            "clipboard_set" => {
+                let text = a.text.as_deref().context("clipboard_set requires `text`")?;
+                self.clipboard.set(text)?;
+                Ok(format!("clipboard set ({} bytes)", text.len()))
+            }
+            "launch_app" => {
+                let app = a.app.as_deref().context("launch_app requires `app`")?;
+                let args = a.args.as_deref().unwrap_or(&[]);
+                let pid = spawn_app(app, args)?;
+                Ok(format!("launched {app} (pid {pid})"))
+            }
+            "activate_window" => {
+                let win = self.activate_window_x11(a)?;
+                Ok(format!("activated window {win:#x}"))
             }
             // Dispatched via the capture path (screenshot()), not execute().
             "screenshot" => bail!("screenshot is handled via the capture path"),
@@ -1994,10 +2219,31 @@ impl Executor for LazyX11Executor {
         true // the eventual X11 backend supports raw capture
     }
 
+    fn damage_cursor(&self) -> Option<u64> {
+        // MUST forward: the trait default is None, which silently degrades every
+        // screencast on this (deployed) backend to full poll-capture per tick —
+        // the exact dead-code hole the readiness fallback fell into.
+        self.try_connect().ok()?.damage_cursor()
+    }
+
+    fn damage_since(&self, cursor: u64) -> Option<(u64, DamageSince)> {
+        self.try_connect().ok()?.damage_since(cursor)
+    }
+
+    fn capture_raw_region(&self, rect: DamageRect) -> Result<Vec<u8>> {
+        self.try_connect()?.capture_raw_region(rect)
+    }
+
     fn list_windows(&self) -> Result<Vec<WindowInfo>> {
         self.try_connect()
             .context("X11 display not available yet")?
             .list_windows()
+    }
+
+    fn clipboard_get(&self) -> Result<String> {
+        self.try_connect()
+            .context("X11 display not available yet")?
+            .clipboard_get()
     }
 
     fn readiness(&self) -> Readiness {
@@ -2010,17 +2256,14 @@ impl Executor for LazyX11Executor {
         let Ok(x) = self.try_connect() else {
             return not_up;
         };
-        match x.sample_root_nonblack() {
-            Ok(nonblack) => Readiness {
-                ready: nonblack,
-                x11_up: true,
-                root_nonblack: Some(nonblack),
-                permissions_pending: None,
-            },
+        // Delegate to the ONE X11 readiness implementation (painted root OR mapped
+        // client windows), keeping the lazy wrapper's self-healing: a
+        // connection-level error means the held connection is dead (X server
+        // restarted) — drop it so the next call reconnects, and report honestly
+        // that X is not up RIGHT NOW.
+        match x.readiness_checked() {
+            Ok(r) => r,
             Err(_) => {
-                // Root GetImage cannot fail on a live connection — the held one is
-                // dead (X server restarted). Drop it so the next call reconnects,
-                // and report honestly that X is not up RIGHT NOW.
                 self.disconnect();
                 not_up
             }
@@ -2035,6 +2278,9 @@ pub struct VirtualExecutor {
     pub log: Mutex<Vec<String>>,
     /// Frame counter so synthetic screenshots differ on every call.
     frame: std::sync::atomic::AtomicU64,
+    /// In-memory clipboard so the set→get contract is exercisable without X.
+    /// `None` until the first `clipboard_set` — a get then errors honestly.
+    clipboard: Mutex<Option<String>>,
 }
 
 impl Executor for VirtualExecutor {
@@ -2043,6 +2289,10 @@ impl Executor for VirtualExecutor {
     }
 
     fn execute(&self, a: &ActionSpec) -> Result<String> {
+        if a.verb == "clipboard_set" {
+            let text = a.text.as_deref().context("clipboard_set requires `text`")?;
+            *self.clipboard.lock().expect("clipboard lock") = Some(text.to_string());
+        }
         self.log.lock().expect("log lock").push(a.verb.clone());
         Ok(format!("virtual: {}", a.verb))
     }
@@ -2095,6 +2345,16 @@ impl Executor for VirtualExecutor {
     /// (unlike a backend that cannot enumerate at all, which keeps the bailing default).
     fn list_windows(&self) -> Result<Vec<WindowInfo>> {
         Ok(Vec::new())
+    }
+
+    /// The in-memory clipboard (set via `clipboard_set` through `execute`). An unset
+    /// clipboard is a typed error, mirroring the X11 backend's empty-selection answer.
+    fn clipboard_get(&self) -> Result<String> {
+        self.clipboard
+            .lock()
+            .expect("clipboard lock")
+            .clone()
+            .context("clipboard is empty (nothing set this session)")
     }
 }
 
@@ -2384,6 +2644,72 @@ mod tests {
         let (out, w, h) = downscale_rgb(&rgb, 4, 2, 2);
         assert_eq!((w, h), (2, 1));
         assert_eq!(out.len(), (w as usize) * (h as usize) * 3);
+    }
+
+    // ---- desktop verbs (G2+G3): EWMH activate message, app resolution, launch ----
+
+    /// The _NET_ACTIVE_WINDOW client message per EWMH: format 32 on the TARGET
+    /// window, data = [source=2 (pager/user — honored without focus-stealing
+    /// heuristics), timestamp 0 (CurrentTime), requestor's current active, 0, 0].
+    #[test]
+    fn activate_message_has_the_ewmh_shape() {
+        let ev = build_activate_message(77, 0x2c, 0x1a);
+        assert_eq!(ev.format, 32);
+        assert_eq!(ev.window, 0x2c);
+        assert_eq!(ev.type_, 77);
+        assert_eq!(ev.data.as_data32(), [2, 0, 0x1a, 0, 0]);
+        assert_eq!(
+            ev.response_type,
+            x11rb::protocol::xproto::CLIENT_MESSAGE_EVENT
+        );
+    }
+
+    #[test]
+    fn find_window_by_app_matches_title_case_insensitively() {
+        let win = |id: u32, title: &str| WindowInfo {
+            id,
+            title: title.into(),
+            pid: None,
+            x: 0,
+            y: 0,
+            w: 10,
+            h: 10,
+            focused: false,
+        };
+        let ws = vec![win(1, "xterm"), win(2, "xclock — Clock"), win(3, "Files")];
+        assert_eq!(find_window_by_app(&ws, "XCLOCK"), Some(2));
+        assert_eq!(find_window_by_app(&ws, "clock"), Some(2)); // substring
+        assert_eq!(find_window_by_app(&ws, "files"), Some(3));
+        assert_eq!(find_window_by_app(&ws, "gimp"), None);
+    }
+
+    #[test]
+    fn spawn_app_returns_a_pid_and_reaps() {
+        // `sh -c true` exists on every CI/dev host; the reaper thread wait()s it.
+        let pid = spawn_app("sh", &["-c".into(), "true".into()]).unwrap();
+        assert!(pid > 0);
+    }
+
+    #[test]
+    fn spawn_app_rejects_missing_binary_and_empty_app() {
+        let err = spawn_app("/nonexistent/shinken-no-such-binary", &[])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("failed to spawn"), "unexpected error: {err}");
+        let err = spawn_app("  ", &[]).unwrap_err().to_string();
+        assert!(err.contains("non-empty"), "unexpected error: {err}");
+    }
+
+    /// The virtual backend's in-memory clipboard honors the set→get contract and
+    /// answers a typed error before anything was set.
+    #[test]
+    fn virtual_clipboard_set_get_roundtrip() {
+        let v = VirtualExecutor::default();
+        let err = v.clipboard_get().unwrap_err().to_string();
+        assert!(err.contains("clipboard is empty"), "unexpected: {err}");
+        let a = spec(r#"{"verb":"clipboard_set","text":"hello ✂️"}"#);
+        v.execute(&a).unwrap();
+        assert_eq!(v.clipboard_get().unwrap(), "hello ✂️");
     }
 
     #[test]

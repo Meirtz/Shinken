@@ -165,10 +165,16 @@ than a screen, and a key-window tree omits every background app.
 **Decision (D13).** The operation layer extends the v0 verb set with an **element verb family**,
 mapped onto the existing ACI tagged-union (D2) and advertised via the existing capability handshake
 (an old runtime simply does not list them). These are additive over the original 11-verb enum;
-the core family has since shipped — the schema's `Verb` enum is now **17** (`drag`,
-`mouse_down`/`mouse_up`, `observe`, and the element verbs under the shorter wire names
-`invoke_action`/`set_value`; `windows` shipped as the `list_windows` query) — see
-[aci-spec §3](aci-spec.md) and [status.md](../engineering/status.md).
+the core family has since shipped — the schema's `Verb` enum is now **22** (`drag`,
+`mouse_down`/`mouse_up`, `observe`, the element verbs under the shorter wire names
+`invoke_action`/`set_value`, the typed in-guest `exec` channel (G1), and the G2+G3 desktop verbs
+`clipboard_get`/`clipboard_set`/`launch_app`/`activate_window`; `windows` shipped as the
+`list_windows` query) — see [aci-spec §3](aci-spec.md) and
+[status.md](../engineering/status.md). The desktop verbs are the
+first slice of this section's app/window scoping made real on Linux: `launch_app` puts an app on
+the desktop, `activate_window` (EWMH `_NET_ACTIVE_WINDOW`, WM-less raise+focus fallback) picks
+*which* window `active_window`-scoped observation means, and `list_windows` disambiguates —
+the per-app observe *selector* (`observe {app}`) and the `apps` query remain designed-only.
 
 | Operation-layer verb | Relation to v0 ACI | Payload sketch |
 |---|---|---|
@@ -193,6 +199,17 @@ zero-size) — and the *primary* mechanism only for the verbs that are inherentl
 operations (`invoke_element_action`, `set_element_value`, `set_text_selection`). This **amends the
 earlier router priority** in [aci-spec §3.2](aci-spec.md), which preferred semantic actuation;
 the spike's hybrid verdict plus the fidelity argument flip the default.
+
+**Dedicated-capability preference — prefer `exec` over UI automation for file/system work.** The
+typed in-guest `exec` verb (**built**; [aci-spec §3.4](aci-spec.md)) is the operation layer's
+dedicated-capability escape hatch: when the step *is* a file/system operation — create or read a
+file, install a package, run a verifier or setup script — driving a terminal application through
+pointer/keyboard verbs is strictly worse (slower, flakier, and the command is invisible to the
+permission audit). Workloads should route such steps through `exec` (capability-gated, argv by
+default, the command recorded in the gateway's decision event) and reserve the GUI verbs for what
+genuinely exercises the UI. The in-tree integrations implement exactly this preference: swerex,
+CUA-Gym, and ProRL-Agent-Server use the in-band `exec` channel whenever the runtime advertises
+the verb, keeping `docker exec` only as the pre-exec-runtime fallback.
 
 ## 7. Legible serialization grammar
 
@@ -332,6 +349,7 @@ so the hot loop never prompts.
 | Pixel tier: screenshot/screencast, X11 capture + XTEST input, `key`/`type_text`, fidelity knobs (`scope`/`max_long_edge`/`format`/`quality`) | **built** (Linux/X11, live CI) |
 | AT-SPI/CDP → normalized `Element` reference paths; SDK-side `element_ref` resolution | **built** (SDK-side; guest-side bails) |
 | Coverage evidence (Qt/GTK/CDP/Electron/terminal/canvas; tree-diff ~1–3% of screenshot bytes) | **measured** (spike #2/E5) |
+| Typed in-guest `exec` channel (argv default + shell opt-in; buffered + streamed; group-kill timeouts; gateway-audited; PTY reserved) | **built** (G1; [aci-spec §3.4](aci-spec.md)) |
 | One dual-tier `observe`; stable-id + diff engine; settle-before-observe; act-returns-observation; app/window scoping; element verb family; serialization grammar; hint packs | **designed-only** (D13) |
 | macOS engine (ScreenCaptureKit + AXUIElement + CGEvent + TCC posture) | **designed-only** (D14) |
 | Windows engine (UIA + SendInput) | **designed-only** (D10) |

@@ -71,3 +71,27 @@ export function screenshot(scope: Action["scope"] = "screen"): Action {
 export function wait(ms?: number): Action {
   return ms === undefined ? { verb: "wait" } : { verb: "wait", ms };
 }
+
+// ---- desktop verbs (G2+G3) ----
+
+/** Read the guest clipboard (answered with a `result` carrying {text}). */
+export function clipboardGet(): Action {
+  return { verb: "clipboard_get" };
+}
+
+export function clipboardSet(text: string): Action {
+  return { verb: "clipboard_set", text };
+}
+
+export function launchApp(app: string, args?: string[]): Action {
+  const action: Action = { verb: "launch_app", app };
+  if (args !== undefined) action.args = args;
+  return action;
+}
+
+/** Activate by window id (from `list_windows`) or by app/title selector. */
+export function activateWindow(selector: number | string): Action {
+  return typeof selector === "number"
+    ? { verb: "activate_window", window_id: selector }
+    : { verb: "activate_window", app: selector };
+}

@@ -122,21 +122,47 @@ def boot(image: str = IMAGE, geometry: str = GEOMETRY):
 
 def _wait_for_desktop_window(env, timeout_s: float = 15.0) -> None:
     """The S9 readiness gate fires when the root paints (wallpaper) — the xterm the
-    image boots can appear a moment later. Suites that click/type into it must wait
-    for a real window, or their focus click lands on bare desktop and every
-    keystroke is lost (observed: typing workloads producing zero frames). Polls the
-    list_windows query when the runtime offers it; silently proceeds otherwise."""
+    image boots can appear a moment later, and even a mapped xterm can come up
+    UNFOCUSED (the openbox/xterm startup race leaves the WM's no-focus fallback
+    window holding the keyboard, where every synthetic keystroke is silently
+    discarded — observed: typing workloads producing 1-frame traces). Suites that
+    click/type need a window that exists AND holds focus, so this waits for both,
+    clicking the first window's center as the bounded recovery action (click-to-
+    focus only works once the WM is up — a single too-early click is lost forever).
+    Polls the list_windows query when the runtime offers it; silently proceeds
+    otherwise."""
     deadline = time.time() + timeout_s
+    wins: list = []
     while time.time() < deadline:
         try:
             wins = env.list_windows()
         except Exception:
             return  # pre-list_windows runtime: keep the old behavior
         if wins:
-            return
+            break
         time.sleep(0.1)
+    if not wins:
+        print(
+            "warning: no desktop window appeared within "
+            f"{timeout_s:.0f}s; typing-based scenarios may be empty",
+            flush=True,
+        )
+        return
+    while time.time() < deadline:
+        if any(w.get("focused") for w in wins):
+            return
+        first = wins[0]
+        try:
+            env.click(x=first["x"] + first["w"] // 2, y=first["y"] + first["h"] // 2)
+        except Exception:
+            pass
+        time.sleep(0.3)
+        try:
+            wins = env.list_windows() or wins
+        except Exception:
+            return
     print(
-        "warning: no desktop window appeared within "
+        "warning: no desktop window took keyboard focus within "
         f"{timeout_s:.0f}s; typing-based scenarios may be empty",
         flush=True,
     )

@@ -1,8 +1,8 @@
 {
   "suite": "boot_waterfall",
   "meta": {
-    "generated_utc": "2026-06-11T01:24:13Z",
-    "git_commit": "212aa1f",
+    "generated_utc": "2026-06-11T04:43:50Z",
+    "git_commit": "e3242ab",
     "python": "3.13.9",
     "host_os": "macOS 26.5.1",
     "host_arch": "arm64",
@@ -21,138 +21,138 @@
     "instrumented": [
       {
         "rep": 0,
-        "run_accepted_ms": 106.0,
-        "container_started_ms": 48.2,
-        "tcp_accept_ms": 126.6,
-        "ws_handshake_ms": 129.1,
-        "ready_ms": 170.9,
+        "run_accepted_ms": 125.5,
+        "container_started_ms": 51.9,
+        "tcp_accept_ms": 148.7,
+        "ws_handshake_ms": 151.7,
+        "ready_ms": 152.4,
         "ready_mode": "guest_query",
-        "ready_polls": 4,
-        "first_nonblack_ms": 174.4
+        "ready_polls": 1,
+        "first_nonblack_ms": 156.0
       },
       {
         "rep": 1,
-        "run_accepted_ms": 102.5,
-        "container_started_ms": 43.2,
-        "tcp_accept_ms": 120.4,
-        "ws_handshake_ms": 123.8,
-        "ready_ms": null,
+        "run_accepted_ms": 121.7,
+        "container_started_ms": 59.4,
+        "tcp_accept_ms": 140.8,
+        "ws_handshake_ms": 143.3,
+        "ready_ms": 171.9,
         "ready_mode": "guest_query",
-        "ready_polls": 6018,
-        "first_nonblack_ms": null
+        "ready_polls": 3,
+        "first_nonblack_ms": 175.2
       },
       {
         "rep": 2,
-        "run_accepted_ms": 124.8,
-        "container_started_ms": 56.8,
-        "tcp_accept_ms": 142.0,
-        "ws_handshake_ms": 144.4,
-        "ready_ms": 187.0,
+        "run_accepted_ms": 118.8,
+        "container_started_ms": 55.9,
+        "tcp_accept_ms": 142.3,
+        "ws_handshake_ms": 144.5,
+        "ready_ms": 173.7,
         "ready_mode": "guest_query",
-        "ready_polls": 4,
-        "first_nonblack_ms": 191.6
+        "ready_polls": 3,
+        "first_nonblack_ms": 177.5
       },
       {
         "rep": 3,
-        "run_accepted_ms": 106.7,
-        "container_started_ms": 35.0,
-        "tcp_accept_ms": 125.5,
-        "ws_handshake_ms": 127.6,
-        "ready_ms": 128.1,
+        "run_accepted_ms": 124.1,
+        "container_started_ms": 58.0,
+        "tcp_accept_ms": 145.8,
+        "ws_handshake_ms": 147.9,
+        "ready_ms": 186.2,
         "ready_mode": "guest_query",
-        "ready_polls": 1,
-        "first_nonblack_ms": 131.4
+        "ready_polls": 4,
+        "first_nonblack_ms": 190.2
       },
       {
         "rep": 4,
-        "run_accepted_ms": 107.7,
-        "container_started_ms": 46.1,
-        "tcp_accept_ms": 126.8,
-        "ws_handshake_ms": 130.1,
-        "ready_ms": null,
+        "run_accepted_ms": 107.4,
+        "container_started_ms": 40.1,
+        "tcp_accept_ms": 126.2,
+        "ws_handshake_ms": 128.3,
+        "ready_ms": 161.1,
         "ready_mode": "guest_query",
-        "ready_polls": 5758,
-        "first_nonblack_ms": null
+        "ready_polls": 3,
+        "first_nonblack_ms": 164.8
       },
       {
         "rep": 5,
-        "run_accepted_ms": 118.8,
-        "container_started_ms": 53.2,
-        "tcp_accept_ms": 137.5,
-        "ws_handshake_ms": 141.2,
-        "ready_ms": 177.5,
+        "run_accepted_ms": 106.8,
+        "container_started_ms": 44.5,
+        "tcp_accept_ms": 127.2,
+        "ws_handshake_ms": 129.4,
+        "ready_ms": 157.4,
         "ready_mode": "guest_query",
-        "ready_polls": 4,
-        "first_nonblack_ms": 181.3
+        "ready_polls": 3,
+        "first_nonblack_ms": 160.9
       }
     ],
     "sdk_create": [
       {
         "rep": 0,
-        "create_ms": 176.6,
-        "connect_ms": 3.0,
-        "first_obs_ms": 11.0,
-        "total_ms": 190.7
+        "create_ms": 167.0,
+        "connect_ms": 2.3,
+        "first_obs_ms": 12.9,
+        "total_ms": 182.3
       },
       {
         "rep": 1,
-        "create_ms": 91021.8,
-        "connect_ms": 2.6,
-        "first_obs_ms": 10.9,
-        "total_ms": 91035.3
+        "create_ms": 162.5,
+        "connect_ms": 2.0,
+        "first_obs_ms": 12.8,
+        "total_ms": 177.3
       },
       {
         "rep": 2,
-        "create_ms": 174.0,
-        "connect_ms": 1.8,
-        "first_obs_ms": 11.0,
-        "total_ms": 186.8
+        "create_ms": 213.7,
+        "connect_ms": 3.1,
+        "first_obs_ms": 12.1,
+        "total_ms": 228.9
       },
       {
         "rep": 3,
-        "create_ms": 45557.2,
-        "connect_ms": 2.3,
-        "first_obs_ms": 11.3,
-        "total_ms": 45570.7
+        "create_ms": 160.8,
+        "connect_ms": 2.0,
+        "first_obs_ms": 11.8,
+        "total_ms": 174.6
       },
       {
         "rep": 4,
-        "create_ms": 181.3,
-        "connect_ms": 3.5,
+        "create_ms": 163.6,
+        "connect_ms": 2.0,
         "first_obs_ms": 11.3,
-        "total_ms": 196.1
+        "total_ms": 176.9
       },
       {
         "rep": 5,
-        "create_ms": 184.2,
-        "connect_ms": 2.4,
-        "first_obs_ms": 11.1,
-        "total_ms": 197.8
+        "create_ms": 169.8,
+        "connect_ms": 3.8,
+        "first_obs_ms": 11.4,
+        "total_ms": 185.0
       }
     ]
   },
   "summary": {
     "milestones_p50_ms": {
-      "run_accepted_ms": 106.7,
-      "container_started_ms": 46.1,
-      "ws_handshake_ms": 129.1,
-      "ready_ms": 177.5,
-      "first_nonblack_ms": 181.3
+      "run_accepted_ms": 118.8,
+      "container_started_ms": 51.9,
+      "ws_handshake_ms": 143.3,
+      "ready_ms": 161.1,
+      "first_nonblack_ms": 164.8
     },
     "ready_mode": "guest_query",
     "sdk_create_ms": {
       "n": 6,
-      "min": 174.0,
-      "p50": 181.3,
-      "mean": 22882.517,
-      "max": 91021.8
+      "min": 160.8,
+      "p50": 163.6,
+      "mean": 172.9,
+      "max": 213.7
     },
     "sdk_total_ms": {
       "n": 6,
-      "min": 186.8,
-      "p50": 196.1,
-      "mean": 22896.233,
-      "max": 91035.3
+      "min": 174.6,
+      "p50": 177.3,
+      "mean": 187.5,
+      "max": 228.9
     }
   }
 }

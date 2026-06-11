@@ -18,7 +18,7 @@ Figures live in [`docs/assets/bench/`](../assets/bench) and regenerate from trac
 
 | artifact | class | what it holds |
 |---|---|---|
-| `benchmarks/results/*.json` | local | 13 suites (16 tracked result JSONs), ~100k individual datapoints, each carrying the host/image fingerprint of its run |
+| `benchmarks/results/*.json` | local | 13 suites (16 tracked result JSONs), ~102k individual datapoints, each carrying the host/image fingerprint of its run |
 | `benchmarks/results/remote/codec_ladder.csv` | remote WAN | 45 cells: format × quality × downscale, one content-rich 1080p frame |
 | `benchmarks/results/remote/fanout_remote.csv` | remote WAN | end-to-end fan-out envelope, N = 4/8/16 real remote sandboxes |
 | `spikes/a11y-coverage/evidence.json` | local spike | accessibility-tree coverage by app surface (E5) |
@@ -118,25 +118,25 @@ The "manage 1024 sandboxes" question splits into a guest-resource half (how many
 host can *run*) and a client-plane half (how many live sessions one process can *drive*). Each
 rung below is measured; only the egress chart at the end is a projection, and is labeled as one.
 
-### 2a. Real sandboxes, one process — N ≤ 64 `[local — rerunnable]`
+### 2a. Real sandboxes, one process — N ≤ 128 `[local — rerunnable]`
 
 S5 (`bench_fanout.py`): N ∈ {1…64} real Docker sandboxes, all sync sessions multiplexed on one
 `SharedLoop`, 10 rounds of {observe JPEG q80 @1024 + click} per tier — 1,347 datapoints:
 
-| N | observe round wall p50 | per-sandbox observe p50 | click round wall p50 | guest RSS / sandbox |
+| N | observe round wall p50 | per-sandbox observe p50 | click round wall p50 | boot wall (8 workers) |
 |---:|---:|---:|---:|---:|
-| 1 | 7.5 ms | 7.2 ms | 1.1 ms | —¹ |
-| 8 | 7.9 ms | 7.3 ms | 1.9 ms | 40.2 MiB |
-| 16 | 14.0 ms | 10.4 ms | 2.2 ms | 41.4 MiB |
-| 32 | 24.6 ms | 20.9 ms | 4.7 ms | 39.3 MiB |
-| 64 | **50.7 ms** | 42.6 ms | 5.5 ms | 36.2 MiB |
+| 1 | 7.6 ms | 7.6 ms | 0.7 ms | 0.20 s |
+| 16 | 19.7 ms | 14.6 ms | 3.6 ms | 0.75 s |
+| 64 | 69.4 ms | 56.9 ms | 9.3 ms | 2.98 s |
+| **128** | **141.6 ms** | 120.2 ms | 24.8 ms | **7.26 s** |
 
-¹ the N=1 guest-RSS reading (157 MiB) is a first-boot settling artifact; steady state is ~36–41 MiB.
+128/128 replicas materialized with zero boot infra-failures (255 boots in the run); guest RSS
+steady at ~40 MiB/sandbox; per-replica boot ~57 ms amortized at N=128.
 
-One process drives **64 real desktops at ~1,260 observations/s aggregate on 2 OS threads**
-(main + one `SharedLoop`); latency degrades gracefully as 64 Xvfb guests contend for 14 cores.
-At ~40 MiB/sandbox the binding constraint above N≈64 on this host is guest RAM in the Docker
-VM — exactly the boundary the client-plane rung isolates next.
+One process drives **128 real desktops at ~900 observations/s aggregate on 2 OS threads**
+(main + one `SharedLoop`); latency degrades gracefully as 128 Xvfb guests contend for 14
+cores. At ~40 MiB/sandbox the binding constraint above N≈128 on this host is guest RAM in the
+Docker VM — exactly the boundary the client-plane rung isolates next.
 
 ![local fan-out](../assets/bench/local_fanout.png)
 
@@ -330,7 +330,7 @@ per-pixel delta 0.0** between the two servers' captures. N=150 per cell:
 |---|---:|---:|---:|
 | input action (click) | 155.1 ms | 1.21 ms | ~128× |
 | observe (full-screen PNG) | 36.3 ms | 4.62 ms | ~7.9× |
-| **full agent step (act + observe)** | **191.8 ms** | **5.37 ms** | **~36×** |
+| **full agent step (act + observe)** | **193.2 ms** | **13.4 ms** | **~14×** |
 
 That is **~5.2 vs ~186 agent steps/s** of pure runtime overhead: OSWorld spawns a fresh
 Python interpreter (re-importing pyautogui, paying its default 0.1 s `PAUSE`) per action and

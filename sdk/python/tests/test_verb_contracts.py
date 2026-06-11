@@ -107,6 +107,34 @@ def test_element_verbs_require_target_and_set_value_requires_text():
     _invalid({"verb": "set_value", "text": "x"})  # missing target
 
 
+def test_clipboard_verbs_contract():
+    _valid({"verb": "clipboard_get"})
+    _valid({"verb": "clipboard_set", "text": "copy me"})
+    _valid({"verb": "clipboard_set", "text": "", "observe": {}})  # mutating → observe ok
+    _invalid({"verb": "clipboard_set"})  # missing text
+    _invalid({"verb": "clipboard_get", "observe": {}})  # the read is non-mutating
+
+
+def test_launch_app_contract():
+    _valid({"verb": "launch_app", "app": "xclock"})
+    _valid({"verb": "launch_app", "app": "/usr/bin/xterm", "args": ["-geometry", "80x24"]})
+    _valid({"verb": "launch_app", "app": "xterm", "observe": {"format": "jpeg"}})
+    _invalid({"verb": "launch_app"})  # missing app
+    _invalid({"verb": "launch_app", "app": ""})  # empty app
+    _invalid({"verb": "launch_app", "app": "xclock", "args": "-flag"})  # args is a list
+    _invalid({"verb": "click", "target": PT, "app": "xclock"})  # app gated to G3 verbs
+    _invalid({"verb": "clipboard_set", "text": "x", "args": ["-x"]})  # args gated to launch
+
+
+def test_activate_window_contract():
+    _valid({"verb": "activate_window", "window_id": 42})
+    _valid({"verb": "activate_window", "app": "xclock"})
+    _valid({"verb": "activate_window", "window_id": 42, "observe": {}})
+    _invalid({"verb": "activate_window"})  # needs window_id or app
+    _invalid({"verb": "activate_window", "window_id": -1})  # ids are non-negative
+    _invalid({"verb": "launch_app", "app": "x", "window_id": 42})  # gated to activate
+
+
 def test_unknown_param_is_rejected():
     _invalid({"verb": "click", "target": PT, "bogus": 1})  # additionalProperties: false
 

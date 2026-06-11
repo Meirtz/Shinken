@@ -265,6 +265,48 @@ def test_push_session_dir_on_exec_opt_in(monkeypatch, tmp_path):
     assert calls[2][0][-1] == "true"  # then the command itself
 
 
+def test_exec_prefers_inband_aci_channel(monkeypatch, tmp_path, mock_shinkend):
+    """When the provider's session reaches a runtime advertising the typed `exec`
+    verb (G1), exec rides the ACI in-band — zero host `docker exec` subprocesses,
+    same bash -lc / cwd / env semantics — and falls back transparently otherwise
+    (the FakeProvider-string-session tests above ARE the fallback proof)."""
+    import shinken
+
+    class AciProvider(FakeProvider):
+        def __init__(self, addr: str) -> None:
+            super().__init__()
+            self.addr = addr
+
+        def connect(self, handle: Any) -> Any:
+            self.connected.append(handle)
+            return shinken.connect(self.addr)
+
+    rt = make_runtime(tmp_path)
+    provider = AciProvider(mock_shinkend)
+    monkeypatch.setattr(mod._providers, "get", lambda name, **kw: provider)
+    calls: list[tuple] = []
+
+    async def fake_run_host(*argv: str, timeout: float | None = None):
+        calls.append((argv, timeout))
+        return 0, "", None
+
+    monkeypatch.setattr(rt, "_run_host", fake_run_host)
+    run(rt.start())
+    calls.clear()
+
+    result = run(rt.exec("echo hi", env={"TASK_ID": "t1"}, timeout_sec=7.5))
+
+    assert calls == [], "no host docker exec: the command rode the ACI"
+    assert result.return_code == 0
+    sent = rt._aci_sess.query("state")["execs"]
+    assert sent[-1]["argv"] == ["bash", "-lc", "echo hi"]  # upstream bash -lc fidelity
+    assert sent[-1]["cwd"] == "/polar/session"  # default cwd preserved
+    assert sent[-1]["env"]["TASK_ID"] == "t1"
+    assert sent[-1]["env"]["SHINKEND_ADDR"] == GUEST_ACI_ADDR
+    assert sent[-1]["timeout_ms"] == 7500
+    run(rt.stop())  # closes the cached in-band session with the sandbox
+
+
 # --- file transfer ----------------------------------------------------------------------
 
 

@@ -224,7 +224,7 @@ Shinken status legend: **built** (CI-proven Linux/X11 slice), **partial**, **des
 | Trajectory capture | TrajectorySaver (per-turn JSON+PNG) + HF-Datasets traces w/ `push_to_hub` (§6) | `shinken.runtime.Trajectory` (typed steps, `exit_reason` precedence); `.skn` deferred (#216) | partial — no dataset-format exporter; see plan |
 | Training harness | Real gym + worker pools + TRL-compatible dataloader + Tinker GRPO trainer (§7) | Workload registry + OSWorld workload + `run_eval_forked`; interop targets (verl/uni-agent, CUA-Gym) identified | partial — no in-tree trainer (by design); reset-from-fork is the wedge |
 | Reset cost (training) | Fresh sandbox per reset; cloud snapshot-boot or local cold boot | Cold boot→usable 0.198 s; fork→usable 0.118–0.60 s; N=32 warm-pool fan-out 4.12 s ([benchmarks §1](../docs/engineering/benchmarks.md)) | built, measured |
-| Step loop cost (training) | Poll-screenshot architecture (same class as OSWorld's server; unmeasured by them) | **5.37 ms p50 act+observe** (~36× vs OSWorld HTTP on identical guest, [benchmarks §7](../docs/engineering/benchmarks.md)) | built, measured |
+| Step loop cost (training) | Poll-screenshot architecture (same class as OSWorld's server; unmeasured by them) | **13.4 ms p50 act+observe** (~14× vs OSWorld HTTP on identical guest, [benchmarks §7](../docs/engineering/benchmarks.md)) | built, measured |
 | Parallel client plane | Worker subprocess per env | `SharedLoop`: 64 real sandboxes / 1,024 live sessions on one thread ([benchmarks §5–6](../docs/engineering/benchmarks.md)) | built, measured |
 | Determinism | None (live desktop, wall-clock) | None yet; event-sourced replay + `.skn` designed (D5) | designed |
 | Deployment | Local (Docker/QEMU/lume) + managed cloud SaaS | Local Docker; control plane designed | cua ahead on managed cloud |
@@ -241,12 +241,12 @@ Effort classes: **S** = days, **M** = 1–2 weeks, **L** = multi-week+.
 
 | # | cua capability | Shinken-native answer | Effort |
 |---|---|---|---|
-| G1 | `run_command` + PTY (`main.py:746-965`) | **Typed `exec` channel on the event plane**: `exec` verb with argv-array (not shell-string) default, streamed stdout/stderr as server-push events on the existing demux (same plane as screencast frames), typed exit status, capability-gated per the gateway shim; PTY = a stream kind later. Beats theirs: no second protocol (their PTY is a separate REST+SSE surface), no silent shell injection by default, gateway-auditable. | M |
-| G2 | Clipboard get/set (`handlers/base.py:359`) | `clipboard_get`/`clipboard_set` typed verbs (X11 selections via the existing x11rb connection — no pyperclip subprocess dance), size-capped, in the capability envelope (clipboard is a data-exfil surface; cua gates nothing). | S |
-| G3 | App-launch + window management (13 verbs, `handlers/base.py:113-186`) | Two typed verbs first: `launch` (argv + wait-for-window) and `window_list`/`activate_window` via X11 EWMH — we already enumerate windows for `scope=window:<id>` capture; reuse that path. Resize/minimize later only if a workload needs it. | S–M |
+| G1 | `run_command` + PTY (`main.py:746-965`) | **Typed `exec` channel on the event plane**: `exec` verb with argv-array (not shell-string) default, streamed stdout/stderr as server-push events on the existing demux (same plane as screencast frames), typed exit status, capability-gated per the gateway shim; PTY = a stream kind later. Beats theirs: no second protocol (their PTY is a separate REST+SSE surface), no silent shell injection by default, gateway-auditable. **BUILT 2026-06-11** (everything but the PTY follow-up; `pty` field reserved/`false`-only) — [aci-spec §3.4](../docs/design/aci-spec.md), swerex/CUA-Gym/ProRL adapters prefer it in-band. | ~~M~~ done |
+| G2 | Clipboard get/set (`handlers/base.py:359`) | **CLOSED (2026-06)**: `clipboard_get`/`clipboard_set` typed verbs — shinkend speaks the ICCCM selection protocol itself on a dedicated worker thread (owner serves TARGETS/UTF8_STRING/STRING; no pyperclip/xclip subprocess dance), 1 MiB cap, INCR refused typed; both directions gate on the envelope's `clipboard` capability, default-off (cua gates nothing). | ~~S~~ done |
+| G3 | App-launch + window management (13 verbs, `handlers/base.py:113-186`) | **CLOSED (2026-06)** for the first slice: `launch_app {app, args?}` (detached spawn on the session $DISPLAY/D-Bus env, no shell; window found via `list_windows`) and `activate_window {window_id \| app}` via EWMH `_NET_ACTIVE_WINDOW` with a WM-less raise+focus fallback — reusing the `list_windows` path as planned. Resize/minimize later only if a workload needs it. | ~~S–M~~ done (first slice) |
 | G4 | In-guest file verbs (11) | Don't mirror them: `put_file`/`get_file` already cover host↔guest with sha256 receipts; in-guest manipulation falls out of G1 (`exec`). Document the equivalence. | S (docs) |
 | G5 | Trajectory export (HF-Datasets traces, `tracing.py`; TrajectorySaver) | Exporter from `shinken.runtime.Trajectory` → parquet/HF-Datasets rows (events + screenshot refs), schema-versioned, with `exit_reason`/failure-taxonomy columns cua lacks. Makes Shinken rollouts directly consumable by TRL/verl-style trainers. | M |
-| G6 | Gym `make/reset/step/evaluate` + worker pool (§7) | **Fork-native gym adapter**: `reset()` = warm-pool fork from the task's golden checkpoint (0.118 s) instead of their sandbox re-create; expose as a Workload-backed env class; interop with CUA-Gym TaskSource / uni-agent shapes rather than inventing a task format. This converts our measured fork advantage into the API trainers already speak. | M |
+| G6 | Gym `make/reset/step/evaluate` + worker pool (§7) | **Fork-native gym adapter — SHIPPED** (`shinken.gym`, 2026-06): `reset()` = warm-pool fork from the task's golden checkpoint (live-gated; measured ~60–120 ms) instead of their sandbox re-create; `step()` takes raw model text via `parse_actions`; `ShinkenGymPool` parallel fork-reset; episodes = typed `Trajectory` + HF-datasets exporter (closes G5's exporter half too); a `MultiTurnDataloader`-shaped iterator covers their TRL-GRPO collection shape without the torch/verl dependency. This converts our measured fork advantage into the API trainers already speak. | M — done |
 | G7 | MCP server (30+ tools) | Thin MCP server over the Python SDK (verbs + screenshot + checkpoint/fork as tools) — distribution surface, zero runtime change. | S–M |
 | G8 | SOM grounding (som pkg) + composed-grounded loop | Stay the course on D3 (a11y/structured tier + `element_ref`) under the measured E5 verdict: **hybrid per-window** — structured where the tree is real (Qt/Chromium controls), pixel fallback where it is measured-zero (canvas; games unmeasured). SOM-style annotation is the natural SDK-side annotator for exactly those zero-tree windows. Their own Linux a11y stub (`linux.py:41`) is evidence the tree must be earned, not assumed. | M (annotator), engine L |
 | G9 | Multi-OS (macOS VZ + clonefile, Windows, Android) | D10 roadmap; adopt their handler-factory shape (`handlers/factory.py`) and lume's stopped-VM-clone semantics as the macOS substrate design input. Not a v0.0.1 race. | L |
@@ -255,7 +255,7 @@ Effort classes: **S** = days, **M** = 1–2 weeks, **L** = multi-week+.
 ### 10.2 Defend (Shinken exclusives — why each matters for training)
 
 - **Typed contract + failure taxonomy** (`sandbox_died`, `exit_reason` precedence, schema-rejected unknown fields): trainers can drop infra-failed rollouts without poisoning reward signals — cua returns stringly `{"success": false}` and silently drops mistyped params (`main.py:574`).
-- **5.37 ms/step act+observe loop** (~36× vs OSWorld-class polling; [benchmarks §7](../docs/engineering/benchmarks.md)): step cost is the RL throughput denominator; cua's per-step path is the same poll-PNG architecture we beat.
+- **13.4 ms/step act+observe loop** (~14× vs OSWorld-class polling; [benchmarks §7](../docs/engineering/benchmarks.md)): step cost is the RL throughput denominator; cua's per-step path is the same poll-PNG architecture we beat.
 - **Harness-integrated fork** (`run_eval_forked`, golden→fork-N→score; warm-pool 0.118 s): resets are the other denominator; cua's reset re-provisions the sandbox (§4, §7) and their fork is cloud-only.
 - **Server-push screencast + idle suppression + dirty-tile delta + binary frames + XDamage**: observation bandwidth at fleet scale (64 sandboxes/1,024 sessions measured) — cua ships none of it.
 - **`SharedLoop` client plane**: one thread drives 1,024 sessions — their worker model is a subprocess per env.
@@ -263,17 +263,22 @@ Effort classes: **S** = days, **M** = 1–2 weeks, **L** = multi-week+.
 
 ### 10.3 Priority — the 3 gaps to close first for training users
 
-1. **G1 — typed `exec` channel** (M). Every benchmark family (OSWorld setup/verify, CUA-Gym
-   verifiers, cua-bench `setup_task`) needs in-guest execution; today it leaks through
-   provider `docker exec`/injector, which won't survive non-Docker substrates. It is also
-   the prerequisite that makes G4 free.
-2. **G6 — fork-native gym adapter** (M). The measured fork advantage is invisible to
+1. **G1 — typed `exec` channel** (M). **DONE (2026-06-11).** Every benchmark family (OSWorld
+   setup/verify, CUA-Gym verifiers, cua-bench `setup_task`) needs in-guest execution; it used
+   to leak through provider `docker exec`/injector, which won't survive non-Docker substrates.
+   Built per the design above (argv default, streamed events on the demux, group-kill
+   timeouts, gateway audit with argv/shell detail); the swerex/CUA-Gym/ProRL adapters now
+   prefer it in-band with the out-of-band fallback kept. PTY remains the follow-up (field
+   reserved). This also makes G4 free (document the equivalence).
+2. **G6 — fork-native gym adapter** (M) — **DONE** (`shinken.gym`; see the G6 row above
+   and `docs/design/agent-runtime.md`). The measured fork advantage is invisible to
    trainers until `reset()` *is* a fork. This is the one feature that converts our wedge
    into the API the trainer camp (TRL/verl/uni-agent) already consumes — and cua's own
    harness proves nobody else has wired it.
 3. **G2+G3 — clipboard + launch/activate verbs** (S–M combined). Cheap task-parity items:
    a large share of OSWorld-class tasks touch clipboard or app launch; without them,
-   workloads shell out around the ACI and the typed-contract story leaks.
+   workloads shell out around the ACI and the typed-contract story leaks. **CLOSED
+   (2026-06)** — see §10.1 G2/G3 and [aci-spec §3](../docs/design/aci-spec.md).
 
 ## 11. Open questions / watch items
 

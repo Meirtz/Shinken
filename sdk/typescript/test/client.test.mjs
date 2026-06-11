@@ -70,6 +70,49 @@ test("screencast: start, demux a frame, record scope, time out cleanly", async (
   assert.equal(await c.nextFrame(20), null); // no frame within the timeout
 });
 
+test("exec() resolves to the typed ExecResult and validates argv/shell exclusivity", async () => {
+  const { transport, sent } = fakeTransport();
+  const c = new AciClient(transport, CAPS, "linux");
+
+  const p = c.exec({ argv: ["echo", "hi"], cwd: "/tmp", timeout_ms: 5000 });
+  const id = sent.at(-1).call_id;
+  assert.equal(sent.at(-1).action.verb, "exec");
+  assert.deepEqual(sent.at(-1).action.argv, ["echo", "hi"]);
+  assert.equal(sent.at(-1).action.cwd, "/tmp");
+  const value = {
+    exit_code: 3, // a nonzero exit code is RETURNED, not thrown
+    signal: null,
+    timed_out: false,
+    stdout: "hi\n",
+    stderr: "",
+    stdout_truncated: false,
+    stderr_truncated: false,
+    duration_ms: 4.2,
+  };
+  c.feed(JSON.stringify({ type: "result", call_id: id, ok: true, value }));
+  assert.deepEqual(await p, value);
+
+  // a nack (e.g. saturation / validation) rejects with the server's reason
+  const bad = c.exec({ shell: "ls | wc -l" });
+  const badId = sent.at(-1).call_id;
+  assert.equal(sent.at(-1).action.shell, "ls | wc -l");
+  c.feed(JSON.stringify({ type: "ack", call_id: badId, ok: false, error: "max concurrent execs reached (4)" }));
+  await assert.rejects(bad, /max concurrent execs/);
+
+  // exactly one of argv/shell — locally typed, nothing sent
+  const before = sent.length;
+  await assert.rejects(c.exec({ argv: ["ls"], shell: "ls" }), /exactly one/);
+  await assert.rejects(c.exec({}), /exactly one/);
+  assert.equal(sent.length, before);
+});
+
+test("feed() ignores streamed exec events it does not consume (no crash, no settle)", () => {
+  const { transport } = fakeTransport();
+  const c = new AciClient(transport, CAPS, "linux");
+  c.feed(JSON.stringify({ type: "exec_output", cause: "x", seq: 0, channel: "stdout", data_b64: "aGk=" }));
+  c.feed(JSON.stringify({ type: "exec_exit", cause: "x", exit_code: 0, timed_out: false, duration_ms: 1, truncated: false }));
+});
+
 test("close() rejects in-flight calls and ends frame waits", async () => {
   const { transport } = fakeTransport();
   const c = new AciClient(transport, CAPS, "linux");

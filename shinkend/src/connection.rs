@@ -99,6 +99,25 @@ pub struct Step {
     /// follow-up (`observe` on a mutating action): the fresh observation (or its typed
     /// capture error) correlated to the action via `cause` = call_id.
     pub followup: Option<Reply>,
+    /// A validated in-guest exec to run (G1). Like [`StreamCtl`], the side effect is
+    /// owned by the async serve loop (bounded by its exec semaphore); the [`Session`]
+    /// stays a pure state machine. Buffered form: `reply` is None and the exec task
+    /// answers with the typed `result`; streamed form: `reply` is the ack and the
+    /// task pushes `exec_output`/`exec_exit` events.
+    pub exec: Option<crate::exec::ExecSpec>,
+}
+
+impl Default for Step {
+    fn default() -> Self {
+        Step {
+            reply: None,
+            close: false,
+            stream: StreamCtl::None,
+            delay_ms: 0,
+            followup: None,
+            exec: None,
+        }
+    }
 }
 
 impl Step {
@@ -108,28 +127,17 @@ impl Step {
     fn text(text: String) -> Self {
         Step {
             reply: Some(Reply::Text(text)),
-            close: false,
-            stream: StreamCtl::None,
-            delay_ms: 0,
-            followup: None,
+            ..Step::default()
         }
     }
     fn silent() -> Self {
-        Step {
-            reply: None,
-            close: false,
-            stream: StreamCtl::None,
-            delay_ms: 0,
-            followup: None,
-        }
+        Step::default()
     }
     fn close(text: String) -> Self {
         Step {
             reply: Some(Reply::Text(text)),
             close: true,
-            stream: StreamCtl::None,
-            delay_ms: 0,
-            followup: None,
+            ..Step::default()
         }
     }
 }
@@ -238,16 +246,7 @@ impl Session {
             Message::Hello { .. } => {
                 Step::text(protocol::error_result_text("?", "already authenticated"))
             }
-            Message::Action { call_id, action } => {
-                let (reply, stream, delay_ms, followup) = self.dispatch_action(&call_id, action);
-                Step {
-                    reply: Some(reply),
-                    close: false,
-                    stream,
-                    delay_ms,
-                    followup,
-                }
-            }
+            Message::Action { call_id, action } => self.dispatch_action(&call_id, action),
             // screen_size must report the real executor geometry, not a stub (#138)
             Message::Query { call_id, q } if q == "screen_size" => {
                 let (w, h) = self.exec.screen_size();
@@ -317,9 +316,10 @@ const MAX_WAIT_MS: u64 = 10_000;
 
 /// The verbs that mutate guest state and therefore admit the per-action `observe`
 /// argument (act-returns-observation). Mirrors the schema's `$defs.MutatingVerb` —
-/// the coordinate tier plus the element verbs (their AX-path writes mutate guest
-/// state exactly like a click does).
-const MUTATING_VERBS: [&str; 12] = [
+/// the coordinate tier, the element verbs (their AX-path writes mutate guest state
+/// exactly like a click does), and the desktop verbs (G2+G3: a clipboard write, an
+/// app launch, a window activation all change what the next observation shows).
+const MUTATING_VERBS: [&str; 15] = [
     "click",
     "double_click",
     "right_click",
@@ -332,6 +332,9 @@ const MUTATING_VERBS: [&str; 12] = [
     "key",
     "invoke_action",
     "set_value",
+    "clipboard_set",
+    "launch_app",
+    "activate_window",
 ];
 
 /// Capture one observation and shape it for the wire — a binary frame on a
@@ -380,21 +383,23 @@ impl Session {
     /// binary-negotiated session, content-negotiated via `if_none_match`); `observe`
     /// → one-shot structured `observation` (always JSON text);
     /// `start_screencast`/`stop_screencast` → `ack` plus a [`StreamCtl`]; `wait` →
-    /// `ack` plus a bounded delay (ms) the serve loop sleeps before replying; every
-    /// other verb → `ack` (with `element_ref` targets resolved to bbox-centre points
-    /// via this session's observation engine first). The third tuple element is that
-    /// delay (0 for everything but `wait`); the fourth is the act-returns-observation
-    /// follow-up (the fresh observation — or its typed capture error — sent right
-    /// after the ack when a mutating action carried `observe`).
-    fn dispatch_action(
-        &mut self,
-        call_id: &str,
-        action: serde_json::Value,
-    ) -> (Reply, StreamCtl, u64, Option<Reply>) {
+    /// `ack` plus a bounded delay (ms) the serve loop sleeps before replying; `exec`
+    /// → a validated [`crate::exec::ExecSpec`] side effect the serve loop runs (the
+    /// streamed form acks here, the buffered form's only reply is the exec task's
+    /// typed `result`); every other verb → `ack` (with `element_ref` targets resolved
+    /// to bbox-centre points via this session's observation engine first).
+    /// `Step::delay_ms` is the `wait` delay (0 otherwise); `Step::followup` is the
+    /// act-returns-observation follow-up (the fresh observation — or its typed
+    /// capture error — sent right after the ack when a mutating action carried
+    /// `observe`).
+    fn dispatch_action(&mut self, call_id: &str, action: serde_json::Value) -> Step {
         let exec = self.exec.clone();
         let exec = exec.as_ref();
         let binary = self.binary;
-        let nack = |error: String| (ack(call_id, false, Some(error)), StreamCtl::None, 0, None);
+        let nack = |error: String| Step {
+            reply: Some(ack(call_id, false, Some(error))),
+            ..Step::default()
+        };
         let spec = match serde_json::from_value::<ActionSpec>(action) {
             Ok(s) => s,
             Err(e) => return nack(format!("bad action: {e}")),
@@ -472,8 +477,24 @@ impl Session {
                     exec,
                     binary,
                 );
-                (reply, StreamCtl::None, 0, None)
+                Step {
+                    reply: Some(reply),
+                    ..Step::default()
+                }
             }
+            // Typed in-guest exec (G1): validate here (the nack path), run in the
+            // serve loop's bounded exec task. The child is a process of shinkend —
+            // no Executor backend involved, so exec works on EVERY backend.
+            "exec" => match crate::exec::ExecSpec::from_action(call_id, &spec, binary) {
+                Ok(espec) => Step {
+                    // Streamed form: ack now, events follow. Buffered form: silence
+                    // until the exec task answers with the typed `result`.
+                    reply: espec.stream.then(|| ack(call_id, true, None)),
+                    exec: Some(espec),
+                    ..Step::default()
+                },
+                Err(e) => nack(e),
+            },
             "start_screencast" => {
                 let fps = spec.fps.unwrap_or(FPS_DEFAULT).clamp(FPS_MIN, FPS_MAX);
                 let delta = spec.delta.unwrap_or(false);
@@ -500,34 +521,55 @@ impl Session {
                     delta,
                     binary,
                 };
-                (ack(call_id, true, None), StreamCtl::Start(cast), 0, None)
+                Step {
+                    reply: Some(ack(call_id, true, None)),
+                    stream: StreamCtl::Start(cast),
+                    ..Step::default()
+                }
             }
-            "stop_screencast" => (ack(call_id, true, None), StreamCtl::Stop, 0, None),
+            "stop_screencast" => Step {
+                reply: Some(ack(call_id, true, None)),
+                stream: StreamCtl::Stop,
+                ..Step::default()
+            },
             // wait: ack, but have the serve loop sleep first (bounded) so the ack lands after
             // the delay — real wait.ms semantics, async so it never blocks the runtime (#140)
-            "wait" => (
-                ack(call_id, true, None),
-                StreamCtl::None,
-                spec.ms.unwrap_or(0).min(MAX_WAIT_MS),
-                None,
-            ),
+            "wait" => Step {
+                reply: Some(ack(call_id, true, None)),
+                delay_ms: spec.ms.unwrap_or(0).min(MAX_WAIT_MS),
+                ..Step::default()
+            },
             // Structured observation (M1b): settle → snapshot → stable ids → render
             // (full or diff). Runs on the serve loop's blocking thread like every other
             // executor call; the AT-SPI worker bounds its own reply deadline, so a hung
             // bus answers a typed error here instead of wedging the runtime.
-            "observe" => (
-                self.observe_action(call_id, &spec),
-                StreamCtl::None,
-                0,
-                None,
-            ),
+            "observe" => Step {
+                reply: Some(self.observe_action(call_id, &spec)),
+                ..Step::default()
+            },
+            // Clipboard read (G2): the answer is a typed `result` carrying `{text}` —
+            // the read's data channel (an ack has no payload), like a query answer.
+            // Backends without clipboard support answer a typed nack.
+            "clipboard_get" => match exec.clipboard_get() {
+                Ok(text) => Step {
+                    reply: Some(Reply::Text(encode(&protocol::clipboard_text_result(
+                        call_id, &text,
+                    )))),
+                    ..Step::default()
+                },
+                Err(e) => nack(e.to_string()),
+            },
             // Element verbs (AX path): resolve the ref against the LAST observation,
             // then drive the node's AT-SPI Action / Value / EditableText interface. A
             // successful element write honors `observe` exactly like a pointer verb.
             "invoke_action" | "set_value" => {
                 let (reply, ok) = self.element_action(call_id, &spec);
                 let followup = if ok { observe_followup(observe) } else { None };
-                (reply, StreamCtl::None, 0, followup)
+                Step {
+                    reply: Some(reply),
+                    followup,
+                    ..Step::default()
+                }
             }
             _ => {
                 // Physical-event preference: an element_ref target on a pointer verb
@@ -552,12 +594,11 @@ impl Session {
                         // itself fails, a typed error result so the client's wait resolves
                         // instead of timing out. The ack stays honest either way: the
                         // ACTION succeeded.
-                        (
-                            ack(call_id, true, None),
-                            StreamCtl::None,
-                            0,
-                            observe_followup(observe),
-                        )
+                        Step {
+                            reply: Some(ack(call_id, true, None)),
+                            followup: observe_followup(observe),
+                            ..Step::default()
+                        }
                     }
                     Err(e) => nack(e.to_string()),
                 }
@@ -1327,6 +1368,111 @@ mod tests {
         }
     }
 
+    // ---- desktop verbs (G2+G3): clipboard / launch_app / activate_window ----
+
+    /// clipboard_set acks; clipboard_get answers a typed `result` whose value is
+    /// `{text}` — the read's payload channel (an ack carries no data).
+    #[test]
+    fn clipboard_set_then_get_roundtrips_through_dispatch() {
+        let mut s = session(None);
+        s.on_text(HELLO);
+        let step = s.on_text(
+            r#"{"type":"action","call_id":"cb1","action":{"verb":"clipboard_set","text":"copy me"}}"#,
+        );
+        let reply = step.reply.unwrap().into_text();
+        assert!(reply.contains("\"type\":\"ack\"") && reply.contains("\"ok\":true"));
+        let step =
+            s.on_text(r#"{"type":"action","call_id":"cb2","action":{"verb":"clipboard_get"}}"#);
+        let v: serde_json::Value = serde_json::from_str(&step.reply.unwrap().into_text()).unwrap();
+        assert_eq!(v["type"], "result");
+        assert_eq!(v["call_id"], "cb2");
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["value"]["text"], "copy me");
+    }
+
+    /// A backend without clipboard support nacks the read with the trait's typed
+    /// error; an empty clipboard answers the backend's typed empty error.
+    #[test]
+    fn clipboard_get_nacks_unsupported_backend_and_empty_clipboard() {
+        let mut s = Session::new(None, Arc::new(SizedExec(640, 480)));
+        s.on_text(HELLO);
+        let step =
+            s.on_text(r#"{"type":"action","call_id":"cb1","action":{"verb":"clipboard_get"}}"#);
+        let reply = step.reply.unwrap().into_text();
+        assert!(
+            reply.contains("\"ok\":false") && reply.contains("clipboard not supported"),
+            "got {reply}"
+        );
+        let mut s = session(None); // virtual backend, nothing set yet
+        s.on_text(HELLO);
+        let step =
+            s.on_text(r#"{"type":"action","call_id":"cb0","action":{"verb":"clipboard_get"}}"#);
+        let reply = step.reply.unwrap().into_text();
+        assert!(
+            reply.contains("\"ok\":false") && reply.contains("clipboard is empty"),
+            "got {reply}"
+        );
+    }
+
+    /// The desktop WRITES are mutating (observe-after-act follows the ack); the
+    /// clipboard READ is not (observe is rejected before dispatch).
+    #[test]
+    fn desktop_write_verbs_admit_observe_clipboard_get_does_not() {
+        let mut s = session(None);
+        s.on_text(HELLO);
+        for (cid, action) in [
+            ("cb1", r#"{"verb":"clipboard_set","text":"x","observe":{}}"#),
+            (
+                "la1",
+                r#"{"verb":"launch_app","app":"xclock","observe":{}}"#,
+            ),
+            (
+                "aw1",
+                r#"{"verb":"activate_window","window_id":42,"observe":{}}"#,
+            ),
+        ] {
+            let step = s.on_text(&format!(
+                r#"{{"type":"action","call_id":"{cid}","action":{action}}}"#
+            ));
+            let reply = step.reply.unwrap().into_text();
+            assert!(reply.contains("\"ok\":true"), "{action} → {reply}");
+            let obs = step
+                .followup
+                .unwrap_or_else(|| panic!("{action} with observe must produce a follow-up"));
+            let v: serde_json::Value = serde_json::from_str(&obs.into_text()).unwrap();
+            assert_eq!(v["cause"], *cid, "follow-up correlates via cause");
+        }
+        let step = s.on_text(
+            r#"{"type":"action","call_id":"cb2","action":{"verb":"clipboard_get","observe":{}}}"#,
+        );
+        let reply = step.reply.unwrap().into_text();
+        assert!(
+            reply.contains("\"ok\":false") && reply.contains("observe is not supported"),
+            "got {reply}"
+        );
+    }
+
+    /// MUTATING_VERBS must not drift from the schema's `$defs.MutatingVerb` enum.
+    #[test]
+    fn mutating_verbs_match_schema() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../schema/aci.schema.json");
+        let raw = std::fs::read_to_string(path).expect("read schema/aci.schema.json");
+        let schema: serde_json::Value = serde_json::from_str(&raw).expect("parse aci schema");
+        let mut from_schema: Vec<String> = schema["$defs"]["MutatingVerb"]["enum"]
+            .as_array()
+            .expect("MutatingVerb enum")
+            .iter()
+            .map(|x| x.as_str().unwrap().to_string())
+            .collect();
+        from_schema.sort();
+        let mut ours: Vec<String> = MUTATING_VERBS.iter().map(|s| s.to_string()).collect();
+        ours.sort();
+        assert_eq!(
+            ours, from_schema,
+            "runtime MUTATING_VERBS drifted from schema"
+        );
+    }
+
     #[test]
     fn invalid_observe_params_nack_before_the_action_executes() {
         let exec = Arc::new(VirtualExecutor::default());
@@ -1419,6 +1565,86 @@ mod tests {
         );
         assert!(step.reply.unwrap().into_text().contains("\"ok\":false"));
         assert!(step.followup.is_none());
+    }
+
+    // ---- typed exec dispatch (G1) ----
+
+    #[test]
+    fn exec_dispatch_validates_and_returns_the_spec_side_effect() {
+        use crate::exec::ExecCommand;
+        let mut s = session(None);
+        s.on_text(HELLO);
+        // Buffered form: NO reply yet (the serve loop's exec task answers with the
+        // typed result), the validated spec rides the Step.
+        let step = s.on_text(
+            r#"{"type":"action","call_id":"x1","action":{"verb":"exec","argv":["echo","hi"],"cwd":"/tmp"}}"#,
+        );
+        assert!(step.reply.is_none(), "buffered exec must not ack");
+        let espec = step.exec.expect("exec side effect");
+        assert_eq!(espec.call_id, "x1");
+        assert_eq!(
+            espec.command,
+            ExecCommand::Argv(vec!["echo".into(), "hi".into()])
+        );
+        assert_eq!(espec.cwd.as_deref(), Some("/tmp"));
+        assert!(!espec.stream && !espec.binary);
+        // Streamed form: ack ok=true plus the spec.
+        let step = s.on_text(
+            r#"{"type":"action","call_id":"x2","action":{"verb":"exec","shell":"ls | wc -l","stream":true}}"#,
+        );
+        let reply = step.reply.unwrap().into_text();
+        assert!(reply.contains("\"type\":\"ack\"") && reply.contains("\"ok\":true"));
+        let espec = step.exec.expect("exec side effect");
+        assert!(espec.stream);
+        assert_eq!(espec.command, ExecCommand::Shell("ls | wc -l".into()));
+    }
+
+    #[test]
+    fn exec_binary_negotiation_reaches_the_spec() {
+        let mut s = session(None);
+        s.on_text(
+            r#"{"type":"hello","v":0,"client":{"name":"t","version":"0"},"accept":{"binary_frames":true}}"#,
+        );
+        let step = s.on_text(
+            r#"{"type":"action","call_id":"x1","action":{"verb":"exec","argv":["true"],"stream":true}}"#,
+        );
+        assert!(
+            step.exec.unwrap().binary,
+            "streamed chunks ride binary frames"
+        );
+    }
+
+    #[test]
+    fn exec_validation_failures_nack_without_a_side_effect() {
+        let mut s = session(None);
+        s.on_text(HELLO);
+        for (action, want) in [
+            (r#"{"verb":"exec"}"#, "requires"),
+            (
+                r#"{"verb":"exec","argv":["ls"],"shell":"ls"}"#,
+                "exactly one",
+            ),
+            (r#"{"verb":"exec","argv":[]}"#, "empty"),
+            (
+                r#"{"verb":"exec","argv":["ls"],"pty":true}"#,
+                "pty is reserved",
+            ),
+            // observe is not admitted on exec (not a MutatingVerb)
+            (
+                r#"{"verb":"exec","argv":["ls"],"observe":{}}"#,
+                "observe is not supported",
+            ),
+        ] {
+            let step = s.on_text(&format!(
+                r#"{{"type":"action","call_id":"x1","action":{action}}}"#
+            ));
+            assert!(step.exec.is_none(), "no exec must escape: {action}");
+            let reply = step.reply.unwrap().into_text();
+            assert!(
+                reply.contains("\"ok\":false") && reply.contains(want),
+                "expected {want:?} for {action}, got {reply}"
+            );
+        }
     }
 
     // ---- drag / mouse_down / mouse_up dispatch + list_windows query ----

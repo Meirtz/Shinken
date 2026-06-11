@@ -15,7 +15,9 @@
     { "$ref": "#/$defs/Result" },
     { "$ref": "#/$defs/ActionMsg" },
     { "$ref": "#/$defs/Ack" },
-    { "$ref": "#/$defs/ObservationMsg" }
+    { "$ref": "#/$defs/ObservationMsg" },
+    { "$ref": "#/$defs/ExecOutputMsg" },
+    { "$ref": "#/$defs/ExecExitMsg" }
   ],
   "$defs": {
     "Hello": {
@@ -186,7 +188,18 @@
         "if_none_match": { "type": "string", "description": "screenshot: a `frame_hash` from a previous screenshot observation (this session's or — across forked replicas with near-identical screens — another session's). If the freshly captured frame's raw-pixel hash equals it, the runtime answers with the compact `not_modified` observation instead of re-sending the payload. Only meaningful against a runtime advertising capabilities.frame_dedup; a client MUST NOT send it otherwise (older runtimes reject unknown action fields)." },
         "structured": { "type": "boolean", "description": "observe: capture the structured (a11y) tree. Omitted defaults to true — observe IS the structured verb (pixels are `screenshot`); an explicit false is rejected by the runtime" },
         "diff": { "type": "boolean", "description": "observe: render tree_text as a diff (`~`/`+`/`-` lines) against this session's previous revision; falls back to the full tree when no baseline exists or the diff exceeds the runtime's line budget. The `elements` array stays the full live list either way" },
-        "settle_ms": { "type": "integer", "minimum": 0, "description": "observe: debounce a11y change notifications for this quiesce window (ms, runtime-clamped) before walking, so the tree is captured after the UI settles; the total settle wait is hard-capped runtime-side" }
+        "settle_ms": { "type": "integer", "minimum": 0, "description": "observe: debounce a11y change notifications for this quiesce window (ms, runtime-clamped) before walking, so the tree is captured after the UI settles; the total settle wait is hard-capped runtime-side" },
+        "argv": { "type": "array", "minItems": 1, "items": { "type": "string" }, "description": "exec: the program + arguments, executed directly (no shell interpretation) — the DEFAULT form. Exactly one of argv/shell is required" },
+        "shell": { "type": "string", "description": "exec: a shell command line, run via the guest's `/bin/sh -c` — the explicit opt-in alternative to argv (shell parsing is a deliberate choice, never a silent default). Mutually exclusive with argv" },
+        "cwd": { "type": "string", "description": "exec: working directory for the child process (guest path); omitted = the runtime's cwd" },
+        "env": { "type": "object", "additionalProperties": { "type": "string" }, "description": "exec: extra environment variables for the child (merged over the runtime's environment)" },
+        "timeout_ms": { "type": "integer", "minimum": 1, "description": "exec: kill-the-process-group deadline (ms, runtime-clamped to a hard max). Omitted = the runtime default (60 s). A timeout is reported honestly (timed_out=true), never disguised as an exit code" },
+        "stdin": { "type": "string", "description": "exec: text written to the child's stdin, which is then closed; omitted = stdin is closed immediately (/dev/null)" },
+        "stream": { "type": "boolean", "description": "exec: streamed form. The action is answered with an ack, stdout/stderr then arrive incrementally as server-pushed `exec_output` events (cause = this call_id; raw-byte binary frames on a binary-negotiated session) and the run terminates with one `exec_exit` event. Omitted/false = buffered form: one `result` whose value is $defs.ExecResult" },
+        "pty": { "const": false, "description": "RESERVED: PTY allocation for the exec channel (interactive shells, TUI programs) is a designed follow-up — a stream kind over the same exec_output/exec_exit events, not a second protocol. This revision pins the field name and rejects true" },
+        "app": { "type": "string", "minLength": 1, "description": "launch_app: the application to start — an executable name resolved on the guest's PATH or an absolute path, spawned detached with the session environment (Linux v1: $DISPLAY + the session D-Bus address shinkend itself runs under). activate_window: a window selector — the first list_windows entry whose title contains this string (case-insensitive) is activated" },
+        "args": { "type": "array", "items": { "type": "string" }, "description": "launch_app: argv tail passed verbatim to the executable (never through a shell — there is no interpolation surface)" },
+        "window_id": { "type": "integer", "minimum": 0, "description": "activate_window: the window to raise+focus — an `id` from the list_windows query (the same id usable as the window:<id> capture scope). Linux v1 sends the EWMH _NET_ACTIVE_WINDOW client message, falling back to raise+set-input-focus on a WM-less display" }
       },
       "allOf": [
         { "if": { "required": ["verb"], "properties": { "verb": { "enum": ["click", "double_click", "right_click", "move", "scroll"] } } }, "then": { "required": ["target"] } },
@@ -196,11 +209,19 @@
         { "if": { "required": ["verb"], "properties": { "verb": { "enum": ["invoke_action", "set_value"] } } }, "then": { "required": ["target"] } },
         { "if": { "required": ["verb"], "properties": { "verb": { "const": "set_value" } } }, "then": { "required": ["text"] } },
         { "if": { "required": ["observe"] }, "then": { "properties": { "verb": { "$ref": "#/$defs/MutatingVerb" } } } },
-        { "if": { "anyOf": [ { "required": ["structured"] }, { "required": ["diff"] }, { "required": ["settle_ms"] } ] }, "then": { "properties": { "verb": { "const": "observe" } } } }
+        { "if": { "anyOf": [ { "required": ["structured"] }, { "required": ["diff"] }, { "required": ["settle_ms"] } ] }, "then": { "properties": { "verb": { "const": "observe" } } } },
+        { "if": { "anyOf": [ { "required": ["argv"] }, { "required": ["shell"] }, { "required": ["cwd"] }, { "required": ["env"] }, { "required": ["timeout_ms"] }, { "required": ["stdin"] }, { "required": ["stream"] }, { "required": ["pty"] } ] }, "then": { "properties": { "verb": { "const": "exec" } } } },
+        { "if": { "required": ["verb"], "properties": { "verb": { "const": "exec" } } }, "then": { "oneOf": [ { "required": ["argv"], "not": { "required": ["shell"] } }, { "required": ["shell"], "not": { "required": ["argv"] } } ] } },
+        { "if": { "required": ["verb"], "properties": { "verb": { "const": "clipboard_set" } } }, "then": { "required": ["text"] } },
+        { "if": { "required": ["verb"], "properties": { "verb": { "const": "launch_app" } } }, "then": { "required": ["app"] } },
+        { "if": { "required": ["verb"], "properties": { "verb": { "const": "activate_window" } } }, "then": { "anyOf": [ { "required": ["window_id"] }, { "required": ["app"] } ] } },
+        { "if": { "required": ["args"] }, "then": { "properties": { "verb": { "const": "launch_app" } } } },
+        { "if": { "required": ["window_id"] }, "then": { "properties": { "verb": { "const": "activate_window" } } } },
+        { "if": { "required": ["app"] }, "then": { "properties": { "verb": { "enum": ["launch_app", "activate_window"] } } } }
       ]
     },
-    "Verb": { "enum": ["click", "double_click", "right_click", "move", "drag", "mouse_down", "mouse_up", "scroll", "type_text", "key", "screenshot", "start_screencast", "stop_screencast", "wait", "observe", "invoke_action", "set_value"] },
-    "MutatingVerb": { "enum": ["click", "double_click", "right_click", "move", "drag", "mouse_down", "mouse_up", "scroll", "type_text", "key", "invoke_action", "set_value"], "description": "the verbs that mutate guest state and therefore admit the per-action `observe` argument — the coordinate tier plus the element verbs (screenshot/screencast/observe/wait do not)" },
+    "Verb": { "enum": ["click", "double_click", "right_click", "move", "drag", "mouse_down", "mouse_up", "scroll", "type_text", "key", "screenshot", "start_screencast", "stop_screencast", "wait", "observe", "invoke_action", "set_value", "exec", "clipboard_get", "clipboard_set", "launch_app", "activate_window"], "description": "the typed action vocabulary. Reply shapes: most verbs answer with an `ack`; `screenshot`/`observe` answer with an `observation`; buffered `exec` answers with a `result` whose value is $defs.ExecResult (streamed exec: ack, then `exec_output`/`exec_exit` events); `clipboard_get` (a read) answers with a `result` whose value is `{text}` — v1 is text-only and size-capped runtime-side, binary clipboard formats are future work" },
+    "MutatingVerb": { "enum": ["click", "double_click", "right_click", "move", "drag", "mouse_down", "mouse_up", "scroll", "type_text", "key", "invoke_action", "set_value", "clipboard_set", "launch_app", "activate_window"], "description": "the verbs that mutate guest state and therefore admit the per-action `observe` argument — the coordinate tier, the element verbs, and the desktop verbs (clipboard_set/launch_app/activate_window); the reads (screenshot/screencast/observe/wait/clipboard_get) do not, and neither does `exec` (its effects are not a UI gesture — observe-after-exec is not a meaningful contract)" },
     "PointerButton": { "enum": ["left", "middle", "right"], "description": "pointer button name; omitted = left" },
     "ObserveSpec": {
       "type": "object", "additionalProperties": false,
@@ -237,6 +258,67 @@
         "bbox": { "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4, "description": "[x, y, w, h] in display pixels" },
         "source": { "$ref": "#/$defs/ElementSource" },
         "provenance": { "type": "object", "description": "backend-specific node identity for re-resolution (e.g. CDP backendDOMNodeId/AX nodeId, AT-SPI path)" }
+      }
+    },
+    "ExecOutputMsg": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "cause", "seq", "channel", "data_b64"],
+      "description": "one stdout/stderr chunk of a STREAMED exec (`exec` with stream=true), server-pushed on the same demux as screencast frames. This is the JSON-text form; a binary-negotiated session carries the chunk bytes raw instead, framed per $defs.BinaryExecOutputHeader",
+      "properties": {
+        "type": { "const": "exec_output" },
+        "cause": { "type": "string", "description": "the exec action's call_id" },
+        "seq": { "type": "integer", "minimum": 0, "description": "monotonic chunk index across BOTH channels of one exec — total output order is reconstructible" },
+        "channel": { "enum": ["stdout", "stderr"] },
+        "data_b64": { "type": "string", "description": "base64 of the raw chunk bytes (chunk size is runtime-capped). Bytes, not text: output need not be UTF-8" }
+      }
+    },
+    "ExecExitMsg": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "cause", "exit_code", "timed_out", "duration_ms", "truncated"],
+      "description": "the terminal event of a STREAMED exec: exactly one per stream:true action, after the last exec_output. Always a JSON text frame",
+      "properties": {
+        "type": { "const": "exec_exit" },
+        "cause": { "type": "string", "description": "the exec action's call_id" },
+        "exit_code": { "type": ["integer", "null"], "description": "the child's exit code; null when it was killed by a signal (see `signal`) or never spawned (see `error`)" },
+        "signal": { "type": ["integer", "null"], "description": "the signal that killed the child, when one did (e.g. 9 after a timeout group-kill)" },
+        "timed_out": { "type": "boolean", "description": "true when the runtime killed the process group at the deadline — reported honestly, never disguised as an exit code" },
+        "duration_ms": { "type": "number", "minimum": 0, "description": "wall time from spawn to reap" },
+        "truncated": { "type": "boolean", "description": "true when the stream's total output budget was exhausted and later chunks were dropped (the child still ran to completion/timeout)" },
+        "error": { "type": "string", "description": "spawn/runtime failure (e.g. `exec_spawn_failed: No such file or directory`) — the run produced no process; exit_code is null" }
+      }
+    },
+    "ExecResult": {
+      "type": "object", "additionalProperties": false,
+      "required": ["exit_code", "timed_out", "stdout", "stderr", "stdout_truncated", "stderr_truncated", "duration_ms"],
+      "description": "the `value` of the `result` answering a BUFFERED exec (`exec` without stream). Documented as a $def like ActionBatch — `result.value` is schema-open, but the runtime emits and the SDK returns exactly this shape. stdout/stderr are UTF-8 with lossy replacement (use the streamed form + binary frames for byte-exact output), each capped at the runtime's per-channel budget with honest truncation flags",
+      "properties": {
+        "exit_code": { "type": ["integer", "null"], "description": "null when killed by a signal (timeout) — see `signal`/`timed_out`" },
+        "signal": { "type": ["integer", "null"] },
+        "timed_out": { "type": "boolean" },
+        "stdout": { "type": "string" },
+        "stderr": { "type": "string" },
+        "stdout_truncated": { "type": "boolean" },
+        "stderr_truncated": { "type": "boolean" },
+        "duration_ms": { "type": "number", "minimum": 0 }
+      }
+    },
+    "BinaryExecOutputHeader": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "cause", "seq", "channel", "data"],
+      "description": "NOT a top-level text message (deliberately absent from the oneOf, like BinaryFrameHeader): the JSON header inside a binary WebSocket exec-output frame, sent only on a session that negotiated hello.accept.binary_frames. Same frame layout as media frames — `u32 LE header_len | this header | payload area` — with the chunk's raw bytes located by `data.off`/`data.len`; the `type` field is the kind discriminator a demux switches on (`observation` vs `exec_output`)",
+      "properties": {
+        "type": { "const": "exec_output" },
+        "cause": { "type": "string" },
+        "seq": { "type": "integer", "minimum": 0 },
+        "channel": { "enum": ["stdout", "stderr"] },
+        "data": {
+          "type": "object", "additionalProperties": false,
+          "required": ["off", "len"],
+          "properties": {
+            "off": { "type": "integer", "minimum": 0, "description": "payload byte offset of the chunk bytes" },
+            "len": { "type": "integer", "minimum": 0, "description": "chunk byte length" }
+          }
+        }
       }
     },
     "ElementSource": { "enum": ["atspi", "uia", "ax", "cdp", "som"] },

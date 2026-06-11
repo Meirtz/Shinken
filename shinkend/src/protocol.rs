@@ -4,6 +4,8 @@
 //! M0 implements the handshake (`hello` → `welcome`), `ping`/`pong`, and
 //! `query` (`platform`, `screen_size`). Action execution arrives in M1 (#4).
 
+use base64::engine::general_purpose::STANDARD as B64;
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
 /// ACI schema version this runtime speaks.
@@ -148,6 +150,36 @@ pub enum Message {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
+    /// One stdout/stderr chunk of a STREAMED exec (`exec` with `stream: true`) —
+    /// the JSON-text form (`data_b64`); a binary-negotiated session ships the chunk
+    /// bytes raw instead (see [`binary_exec_output`]).
+    ExecOutput {
+        /// The exec action's call_id.
+        cause: String,
+        /// Monotonic chunk index across BOTH channels of one exec.
+        seq: u64,
+        /// `stdout` or `stderr`.
+        channel: String,
+        /// base64 of the raw chunk bytes (output need not be UTF-8).
+        data_b64: String,
+    },
+    /// The terminal event of a STREAMED exec — exactly one per `stream: true`
+    /// action, after the last `exec_output`. Always JSON text.
+    ExecExit {
+        cause: String,
+        /// The child's exit code; `None` when killed by a signal or never spawned.
+        exit_code: Option<i32>,
+        /// The killing signal, when one did (e.g. 9 after a timeout group-kill).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        signal: Option<i32>,
+        timed_out: bool,
+        duration_ms: f64,
+        /// Whether the stream's total output budget dropped later chunks.
+        truncated: bool,
+        /// Spawn/runtime failure — the run produced no process; exit_code is null.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
     Observation {
         obs_id: String,
         /// The `call_id` this observation answers (set for one-shot `screenshot`),
@@ -219,6 +251,16 @@ pub fn capabilities() -> Capabilities {
             "observe",
             "invoke_action",
             "set_value",
+            // typed in-guest exec channel (G1): argv-default, shell opt-in,
+            // buffered result or streamed exec_output/exec_exit
+            "exec",
+            // desktop task-parity verbs (G2+G3): clipboard + app launch/activate.
+            // Advertised by every shinkend; a backend without an implementation
+            // answers with a typed unsupported error at dispatch time.
+            "clipboard_get",
+            "clipboard_set",
+            "launch_app",
+            "activate_window",
         ]
         .iter()
         .map(|s| s.to_string())
@@ -308,6 +350,90 @@ pub fn not_modified_observation(call_id: &str, frame_hash: &str) -> Message {
         frame_hash: Some(frame_hash.to_string()),
         not_modified: Some(true),
     }
+}
+
+// ---- exec channel (G1) ----
+
+/// Build the `result` answering a BUFFERED exec: `ok: true` (the ACTION ran — a
+/// nonzero exit code is the COMMAND failing, reported in the typed value, not an
+/// action error) with `value` = the schema's `$defs.ExecResult`. stdout/stderr are
+/// UTF-8 with lossy replacement; byte-exact output rides the streamed binary form.
+pub fn exec_result(call_id: &str, o: &crate::exec::ExecOutcome) -> Message {
+    ok_result(
+        call_id,
+        serde_json::json!({
+            "exit_code": o.exit_code,
+            "signal": o.signal,
+            "timed_out": o.timed_out,
+            "stdout": String::from_utf8_lossy(&o.stdout),
+            "stderr": String::from_utf8_lossy(&o.stderr),
+            "stdout_truncated": o.stdout_truncated,
+            "stderr_truncated": o.stderr_truncated,
+            "duration_ms": o.duration_ms,
+        }),
+    )
+}
+
+/// Serialize one JSON-text `exec_output` event (base64 chunk). `None` only on a
+/// serialization failure, which the streamed runner skips rather than wedging.
+pub fn exec_output_text(cause: &str, seq: u64, channel: &str, data: &[u8]) -> Option<String> {
+    serde_json::to_string(&Message::ExecOutput {
+        cause: cause.to_string(),
+        seq,
+        channel: channel.to_string(),
+        data_b64: B64.encode(data),
+    })
+    .ok()
+}
+
+/// Build one BINARY `exec_output` frame — the same `u32 LE header_len | JSON header |
+/// payload` layout as media frames, with the header's `type` as the kind
+/// discriminator and the chunk bytes located by `data.off`/`data.len`
+/// (schema `$defs.BinaryExecOutputHeader`).
+pub fn binary_exec_output(cause: &str, seq: u64, channel: &str, data: &[u8]) -> Vec<u8> {
+    let header = serde_json::json!({
+        "type": "exec_output",
+        "cause": cause,
+        "seq": seq,
+        "channel": channel,
+        "data": { "off": 0, "len": data.len() },
+    });
+    assemble_binary(&header, &[data])
+}
+
+/// Serialize the terminal `exec_exit` of a streamed run.
+pub fn exec_exit_text(
+    cause: &str,
+    exit_code: Option<i32>,
+    signal: Option<i32>,
+    timed_out: bool,
+    duration_ms: f64,
+    truncated: bool,
+) -> String {
+    serde_json::to_string(&Message::ExecExit {
+        cause: cause.to_string(),
+        exit_code,
+        signal,
+        timed_out,
+        duration_ms,
+        truncated,
+        error: None,
+    })
+    .unwrap_or_else(|_| error_result_text(cause, "failed to encode exec_exit"))
+}
+
+/// Serialize an error-terminal `exec_exit` (spawn/wait failure: no process ran).
+pub fn exec_exit_error(cause: &str, error: &str, duration_ms: f64) -> String {
+    serde_json::to_string(&Message::ExecExit {
+        cause: cause.to_string(),
+        exit_code: None,
+        signal: None,
+        timed_out: false,
+        duration_ms,
+        truncated: false,
+        error: Some(error.to_string()),
+    })
+    .unwrap_or_else(|_| error_result_text(cause, error))
 }
 
 // ---- binary media frames ----
@@ -461,6 +587,13 @@ pub fn ready_result(call_id: &str, r: crate::executor::Readiness) -> Message {
 /// JSON array of `{id, title, pid, x, y, w, h, focused}` objects.
 pub fn list_windows_result(call_id: &str, windows: &[crate::executor::WindowInfo]) -> Message {
     ok_result(call_id, serde_json::json!(windows))
+}
+
+/// Build the `clipboard_get` reply: a typed `result` whose value is `{text}`. The
+/// verb is a READ — its data rides the result channel like a query answer (an `ack`
+/// carries no payload). v1 is text-only; binary clipboard formats are future work.
+pub fn clipboard_text_result(call_id: &str, text: &str) -> Message {
+    ok_result(call_id, serde_json::json!({ "text": text }))
 }
 
 fn err_result(call_id: &str, error: &str) -> Message {
@@ -807,6 +940,19 @@ mod tests {
         assert_eq!(v["value"][0]["focused"], false);
     }
 
+    /// clipboard_get's answer is a typed result carrying {text} — the read verb's
+    /// payload channel (acks carry no value).
+    #[test]
+    fn clipboard_text_result_carries_text_value() {
+        let msg = clipboard_text_result("c3", "hello ✂️");
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&msg).unwrap()).unwrap();
+        assert_eq!(v["type"], "result");
+        assert_eq!(v["call_id"], "c3");
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["value"]["text"], "hello ✂️");
+    }
+
     /// respond() must not fabricate a window list — only the live session can.
     #[test]
     fn respond_refuses_list_windows_like_ready() {
@@ -923,6 +1069,121 @@ mod tests {
         assert_eq!(tiles[1]["x"], 64);
         let payload = &frame[4 + hlen..];
         assert_eq!(payload, b"AAAABB");
+    }
+
+    // ---- exec channel wire shapes (G1) ----
+
+    /// The buffered exec result is ok=true with the typed ExecResult value — a
+    /// nonzero exit code is the COMMAND's outcome, not an action error.
+    #[test]
+    fn exec_result_is_ok_true_with_typed_value() {
+        let o = crate::exec::ExecOutcome {
+            exit_code: Some(3),
+            signal: None,
+            timed_out: false,
+            stdout: b"out\n".to_vec(),
+            stderr: b"err\n".to_vec(),
+            stdout_truncated: false,
+            stderr_truncated: true,
+            duration_ms: 12.5,
+        };
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&exec_result("c1", &o)).unwrap()).unwrap();
+        assert_eq!(v["type"], "result");
+        assert_eq!(v["call_id"], "c1");
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["value"]["exit_code"], 3);
+        assert_eq!(v["value"]["stdout"], "out\n");
+        assert_eq!(v["value"]["stderr"], "err\n");
+        assert_eq!(v["value"]["stderr_truncated"], true);
+        assert_eq!(v["value"]["timed_out"], false);
+        assert!(v["value"]["signal"].is_null());
+    }
+
+    /// exec_output text events carry cause/seq/channel/data_b64 and round-trip
+    /// through the typed Message; exec_exit pins the terminal shape (exit_code is
+    /// REQUIRED-nullable, so a signal kill serializes `null`, never omits the key).
+    #[test]
+    fn exec_output_and_exit_serialize_the_schema_shapes() {
+        let text = exec_output_text("c2", 4, "stderr", b"\xFFraw").unwrap();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["type"], "exec_output");
+        assert_eq!(v["cause"], "c2");
+        assert_eq!(v["seq"], 4);
+        assert_eq!(v["channel"], "stderr");
+        assert_eq!(v["data_b64"], B64.encode(b"\xFFraw"));
+        let back: Message = serde_json::from_str(&text).unwrap();
+        assert!(matches!(back, Message::ExecOutput { .. }));
+
+        let exit = exec_exit_text("c2", None, Some(9), true, 200.0, false);
+        let v: serde_json::Value = serde_json::from_str(&exit).unwrap();
+        assert_eq!(v["type"], "exec_exit");
+        assert!(
+            v["exit_code"].is_null(),
+            "killed → exit_code must be null, present"
+        );
+        assert_eq!(v["signal"], 9);
+        assert_eq!(v["timed_out"], true);
+        assert_eq!(v["truncated"], false);
+        assert!(v.get("error").is_none(), "no error key on a clean kill");
+
+        let err = exec_exit_error("c3", "exec_spawn_failed: nope", 1.0);
+        let v: serde_json::Value = serde_json::from_str(&err).unwrap();
+        assert_eq!(v["error"], "exec_spawn_failed: nope");
+        assert!(v["exit_code"].is_null());
+    }
+
+    /// Binary exec_output frames reuse the media-frame layout with the header's
+    /// `type` as the kind discriminator and `data.off/len` locating the raw bytes.
+    #[test]
+    fn binary_exec_output_frame_layout() {
+        let frame = binary_exec_output("c1", 2, "stdout", b"chunk-bytes");
+        let hlen = u32::from_le_bytes(frame[..4].try_into().unwrap()) as usize;
+        let header: serde_json::Value = serde_json::from_slice(&frame[4..4 + hlen]).unwrap();
+        assert_eq!(header["type"], "exec_output");
+        assert_eq!(header["cause"], "c1");
+        assert_eq!(header["seq"], 2);
+        assert_eq!(header["channel"], "stdout");
+        assert_eq!(header["data"]["off"], 0);
+        assert_eq!(header["data"]["len"], b"chunk-bytes".len());
+        assert!(header.get("data_b64").is_none(), "no base64 in binary");
+        assert_eq!(&frame[4 + hlen..], b"chunk-bytes");
+    }
+
+    /// The exec messages must exist in the published schema's oneOf vocabulary.
+    #[test]
+    fn exec_messages_are_in_schema() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../schema/aci.schema.json");
+        let raw = std::fs::read_to_string(path).expect("read schema/aci.schema.json");
+        let schema: serde_json::Value = serde_json::from_str(&raw).expect("parse aci schema");
+        assert_eq!(
+            schema["$defs"]["ExecOutputMsg"]["properties"]["type"]["const"],
+            "exec_output"
+        );
+        assert_eq!(
+            schema["$defs"]["ExecExitMsg"]["properties"]["type"]["const"],
+            "exec_exit"
+        );
+        assert_eq!(
+            schema["$defs"]["BinaryExecOutputHeader"]["properties"]["type"]["const"],
+            "exec_output"
+        );
+        // and the Action carries the exec argument family
+        for field in [
+            "argv",
+            "shell",
+            "cwd",
+            "env",
+            "timeout_ms",
+            "stdin",
+            "stream",
+            "pty",
+        ] {
+            assert!(
+                !schema["$defs"]["Action"]["properties"][field].is_null(),
+                "schema Action must define {field}"
+            );
+        }
     }
 
     #[test]
