@@ -455,7 +455,7 @@ def plot(payload: dict) -> None:
         ax1.axvline(p50, color=color, linewidth=0.7, alpha=0.4, linestyle="--")
     ax1.set_xscale("log")
     ax1.set_xlabel("full agent step, act + observe (ms, log)")
-    ax1.set_ylabel("fraction of steps ≤ x")
+    ax1.set_ylabel("fraction of steps $\\leq$ x")
     ax1.set_title(
         f"Per-step latency CDF — same guest, same display (N={payload['reps']})"
     )

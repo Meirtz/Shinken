@@ -153,7 +153,7 @@ def plot(payload: dict) -> None:
     ax2.set_title(f"Latency CDF — observation ops, binary vs text (N={payload['obs_reps']}/op)")
 
     for ax in (ax1, ax2):
-        ax.set_ylabel("fraction of calls ≤ x")
+        ax.set_ylabel("fraction of calls $\\leq$ x")
         ax.set_ylim(0, 1.02)
         ax.legend(fontsize=8, loc="lower right")
     save_plot(fig, "action_latency")

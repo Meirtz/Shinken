@@ -403,7 +403,7 @@ def plot_pool(payload: dict) -> None:
     ax1.set_xticklabels([b[0] for b in bars], fontsize=9)
     ax1.set_ylabel("seconds to a usable replica (mean, min–max)")
     k = payload.get("pool", {}).get("k")
-    ax1.set_title(f"Fork→usable: warm-pool graft vs cold paths (K={k})")
+    ax1.set_title(f"Fork$\\to$usable: warm-pool graft vs cold paths (K={k})")
 
     walls = sorted(d["fanout_walls"], key=lambda w: w["n"])
     ns = [w["n"] for w in walls]
@@ -441,7 +441,7 @@ def plot_pool(payload: dict) -> None:
     )
     ax2.set_xlabel("N replicas forked from one checkpoint")
     ax2.set_ylabel("seconds")
-    ax2.set_title("Per-replica fork→usable across the fan-out")
+    ax2.set_title("Per-replica fork$\\to$usable across the fan-out")
     ax2.legend(loc="center right", fontsize=8.5)
     save_plot(fig, "fork_resume_pool")
 

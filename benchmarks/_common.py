@@ -465,7 +465,7 @@ def write_result(suite: str, payload: dict[str, Any]) -> Path:
 def style() -> None:
     """Apply the one shared matplotlib style (Agg, no display). Idempotent; called
     by ``new_axes`` and importable by any plotting script outside this package.
-    Paper aesthetic: seaborn whitegrid + Times New Roman with STIX math."""
+    Paper aesthetic: seaborn whitegrid + real LaTeX text (usetex) in Times."""
     import matplotlib
 
     matplotlib.use("Agg")
@@ -476,9 +476,13 @@ def style() -> None:
     plt.rcParams.update(
         {
             "figure.dpi": 140,
-            "font.family": "serif",
-            "font.serif": ["Times New Roman", "STIXGeneral", "DejaVu Serif"],
+            "text.usetex": True,
+            "text.latex.preamble": "",
+            "font.family": "Times New Roman",
+            "font.serif": ["Times New Roman"],
             "mathtext.fontset": "stix",
+            "pdf.fonttype": 42,
+            "ps.fonttype": 42,
             "font.size": 12,
             "axes.titlesize": 13,
             "axes.labelsize": 12,

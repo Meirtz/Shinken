@@ -282,7 +282,7 @@ def plot(payload: dict) -> None:
         )
         ax.set_xticks(list(x))
         ax.set_xticklabels(labels)
-        ax.set_ylabel("guest CPU % of one core (shinkend + Xvfb)")
+        ax.set_ylabel("guest CPU \\% of one core (shinkend + Xvfb)")
         ax.set_title(
             f"Guest capture cost — {workload} desktop\n"
             f"(delta-JPEG q80 stream, {payload['window_s']:g}s windows)"

@@ -587,7 +587,7 @@ def plot(payload: dict) -> None:
     ax_d.set_xlim(left=0)
     ax_d.set_ylim(0, 1.02)
     ax_d.set_xlabel(f"per-observation latency at N={n_max} (ms)")
-    ax_d.set_ylabel("fraction of observations ≤ x")
+    ax_d.set_ylabel("fraction of observations $\\leq$ x")
     ax_d.set_title(f"Observe latency CDF at N={n_max}")
     ax_d.legend(loc="lower right")
 

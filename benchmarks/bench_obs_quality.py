@@ -827,7 +827,7 @@ def plot(payload: dict) -> None:
     )
     ax1.set_xscale("log")
     ax1.set_xlabel("KiB per frame (delta cell: whole stream), log")
-    ax1.set_ylabel("% elements legible (control-conditioned)")
+    ax1.set_ylabel("\\% elements legible (control-conditioned)")
     ax1.set_ylim(-4, 112)
     ax1.set_title("Legibility vs bytes — every (scene x tier) cell")
     tier_handles = [
@@ -861,7 +861,7 @@ def plot(payload: dict) -> None:
     ax2.set_xticklabels(
         [_TIER_LABELS[t] for t in tiers], rotation=20, ha="right", fontsize=8
     )
-    ax2.set_ylabel("% elements legible (control-conditioned)")
+    ax2.set_ylabel("\\% elements legible (control-conditioned)")
     ax2.set_ylim(-4, 112)
     ax2.set_title("Legibility by font size — small text breaks first")
     ax2.legend(loc="lower left", fontsize=7)

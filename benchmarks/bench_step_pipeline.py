@@ -209,7 +209,7 @@ def plot(payload: dict) -> None:
         ax2.axhline(k + 1, ls=":", lw=0.9, color=c, alpha=0.7)
     ax2.set_xlabel("added WAN RTT (ms, delay proxy)")
     ax2.set_ylabel("speedup: sequential p50 / step() p50")
-    ax2.set_title("Convergence to the (k+1)× RTT bound (dotted)")
+    ax2.set_title("Convergence to the (k+1)$\\times$ RTT bound (dotted)")
     ax2.legend(fontsize=8, loc="upper left")
     save_plot(fig, "step_pipeline")
 

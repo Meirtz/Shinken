@@ -345,7 +345,7 @@ def plot(payload: dict) -> None:
     ax.set_ylim(len(runs) - 0.4, -0.75)  # inverted, tight rows
     ax.set_xlabel("ms since `docker run` issued (p50 of cumulative milestones)")
     note = "contended host" if payload.get("contended_host") else "quiet host"
-    ax.set_title(f"Cold-boot waterfall — docker run → usable sandbox ({note})")
+    ax.set_title(f"Cold-boot waterfall — docker run $\\to$ usable sandbox ({note})")
     ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.22), fontsize=8.5, ncols=3)
     save_plot(fig, "boot_waterfall")
 

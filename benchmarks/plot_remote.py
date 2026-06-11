@@ -75,7 +75,7 @@ def remote_codec_ladder():
     ax.set_xticks([30, 40, 50, 60, 70, 80, 90, 95])
     ax.set_xlabel("JPEG quality")
     ax.set_ylabel("bytes per frame (KiB, log)")
-    ax.set_title("Remote WAN codec ladder — bytes vs JPEG quality × downscale")
+    ax.set_title("Remote WAN codec ladder — bytes vs JPEG quality $\\times$ downscale")
     ax.legend(loc="center left", bbox_to_anchor=(1.01, 0.5), frameon=False)
     ax.text(
         0.98,
@@ -110,7 +110,7 @@ def bandwidth_bars():
     ax.set_ylabel("bytes per frame (KiB, log)")
     ax.set_title("Per-frame observation size — PNG vs JPEG (remote WAN)")
     for i, (b, v) in enumerate(zip(bars, vals)):
-        tag = "baseline" if i == 0 else f"{base / v:.0f}× vs PNG"
+        tag = "baseline" if i == 0 else f"{base / v:.0f}$\\times$ vs PNG"
         ax.text(b.get_x() + b.get_width() / 2, v * 1.12, f"{v:.1f} KiB\n{tag}", ha="center", fontsize=9)
     save_plot(fig, "bandwidth_bars")
 
@@ -179,7 +179,7 @@ def aggregate_projection():
     _log_yticks(ax, [10, 100, 1000, 10000])
     ax.set_xlabel("concurrent sandboxes (N), 1 observation/s")
     ax.set_ylabel("aggregate egress (Mbps, log)")
-    ax.set_title("Projected aggregate egress — N sandboxes × 1 Hz")
+    ax.set_title("Projected aggregate egress — N sandboxes $\\times$ 1 Hz")
     ax.text(
         0.02,
         0.97,
@@ -248,7 +248,7 @@ def a11y_coverage():
         0.95,
         "addressable = roled + bbox + actionable\n"
         "CDP page rows: 0.23 of all nodes but 1.00 of labeled controls\n"
-        "one-off a11y-coverage spike (E5/#2), Linux/X11 image",
+        "one-off a11y-coverage spike (E5/\\#2), Linux/X11 image",
         transform=ax.transAxes,
         ha="right",
         va="top",

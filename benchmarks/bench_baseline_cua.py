@@ -716,7 +716,7 @@ def plot(summary: dict) -> None:
             fontsize=9,
         )
     ax.set_ylabel("seconds (p50)")
-    ax.set_title("boot → usable\n(create + connect + first screenshot)")
+    ax.set_title("boot $\\to$ usable\n(create + connect + first screenshot)")
 
     # panel 2 — act+observe step
     ax = axes[1]
@@ -755,7 +755,7 @@ def plot(summary: dict) -> None:
             "shinken",
         ),
         (
-            "fork → usable",
+            "fork $\\to$ usable",
             _p50(summary.get("shinken", {}).get("fork_to_usable_ms")),
             "shinken",
             "shinken",

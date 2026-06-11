@@ -445,7 +445,7 @@ def plot(payload: dict) -> None:
     )
     for x, (o, s) in enumerate(zip(off, static, strict=False)):
         if s > 0:
-            ax1.text(x, max(o, s) * 1.03, f"{o / s:.1f}×", ha="center", fontsize=9)
+            ax1.text(x, max(o, s) * 1.03, f"{o / s:.1f}$\\times$", ha="center", fontsize=9)
     ax1.set_xticks(list(xs))
     ax1.set_xticklabels([f"N={f['n']}" for f in fleets])
     ax1.set_ylabel("wire KiB per observe-all round (mean)")
