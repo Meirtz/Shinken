@@ -353,6 +353,13 @@ hard dependency on the target framework; each ships fixture tests + a runnable e
 fork-native **gym** facade graduated into the headline results above (`shinken.gym`,
 `reset()` = fork); the rest:
 
+- **NeMo Gym** ([NVIDIA-NeMo/Gym](https://github.com/NVIDIA-NeMo/Gym)) —
+  `shinken.integrations.nemo_gym`: a resources server whose **per-rollout resource is a
+  fork of the task's golden checkpoint**, with a text-first computer-use tool set
+  (`computer_observe` = stable-id tree / `~/+/-` diff) and CUA-Gym `reward.py` as the
+  `/verify` scorer. Verified end-to-end with `ng_collect_rollouts` (reward 1.0 on both
+  demo tasks, GUI task solved by element id + diff verification); the rollout JSONL feeds
+  NeMo RL GRPO directly. Example: [`examples/nemo_gym/`](examples/nemo_gym/README.md).
 - **OSWorld** — a `DesktopEnv`-shaped shim (`shinken.osworld`) + an eval Workload: the
   harness's pyautogui/`computer_13` actions actuate over the typed ACI and its own evaluator
   scores the run (the single-task gate above).

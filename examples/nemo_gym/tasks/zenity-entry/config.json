@@ -1,0 +1,15 @@
+{
+  "id": "zenity-entry",
+  "instruction": "A dialog titled 'Vendor' is open on the desktop. Type exactly ACME GmbH into its entry field, then press Return (or click OK).",
+  "app_type": "gui",
+  "config": [],
+  "shinken_post_fork": [
+    {
+      "type": "execute",
+      "parameters": {
+        "command": "DISPLAY=:0 DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/shinken-session-bus NO_AT_BRIDGE=0 nohup sh -c 'zenity --entry --title=Vendor --text=Vendor: > /tmp/vendor.txt' >/dev/null 2>&1 & sleep 1.5"
+      }
+    }
+  ],
+  "evaluator": {"type": "python", "script": "reward.py"}
+}

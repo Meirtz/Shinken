@@ -1,0 +1,7 @@
+{
+  "id": "hello-file",
+  "instruction": "Create a file at /tmp/hello.txt whose exact content is the single word: shinken",
+  "app_type": "cli",
+  "config": [],
+  "evaluator": {"type": "python", "script": "reward.py"}
+}

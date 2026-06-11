@@ -44,7 +44,7 @@ committed is world-readable.
 | `README.md`, `LICENSE` (Apache-2.0) | ✅ | front matter |
 | `schema/` | ✅ | ACI JSON Schema (`aci.schema.json`) |
 | `shinkend/` | ✅ | Rust Guest Runtime (`shinkend`) |
-| `sdk/python/` | ✅ | Python SDK and CLI (incl. `shinken/integrations/` — swerex/uni-agent, CUA-Gym, Agentix, ProRL-Agent-Server interop adapters) |
+| `sdk/python/` | ✅ | Python SDK and CLI (incl. `shinken/integrations/` — swerex/uni-agent, CUA-Gym, Agentix, ProRL-Agent-Server, NeMo-Gym interop adapters) |
 | `images/linux/` | ✅ | Local Linux Sandbox image |
 | `examples/` | ✅ | Runnable interop examples (`gym_rollout.py`, `cua_gym_shinken.py`, `agentix_shinken.py`, `uniagent_shinken.py` — scripted, no model API) |
 | `benchmarks/` | ✅ | Rerunnable local benchmark suites (incl. `bench_client_scale.py` N=1024 client plane) + tracked raw results (`results/*.json`, one-off WAN CSVs in `results/remote/`); ALL figures land in `docs/assets/bench/` (regenerate: `replot.py` + `plot_remote.py`); methodology in `docs/engineering/benchmarks.md`, headline report in `docs/benchmarks/README.md`; plus the agent-quality STUDY harness (`bench_agent_quality.py` — codec tier × task success over fork-identical episodes, `docs/engineering/agent-quality-study.md`; not in `run_all.sh`, needs a model endpoint) |
