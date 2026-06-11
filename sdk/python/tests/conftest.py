@@ -24,6 +24,9 @@ _MOCK_VERBS = {
     "double_click",
     "right_click",
     "move",
+    "drag",
+    "mouse_down",
+    "mouse_up",
     "scroll",
     "type_text",
     "key",
@@ -31,7 +34,36 @@ _MOCK_VERBS = {
     "start_screencast",
     "stop_screencast",
     "wait",
+    # structured-observation family (M1b) — mirrored from the runtime's verb set
+    "observe",
+    "invoke_action",
+    "set_value",
 }
+
+# The fixed window list the mock answers `query q="list_windows"` with — shaped like
+# the real runtime's EWMH enumeration ({id, title, pid, x, y, w, h, focused}).
+_MOCK_WINDOWS = [
+    {
+        "id": 0x1A,
+        "title": "xterm",
+        "pid": 1234,
+        "x": 4,
+        "y": 8,
+        "w": 484,
+        "h": 316,
+        "focused": True,
+    },
+    {
+        "id": 0x2B,
+        "title": "xclock",
+        "pid": 1235,
+        "x": 40,
+        "y": 40,
+        "w": 200,
+        "h": 200,
+        "focused": False,
+    },
+]
 
 # A valid 1x1 PNG (signature + IHDR/IDAT/IEND), base64-encoded.
 _PNG_1X1 = (
@@ -113,6 +145,20 @@ async def _push_frames(
             await asyncio.sleep(period)
 
 
+async def _send_observation(ws, cid: str, fmt: str, binary: bool, scope: str = "screen") -> None:
+    """Send one image-bearing observation answering ``cid`` via ``cause`` — the shape
+    shared by the one-shot screenshot reply and the act-returns-observation follow-up
+    (binary frame on a binary-negotiated session, base64-in-JSON text otherwise)."""
+    meta = {"w": 1, "h": 1, "scope": scope, "format": fmt}
+    frame = {"type": "observation", "obs_id": f"obs-{cid}", "cause": cid}
+    if binary:
+        frame["image"] = {"off": 0, "len": len(_PNG_1X1_BYTES), **meta}
+        await ws.send(_binary_frame(frame, [_PNG_1X1_BYTES]))
+    else:
+        frame["image"] = {"ref": _PNG_1X1, **meta}
+        await ws.send(json.dumps(frame))
+
+
 def _record(state: dict, action: dict) -> None:
     """Apply an inbound action to the mock's in-memory state, so a verifier can read back
     the *observed* effect (a click landed, text was typed, keys were pressed) instead of
@@ -122,12 +168,42 @@ def _record(state: dict, action: dict) -> None:
         tgt = action.get("target") or {}
         entry = {"verb": verb, "kind": tgt.get("kind"), "x": tgt.get("x"), "y": tgt.get("y")}
         (state["moves"] if verb == "move" else state["clicks"]).append(entry)
+    elif verb == "drag":
+        tgt, to = action.get("target") or {}, action.get("to") or {}
+        state["drags"].append(
+            {
+                "from": {"x": tgt.get("x"), "y": tgt.get("y")},
+                "to": {"x": to.get("x"), "y": to.get("y")},
+                "duration_ms": action.get("duration_ms"),
+                "button": action.get("button"),
+            }
+        )
+    elif verb in ("mouse_down", "mouse_up"):
+        tgt = action.get("target") or {}
+        state["buttons"].append(
+            {
+                "verb": verb,
+                "button": action.get("button"),
+                "x": tgt.get("x"),
+                "y": tgt.get("y"),
+            }
+        )
     elif verb == "type_text":
         state["typed"] += action.get("text", "")
     elif verb == "key":
         state["keys"].append(action.get("keys", ""))
     elif verb == "scroll":
         state["scrolls"].append({"dx": action.get("dx"), "dy": action.get("dy")})
+    elif verb in ("invoke_action", "set_value"):
+        # Element verbs (M1b): record the ref + payload so a verifier can read back
+        # what the AX path was asked to do.
+        state["element_calls"].append(
+            {
+                "verb": verb,
+                "ref": (action.get("target") or {}).get("ref"),
+                "text": action.get("text"),
+            }
+        )
     elif verb == "start_screencast":
         # The capture params each start/resume actually carried over the wire, so a
         # test can assert a resume re-sent the ORIGINAL fps/max_long_edge/scope (#56).
@@ -156,9 +232,21 @@ async def _handler(
     streams: dict[str, int] | None = None,
     support_binary: bool = True,
     support_dedup: bool = True,
+    support_structured: bool = True,
 ) -> None:
     cast: asyncio.Task | None = None
-    state = {"typed": "", "keys": [], "clicks": [], "moves": [], "scrolls": [], "casts": []}
+    state = {
+        "typed": "",
+        "keys": [],
+        "clicks": [],
+        "moves": [],
+        "scrolls": [],
+        "casts": [],
+        "drags": [],
+        "buttons": [],
+        "element_calls": [],
+        "observes": 0,
+    }
     # Resume registry (#56): logical stream id -> next seq. Server-instance scoped
     # (shared across this mock's connections, so a reconnecting client can resume).
     streams = {} if streams is None else streams
@@ -192,6 +280,19 @@ async def _handler(
         kind = msg.get("type")
         if kind == "action":
             verb = (msg.get("action") or {}).get("verb")
+            if not support_structured and verb in ("observe", "invoke_action", "set_value"):
+                # simulate a pre-engine runtime: the verb is unknown to it
+                await ws.send(
+                    json.dumps(
+                        {
+                            "type": "ack",
+                            "call_id": msg.get("call_id", "?"),
+                            "ok": False,
+                            "error": f"unknown verb: {verb}",
+                        }
+                    )
+                )
+                continue
             if verb not in _MOCK_VERBS:
                 await ws.send(
                     json.dumps(
@@ -213,11 +314,14 @@ async def _handler(
                 "observation_types": ["a11y", "screenshot", "screencast"],
                 "max_long_edge": 2576,
                 "image_formats": ["png", "jpeg"],
+                "observe_after_act": True,
             }
             if support_binary:
                 capabilities["binary_frames"] = True
             if support_dedup:
                 capabilities["frame_dedup"] = True
+            if support_structured:
+                capabilities["structured_observation"] = True
             await ws.send(
                 json.dumps(
                     {
@@ -236,6 +340,8 @@ async def _handler(
                 value: object = "linux"
             elif q == "state":
                 value = state  # observed effects, for eval verifiers
+            elif q == "list_windows":
+                value = _MOCK_WINDOWS
             else:
                 value = {"w": 1280, "h": 800}
             reply = {"type": "result", "call_id": msg.get("call_id"), "ok": True, "value": value}
@@ -309,6 +415,61 @@ async def _handler(
                             }
                         )
                     )
+            elif verb == "observe":
+                # Guest structured observation (M1b), mirroring shinkend's reply:
+                # tree_text + full elements + revision/focus; rev>1 changes the
+                # entry's value so a diff observe has something to show.
+                state["observes"] += 1
+                rev = state["observes"]
+                value = "hello" if rev > 1 else ""
+                elements = [
+                    {"ref": "e1", "role": "frame", "name": "Win", "bbox": [0, 0, 800, 600]},
+                    {
+                        "ref": "e2",
+                        "role": "push button",
+                        "name": "OK",
+                        "bbox": [10, 10, 80, 30],
+                        "states": ["enabled"],
+                        "actions": ["click"],
+                    },
+                    {
+                        "ref": "e3",
+                        "role": "entry",
+                        "value": value,
+                        "bbox": [10, 60, 200, 30],
+                        "states": ["editable", "focused"],
+                        "focused": True,
+                    },
+                ]
+                for el in elements:
+                    el["source"] = "atspi"
+                diff = bool(action.get("diff")) and rev > 1
+                obs = {
+                    "type": "observation",
+                    "obs_id": f"obs-{cid}",
+                    "cause": cid,
+                    "tree": "diff" if diff else "full",
+                    "revision": rev,
+                    "focus": "e3",
+                    "node_count": len(elements),
+                    "capture_ms": 1.5,
+                    "elements": elements,
+                }
+                if diff:
+                    obs["diff_of"] = rev - 1
+                    obs["tree_text"] = (
+                        f"app: mock  (revision {rev}, diff of revision {rev - 1})\n"
+                        f'~   e3 entry (editable,focused) Value:"{value}"\nfocus: e3'
+                    )
+                else:
+                    obs["tree_text"] = (
+                        f"app: mock  (revision {rev}, 3 nodes)\n"
+                        'e1 frame "Win"\n'
+                        '  e2 push button (enabled) "OK" Actions:[click]\n'
+                        f'  e3 entry (editable,focused) Value:"{value}"\n'
+                        "focus: e3"
+                    )
+                await ws.send(json.dumps(obs))
             elif verb == "start_screencast":
                 if cast is not None:
                     cast.cancel()
@@ -347,12 +508,20 @@ async def _handler(
                 await ws.send(json.dumps({"type": "ack", "call_id": cid, "ok": True}))
             else:
                 await ws.send(json.dumps({"type": "ack", "call_id": cid, "ok": True}))
+                # Act-returns-observation: a mutating action with `observe` gets a
+                # fresh observation right after the ack (cause = call_id), like the
+                # real runtime's follow-up.
+                obs = action.get("observe")
+                if obs is not None:
+                    await _send_observation(
+                        ws, cid, obs.get("format") or "png", binary, obs.get("scope") or "screen"
+                    )
     if cast is not None:
         cast.cancel()
 
 
 def _start_mock_server(
-    support_binary: bool = True, support_dedup: bool = True
+    support_binary: bool = True, support_dedup: bool = True, support_structured: bool = True
 ) -> tuple[str, object, object]:
     """Start one mock shinkend on its own loop/thread; return (addr, loop, thread)."""
     port = _free_port()
@@ -367,6 +536,7 @@ def _start_mock_server(
                 streams=streams,
                 support_binary=support_binary,
                 support_dedup=support_dedup,
+                support_structured=support_structured,
             ),
             "127.0.0.1",
             port,
@@ -417,6 +587,19 @@ def mock_shinkend_no_dedup():
     real old runtime's deny_unknown_fields behavior) — so a test passes only if the
     SDK's capability gate kept the field off the wire."""
     addr, loop, thread = _start_mock_server(support_dedup=False)
+    try:
+        yield addr
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(timeout=2)
+
+
+@pytest.fixture
+def mock_shinkend_no_structured():
+    """A mock that simulates a PRE-ENGINE runtime: no ``structured_observation``
+    capability in the welcome and the observe family answers ``unknown verb`` —
+    the SDK must fall back to its co-located structured path."""
+    addr, loop, thread = _start_mock_server(support_structured=False)
     try:
         yield addr
     finally:

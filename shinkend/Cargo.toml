@@ -11,6 +11,13 @@ publish = false
 name = "shinkend"
 path = "src/main.rs"
 
+[features]
+default = ["macos-native"]
+# The native macOS executor (CoreGraphics capture + CGEvent input). On by default;
+# compiles to nothing on non-macOS targets, so the Linux build is untouched. Disable
+# with --no-default-features to build a mac binary without the native backend.
+macos-native = []
+
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "signal", "time", "sync"] }
 tokio-tungstenite = "0.21"
@@ -26,6 +33,18 @@ png = "0.17"
 # while giving the screenshot/screencast bandwidth lever (PNG ~1.8 MB → JPEG ~0.1 MB @1080p).
 jpeg-encoder = "0.6"
 base64 = "0.22"
+# Structured observation (M1b): AT-SPI over D-Bus, pure Rust (zbus), tokio backend —
+# all bus work runs on one dedicated worker thread (src/atspi_source.rs).
+atspi = { version = "0.30.0", default-features = false, features = ["connection", "proxies", "tokio", "wrappers", "zbus"] }
+
+# macOS native executor (feature `macos-native`): CoreGraphics/Quartz capture +
+# CGEvent input synthesis. v1 uses the CG APIs (CGDisplayCreateImage /
+# CGWindowListCreateImage — deprecated since macOS 14 but functional); the
+# ScreenCaptureKit upgrade path is documented in docs/engineering/macos-engine.md.
+[target.'cfg(target_os = "macos")'.dependencies]
+# `highsierra` unlocks CGEventCreateScrollWheelEvent2 (pixel-denominated scroll).
+core-graphics = { version = "0.24", features = ["highsierra"] }
+core-foundation = "0.10"
 
 [profile.release]
 strip = true

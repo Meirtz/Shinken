@@ -88,6 +88,21 @@ def data_uri_png(png: bytes) -> str:
     return data_uri(png, "png")
 
 
+def actions_from_text(text: str) -> list[dict]:
+    """Raw model text containing **string-form XML tool calls** (or the Shinken tag
+    dialect) → an ordered list of canonical ACI actions. Many CU models emit their tool
+    calls as text rather than structured ``tool_use`` JSON; this delegates to
+    :func:`shinken.dialect.parse_actions` (``format="auto"``) and re-raises its teaching
+    errors as structured :class:`AdapterError`\\ s so adapter hosts keep one exception
+    contract. Unknown verbs raise — an action is never silently dropped."""
+    from shinken.dialect import DialectError, parse_actions
+
+    try:
+        return parse_actions(text, format="auto")
+    except DialectError as exc:
+        raise AdapterError("from_text", str(exc)) from exc
+
+
 def image_size(observation: dict) -> dict:
     """Pull ``{w, h, scope}`` out of a screenshot observation for coordinate-space
     metadata (recorded so model pixels can be mapped back to the display)."""

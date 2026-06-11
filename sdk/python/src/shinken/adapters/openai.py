@@ -10,7 +10,7 @@ https://platform.openai.com/docs/guides/tools-computer-use
 
 from __future__ import annotations
 
-from .base import AdapterError, data_uri, point_px
+from .base import AdapterError, actions_from_text, data_uri, point_px
 
 #: OpenAI button values that ACI v0 can model (others → structured AdapterError).
 _BUTTON_VERB = {"left": "click", "right": "right_click"}
@@ -87,6 +87,16 @@ class OpenAIComputerUseAdapter:
                 return {"verb": "wait", "ms": int(ms)}
             return {"verb": "wait"}
         raise AdapterError(t, "unrecognized OpenAI computer action")
+
+    def from_text(self, text: str) -> list[dict]:
+        """Raw assistant *text* containing string-form XML tool calls — e.g.
+        ``<tool_call>{"name": …, "arguments": {…}}</tool_call>`` blocks or
+        ``<action name="keypress"><param name="keys">["ctrl","l"]</param></action>``
+        elements — → an **ordered list** of canonical ACI actions. Structured
+        ``computer_call`` payloads should keep using :meth:`to_aci_actions`; this is the
+        path for models that emit the call as text. Raises :class:`AdapterError` on
+        unknown verbs or junk (never a silent drop)."""
+        return actions_from_text(text)
 
     def safety_check_events(self, computer_call: dict) -> list[dict]:
         """``pending_safety_checks`` → Shinken permission-event payloads (decision

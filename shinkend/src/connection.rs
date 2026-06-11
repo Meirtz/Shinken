@@ -7,7 +7,10 @@
 
 use std::sync::Arc;
 
-use crate::executor::{ActionSpec, EncodeOpts, Executor, ImageFormat, DEFAULT_JPEG_QUALITY};
+use crate::executor::{
+    ActionSpec, EncodeOpts, Executor, ImageFormat, Target, DEFAULT_JPEG_QUALITY,
+};
+use crate::observe::{ObserveState, TreeSource};
 use crate::protocol::{self, Message};
 
 /// Constant-time byte-string equality for bearer-token comparison (#135), so token auth
@@ -92,6 +95,10 @@ pub struct Step {
     /// Bounded async delay (ms) the serve loop sleeps before sending this reply — the
     /// `wait` verb's semantics, honored without blocking the runtime (#140).
     pub delay_ms: u64,
+    /// A second outbound message sent right after `reply` — the act-returns-observation
+    /// follow-up (`observe` on a mutating action): the fresh observation (or its typed
+    /// capture error) correlated to the action via `cause` = call_id.
+    pub followup: Option<Reply>,
 }
 
 impl Step {
@@ -104,6 +111,7 @@ impl Step {
             close: false,
             stream: StreamCtl::None,
             delay_ms: 0,
+            followup: None,
         }
     }
     fn silent() -> Self {
@@ -112,6 +120,7 @@ impl Step {
             close: false,
             stream: StreamCtl::None,
             delay_ms: 0,
+            followup: None,
         }
     }
     fn close(text: String) -> Self {
@@ -120,6 +129,7 @@ impl Step {
             close: true,
             stream: StreamCtl::None,
             delay_ms: 0,
+            followup: None,
         }
     }
 }
@@ -132,6 +142,12 @@ pub struct Session {
     /// Binary media framing negotiated by this session's `hello.accept.binary_frames`.
     /// Off by default — an old client that never asked keeps base64-in-JSON frames.
     binary: bool,
+    /// The structured-observation backend (the AT-SPI worker handle in production,
+    /// a fake in tests); `None` nacks the observe family with a typed error.
+    tree: Option<Arc<dyn TreeSource>>,
+    /// Per-session structured-observation state: stable element ids, the diff
+    /// baseline, and the live `element_ref` index (M1b).
+    obs: ObserveState,
 }
 
 impl Session {
@@ -141,7 +157,16 @@ impl Session {
             token,
             exec,
             binary: false,
+            tree: None,
+            obs: ObserveState::default(),
         }
+    }
+
+    /// Attach the structured-observation backend (builder-style, used by the serve
+    /// loop; sessions without one keep nacking the observe family honestly).
+    pub fn with_tree_source(mut self, tree: Arc<dyn TreeSource>) -> Self {
+        self.tree = Some(tree);
+        self
     }
 
     pub fn is_authenticated(&self) -> bool {
@@ -214,13 +239,13 @@ impl Session {
                 Step::text(protocol::error_result_text("?", "already authenticated"))
             }
             Message::Action { call_id, action } => {
-                let (reply, stream, delay_ms) =
-                    dispatch_action(&call_id, action, self.exec.as_ref(), self.binary);
+                let (reply, stream, delay_ms, followup) = self.dispatch_action(&call_id, action);
                 Step {
                     reply: Some(reply),
                     close: false,
                     stream,
                     delay_ms,
+                    followup,
                 }
             }
             // screen_size must report the real executor geometry, not a stub (#138)
@@ -233,6 +258,15 @@ impl Session {
             // blocking thread like every other executor call.
             Message::Query { call_id, q } if q == "ready" => {
                 Step::reply(&protocol::ready_result(&call_id, self.exec.readiness()))
+            }
+            // EWMH window enumeration — the Linux "enumerate apps" read primitive.
+            // Answered from the live executor (several X round trips, on the serve
+            // loop's blocking thread like every other executor call).
+            Message::Query { call_id, q } if q == "list_windows" => {
+                match self.exec.list_windows() {
+                    Ok(ws) => Step::reply(&protocol::list_windows_result(&call_id, &ws)),
+                    Err(e) => Step::text(protocol::error_result_text(&call_id, &e.to_string())),
+                }
             }
             other => match protocol::respond(other) {
                 Some(r) => Step::reply(&r),
@@ -281,138 +315,352 @@ fn clamp_long_edge(m: Option<u32>) -> Option<u32> {
 /// Maximum a `wait` action will sleep (ms) — bounds a client from parking a connection.
 const MAX_WAIT_MS: u64 = 10_000;
 
-/// Run one `action`. `screenshot` → one-shot `observation` (a binary frame on a
-/// binary-negotiated session); `start_screencast`/`stop_screencast` → `ack` plus a
-/// [`StreamCtl`]; `wait` → `ack` plus a bounded delay (ms) the serve loop sleeps before
-/// replying; every other verb → `ack`. The third tuple element is that delay (0 for
-/// everything but `wait`).
-fn dispatch_action(
+/// The verbs that mutate guest state and therefore admit the per-action `observe`
+/// argument (act-returns-observation). Mirrors the schema's `$defs.MutatingVerb` —
+/// the coordinate tier plus the element verbs (their AX-path writes mutate guest
+/// state exactly like a click does).
+const MUTATING_VERBS: [&str; 12] = [
+    "click",
+    "double_click",
+    "right_click",
+    "move",
+    "drag",
+    "mouse_down",
+    "mouse_up",
+    "scroll",
+    "type_text",
+    "key",
+    "invoke_action",
+    "set_value",
+];
+
+/// Capture one observation and shape it for the wire — a binary frame on a
+/// binary-negotiated session, base64-in-JSON text otherwise — answering `call_id` via
+/// `cause`. Shared by the one-shot `screenshot` and the act-returns-observation
+/// follow-up so both produce byte-identical observation shapes. `Err` carries the
+/// capture error message; the caller decides its wire form (nack vs error result).
+fn observation_reply(
     call_id: &str,
-    action: serde_json::Value,
+    scope: &str,
+    opts: EncodeOpts,
     exec: &dyn Executor,
     binary: bool,
-) -> (Reply, StreamCtl, u64) {
-    let spec = match serde_json::from_value::<ActionSpec>(action) {
-        Ok(s) => s,
-        Err(e) => {
-            return (
-                ack(call_id, false, Some(format!("bad action: {e}"))),
+) -> Result<Reply, String> {
+    let img = exec.capture(scope, opts).map_err(|e| e.to_string())?;
+    Ok(image_reply(call_id, scope, &img, None, binary))
+}
+
+/// Validate an `observe` spec's capture parameters (same rules as `screenshot`:
+/// well-formed scope, schema codec, 1–100 quality, clamped long edge) into the
+/// `(scope, EncodeOpts)` a capture takes. `Err` is the nack message — validation runs
+/// BEFORE the action executes, so a malformed observe never half-applies an action.
+fn resolve_observe(obs: &crate::executor::ObserveSpec) -> Result<(String, EncodeOpts), String> {
+    let scope = obs.scope.clone().unwrap_or_else(|| "screen".to_string());
+    if obs.scope.is_some() && !valid_scope(&scope) {
+        return Err(format!("invalid observe scope: {scope}"));
+    }
+    let format = ImageFormat::parse(obs.format.as_deref()).map_err(|e| e.to_string())?;
+    let quality = match obs.quality {
+        None => DEFAULT_JPEG_QUALITY,
+        Some(q) if (1..=100).contains(&q) => q,
+        Some(q) => return Err(format!("observe quality out of range 1-100: {q}")),
+    };
+    Ok((
+        scope,
+        EncodeOpts {
+            max_long_edge: clamp_long_edge(obs.max_long_edge),
+            format,
+            quality,
+        },
+    ))
+}
+
+impl Session {
+    /// Run one `action`. `screenshot` → one-shot `observation` (a binary frame on a
+    /// binary-negotiated session, content-negotiated via `if_none_match`); `observe`
+    /// → one-shot structured `observation` (always JSON text);
+    /// `start_screencast`/`stop_screencast` → `ack` plus a [`StreamCtl`]; `wait` →
+    /// `ack` plus a bounded delay (ms) the serve loop sleeps before replying; every
+    /// other verb → `ack` (with `element_ref` targets resolved to bbox-centre points
+    /// via this session's observation engine first). The third tuple element is that
+    /// delay (0 for everything but `wait`); the fourth is the act-returns-observation
+    /// follow-up (the fresh observation — or its typed capture error — sent right
+    /// after the ack when a mutating action carried `observe`).
+    fn dispatch_action(
+        &mut self,
+        call_id: &str,
+        action: serde_json::Value,
+    ) -> (Reply, StreamCtl, u64, Option<Reply>) {
+        let exec = self.exec.clone();
+        let exec = exec.as_ref();
+        let binary = self.binary;
+        let nack = |error: String| (ack(call_id, false, Some(error)), StreamCtl::None, 0, None);
+        let spec = match serde_json::from_value::<ActionSpec>(action) {
+            Ok(s) => s,
+            Err(e) => return nack(format!("bad action: {e}")),
+        };
+        let scope = spec.scope.clone().unwrap_or_else(|| "screen".to_string());
+        // Reject a provided-but-malformed capture scope instead of silently capturing the
+        // full screen — a privacy/contract issue (#139). (An absent scope defaults to "screen".)
+        if spec.scope.is_some()
+            && matches!(spec.verb.as_str(), "screenshot" | "start_screencast")
+            && !valid_scope(&scope)
+        {
+            return nack(format!("invalid capture scope: {scope}"));
+        }
+        // Resolve the wire codec + quality for the verbs that consume them (same verb gating
+        // as the scope check above — an invalid `format` on e.g. `stop_screencast` must not
+        // nack the stop). Quality is REJECTED outside the schema's 1–100, not silently
+        // clamped: the runtime must not accept what the published contract rejects.
+        let is_capture = matches!(spec.verb.as_str(), "screenshot" | "start_screencast");
+        let (format, quality) = if is_capture {
+            let format = match ImageFormat::parse(spec.format.as_deref()) {
+                Ok(f) => f,
+                Err(e) => return nack(e.to_string()),
+            };
+            let quality = match spec.quality {
+                None => DEFAULT_JPEG_QUALITY,
+                Some(q) if (1..=100).contains(&q) => q,
+                Some(q) => return nack(format!("quality out of range 1-100: {q}")),
+            };
+            (format, quality)
+        } else {
+            (ImageFormat::Png, DEFAULT_JPEG_QUALITY) // unused by non-capture verbs
+        };
+        // Act-returns-observation (`observe`): only mutating verbs admit it (the schema's
+        // MutatingVerb gate), and its capture parameters are validated BEFORE the action
+        // executes so a malformed observe nacks cleanly instead of half-applying.
+        let observe = match spec.observe.as_ref() {
+            Some(obs) => {
+                if !MUTATING_VERBS.contains(&spec.verb.as_str()) {
+                    return nack(format!("observe is not supported on verb {:?}", spec.verb));
+                }
+                match resolve_observe(obs) {
+                    Ok(resolved) => Some(resolved),
+                    Err(e) => return nack(e),
+                }
+            }
+            None => None,
+        };
+        // The fresh observation (or its typed capture error) following a successful
+        // mutating action that carried `observe` — shared by the XTEST and AX paths.
+        let observe_followup = |observe: Option<(String, EncodeOpts)>| {
+            observe.map(|(obs_scope, opts)| {
+                observation_reply(call_id, &obs_scope, opts, exec, binary).unwrap_or_else(|e| {
+                    Reply::Text(protocol::error_result_text(
+                        call_id,
+                        &format!("observe failed: {e}"),
+                    ))
+                })
+            })
+        };
+        match spec.verb.as_str() {
+            "screenshot" => {
+                let opts = EncodeOpts {
+                    max_long_edge: clamp_long_edge(spec.max_long_edge),
+                    format,
+                    quality,
+                };
+                // Content-negotiated (if_none_match / frame_hash / not_modified) on a
+                // raw-capture backend; a binary-negotiated session gets the image as one
+                // WS Binary message (raw codec bytes after the JSON header — no base64).
+                let reply = screenshot_reply(
+                    call_id,
+                    &scope,
+                    opts,
+                    spec.if_none_match.as_deref(),
+                    exec,
+                    binary,
+                );
+                (reply, StreamCtl::None, 0, None)
+            }
+            "start_screencast" => {
+                let fps = spec.fps.unwrap_or(FPS_DEFAULT).clamp(FPS_MIN, FPS_MAX);
+                let delta = spec.delta.unwrap_or(false);
+                // A delta stream needs raw (pre-encode) capture to diff tiles; nack a
+                // backend that can't do it rather than ack and then die frameless.
+                if delta && !exec.supports_raw_capture() {
+                    return nack(format!(
+                        "delta screencast not supported by the {} backend",
+                        exec.backend()
+                    ));
+                }
+                let cast = ScreencastSpec {
+                    stream_id: call_id.to_string(),
+                    fps,
+                    // Default an unspecified cap to the negotiated max so a busy full-res
+                    // desktop can't pin OUTBOUND_CAP × multi-MB frames in the writer queue.
+                    max_long_edge: clamp_long_edge(spec.max_long_edge)
+                        .or(Some(protocol::MAX_LONG_EDGE)),
+                    format,
+                    quality,
+                    scope,
+                    start_seq: 0,
+                    resume_stream: spec.resume_stream,
+                    delta,
+                    binary,
+                };
+                (ack(call_id, true, None), StreamCtl::Start(cast), 0, None)
+            }
+            "stop_screencast" => (ack(call_id, true, None), StreamCtl::Stop, 0, None),
+            // wait: ack, but have the serve loop sleep first (bounded) so the ack lands after
+            // the delay — real wait.ms semantics, async so it never blocks the runtime (#140)
+            "wait" => (
+                ack(call_id, true, None),
+                StreamCtl::None,
+                spec.ms.unwrap_or(0).min(MAX_WAIT_MS),
+                None,
+            ),
+            // Structured observation (M1b): settle → snapshot → stable ids → render
+            // (full or diff). Runs on the serve loop's blocking thread like every other
+            // executor call; the AT-SPI worker bounds its own reply deadline, so a hung
+            // bus answers a typed error here instead of wedging the runtime.
+            "observe" => (
+                self.observe_action(call_id, &spec),
                 StreamCtl::None,
                 0,
-            )
+                None,
+            ),
+            // Element verbs (AX path): resolve the ref against the LAST observation,
+            // then drive the node's AT-SPI Action / Value / EditableText interface. A
+            // successful element write honors `observe` exactly like a pointer verb.
+            "invoke_action" | "set_value" => {
+                let (reply, ok) = self.element_action(call_id, &spec);
+                let followup = if ok { observe_followup(observe) } else { None };
+                (reply, StreamCtl::None, 0, followup)
+            }
+            _ => {
+                // Physical-event preference: an element_ref target on a pointer verb
+                // resolves to the element's bbox centre and the click goes out as a
+                // real XTEST event there (invoke_action is the AX-path alternative).
+                let mut spec = spec;
+                if let Some(Target::ElementRef { element_ref, .. }) = &spec.target {
+                    match self.obs.resolve_point(element_ref) {
+                        Ok((x, y)) => {
+                            spec.target = Some(Target::PointPx {
+                                x: f64::from(x),
+                                y: f64::from(y),
+                            })
+                        }
+                        Err(e) => return nack(e),
+                    }
+                }
+                match exec.execute(&spec) {
+                    Ok(_) => {
+                        // The action landed; when `observe` was requested, follow the ack
+                        // with a fresh observation (cause = call_id) — or, if the capture
+                        // itself fails, a typed error result so the client's wait resolves
+                        // instead of timing out. The ack stays honest either way: the
+                        // ACTION succeeded.
+                        (
+                            ack(call_id, true, None),
+                            StreamCtl::None,
+                            0,
+                            observe_followup(observe),
+                        )
+                    }
+                    Err(e) => nack(e.to_string()),
+                }
+            }
         }
-    };
-    let scope = spec.scope.clone().unwrap_or_else(|| "screen".to_string());
-    // Reject a provided-but-malformed capture scope instead of silently capturing the
-    // full screen — a privacy/contract issue (#139). (An absent scope defaults to "screen".)
-    if spec.scope.is_some()
-        && matches!(spec.verb.as_str(), "screenshot" | "start_screencast")
-        && !valid_scope(&scope)
-    {
-        return (
-            ack(
+    }
+
+    /// Handle the `observe` verb: capture + render one structured observation.
+    fn observe_action(&mut self, call_id: &str, spec: &ActionSpec) -> Reply {
+        if spec.structured == Some(false) {
+            return ack(
                 call_id,
                 false,
-                Some(format!("invalid capture scope: {scope}")),
-            ),
-            StreamCtl::None,
-            0,
-        );
-    }
-    // Resolve the wire codec + quality for the verbs that consume them (same verb gating
-    // as the scope check above — an invalid `format` on e.g. `stop_screencast` must not
-    // nack the stop). Quality is REJECTED outside the schema's 1–100, not silently
-    // clamped: the runtime must not accept what the published contract rejects.
-    let is_capture = matches!(spec.verb.as_str(), "screenshot" | "start_screencast");
-    let (format, quality) = if is_capture {
-        let format = match ImageFormat::parse(spec.format.as_deref()) {
-            Ok(f) => f,
-            Err(e) => return (ack(call_id, false, Some(e.to_string())), StreamCtl::None, 0),
+                Some("observe structured:false is the pixel path — use `screenshot`".to_string()),
+            );
+        }
+        let Some(tree) = self.tree.clone() else {
+            return ack(
+                call_id,
+                false,
+                Some(
+                    "structured_observation_unavailable: this runtime has no tree source"
+                        .to_string(),
+                ),
+            );
         };
-        let quality = match spec.quality {
-            None => DEFAULT_JPEG_QUALITY,
-            Some(q) if (1..=100).contains(&q) => q,
-            Some(q) => {
+        let t0 = std::time::Instant::now();
+        match tree.snapshot(spec.settle_ms) {
+            Ok(snapshot) => {
+                let rendered = self.obs.observe(&snapshot, spec.diff.unwrap_or(false));
+                let capture_ms = (t0.elapsed().as_secs_f64() * 100_000.0).round() / 100.0; // 0.01 ms
+                Reply::Text(rendered.to_observation_text(call_id, capture_ms))
+            }
+            Err(e) => ack(
+                call_id,
+                false,
+                Some(format!("structured observation failed: {e:#}")),
+            ),
+        }
+    }
+
+    /// Handle `invoke_action` / `set_value`: element_ref → backend node → AT-SPI.
+    /// Returns the wire reply plus whether the element write SUCCEEDED — the success
+    /// flag drives the act-returns-observation follow-up in the dispatcher.
+    fn element_action(&mut self, call_id: &str, spec: &ActionSpec) -> (Reply, bool) {
+        let Some(tree) = self.tree.clone() else {
+            return (
+                ack(
+                    call_id,
+                    false,
+                    Some(
+                        "structured_observation_unavailable: this runtime has no tree source"
+                            .to_string(),
+                    ),
+                ),
+                false,
+            );
+        };
+        let element_ref = match &spec.target {
+            Some(Target::ElementRef { element_ref, .. }) => element_ref.clone(),
+            _ => {
                 return (
                     ack(
                         call_id,
                         false,
-                        Some(format!("quality out of range 1-100: {q}")),
+                        Some(format!("{} requires an element_ref target", spec.verb)),
                     ),
-                    StreamCtl::None,
-                    0,
+                    false,
                 )
             }
         };
-        (format, quality)
-    } else {
-        (ImageFormat::Png, DEFAULT_JPEG_QUALITY) // unused by non-capture verbs
-    };
-    match spec.verb.as_str() {
-        "screenshot" => {
-            let opts = EncodeOpts {
-                max_long_edge: clamp_long_edge(spec.max_long_edge),
-                format,
-                quality,
-            };
-            let reply = screenshot_reply(
-                call_id,
-                &scope,
-                opts,
-                spec.if_none_match.as_deref(),
-                exec,
-                binary,
-            );
-            (reply, StreamCtl::None, 0)
-        }
-        "start_screencast" => {
-            let fps = spec.fps.unwrap_or(FPS_DEFAULT).clamp(FPS_MIN, FPS_MAX);
-            let delta = spec.delta.unwrap_or(false);
-            // A delta stream needs raw (pre-encode) capture to diff tiles; nack a
-            // backend that can't do it rather than ack and then die frameless.
-            if delta && !exec.supports_raw_capture() {
-                return (
-                    ack(
-                        call_id,
+        let record = match self.obs.resolve(&element_ref) {
+            Ok(r) => r.clone(),
+            Err(e) => return (ack(call_id, false, Some(e)), false),
+        };
+        let result = match spec.verb.as_str() {
+            // `text` carries the action name (None → the node's first action).
+            "invoke_action" => tree.invoke(&record.backend_id, spec.text.as_deref()),
+            _ => match &spec.text {
+                Some(value) => tree.set_value(&record.backend_id, value),
+                None => {
+                    return (
+                        ack(
+                            call_id,
+                            false,
+                            Some("set_value requires `text` (the new value)".to_string()),
+                        ),
                         false,
-                        Some(format!(
-                            "delta screencast not supported by the {} backend",
-                            exec.backend()
-                        )),
-                    ),
-                    StreamCtl::None,
-                    0,
-                );
-            }
-            let cast = ScreencastSpec {
-                stream_id: call_id.to_string(),
-                fps,
-                // Default an unspecified cap to the negotiated max so a busy full-res
-                // desktop can't pin OUTBOUND_CAP × multi-MB frames in the writer queue.
-                max_long_edge: clamp_long_edge(spec.max_long_edge)
-                    .or(Some(protocol::MAX_LONG_EDGE)),
-                format,
-                quality,
-                scope,
-                start_seq: 0,
-                resume_stream: spec.resume_stream,
-                delta,
-                binary,
-            };
-            (ack(call_id, true, None), StreamCtl::Start(cast), 0)
+                    )
+                }
+            },
+        };
+        match result {
+            Ok(_) => (ack(call_id, true, None), true),
+            Err(e) => (
+                ack(
+                    call_id,
+                    false,
+                    Some(format!("{} {element_ref} failed: {e:#}", spec.verb)),
+                ),
+                false,
+            ),
         }
-        "stop_screencast" => (ack(call_id, true, None), StreamCtl::Stop, 0),
-        // wait: ack, but have the serve loop sleep first (bounded) so the ack lands after
-        // the delay — real wait.ms semantics, async so it never blocks the runtime (#140)
-        "wait" => (
-            ack(call_id, true, None),
-            StreamCtl::None,
-            spec.ms.unwrap_or(0).min(MAX_WAIT_MS),
-        ),
-        _ => match exec.execute(&spec) {
-            Ok(_) => (ack(call_id, true, None), StreamCtl::None, 0),
-            Err(e) => (ack(call_id, false, Some(e.to_string())), StreamCtl::None, 0),
-        },
     }
 }
 
@@ -1026,5 +1274,393 @@ mod tests {
             s.on_text(r#"{"type":"action","call_id":"sc2","action":{"verb":"stop_screencast"}}"#);
         assert!(step.reply.unwrap().into_text().contains("\"ok\":true"));
         assert_eq!(step.stream, StreamCtl::Stop);
+    }
+
+    // ---- act-returns-observation (`observe`) ----
+
+    #[test]
+    fn observe_on_mutating_action_acks_then_follows_up_with_observation() {
+        let mut s = session(None);
+        s.on_text(HELLO);
+        let step = s.on_text(
+            r#"{"type":"action","call_id":"c1","action":{"verb":"click",
+                "target":{"kind":"point_px","x":1,"y":2},
+                "observe":{"format":"jpeg","quality":70}}}"#,
+        );
+        let ack = step.reply.unwrap().into_text();
+        assert!(ack.contains("\"type\":\"ack\"") && ack.contains("\"ok\":true"));
+        let obs = step.followup.expect("observe must produce a follow-up");
+        let v: serde_json::Value = serde_json::from_str(&obs.into_text()).unwrap();
+        assert_eq!(v["type"], "observation");
+        assert_eq!(
+            v["cause"], "c1",
+            "the follow-up correlates via cause=call_id"
+        );
+        assert_eq!(v["obs_id"], "obs-c1");
+        assert_eq!(
+            v["image"]["format"], "jpeg",
+            "observe params reach the capture"
+        );
+        assert!(v["image"]["ref"].is_string());
+    }
+
+    #[test]
+    fn observe_is_rejected_on_non_mutating_verbs() {
+        let mut s = session(None);
+        s.on_text(HELLO);
+        for action in [
+            r#"{"verb":"wait","ms":1,"observe":{}}"#,
+            r#"{"verb":"screenshot","observe":{}}"#,
+            r#"{"verb":"start_screencast","observe":{}}"#,
+        ] {
+            let step = s.on_text(&format!(
+                r#"{{"type":"action","call_id":"c1","action":{action}}}"#
+            ));
+            let reply = step.reply.unwrap().into_text();
+            assert!(
+                reply.contains("\"ok\":false") && reply.contains("observe is not supported"),
+                "observe on {action} must be nacked, got {reply}"
+            );
+            assert!(step.followup.is_none());
+            // and the stream side effect must not fire either
+            assert_eq!(step.stream, StreamCtl::None);
+        }
+    }
+
+    #[test]
+    fn invalid_observe_params_nack_before_the_action_executes() {
+        let exec = Arc::new(VirtualExecutor::default());
+        let mut s = Session::new(None, exec.clone());
+        s.on_text(HELLO);
+        for (action, want) in [
+            (
+                r#"{"verb":"click","target":{"kind":"point_px","x":1,"y":2},"observe":{"format":"webp"}}"#,
+                "unsupported image format",
+            ),
+            (
+                r#"{"verb":"click","target":{"kind":"point_px","x":1,"y":2},"observe":{"quality":0}}"#,
+                "observe quality out of range",
+            ),
+            (
+                r#"{"verb":"click","target":{"kind":"point_px","x":1,"y":2},"observe":{"scope":"bogus"}}"#,
+                "invalid observe scope",
+            ),
+        ] {
+            let step = s.on_text(&format!(
+                r#"{{"type":"action","call_id":"c1","action":{action}}}"#
+            ));
+            let reply = step.reply.unwrap().into_text();
+            assert!(
+                reply.contains("\"ok\":false") && reply.contains(want),
+                "expected {want:?} in {reply}"
+            );
+        }
+        // validation happens BEFORE execution: nothing was half-applied
+        assert!(exec.log.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn observe_followup_is_binary_on_a_binary_session() {
+        let mut s = session(None);
+        s.on_text(
+            r#"{"type":"hello","v":0,"client":{"name":"t","version":"0"},"accept":{"binary_frames":true}}"#,
+        );
+        let step = s.on_text(
+            r#"{"type":"action","call_id":"c2","action":{"verb":"type_text","text":"x","observe":{}}}"#,
+        );
+        assert!(step.reply.unwrap().into_text().contains("\"ok\":true"));
+        match step.followup {
+            Some(Reply::Binary(bytes)) => {
+                let hlen = u32::from_le_bytes(bytes[..4].try_into().unwrap()) as usize;
+                let header: serde_json::Value =
+                    serde_json::from_slice(&bytes[4..4 + hlen]).unwrap();
+                assert_eq!(header["cause"], "c2");
+                assert!(header["image"]["len"].is_number());
+            }
+            other => panic!("expected a binary follow-up, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn observe_capture_failure_yields_typed_error_followup_after_honest_ack() {
+        // SizedExec executes actions fine but cannot capture (trait default bails):
+        // the ack must stay ok=true (the ACTION succeeded) and the follow-up must be
+        // a typed error result so the client's observation wait resolves.
+        let mut s = Session::new(None, Arc::new(SizedExec(640, 480)));
+        s.on_text(HELLO);
+        let step = s.on_text(
+            r#"{"type":"action","call_id":"c3","action":{"verb":"key","keys":"a","observe":{}}}"#,
+        );
+        assert!(step.reply.unwrap().into_text().contains("\"ok\":true"));
+        let v: serde_json::Value =
+            serde_json::from_str(&step.followup.unwrap().into_text()).unwrap();
+        assert_eq!(v["type"], "result");
+        assert_eq!(v["call_id"], "c3");
+        assert_eq!(v["ok"], false);
+        assert!(v["error"].as_str().unwrap().contains("observe failed"));
+    }
+
+    #[test]
+    fn failed_action_with_observe_nacks_without_a_followup() {
+        // FailingExec: every action errors — observe must not capture anything.
+        struct FailingExec;
+        impl Executor for FailingExec {
+            fn execute(&self, _: &ActionSpec) -> anyhow::Result<String> {
+                anyhow::bail!("boom")
+            }
+            fn backend(&self) -> &'static str {
+                "failing-test"
+            }
+        }
+        let mut s = Session::new(None, Arc::new(FailingExec));
+        s.on_text(HELLO);
+        let step = s.on_text(
+            r#"{"type":"action","call_id":"c4","action":{"verb":"key","keys":"a","observe":{}}}"#,
+        );
+        assert!(step.reply.unwrap().into_text().contains("\"ok\":false"));
+        assert!(step.followup.is_none());
+    }
+
+    // ---- drag / mouse_down / mouse_up dispatch + list_windows query ----
+
+    #[test]
+    fn gesture_verbs_dispatch_to_the_executor() {
+        let exec = Arc::new(VirtualExecutor::default());
+        let mut s = Session::new(None, exec.clone());
+        s.on_text(HELLO);
+        for action in [
+            r#"{"verb":"drag","target":{"kind":"point_px","x":1,"y":2},"to":{"kind":"point_px","x":3,"y":4},"duration_ms":10,"button":"left"}"#,
+            r#"{"verb":"mouse_down","target":{"kind":"point_px","x":1,"y":2}}"#,
+            r#"{"verb":"mouse_up"}"#,
+        ] {
+            let step = s.on_text(&format!(
+                r#"{{"type":"action","call_id":"c1","action":{action}}}"#
+            ));
+            assert!(step.reply.unwrap().into_text().contains("\"ok\":true"));
+        }
+        assert_eq!(
+            exec.log.lock().unwrap().as_slice(),
+            ["drag", "mouse_down", "mouse_up"]
+        );
+    }
+
+    #[test]
+    fn list_windows_query_answers_from_the_executor() {
+        let mut s = session(None); // virtual backend: honest empty enumeration
+        s.on_text(HELLO);
+        let reply = s
+            .on_text(r#"{"type":"query","call_id":"w1","q":"list_windows"}"#)
+            .reply
+            .unwrap()
+            .into_text();
+        let v: serde_json::Value = serde_json::from_str(&reply).unwrap();
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["value"], serde_json::json!([]));
+        // a backend without enumeration answers with a typed error, not a fabrication
+        let mut s = Session::new(None, Arc::new(SizedExec(640, 480)));
+        s.on_text(HELLO);
+        let reply = s
+            .on_text(r#"{"type":"query","call_id":"w2","q":"list_windows"}"#)
+            .reply
+            .unwrap()
+            .into_text();
+        let v: serde_json::Value = serde_json::from_str(&reply).unwrap();
+        assert_eq!(v["ok"], false);
+        assert!(v["error"]
+            .as_str()
+            .unwrap()
+            .contains("list_windows not supported"));
+    }
+
+    // ---- structured observation + element_ref actions (M1b) ----
+
+    use crate::observe::tests::{sample_tree, FakeSource};
+    use crate::observe::STALE_ELEMENT_PREFIX;
+
+    /// `(verb, resolved point)` as seen by the backend.
+    type RecordedTarget = (String, Option<(f64, f64)>);
+
+    /// An executor that records the RESOLVED target of every pointer action, to
+    /// prove element_ref → bbox-centre point_px rewriting reaches the backend.
+    #[derive(Default)]
+    struct TargetRecorder {
+        targets: std::sync::Mutex<Vec<RecordedTarget>>,
+    }
+    impl Executor for TargetRecorder {
+        fn execute(&self, a: &ActionSpec) -> anyhow::Result<String> {
+            let point = match &a.target {
+                Some(Target::PointPx { x, y }) => Some((*x, *y)),
+                _ => None,
+            };
+            self.targets.lock().unwrap().push((a.verb.clone(), point));
+            Ok("ok".into())
+        }
+        fn backend(&self) -> &'static str {
+            "target-recorder"
+        }
+    }
+
+    fn observing_session(src: Arc<FakeSource>) -> (Session, Arc<TargetRecorder>) {
+        let exec = Arc::new(TargetRecorder::default());
+        let mut s = Session::new(None, exec.clone()).with_tree_source(src);
+        s.on_text(HELLO);
+        (s, exec)
+    }
+
+    const OBSERVE: &str =
+        r#"{"type":"action","call_id":"o1","action":{"verb":"observe","structured":true}}"#;
+
+    #[test]
+    fn observe_returns_structured_observation_with_stable_ids() {
+        let src = Arc::new(FakeSource::new(sample_tree()));
+        let (mut s, _) = observing_session(src);
+        let v = obs_json(s.on_text(OBSERVE));
+        assert_eq!(v["type"], "observation");
+        assert_eq!(v["cause"], "o1");
+        assert_eq!(v["tree"], "full");
+        assert_eq!(v["revision"], 1);
+        assert_eq!(v["node_count"], 3);
+        assert_eq!(v["focus"], "e3");
+        assert!(v["capture_ms"].is_number());
+        let text = v["tree_text"].as_str().unwrap();
+        assert!(text.starts_with("app: zenity"), "{text}");
+        assert!(text.contains("e2 push button"));
+        assert!(text.ends_with("focus: e3"));
+        assert_eq!(v["elements"].as_array().unwrap().len(), 3);
+        // Re-observe: SAME ids, bumped revision.
+        let v2 =
+            obs_json(s.on_text(r#"{"type":"action","call_id":"o2","action":{"verb":"observe"}}"#));
+        assert_eq!(v2["revision"], 2);
+        assert_eq!(v2["elements"][1]["ref"], "e2", "ids stable across observes");
+    }
+
+    #[test]
+    fn observe_diff_renders_change_against_previous_revision() {
+        let src = Arc::new(FakeSource::new(sample_tree()));
+        let (mut s, _) = observing_session(src.clone());
+        s.on_text(OBSERVE);
+        src.tree.lock().unwrap().nodes[2].value = Some("typed!".to_string());
+        let v = obs_json(s.on_text(
+            r#"{"type":"action","call_id":"o2","action":{"verb":"observe","diff":true}}"#,
+        ));
+        assert_eq!(v["tree"], "diff");
+        assert_eq!(v["diff_of"], 1);
+        assert!(
+            v["tree_text"].as_str().unwrap().contains("~   e3 entry"),
+            "{}",
+            v["tree_text"]
+        );
+        // The raw structured array still carries the FULL element list.
+        assert_eq!(v["elements"].as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn observe_without_a_tree_source_is_a_typed_nack() {
+        let mut s = session(None); // no tree source attached
+        s.on_text(HELLO);
+        let v = obs_json(s.on_text(OBSERVE));
+        assert_eq!(v["ok"], false);
+        assert!(
+            v["error"]
+                .as_str()
+                .unwrap()
+                .contains("structured_observation_unavailable"),
+            "{v}"
+        );
+        // and explicit structured:false is rejected, not aliased to pixels
+        let src = Arc::new(FakeSource::new(sample_tree()));
+        let (mut s, _) = observing_session(src);
+        let v = obs_json(s.on_text(
+            r#"{"type":"action","call_id":"oX","action":{"verb":"observe","structured":false}}"#,
+        ));
+        assert_eq!(v["ok"], false);
+        assert!(v["error"].as_str().unwrap().contains("screenshot"));
+    }
+
+    #[test]
+    fn element_ref_click_resolves_to_bbox_centre_point() {
+        let src = Arc::new(FakeSource::new(sample_tree()));
+        let (mut s, exec) = observing_session(src);
+        s.on_text(OBSERVE);
+        let v = obs_json(s.on_text(
+            r#"{"type":"action","call_id":"c1","action":{"verb":"click","target":{"kind":"element_ref","ref":"e2"}}}"#,
+        ));
+        assert_eq!(v["ok"], true, "{v}");
+        let recorded = exec.targets.lock().unwrap().clone();
+        // sample_tree's button bbox is [10, 20, 80, 30] → centre (50, 35)
+        assert_eq!(recorded, vec![("click".to_string(), Some((50.0, 35.0)))]);
+    }
+
+    #[test]
+    fn stale_or_unknown_element_ref_is_a_machine_readable_nack() {
+        let src = Arc::new(FakeSource::new(sample_tree()));
+        let (mut s, exec) = observing_session(src.clone());
+        // Before ANY observation: stale-typed.
+        let v = obs_json(s.on_text(
+            r#"{"type":"action","call_id":"c0","action":{"verb":"click","target":{"kind":"element_ref","ref":"e2"}}}"#,
+        ));
+        assert_eq!(v["ok"], false);
+        assert!(v["error"]
+            .as_str()
+            .unwrap()
+            .starts_with(STALE_ELEMENT_PREFIX));
+        // Observe, then make the button disappear and re-observe: its id is evicted.
+        s.on_text(OBSERVE);
+        src.tree.lock().unwrap().nodes.remove(1);
+        s.on_text(r#"{"type":"action","call_id":"o2","action":{"verb":"observe"}}"#);
+        let v = obs_json(s.on_text(
+            r#"{"type":"action","call_id":"c1","action":{"verb":"click","target":{"kind":"element_ref","ref":"e2"}}}"#,
+        ));
+        assert_eq!(v["ok"], false);
+        let err = v["error"].as_str().unwrap();
+        assert!(
+            err.starts_with(STALE_ELEMENT_PREFIX) && err.contains("re-observe"),
+            "{err}"
+        );
+        assert!(
+            exec.targets.lock().unwrap().is_empty(),
+            "no click must reach the backend"
+        );
+    }
+
+    #[test]
+    fn invoke_action_routes_to_the_ax_backend_by_name() {
+        let src = Arc::new(FakeSource::new(sample_tree()));
+        let (mut s, _) = observing_session(src.clone());
+        s.on_text(OBSERVE);
+        let v = obs_json(s.on_text(
+            r#"{"type":"action","call_id":"i1","action":{"verb":"invoke_action","target":{"kind":"element_ref","ref":"e2"},"text":"click"}}"#,
+        ));
+        assert_eq!(v["ok"], true, "{v}");
+        assert_eq!(
+            src.invoked.lock().unwrap().clone(),
+            vec![(":1.9/b".to_string(), Some("click".to_string()))]
+        );
+        // A missing target is rejected with the verb named.
+        let v = obs_json(
+            s.on_text(r#"{"type":"action","call_id":"i2","action":{"verb":"invoke_action"}}"#),
+        );
+        assert_eq!(v["ok"], false);
+        assert!(v["error"].as_str().unwrap().contains("element_ref target"));
+    }
+
+    #[test]
+    fn set_value_requires_text_and_routes_the_value() {
+        let src = Arc::new(FakeSource::new(sample_tree()));
+        let (mut s, _) = observing_session(src.clone());
+        s.on_text(OBSERVE);
+        let v = obs_json(s.on_text(
+            r#"{"type":"action","call_id":"s1","action":{"verb":"set_value","target":{"kind":"element_ref","ref":"e3"}}}"#,
+        ));
+        assert_eq!(v["ok"], false);
+        assert!(v["error"].as_str().unwrap().contains("requires `text`"));
+        let v = obs_json(s.on_text(
+            r#"{"type":"action","call_id":"s2","action":{"verb":"set_value","target":{"kind":"element_ref","ref":"e3"},"text":"hello"}}"#,
+        ));
+        assert_eq!(v["ok"], true, "{v}");
+        assert_eq!(
+            src.set.lock().unwrap().clone(),
+            vec![(":1.9/e".to_string(), "hello".to_string())]
+        );
     }
 }

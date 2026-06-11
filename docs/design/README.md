@@ -16,6 +16,7 @@ eval, substrates, streaming, and future cross-OS/GPU tiers.
 - OSWorld teardown: [`osworld-analysis.md`](osworld-analysis.md)
 - Competitive landscape: [`landscape.md`](landscape.md)
 - ADRs / technical decisions: [`tech-decisions.md`](tech-decisions.md)
+- Operation layer (deep act/observe contract, D13/D14): [`operation-layer.md`](operation-layer.md)
 - CLI / code execution boundary: [`code-execution.md`](code-execution.md)
 - Code-agent RL readiness (reserved seams, design-only): [`code-agent-rl.md`](code-agent-rl.md)
 - Isolation & capability note: [`threat-model.md`](threat-model.md)
@@ -25,7 +26,7 @@ eval, substrates, streaming, and future cross-OS/GPU tiers.
 ## Rules
 
 - ADRs in [`tech-decisions.md`](tech-decisions.md) are the source of truth for design
-  decisions D1-D12.
+  decisions D1-D14.
 - Design docs may describe target architecture, but must distinguish target, v0.0.1, and later
   optimized/production tiers when that matters.
 - Current implementation claims should link to [`../engineering/status.md`](../engineering/status.md), not be duplicated.

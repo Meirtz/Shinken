@@ -141,6 +141,16 @@ class Capabilities:
     # on a hash hit. False on older welcomes — the SDK never sends if_none_match
     # then (pre-dedup runtimes reject unknown action fields).
     frame_dedup: bool = False
+    # Whether the runtime honors the per-action ``observe`` argument
+    # (act-returns-observation): a mutating action's ack is followed by a fresh
+    # observation with cause = the action's call_id. False on older welcomes — the
+    # SDK then rejects ``observe=`` before anything goes on the wire.
+    observe_after_act: bool = False
+    # Whether the runtime ships the guest-side structured-observation engine (the
+    # `observe` verb with stable element refs + tree_text, element_ref targets,
+    # invoke_action/set_value). False on welcomes from pre-engine runtimes — the SDK
+    # then falls back to its co-located AT-SPI helper.
+    structured_observation: bool = False
 
 
 def _to_uri(addr: str) -> str:
@@ -237,9 +247,38 @@ def _parse_welcome(welcome: dict) -> tuple[Capabilities, str]:
             image_formats=caps.get("image_formats") or ["png"],
             binary_frames=bool(caps.get("binary_frames", False)),
             frame_dedup=bool(caps.get("frame_dedup", False)),
+            observe_after_act=bool(caps.get("observe_after_act", False)),
+            structured_observation=bool(caps.get("structured_observation", False)),
         ),
         (welcome.get("server") or {}).get("platform", "linux"),
     )
+
+
+def _observation_dict(reply: dict) -> dict:
+    """Shape one image-bearing ``observation`` message into the dict the SDK returns
+    for screenshots and act-returns-observation: ``{'bytes', 'format', 'w', 'h',
+    'wire_len'}`` — plus the ``'png'`` back-compat alias only when the codec really is
+    PNG, so legacy readers fail loudly instead of mislabeling JPEG bytes."""
+    img = reply.get("image") or {}
+    raw = _image_bytes(img)  # binary-path raw bytes, or text-path base64 decoded
+    out = {
+        "bytes": raw,
+        "format": img.get("format", "png"),
+        "w": img.get("w"),
+        "h": img.get("h"),
+        # On-the-wire size of the observation that carried this image (binary
+        # frame or JSON text), for bandwidth accounting. None on mocked replies
+        # injected without a transport.
+        "wire_len": reply.get("wire_len"),
+    }
+    if out["format"] == "png":
+        out["png"] = raw  # back-compat alias, only when it really is PNG
+    return out
+
+
+#: The keys an ``observe=`` dict admits — the screenshot-shaped capture levers
+#: (schema ``$defs.ObserveSpec``).
+_OBSERVE_KEYS = {"format", "quality", "max_long_edge", "scope"}
 
 
 def _parse_binary_frame(raw: bytes) -> dict:
@@ -457,6 +496,12 @@ class AsyncSandbox:
         # for a one-shot observation), `pong` to the next ping waiter, and unsolicited
         # server-pushed stream frames (screencast) to the frame queue.
         self._pending: dict[str, asyncio.Future] = {}
+        # Act-returns-observation futures (#observe-after-act): an action sent with
+        # ``observe`` gets TWO correlated replies on the same call_id — the ack, then
+        # the observation (cause = call_id). Both futures are registered BEFORE the
+        # send; the demux resolves ``_pending`` first (the ack) and falls back here
+        # (the follow-up), so the strictly-ordered wire can never race a re-register.
+        self._pending_obs: dict[str, asyncio.Future] = {}
         self._pong_waiters: deque[asyncio.Future] = deque()
         self._frames: asyncio.Queue = asyncio.Queue(maxsize=_FRAME_QUEUE_MAX)
         # Frame-budget accounting (GLOBAL_FRAME_BUDGET_BYTES): resident size of each queued
@@ -596,6 +641,10 @@ class AsyncSandbox:
             return
         cid = msg.get("call_id") or msg.get("cause")
         fut = self._pending.pop(cid, None) if cid is not None else None
+        if fut is None and cid is not None:
+            # Second correlated reply on one call_id: the act-returns-observation
+            # follow-up (the ack already consumed the primary future).
+            fut = self._pending_obs.pop(cid, None)
         if fut is not None and not fut.done():
             fut.set_result(msg)
             return
@@ -611,6 +660,10 @@ class AsyncSandbox:
             if not fut.done():
                 fut.set_exception(exc)
         self._pending.clear()
+        for fut in self._pending_obs.values():
+            if not fut.done():
+                fut.set_exception(exc)
+        self._pending_obs.clear()
         while self._pong_waiters:
             fut = self._pong_waiters.popleft()
             if not fut.done():
@@ -741,23 +794,88 @@ class AsyncSandbox:
         self._record_decision(cap_name, label, "deny", False, reason)
         raise CapabilityDenied(f"{label}: {reason}")
 
-    async def act(self, verb: str, target: dict | None = None, **kwargs: Any) -> dict:
-        """Send one typed action and await its reply. Raises on failure."""
+    def _observe_spec(self, observe: Any) -> dict | None:
+        """Normalize + validate an ``observe=`` argument (act-returns-observation).
+        ``True`` → runtime defaults; a dict admits only the screenshot-shaped keys
+        (``format``/``quality``/``max_long_edge``/``scope``). Rejected with a typed
+        :class:`ValueError` BEFORE anything goes on the wire when the runtime's
+        welcome did not advertise ``capabilities.observe_after_act`` (old runtimes
+        never see the field) or the requested codec is not advertised."""
+        if observe is None or observe is False:
+            return None
+        if not self.capabilities.observe_after_act:
+            raise ValueError(
+                "observe-after-act not advertised by the runtime "
+                "(capabilities.observe_after_act); take a separate screenshot instead"
+            )
+        spec = {} if observe is True else dict(observe)
+        unknown = set(spec) - _OBSERVE_KEYS
+        if unknown:
+            raise ValueError(f"unknown observe keys: {sorted(unknown)}")
+        self._check_image_format(spec.get("format"))
+        return spec
+
+    async def act(
+        self, verb: str, target: dict | None = None, observe: Any = None, **kwargs: Any
+    ) -> dict:
+        """Send one typed action and await its reply. Raises on failure.
+
+        ``observe`` (act-returns-observation) asks the runtime to follow the ack with
+        a fresh observation correlated by the same call_id — one round trip instead of
+        act + screenshot. Pass ``True`` for runtime defaults or a dict of the
+        screenshot-shaped capture levers (``format``/``quality``/``max_long_edge``/
+        ``scope``). When set, the OBSERVATION dict (same shape as :meth:`screenshot`)
+        is returned instead of the ack. Only mutating verbs admit it; requires the
+        runtime's ``capabilities.observe_after_act``."""
         self._gate(verb)
+        obs_spec = self._observe_spec(observe)
+        if obs_spec is not None:
+            # The follow-up is a capture: gate it like one, so a session without the
+            # screenshot capability can't smuggle pixels out via observe.
+            self._gate("screenshot")
         action: dict = {"verb": verb}
         if target is not None:
             action["target"] = target
+        if obs_spec is not None:
+            action["observe"] = obs_spec
         action.update({k: v for k, v in kwargs.items() if v is not None})
         call_id = self._next_id()
-        reply = await self._rpc({"type": "action", "call_id": call_id, "action": action})
-        # A successful one-shot `screenshot` is answered with an `observation` (which has
-        # no `ok` field), not an `ack` — so an adapter-translated model screenshot
-        # tool-call routed through act()/act_batch() must not be treated as a failure.
-        ok = True if reply.get("type") == "observation" else reply.get("ok")
-        if not ok:
-            raise RuntimeError(reply.get("error", f"action {verb!r} failed"))
+        obs_fut: asyncio.Future | None = None
+        if obs_spec is not None:
+            # Register the follow-up future BEFORE the send: the wire is strictly
+            # ordered (ack then observation), and _dispatch resolves _pending first,
+            # falling back here — so the observation can never slip past a window
+            # between the ack resolving and a late registration.
+            obs_fut = asyncio.get_running_loop().create_future()
+            self._pending_obs[call_id] = obs_fut
+        try:
+            reply = await self._rpc({"type": "action", "call_id": call_id, "action": action})
+            # A successful one-shot `screenshot` is answered with an `observation` (which
+            # has no `ok` field), not an `ack` — so an adapter-translated model screenshot
+            # tool-call routed through act()/act_batch() must not be treated as a failure.
+            ok = True if reply.get("type") == "observation" else reply.get("ok")
+            if not ok:
+                raise RuntimeError(reply.get("error", f"action {verb!r} failed"))
+        except BaseException:
+            # A nacked/failed action never gets a follow-up — drop the orphan future.
+            if obs_fut is not None:
+                self._pending_obs.pop(call_id, None)
+            raise
         self._action_count += 1
-        return reply
+        if obs_fut is None:
+            return reply
+        try:
+            obs_reply = await asyncio.wait_for(obs_fut, self._rpc_timeout)
+        except asyncio.TimeoutError:
+            self._pending_obs.pop(call_id, None)
+            raise TimeoutError(
+                f"observe follow-up for {verb!r} ({call_id}) timed out after {self._rpc_timeout}s"
+            ) from None
+        if obs_reply.get("type") != "observation":
+            # The action landed but the capture failed: the runtime sent a typed
+            # error result instead of the observation.
+            raise RuntimeError(obs_reply.get("error", f"observe after {verb!r} failed"))
+        return _observation_dict(obs_reply)
 
     async def act_batch(
         self, actions: list[dict], *, stop_on_error: bool = True, batch_id: str | None = None
@@ -1010,26 +1128,117 @@ class AsyncSandbox:
             "observation_error": observation_error,
         }
 
-    async def click(self, target: Any = None, *, x: float | None = None, y: float | None = None):
-        return await self.act("click", _target(target, x, y))
+    async def click(
+        self,
+        target: Any = None,
+        *,
+        x: float | None = None,
+        y: float | None = None,
+        observe: Any = None,
+    ):
+        return await self.act("click", _target(target, x, y), observe=observe)
 
     async def double_click(
-        self, target: Any = None, *, x: float | None = None, y: float | None = None
+        self,
+        target: Any = None,
+        *,
+        x: float | None = None,
+        y: float | None = None,
+        observe: Any = None,
     ):
-        return await self.act("double_click", _target(target, x, y))
+        return await self.act("double_click", _target(target, x, y), observe=observe)
 
     async def right_click(
-        self, target: Any = None, *, x: float | None = None, y: float | None = None
+        self,
+        target: Any = None,
+        *,
+        x: float | None = None,
+        y: float | None = None,
+        observe: Any = None,
     ):
-        return await self.act("right_click", _target(target, x, y))
+        return await self.act("right_click", _target(target, x, y), observe=observe)
 
-    async def move(self, target: Any = None, *, x: float | None = None, y: float | None = None):
-        return await self.act("move", _target(target, x, y))
+    async def move(
+        self,
+        target: Any = None,
+        *,
+        x: float | None = None,
+        y: float | None = None,
+        observe: Any = None,
+    ):
+        return await self.act("move", _target(target, x, y), observe=observe)
+
+    async def drag(
+        self,
+        target: Any = None,
+        to: Any = None,
+        *,
+        x: float | None = None,
+        y: float | None = None,
+        to_x: float | None = None,
+        to_y: float | None = None,
+        duration_ms: int | None = None,
+        button: str | None = None,
+        observe: Any = None,
+    ):
+        """Drag: pointer down at the source, interpolated moves, button up at the
+        destination. Source/destination are targets (or ``x``/``y`` + ``to_x``/``to_y``
+        pixel pairs); ``duration_ms`` spreads the gesture over time (omitted = fastest;
+        the runtime clamps absurd values) and ``button`` picks ``left`` (default) /
+        ``middle`` / ``right``."""
+        src = _target(target, x, y)
+        if src is None:
+            raise ValueError("drag requires a source (target= or x=/y=)")
+        dst = _target(to, to_x, to_y)
+        if dst is None:
+            raise ValueError("drag requires a destination (to= or to_x=/to_y=)")
+        return await self.act(
+            "drag", src, to=dst, duration_ms=duration_ms, button=button, observe=observe
+        )
+
+    async def mouse_down(
+        self,
+        target: Any = None,
+        *,
+        x: float | None = None,
+        y: float | None = None,
+        button: str | None = None,
+        observe: Any = None,
+    ):
+        """Press (and hold) a pointer button — the decomposed half of a free-form
+        gesture (down → moves → up). With a target the pointer moves there first;
+        without one it presses at the current position."""
+        return await self.act("mouse_down", _target(target, x, y), button=button, observe=observe)
+
+    async def mouse_up(
+        self,
+        target: Any = None,
+        *,
+        x: float | None = None,
+        y: float | None = None,
+        button: str | None = None,
+        observe: Any = None,
+    ):
+        """Release a pointer button (see :meth:`mouse_down`)."""
+        return await self.act("mouse_up", _target(target, x, y), button=button, observe=observe)
 
     async def scroll(
-        self, target: Any = None, *, x: float | None = None, y: float | None = None, dy: float = 0.0
+        self,
+        target: Any = None,
+        *,
+        x: float | None = None,
+        y: float | None = None,
+        dy: float = 0.0,
+        observe: Any = None,
     ):
-        return await self.act("scroll", _target(target, x, y), dy=dy)
+        return await self.act("scroll", _target(target, x, y), dy=dy, observe=observe)
+
+    async def list_windows(self) -> list[dict]:
+        """Enumerate visible top-level windows — the Linux "enumerate apps" read
+        primitive (EWMH ``_NET_CLIENT_LIST`` / ``_NET_WM_NAME`` / ``_NET_ACTIVE_WINDOW``
+        guest-side). Each entry is ``{id, title, pid, x, y, w, h, focused}``; ``id`` is
+        usable as the ``window:<id>`` capture scope."""
+        return await self.query("list_windows")
 
     def _check_image_format(self, format: str | None) -> None:
         """Codec negotiation: reject a requested ``format`` the runtime's welcome did
@@ -1129,11 +1338,11 @@ class AsyncSandbox:
             self._frame_cache.record(hit=False)
         return out
 
-    async def type_text(self, text: str):
-        return await self.act("type_text", text=text)
+    async def type_text(self, text: str, *, observe: Any = None):
+        return await self.act("type_text", text=text, observe=observe)
 
-    async def key(self, keys: str):
-        return await self.act("key", keys=keys)
+    async def key(self, keys: str, *, observe: Any = None):
+        return await self.act("key", keys=keys, observe=observe)
 
     async def astart_screencast(
         self,
@@ -1710,6 +1919,10 @@ class Sandbox:
         self._closed = False
         self._elements: dict[str, dict] = {}  # ref -> Element, from the last observe(structured)
         self._last_structured: list[dict] = []  # last full element list, for observe_diff (#4)
+        # Whether the last structured observation came from the GUEST engine: its refs
+        # are runtime-side ids, so element actions dispatch as element_ref targets
+        # (resolved guest-side against the live tree) instead of local bbox math.
+        self._elements_from_guest = False
 
     @property
     def capabilities(self) -> Capabilities:
@@ -1755,8 +1968,10 @@ class Sandbox:
         """Number of ACI actions successfully dispatched this session (eval step count)."""
         return self._inner.actions_dispatched
 
-    def act(self, verb: str, target: dict | None = None, **kwargs: Any) -> dict:
-        return self._loop.run(self._inner.act(verb, target, **kwargs))
+    def act(
+        self, verb: str, target: dict | None = None, observe: Any = None, **kwargs: Any
+    ) -> dict:
+        return self._loop.run(self._inner.act(verb, target, observe=observe, **kwargs))
 
     def act_batch(
         self, actions: list[dict], *, stop_on_error: bool = True, batch_id: str | None = None
@@ -1786,22 +2001,125 @@ class Sandbox:
         still returns after a mid-step per-action error."""
         return self._loop.run(self._inner.step(actions, observe=observe, step_id=step_id))
 
-    def click(self, target: Any = None, *, x: float | None = None, y: float | None = None):
-        return self._loop.run(self._inner.click(target, x=x, y=y))
+    def click(
+        self,
+        target: Any = None,
+        *,
+        x: float | None = None,
+        y: float | None = None,
+        observe: Any = None,
+    ):
+        """Click. With ``observe`` (act-returns-observation), the runtime follows the
+        ack with a fresh observation in the same round trip and the OBSERVATION dict
+        (the :meth:`screenshot` shape) is returned — ``env.click(x=1, y=2,
+        observe=True)["bytes"]``. ``observe`` may also be a dict of the capture levers
+        (``format``/``quality``/``max_long_edge``/``scope``). Same on every other
+        mutating verb below."""
+        return self._loop.run(self._inner.click(target, x=x, y=y, observe=observe))
 
-    def double_click(self, target: Any = None, *, x: float | None = None, y: float | None = None):
-        return self._loop.run(self._inner.double_click(target, x=x, y=y))
+    def double_click(
+        self,
+        target: Any = None,
+        *,
+        x: float | None = None,
+        y: float | None = None,
+        observe: Any = None,
+    ):
+        return self._loop.run(self._inner.double_click(target, x=x, y=y, observe=observe))
 
-    def right_click(self, target: Any = None, *, x: float | None = None, y: float | None = None):
-        return self._loop.run(self._inner.right_click(target, x=x, y=y))
+    def right_click(
+        self,
+        target: Any = None,
+        *,
+        x: float | None = None,
+        y: float | None = None,
+        observe: Any = None,
+    ):
+        return self._loop.run(self._inner.right_click(target, x=x, y=y, observe=observe))
 
-    def move(self, target: Any = None, *, x: float | None = None, y: float | None = None):
-        return self._loop.run(self._inner.move(target, x=x, y=y))
+    def move(
+        self,
+        target: Any = None,
+        *,
+        x: float | None = None,
+        y: float | None = None,
+        observe: Any = None,
+    ):
+        return self._loop.run(self._inner.move(target, x=x, y=y, observe=observe))
+
+    def drag(
+        self,
+        target: Any = None,
+        to: Any = None,
+        *,
+        x: float | None = None,
+        y: float | None = None,
+        to_x: float | None = None,
+        to_y: float | None = None,
+        duration_ms: int | None = None,
+        button: str | None = None,
+        observe: Any = None,
+    ):
+        """Drag from a source to a destination (pointer down → interpolated moves →
+        up); see :meth:`AsyncSandbox.drag`."""
+        return self._loop.run(
+            self._inner.drag(
+                target,
+                to,
+                x=x,
+                y=y,
+                to_x=to_x,
+                to_y=to_y,
+                duration_ms=duration_ms,
+                button=button,
+                observe=observe,
+            )
+        )
+
+    def mouse_down(
+        self,
+        target: Any = None,
+        *,
+        x: float | None = None,
+        y: float | None = None,
+        button: str | None = None,
+        observe: Any = None,
+    ):
+        """Press (and hold) a pointer button — see :meth:`AsyncSandbox.mouse_down`."""
+        return self._loop.run(
+            self._inner.mouse_down(target, x=x, y=y, button=button, observe=observe)
+        )
+
+    def mouse_up(
+        self,
+        target: Any = None,
+        *,
+        x: float | None = None,
+        y: float | None = None,
+        button: str | None = None,
+        observe: Any = None,
+    ):
+        """Release a pointer button — see :meth:`AsyncSandbox.mouse_up`."""
+        return self._loop.run(
+            self._inner.mouse_up(target, x=x, y=y, button=button, observe=observe)
+        )
 
     def scroll(
-        self, target: Any = None, *, x: float | None = None, y: float | None = None, dy: float = 0.0
+        self,
+        target: Any = None,
+        *,
+        x: float | None = None,
+        y: float | None = None,
+        dy: float = 0.0,
+        observe: Any = None,
     ):
-        return self._loop.run(self._inner.scroll(target, x=x, y=y, dy=dy))
+        return self._loop.run(self._inner.scroll(target, x=x, y=y, dy=dy, observe=observe))
+
+    def list_windows(self) -> list[dict]:
+        """Enumerate visible top-level windows (``{id, title, pid, x, y, w, h,
+        focused}`` each; ``id`` is usable as the ``window:<id>`` capture scope) — see
+        :meth:`AsyncSandbox.list_windows`."""
+        return self._loop.run(self._inner.list_windows())
 
     def screenshot(
         self,
@@ -1815,15 +2133,30 @@ class Sandbox:
             self._inner.screenshot(scope, format=format, quality=quality, dedup=dedup)
         )
 
-    def observe(self, structured: bool = False, source: Any = None) -> dict:
+    def observe(
+        self,
+        structured: bool = False,
+        source: Any = None,
+        *,
+        diff: bool = False,
+        settle_ms: int | None = None,
+    ) -> dict:
         """Observe the desktop. ``structured=True`` captures the accessibility tree as
-        ACI ``Element``s (full tree + node_count + capture_ms), falling back gracefully
-        with ``available=False`` if AT-SPI is unavailable; otherwise returns a
-        screenshot observation. The structured path is a **co-located / local-reference**
-        capture (AT-SPI on this host); the over-the-wire shinkend path is a follow-up."""
+        ACI ``Element``s with stable refs; otherwise returns a screenshot observation.
+
+        The structured path **prefers the guest engine**: when the runtime advertises
+        ``capabilities.structured_observation``, the capture runs inside the Sandbox
+        (`observe` verb) and the reply carries ``tree_text`` (the legible serialization),
+        ``elements`` (stable ``e<N>`` refs minted runtime-side), ``revision``, ``focus``,
+        ``node_count`` and ``capture_ms``; ``diff`` renders ``tree_text`` against the
+        previous revision and ``settle_ms`` debounces a11y events before the walk.
+        Without the capability (or with an explicit ``source``), the co-located /
+        local-reference AT-SPI capture is used as the fallback, returning
+        ``available=False`` gracefully when no tree is reachable."""
         if structured:
-            obs = self._capture_structured(source)
-            return obs
+            if source is None and self._guest_observe_available():
+                return self._observe_guest(diff=diff, settle_ms=settle_ms)
+            return self._capture_structured(source)
         shot = self.screenshot()
         return {
             "type": "observation",
@@ -1832,25 +2165,54 @@ class Sandbox:
             "png": shot["png"],
         }
 
+    def _guest_observe_available(self) -> bool:
+        caps = self._inner.capabilities
+        return bool(caps.structured_observation) or "observe" in (caps.verbs or [])
+
+    def _observe_guest(self, *, diff: bool = False, settle_ms: int | None = None) -> dict:
+        """Structured observation through the GUEST engine (the `observe` verb): the
+        runtime settles, walks AT-SPI, mints stable ids, and renders ``tree_text``.
+        Refreshes the ``ref → Element`` map; refs are resolved guest-side on actions."""
+        kwargs: dict[str, Any] = {"structured": True}
+        if diff:
+            kwargs["diff"] = True
+        if settle_ms is not None:
+            kwargs["settle_ms"] = settle_ms
+        obs = self.act("observe", **kwargs)
+        self._elements = {e["ref"]: e for e in obs.get("elements", [])}
+        self._elements_from_guest = True
+        obs.setdefault("available", True)
+        return obs
+
     def _capture_structured(self, source: Any = None) -> dict:
         """Gate the ``a11y`` capability (#145), capture a structured observation, and
-        retain its ``ref → Element`` map (#78)."""
+        retain its ``ref → Element`` map (#78). Co-located fallback path."""
         from .a11y import AtspiSource, observe_structured
 
         self._inner.gate_capability("a11y", "observe_structured")
         obs = observe_structured(source or AtspiSource())
         self._elements = {e["ref"]: e for e in obs.get("elements", [])}
+        self._elements_from_guest = False
         return obs
 
-    def observe_diff(self, source: Any = None) -> dict:
-        """Structured observation as a **diff** from the previous one (#4 / D3): returns
+    def observe_diff(self, source: Any = None, *, settle_ms: int | None = None) -> dict:
+        """Structured observation as a **diff** from the previous one (#4 / D3).
+
+        Preferring the guest engine: returns the guest observation with
+        ``tree="diff"`` and ``tree_text`` holding the ``~`` changed / ``+`` added /
+        ``-`` removed lines against this session's previous revision (``diff_of``),
+        with ``elements`` still the full live list (an explicit no-change notice when
+        nothing moved; the full tree when the diff exceeds the runtime's line budget).
+
+        On the local fallback (no guest engine, or an explicit ``source``): returns
         ``{added, removed, changed, unchanged, size, available}`` — only what changed
         since the last ``observe_diff`` / ``observe(structured=True)``, plus the
-        serialized diff-vs-full byte sizes (the tree-diff bandwidth measure). The first
-        call has no baseline, so every element is ``added``. Falls back to
-        ``available=False`` (like the full structured path) when the source is
-        unavailable. Also refreshes the ``element_ref`` map, so ``resolve``/``act_on``
+        serialized diff-vs-full byte sizes. The first call has no baseline, so every
+        element is ``added``; ``available=False`` when the source is unreachable.
+        Either way the ``element_ref`` map is refreshed, so ``resolve``/``act_on``
         keep working."""
+        if source is None and self._guest_observe_available():
+            return self._observe_guest(diff=True, settle_ms=settle_ms)
         from .a11y import diff_elements, diff_size
 
         obs = self._capture_structured(source)
@@ -1883,17 +2245,38 @@ class Sandbox:
         return {"x": x + w // 2, "y": y + h // 2, "element": el}
 
     def act_on(self, ref: str, verb: str = "click", **kwargs: Any) -> dict:
-        """Semantic action routing: resolve an `element_ref` to a point via the last
-        structured observation, then dispatch ``verb`` there as a typed pixel action —
-        the structured fast path (no raw coordinates from the caller)."""
+        """Semantic action routing (no raw coordinates from the caller).
+
+        When the last structured observation came from the **guest engine**, the
+        action ships an ``element_ref`` target and the runtime resolves it against
+        the live tree (bbox centre, physical XTEST event) — a stale id answers a
+        machine-readable ``stale_element_ref:`` error meaning re-observe. On the
+        local fallback, the SDK resolves the point from the last observation and
+        dispatches a typed pixel action."""
+        if self._elements_from_guest:
+            return self.act(verb, {"kind": "element_ref", "ref": ref}, **kwargs)
         point = self.resolve(ref)
         return self.act(verb, {"kind": "point_px", "x": point["x"], "y": point["y"]}, **kwargs)
 
-    def type_text(self, text: str):
-        return self._loop.run(self._inner.type_text(text))
+    def invoke_action(self, ref: str, action: str | None = None) -> dict:
+        """Invoke an element's accessibility action by name (the AX-path fallback for
+        elements without usable geometry): ``action=None`` triggers the element's
+        first advertised action (see ``Element.actions`` on the observation). Needs a
+        runtime with ``capabilities.structured_observation``."""
+        kwargs: dict[str, Any] = {"text": action} if action is not None else {}
+        return self.act("invoke_action", {"kind": "element_ref", "ref": ref}, **kwargs)
 
-    def key(self, keys: str):
-        return self._loop.run(self._inner.key(keys))
+    def set_value(self, ref: str, value: str) -> dict:
+        """Set an element's value through its accessibility interface (numeric Value
+        or EditableText), e.g. filling an entry without synthesizing keystrokes.
+        Needs a runtime with ``capabilities.structured_observation``."""
+        return self.act("set_value", {"kind": "element_ref", "ref": ref}, text=value)
+
+    def type_text(self, text: str, *, observe: Any = None):
+        return self._loop.run(self._inner.type_text(text, observe=observe))
+
+    def key(self, keys: str, *, observe: Any = None):
+        return self._loop.run(self._inner.key(keys, observe=observe))
 
     def screencast(
         self,

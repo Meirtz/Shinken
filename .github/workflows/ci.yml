@@ -176,6 +176,13 @@ jobs:
             SHK_WINDOW="$WID" python scripts/window_smoke.py
             echo "✅ live focused-window capture verified (window:$WID)"
           fi
+          if [ -f scripts/action_surface_smoke.py ]; then
+            SHK_EXPECT_WINDOW="${WID:-}" python scripts/action_surface_smoke.py
+            eval "$(xdotool getmouselocation --shell)"
+            echo "cursor at X=$X Y=$Y after drag"
+            test "$X" = "640" && test "$Y" = "360" && echo "✅ live drag verified (pointer parked at the drop point)"
+            echo "✅ live action surface verified (drag + mouse_down/up + observe + list_windows)"
+          fi
       - if: steps.present.outputs.go == 'false'
         run: echo "::error::shinkend or a smoke script is missing — this gate must not be skipped"; exit 1
 
@@ -252,6 +259,9 @@ jobs:
           SHK_TOKEN="$TOKEN" python scripts/docker_smoke.py || { docker logs shk; exit 1; }
           if [ -f scripts/docker_file_smoke.py ]; then
             SHK_TOKEN="$TOKEN" SHK_CONTAINER=shk python scripts/docker_file_smoke.py || { docker logs shk; exit 1; }
+          fi
+          if [ -f scripts/observe_smoke.py ]; then
+            SHK_TOKEN="$TOKEN" SHK_CONTAINER=shk python scripts/observe_smoke.py || { docker logs shk; docker exec shk cat /tmp/atspi.log /tmp/zen.log 2>/dev/null || true; exit 1; }
           fi
           docker rm -f shk
       - if: steps.present.outputs.go == 'true'

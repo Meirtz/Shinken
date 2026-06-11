@@ -5,7 +5,9 @@
 The **Agent-Computer Interface (ACI)** is Shinken's product. This document is the north-star it is
 built toward — the elegant surface, the typed action/observation model, the action-execution and
 capture strategies, and the small async core contract that lets *any* harness drive Shinken. It
-reconciles to decisions **D2** (actions), **D3** (observation), **D5** (replay), **D8** (interfaces).
+reconciles to decisions **D2** (actions), **D3** (observation), **D5** (replay), **D8** (interfaces),
+and — for the deep per-step act/observe contract — **D13/D14** (the operation layer; full design in
+[operation-layer.md](operation-layer.md)).
 
 > **Lineage.** Shinken is the elegant Python-exec sandbox idea grown up: the prior `shinken` gave
 > you `init() / run(code) / save() / restore() / cleanup()` with a rich `result.output`. Shinken
@@ -97,12 +99,47 @@ target = oneof{ point_px{x,y} | point_norm{x,y∈0..1} | element_ref{ref, source
 ```
 
 Every observation carries a `CoordinateSpace {origin, w, h, dpr}`; coordinate normalization lives in
-the protocol, once. v0 verbs (11, matching the `Verb` enum in
+the protocol, once. v0 verbs (**17**, matching the `Verb` enum in
 [`../../schema/aci.schema.json`](../../schema/aci.schema.json) and the runtime's advertised
-capabilities): `click, double_click, right_click, move, scroll, type_text, key, screenshot,
-start_screencast, stop_screencast, wait`. **Code-as-action** (`run`/bash/edit) is a separate,
+capabilities):
+
+| Family | Verbs |
+|---|---|
+| Pointer | `click`, `double_click`, `right_click`, `move`, `scroll` |
+| Gesture | `drag`, `mouse_down`, `mouse_up` |
+| Keyboard | `type_text`, `key` |
+| Pixel observation | `screenshot`, `start_screencast`, `stop_screencast` |
+| Structured observation (D13/M1b) | `observe` |
+| Element (AX path, D13/M1b) | `invoke_action`, `set_value` |
+| Timing | `wait` |
+
+`drag` is the composed
+gesture — pointer down at `target`, interpolated moves, up at `to`, with optional `duration_ms`
+(clamped guest-side) and `button` (`left`/`middle`/`right`); `mouse_down`/`mouse_up` are its
+decomposed halves for free-form gestures (down → moves → up), `target` optional (absent = act at
+the current pointer position). `observe` captures the structured (a11y) tree with stable element
+ids, diff rendering, and settle (§4.1); `invoke_action`/`set_value` drive an element's
+accessibility interface directly (the AX-path fallback to physical events — §3.2 router).
+**Code-as-action** (`run`/bash/edit) is a separate,
 **off-by-default** capability class behind the policy boundary (D6) — expressive, but gated and
 auditable.
+
+**Act-returns-observation (`observe` argument).** Every *mutating* verb (the schema's
+`MutatingVerb` set — pointer/keyboard/gesture plus the element verbs, not
+`screenshot`/screencast/`observe`/`wait`) accepts an optional `observe` object carrying
+the screenshot-shaped capture levers (`scope`, `format`, `quality`, `max_long_edge`). The runtime
+then follows the action's `ack` with a fresh `observation` whose `cause` is the SAME `call_id` —
+one round trip instead of act + screenshot, the same correlation rule as the one-shot screenshot
+reply (and a binary frame on a binary-negotiated session). Capability-gated: a runtime advertises
+`capabilities.observe_after_act` in the welcome; clients must not send `observe` otherwise (old
+runtimes are unaffected — they never see the field). If the action succeeds but the capture fails,
+the ack stays `ok:true` and the follow-up is a typed error `result` on the same `call_id`.
+
+**Queries** (`Query.q`, a closed enum): `platform`, `screen_size`, `ready` (S9 boot readiness),
+and `list_windows` — EWMH window enumeration (`_NET_CLIENT_LIST`, `_NET_WM_NAME`, `_NET_WM_PID`,
+`_NET_ACTIVE_WINDOW`; a WM-less display falls back to the mapped root children), answering
+`[{id, title, pid, x, y, w, h, focused}]` with `id` usable as the `window:<id>` capture scope —
+the Linux "enumerate apps" read primitive ahead of the structured/a11y engine (D3).
 
 ### 3.1 Action execution taxonomy
 
@@ -113,6 +150,23 @@ a backend router:
 ```text
 agent/model grammar -> adapter -> typed ACI action -> capability boundary -> executor router -> backend
 ```
+
+**String-form XML tool calls are a first-class model grammar.** Many CU models emit their tool
+calls as *text*, not structured `tool_use` JSON. The SDK's dialect layer
+(`shinken.dialect.parse_actions(text, format="auto"|"xml"|"dialect")` /
+`parse_xml_actions(text)`) parses the wild-type grammars into the same canonical typed actions:
+(a) JSON-in-XML `<tool_call>{"name": "computer_use", "arguments": {…}}</tool_call>`
+(Qwen/Hermes), (b) `<invoke name="…"><parameter name="…">…</parameter></invoke>` blocks,
+(c) `<function=…>` / `<function name="…">` parameter-element calls (Seed/UI-TARS-2,
+qwen3.5-4b), and (d) attribute/element XML (`<click x="100" y="200"/>`,
+`<action name="click"><param name="x">100</param></action>`). Parsing is tolerant — markdown
+fences, namespace prefixes, unclosed tags, unquoted attributes, trailing-comma/truncated JSON —
+but **never silently drops**: an unknown verb or an action-shaped tag the parser cannot map
+raises a typed `DialectError` carrying the offending snippet, so the Operator loop returns a
+teaching error instead of executing a partial plan; multiple calls in one message yield an
+ordered action list. The vendor adapters expose this as `.from_text(text)`; plain-text DSLs
+keep their existing parsers (Kimi-VL/Aguvis pyautogui in `shinken.adapters.kimi`, OSWorld
+pixel-pyautogui code blocks in `shinken.osworld.parse_model_actions`).
 
 This gives Shinken four distinct action classes:
 
@@ -136,8 +190,13 @@ in v0.0.1 — they ride the substrate's own channel (the OSWorld controller's `/
 cp`/`exec`, the inject transport; the SDK's `put_file`/`get_file` are substrate-side, not wire
 messages). Typed `exec`/`put_file`/`get_file`/`launch` wire verbs are deferred post-v0.0.1, added
 behind the code-as-action capability class when a Workload must do setup/scoring purely through the
-ACI. Likewise `element_ref` resolution is **SDK-side** in v0.0.1 (resolved from the last structured
-observation to a `point_px`); guest-side over-the-wire resolution is the #96 backend ladder (D3).
+ACI. `element_ref` resolution is **guest-side on Linux** as of the M1b observation engine: the
+runtime resolves a live ref from the session's last structured observation to its bbox centre and
+fires a physical XTEST event there (the SDK-side `point_px` resolution remains the fallback for
+pre-engine runtimes); `invoke_action` is the AX-path alternative for geometry-less elements. A
+stale/unknown ref answers a machine-readable ack error starting `stale_element_ref:` — the contract
+is *re-observe, then retry with a fresh ref*. The rest of the #96 backend ladder (CDP, UIA/AX) stays
+designed-only (D3).
 
 The Action Gateway (or the Phase-0 gateway shim) owns capability decisions before an action reaches
 `shinkend`. `shinkend` executes only validated actions inside the Sandbox and reports typed
@@ -158,7 +217,99 @@ deep-dive; see [notes/p0-deepdive.md](../../notes/p0-deepdive.md).)
 | **Windows** | **UIAutomation `Invoke`/`Value`** | **SendInput** | UIA + background dispatch (later) |
 | **macOS** | **AXUIElement `AXPress`/`AXSetValue`** | **CGEventPostToPid** (avoid `CGWarpMouseCursorPosition`) | per-pid post; SkyLight (later) |
 
-**Router priority at actuation:** `browser → CDP` · `element_ref with a valid a11y action → AT-SPI/UIA/AX` · `else pixel coordinate → XTEST/SendInput/CGEvent`. We do **not** make raw XTEST/pyautogui the sole strategy (coordinate-only, focus-stealing, X11-only). A `pyautogui`-compatible shim is kept so OSWorld's pyautogui action space runs unchanged.
+**Router priority at actuation (amended 2026-06-11 by D13 — physical events first):** browser
+surfaces route to the Browser Runtime (CDP); for everything else, an `element_ref` is **resolved to
+geometry and actuated with synthetic OS input** (`XTEST`/`SendInput`/`CGEvent`) at the element —
+apps behave most faithfully under the same events a human produces — and accessibility-interface
+invocation (AT-SPI `do_action` / UIA patterns / AX `AXPress`) is the **fallback** when geometry is
+unusable (occluded, off-screen, zero-size), plus the primary mechanism for the inherently
+element-interface verbs (`invoke_element_action`, `set_element_value`, `set_text_selection`, §3.3).
+Pixel-coordinate targets go straight to synthetic input. We do **not** make raw XTEST/pyautogui the
+sole strategy (coordinate-only, focus-stealing, X11-only). A `pyautogui`-compatible shim is kept so
+OSWorld's pyautogui action space runs unchanged.
+
+### 3.3 Operation-layer verb family (D13 — built core + designed remainder)
+
+The operation layer ([operation-layer.md](operation-layer.md), D13) extends the original v0
+11-verb enum with an **element verb family**. The core of it is now **built and in the 17-verb
+enum** (§3): `drag`, the `observe` wire verb, and the element verbs — shipped under the shorter
+wire names `invoke_action`/`set_value` (the canon's `invoke_element_action`/`set_element_value`),
+with `windows` shipped as the `list_windows` query. The **remainder is designed-only** — additive,
+capability-negotiated (`welcome.capabilities.verbs`), absent from `schema/aci.schema.json` until
+built: `set_text_selection`, `scroll_element`, the `apps` query, and per-app/key-window observe
+scoping. Illustrative, schema-ready shapes (designed forms; the built verbs use the §3/§4.1 wire
+shapes):
+
+```jsonc
+// click by element id — the EXISTING click verb; target already admits element_ref (the engine
+// resolves it guest-side to geometry, then synthesizes real input — §3.2 router, D13)
+{ "verb": "click", "target": { "kind": "element_ref", "ref": "e14" } }
+
+// drag — new verb; two targets, same Target union
+{ "verb": "drag", "from": { "kind": "element_ref", "ref": "e14" },
+  "to": { "kind": "point_px", "x": 640, "y": 410 }, "modifiers": ["shift"] }
+
+// invoke a NAMED secondary action the element advertises (actions=[…] in the serialization)
+{ "verb": "invoke_element_action", "target": { "kind": "element_ref", "ref": "e3" },
+  "action": "showMenu" }
+
+// set a value directly through the element interface
+{ "verb": "set_element_value", "target": { "kind": "element_ref", "ref": "e8" }, "value": "42" }
+
+// text selection / caret placement; prefix/suffix disambiguate repeated matches of `text`
+{ "verb": "set_text_selection", "target": { "kind": "element_ref", "ref": "e8" },
+  "mode": "caret_after",            // "select" | "caret_before" | "caret_after"
+  "text": "Q3", "prefix": "the ", "suffix": " report" }
+
+// scroll a specific element by PAGES (fractions of its visible extent); pixel-delta scroll remains
+{ "verb": "scroll_element", "target": { "kind": "element_ref", "ref": "e20" },
+  "pages": -0.5, "axis": "v" }
+
+// the unified observe primitive (§4.1) — subsumes screenshot
+{ "verb": "observe", "app": { "name": "Text Editor" }, "include": ["screenshot", "tree"],
+  "max_long_edge": 1280, "format": "jpeg", "quality": 80, "tree_mode": "auto" }
+```
+
+Unchanged aliases: `send_keys` **is** the existing `key` (xdotool keysym chords); `enter_text`
+**is** the existing `type_text`. The read surface rides the existing query channel, not a verb:
+
+```jsonc
+{ "type": "query", "q": "apps" }
+// → { "apps": [ { "name": "Text Editor", "pid": 4242, "path": "/usr/bin/gnome-text-editor",
+//                 "focused": true } ] }
+{ "type": "query", "q": "windows", "app": { "name": "Text Editor" } }
+// → { "windows": [ { "id": "w:18", "title": "Untitled", "key": true, "bbox": [0,0,1280,800] } ] }
+```
+
+**`element_ref` semantics under D13:** refs are **stable across observations within a session**
+(never reused, never migrated to a different control); an action citing a ref the engine can no
+longer resolve fails typed, with a re-observe hint:
+
+```jsonc
+{ "type": "result", "id": "a-19", "status": "failed",
+  "failure_kind": "stale_element_ref",
+  "detail": { "ref": "e14", "last_seen": { "role": "button", "title": "Save" },
+              "hint": "re-observe; the element tree has changed since seq 312" } }
+```
+
+An **ambiguous app selector** is likewise a typed rejection (never a guess):
+
+```jsonc
+{ "type": "result", "id": "a-20", "status": "failed", "failure_kind": "ambiguous_app",
+  "detail": { "name": "Notes", "candidates": [ { "pid": 511, "path": "/usr/bin/gnome-notes" },
+                                               { "pid": 988, "path": "/opt/notes-electron/notes" } ] } }
+```
+
+**Observe-after-act (D13):** every mutating verb accepts an optional `observe` argument (same
+parameters as the `observe` verb). The runtime actuates, waits for UI quiescence
+(settle-before-observe), and folds the fresh observation into the action result — the recommended
+loop is one observation per turn:
+
+```jsonc
+{ "verb": "click", "target": { "kind": "element_ref", "ref": "e14" },
+  "observe": { "include": ["tree"], "tree_mode": "auto" } }
+// → result { "status": "ok", "observation": { …ViewObservation (§4.1), tree.mode = "diff"… } }
+```
 
 ---
 
@@ -193,6 +344,43 @@ resolution, for the agent loop; (2) **continuous video** for the human Control P
 **observation event** (`a11y` full→diff with stable element refs) is recorded alongside screenshots
 when available and can become the low-bandwidth default for tree-rich apps.
 
+### 4.1 Structured observation contract (M1b, built for Linux/AT-SPI)
+
+The guest engine is wired as one verb plus an observation shape (schema:
+[`schema/aci.schema.json`](../../schema/aci.schema.json), advertised as
+`capabilities.structured_observation`):
+
+```
+observe(structured=true, diff?, settle_ms?) ->
+  observation{ tree: full|diff, tree_text, elements[], revision, diff_of?,
+               focus?, node_count, capture_ms }
+```
+
+- **Settle then walk.** `settle_ms` debounces a11y change notifications (focus/window/text/
+  children-changed) for a bounded quiesce window (clamped; total wait hard-capped) before the
+  AT-SPI walk of the **focused app** (all apps when none is active). The walk is capped in
+  nodes/depth/time and runs on a dedicated worker thread with per-call deadlines — a hung AT-SPI
+  peer yields a typed error, never a wedged runtime; an over-cap tree returns partial,
+  labeled `truncated`.
+- **Stable ids.** Elements are `e<N>`: minted monotonically per session, keyed to a composite
+  identity heuristic (AT-SPI bus name + object path, plus role and parent path), kept while the
+  element lives, **evicted and never reused** when it disappears. Honest limit: a toolkit that
+  recycles an object path for an identical-role node under the same parent is indistinguishable
+  from the original. Content changes (name/value/states/bbox) do not change identity — they render
+  as `~` lines.
+- **Two renderings, one message.** `tree_text` is the model-facing serialization — a header
+  (`app:`/`window:`/revision), one indented line per element
+  (`e<id> <role> [(states)] ["title"] [Value:…] [Actions:…]`), and a `focus:` trailer; `elements`
+  is the raw structured array (ACI `Element`s) for tooling, always the FULL live list. With
+  `diff`, `tree_text` becomes `~` changed / `+` added lines plus a summarized `- removed:`
+  id-range line against revision `diff_of` (an explicit *no change* notice when nothing moved; the
+  full tree when the diff exceeds the line budget, `SHINKEND_DIFF_BUDGET`).
+- **Element actions.** Pointer verbs accept `target.kind=element_ref`: the runtime resolves the
+  live ref to its bbox centre and fires a **physical** XTEST event (physical-event preference).
+  `invoke_action` (AT-SPI Action by name, `text` = action name, default = first action) and
+  `set_value` (`text` = new value; numeric Value or EditableText) are the AX-path verbs. A
+  stale/unknown ref nacks with an error starting **`stale_element_ref:`** → re-observe and retry.
+
 Layered observation in Phase 0: rung 0 screenshot baseline → rung 1 a11y/DOM structure when available
 → rung 2 Set-of-Marks / OmniParser for screenshot-only UIs → rung 3 focused region/zoom/video.
 
@@ -205,6 +393,55 @@ Phase-0 screencast resource policy is deliberately conservative:
   max connection lifetime.
 - Python SDK frame queue: bounded to 32 frames with drop-oldest semantics; starting a new stream
   clears stale frames, and stopping a stream pushes an explicit end sentinel.
+
+### 4.2 Unified observe + diff observations (D13 — the designed superset)
+
+The operation layer binds both perception tiers into **one observe primitive** ([operation-layer.md](operation-layer.md)
+§1–§3): the observation carries the screenshot, the structured element tree, and a **focus
+pointer**; the model picks the tier per step; pixels are the universal fallback. Illustrative,
+schema-ready shape (`ViewObservation`):
+
+```jsonc
+{ "type": "observation", "kind": "view", "seq": 312,
+  "app": { "name": "Text Editor", "pid": 4242,
+           "window": { "id": "w:18", "title": "Untitled", "key": true } },
+  "space": { "w": 1280, "h": 800 },                       // CoordinateSpace, as today
+  "image": { "format": "jpeg", "quality": 80, "w": 1280, "h": 800, "ref": "<bytes>" },
+  "tree": { "mode": "full",
+            "elements": [ /* Element[] — existing $defs.Element, refs stable in-session */ ],
+            "focus": "e8",
+            "serialized": "e1 window \"Untitled — Text Editor\" (active)\n…\nfocus: e8" },
+  "settle": { "quiesced": true, "waited_ms": 140 },        // settle-before-observe report
+  "hints": { "pack": "writer@1", "text": "…" }             // optional, once per app per session
+}
+```
+
+A re-observation against an in-session baseline returns a **diff** instead of a full tree (the
+existing `$defs` `delta` sketch, deepened — removed refs may be range-summarized because ids are
+assigned in discovery order; if the serialized diff exceeds the line budget, the engine sends the
+full tree instead):
+
+```jsonc
+"tree": { "mode": "diff", "base_seq": 312,
+  "changed": [ { "ref": "e8",  "role": "text-area", "value": "Dear team, …", "states": ["focused","editable"] } ],
+  "added":   [ { "ref": "e11", "role": "button", "name": "Save", "parent": "e5" } ],
+  "removed": [ "e21…e34" ],
+  "focus": "e8",
+  "serialized": "~ e8 . text-area value=\"Dear team, …\" (focused, editable)\n+ e11 . . button \"Save\" (enabled)\n- e21…e34 (14 removed)\nfocus: e8",
+  "line_budget": 200, "truncated": false }
+```
+
+On a permissions-gated engine (macOS TCC, D14), observe while grants are pending returns a typed
+**keep-alive**, not a failure:
+
+```jsonc
+{ "type": "observation", "kind": "view", "status": "pending_permissions",
+  "missing": ["screen_recording"], "retry_after_ms": 1000 }
+```
+
+All of §4.1 is **designed-only** (the guest observation engine is unbuilt — see
+[status.md](../engineering/status.md)); the built v0 surface is the screenshot/screencast contract
+above plus SDK-side AT-SPI/CDP reference paths.
 
 ---
 
@@ -278,8 +515,8 @@ content hashes and artifact references.
 
 On connect the client sends `hello{v, client, accept}`; the runtime replies `welcome{server,
 capabilities}` advertising `{schema_version, verbs, targets, observation_types, max_long_edge,
-image_formats, binary_frames}`. The client uses only advertised capabilities. The ACI is
-semver-versioned; adapters are version-pinned.
+image_formats, binary_frames, observe_after_act}`. The client uses only advertised capabilities.
+The ACI is semver-versioned; adapters are version-pinned.
 
 ### 7.1 Binary media frames (negotiated)
 
@@ -308,7 +545,7 @@ SDK falls back to the text path transparently).
 | Area | P0 | Later |
 |------|----|-------|
 | Actions | typed schema + executor; Linux XTEST + CDP/AT-SPI routing + pyautogui-compat | Wayland (libei), Windows UIA/SendInput, macOS AX/CGEvent, background injection |
-| Observation | screenshot baseline + screen video + focused-app capture + a11y/CDP reference tracks | structured-default fast path for tree-rich apps, SoM/OmniParser service, multi-OS a11y, hardware NVENC streaming pipeline |
+| Observation | screenshot baseline + screen video + focused-app capture + a11y/CDP reference tracks | the D13 operation layer (unified observe, stable-id diffs, settle, observe-after-act, app/window scoping), SoM/OmniParser service, multi-OS engines (macOS per D14, Windows UIA), hardware NVENC streaming pipeline |
 | Replay | `.skn` event log + state snapshots; qcow2-eval (revert only) | video sidecar, mid-execution branching (fork tier), agent-core determinism |
 | Harness | async Env+Operator core; Gym shim; OSWorld shim; 1 vendor adapter | MCP server, full adapter set, RL gym at scale |
 | File transfer | `put_file/get_file` design + benchmarks; no base64 on hot paths | resumable directory sync, object-store handoff, artifact GC/dedup |

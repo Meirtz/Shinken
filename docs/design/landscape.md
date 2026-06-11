@@ -59,6 +59,12 @@ Each capsule: **What** it is · **Strengths** · **Weaknesses** · **Lesson** (w
 
 ### 2.1 trycua/cua — the closest analog
 
+> Full code-level teardown — file:line receipts into the pinned clone
+> (`references/cua/` @ `2925b491`, 2026-06-08), the 53-command action-surface
+> inventory, the cua-vs-Shinken feature matrix, and the training-first surpass
+> plan — lives in [`notes/cua-teardown.md`](../../notes/cua-teardown.md). This
+> capsule is the short strategic read.
+
 **What.** Open-source (MIT, YC X25) monorepo grown into five surfaces: (1) `cua-driver` — a Rust MCP daemon driving native macOS/Windows apps in the background on the user's own desktop via AX/UIA/AT-SPI trees + window-scoped screenshots, with per-session agent cursors; (2) `cua-sandbox` — a rewritten SDK composing a Runtime (Docker/QEMU/Lume/Hyper-V/Tart/Android emulator) with a Transport (websocket/http/cloud/vnc/ssh/adb/gRPC — including a ~75-line `OSWorldTransport` shim), with cloud snapshots and CoW fork; (3) `cua-agent` — ~20 registered model loops over litellm with a 15-hook callback lifecycle; (4) `cua-bench` — a real gym + RL harness (tasks-as-code with mandatory oracle solvers, HTTP worker pools, a verl dataloader, a Tinker GRPO trainer, HuggingFace-Datasets traces); (5) `lume`/`lumier`/`cuabot` (APFS-clonefile instant VM clone). Source: <https://github.com/trycua/cua> (surveyed 2026-06-10).
 
 **Strengths.** Owns the "one API, any OS, cloud or local" positioning with the deepest backend matrix in the field. Genuinely good DX: immutable chainable `Image` builder, three-mode lifecycle (ephemeral/create/connect), callback pipeline for telemetry. `cua-driver`'s snapshot-keyed AX-tree handles are exactly the structured-observation model Shinken wants. cua-bench ("cua gym") sits on top as a Gym-style eval harness with an oracle-solver regression check.

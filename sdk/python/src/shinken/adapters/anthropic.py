@@ -12,6 +12,7 @@ from __future__ import annotations
 from .base import (
     SCROLL_PX_PER_CLICK,
     AdapterError,
+    actions_from_text,
     image_size,
     point_px,
     screenshot_image_block,
@@ -81,6 +82,15 @@ class AnthropicComputerUseAdapter:
         if action == "scroll":
             return _scroll(coord, tool_input)
         raise AdapterError(action, "unrecognized Anthropic computer action")
+
+    def from_text(self, text: str) -> list[dict]:
+        """Raw assistant *text* containing string-form XML tool calls — e.g. an
+        ``<invoke name="computer"><parameter name="action">left_click</parameter>…``
+        block, or bare ``<left_click x="…" y="…"/>`` tags — → an **ordered list** of
+        canonical ACI actions. Structured ``tool_use`` inputs should keep using
+        :meth:`to_aci_action`; this is the path for models that emit the call as text.
+        Raises :class:`AdapterError` on unknown verbs or junk (never a silent drop)."""
+        return actions_from_text(text)
 
     def to_tool_result(self, observation: dict) -> dict:
         """A Shinken screenshot observation → Anthropic ``tool_result`` content.

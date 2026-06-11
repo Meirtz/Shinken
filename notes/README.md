@@ -6,6 +6,7 @@ Lower bar than `docs/`: opinionated, exploratory, citation-heavy, may go stale.
 | Note | What it covers | Status |
 |------|----------------|--------|
 | [osworld-teardown.md](osworld-teardown.md) | File-by-file raw findings from the OSWorld code teardown (with file:line) | ✅ |
+| [cua-teardown.md](cua-teardown.md) | Code-level trycua/cua teardown (action surface, snapshot/fork reality, training harness, with file:line) + feature matrix + training-first surpass plan | ✅ |
 | [streaming-bandwidth.md](streaming-bandwidth.md) | Remote-desktop protocols, codecs (incl. NVENC), delta/structured-op streaming, bandwidth math | ✅ |
 | [replay.md](replay.md) | Replay modalities (video vs event-log vs deterministic re-exec), the `.skn` format, forking | ✅ |
 | [permissions.md](permissions.md) | OS sandboxing primitives, capability model, Cedar vs OPA, egress/secrets, the "unlock" panel | ✅ |

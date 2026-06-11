@@ -239,7 +239,8 @@ numbers behind every "measured" are in [`docs/benchmarks/`](docs/benchmarks/READ
 
 | area | state | what exists |
 |---|---|---|
-| ACI v0 (typed actions + observation) | ✅ built | handshake/auth, pointer+keyboard via X11/XTEST, screenshot, real-time screencast (idle-suppress, downscale, reconnect), focused-window capture; 11 verbs, contract-tested |
+| ACI v0 (typed actions + observation) | ✅ built | handshake/auth, pointer+keyboard via X11/XTEST (incl. `drag` + `mouse_down`/`mouse_up`), screenshot, act-returns-observation (`observe`), real-time screencast (idle-suppress, downscale, reconnect), focused-window capture, `list_windows` enumeration; **17 verbs**, contract-tested |
+| Structured observation (Linux v1) | ✅ built | guest `observe` engine in `shinkend` (AT-SPI): stable element ids, `tree_text` diff rendering, settle; guest-resolved `element_ref` targets + `invoke_action`/`set_value`; live Docker smoke |
 | Observation codec | ✅ built + measured | PNG lossless default; JPEG lever **~1–21× content-dependent** (PNG can win; ~131× stacked with downscale on content-rich frames); **lossless dirty-tile delta ~11× on text** |
 | Runtime state | ✅ built + measured | Docker disk-tier **checkpoint / fork / resume** behind a provider interface; `run_eval_forked`; checkpoint ~0.57 s; fork→usable ~0.7 s classic / **~0.1 s warm-pool graft** (state-verified); boot→usable ~0.2 s after S9 push-based readiness |
 | Concurrency | ✅ built + measured | async core + `SharedLoop`: **64 real sandboxes** on 2 threads; client plane held to **1,024 live ACI sessions on one loop thread** (~884 Mbps sustained ingest, protocol-faithful synthetic peers); `ping_jitter` fleet decorrelation |
@@ -248,7 +249,8 @@ numbers behind every "measured" are in [`docs/benchmarks/`](docs/benchmarks/READ
 | Structured a11y/DOM default (D3) | ⏳ provisional | coverage measured (E5): hybrid per-window structured + pixel fallback, *not* structured-by-default |
 | Capability scoping (D6) | ○ mostly designed | a sandbox is granted the resources its task needs; local gateway shim records the envelope; control-plane enforcement designed |
 | CRIU memory + sub-second CoW fork | ○ designed | only the Docker disk tier is built |
-| Control plane, WebRTC/GPU, cross-OS, `.skn` replay | ○ designed | reference path collapses these to one local `shinkend` |
+| macOS engine (D14) | 🟡 v1 slice | native CoreGraphics capture + CGEvent input in `shinkend` (`--backend macos`), TCC-honest readiness; local-only proof — no mac CI; AX tree designed |
+| Control plane, WebRTC/GPU, Windows/Wayland, `.skn` replay | ○ designed | reference path collapses these to one local `shinkend` |
 
 ## Why "Shinken"?
 

@@ -1,7 +1,7 @@
 # Shinken — Technical Decisions (ADRs)
 
 > The keystone document. Each Architecture Decision Record (ADR) below corresponds to one
-> of the twelve decisions D1–D12 that define Shinken. Every ADR follows one template:
+> of the fourteen decisions D1–D14 that define Shinken. Every ADR follows one template:
 > **Title · Status · Context · Decision · Alternatives (and why rejected) ·
 > Consequences (positive / negative / risks) · Evidence**.
 >
@@ -42,6 +42,8 @@
 | **D10** | Cross-platform = one control plane, one Guest Runtime contract, one ACI | Accepted (phased) | Linux first-class v1; Windows + macOS heavier v1 tiers; Android roadmap |
 | **D11** | GPU = optional acceleration tier | Provisional | Opt-in; encode **never on A100/H100**; vGPU (density) + MIG/CoCo (trusted); NICE DCV is the build-vs-buy fork |
 | **D12** | Business = open self-hostable core + optional hosted commercial layer | Accepted | No lock-in; runtime-state wedge; trajectory export as byproduct; optimized for NVIDIA where present |
+| **D13** | Operation layer = one dual-tier observe + stable element identity/diffs + an element verb family | Accepted (phased) | One observe returns pixels + tree + focus; stable ids → `~/+/-` diffs; settle-before-observe; act-returns-observation; per-app scoping; physical events first — design canon in [operation-layer.md](operation-layer.md) |
+| **D14** | macOS engine substrate = ScreenCaptureKit + AXUIElement + CGEvent under TCC | Accepted (phased) | One-shot SCK capture, AX tree (incl. Chromium/Electron enable attributes), CGEvent input; permissions-pending observe keeps the session alive |
 
 ---
 
@@ -201,6 +203,8 @@ A **screenshot-first baseline with structured upgrade** observation model:
 Agents can act on raw `x,y` in the screenshot baseline; they should act on element refs / marks when structure is available. Target the ~6× token saving and replay-stable trajectories for tree-rich apps. The a11y-coverage assumption is **important and unverified**, but it is no longer a blocker for the first screenshot-based GUI loop (see Risks and [`../../notes/open-questions.md`](../../notes/open-questions.md)).
 
 **`element_ref` resolution — settled 2026-06: SDK-side is the v0.0.1 reference path.** The structured tree is captured co-located with the SDK (`a11y.py` / CDP), and `element_ref` resolves to a click point **client-side** (`Sandbox.resolve`/`act_on` map a ref from the last structured observation to a `point_px`); the in-Sandbox shinkend executor deliberately **bails** on `element_ref` (`executor.rs`), because guest-side over-the-wire a11y resolution requires the native automation/accessibility backend ladder, which is **post-v0.0.1** (#96). This is honest in `status.md` and is the reference-implementation reading of the plan's local/reference scope — it ships the structured fast path for SDK-co-located setups now and defers the guest engine, rather than blocking v0.0.1 on ~a week of guest-side work.
+
+**Sub-decision — extended 2026-06-11 (the operation layer, D13): stable element identity + diff observations + settle-before-observe.** The a11y-coverage spike (#2/E5) has now **measured** the coverage picture — strong Qt/AT-SPI (0.87 addressable) and Chromium-family-via-CDP, weak GTK, absent terminals, canvas measured at zero with a change-blind diff; tree-diff ~1–3% of a screenshot's bytes — so the structured-default upgrade **stays Provisional** and the committed shape is **hybrid per-window**. D3's structured track is accordingly deepened by three operation-layer commitments specified in [operation-layer.md](operation-layer.md) and owned by **D13**: (a) element ids (`Element.ref`) are **stable across observations within a session**, so re-observations emit `~/+/-` **diffs** (removed-id range summarization under a line budget, full-tree fallback) and stale-id failures carry a typed re-observe hint; (b) observation capture **settles** — debounce on accessibility change notifications until the UI quiesces, bounded by a deadline; (c) the **one observe primitive** returns both tiers (screenshot + tree + focus pointer), and the model picks the tier per step, pixels always the universal fallback. The identity/diff layer is named plainly as the hardest in-house component and the headline token/correctness optimization. All of this is **designed-only** today (the guest observation engine is unbuilt — see [status.md](../engineering/status.md)).
 
 ### Alternatives (and why rejected)
 
@@ -643,15 +647,174 @@ The market punishes closed single-modality products (Scrapybara sunset). The ope
 
 ---
 
+## D13 — Operation layer: one observe contract, stable element identity, and an element verb family
+
+**Status:** Accepted (phased). The contract is committed design canon (the full specification is
+[`operation-layer.md`](operation-layer.md)); the guest-side observation engine, the new verbs, and
+the per-OS engines are **designed-only, not built** ([status.md](../engineering/status.md)). The
+coverage evidence underneath it is first-party (spike #2/E5).
+
+### Context
+
+The a11y-coverage spike (E5) replaced the "structured-by-default?" question with a measured answer:
+coverage is **uneven per window** (Qt 0.87 addressable, Chromium page content fully resolvable over
+CDP, GTK ~0.10, terminals zero, canvas zero *with a change-blind diff*), while a stable-frame tree
+diff costs ~1–3% of a screenshot's bytes. That verdict makes the per-step loop mechanics — not the
+modality choice — the open design problem: how an agent gets both tiers without paying for both
+every step, how element targets stay valid across steps, how observation timing avoids half-painted
+UIs, and how round trips are minimized. D2's tagged-union and D3's layered observation are the
+right frames but underspecify this **operation layer**.
+
+### Decision
+
+One operation-layer contract, fully specified in [`operation-layer.md`](operation-layer.md):
+
+1. **One observe primitive, two perception tiers bound together** — every observation can carry the
+   screenshot *and* the structured element tree *and* a focus pointer; the model picks the tier per
+   step; pixels are the universal fallback.
+2. **Stable element identity + diff observations** — interactable ids stable across observations
+   within a session (never reused, never migrated); re-observations emit `~/+/-` diffs with
+   removed-id range summarization under a line budget and a full-tree fallback; stale-id failures
+   are typed and carry a re-observe hint. Stated plainly: this identity/diff layer is the hardest
+   in-house component of the operation layer and the headline token/correctness optimization.
+3. **Settle-before-observe** — debounce on accessibility change notifications until the UI
+   quiesces (quiet window + deadline), reported as `settle{quiesced, waited_ms}`.
+4. **Act-returns-observation** — every mutating action MAY return a fresh settled observation
+   (opt-in argument); the recommended loop is one-observe-per-turn.
+5. **Per-app/window scoping** — actions/observations target an app (name/bundle-id/path/pid;
+   ambiguous names rejected with candidates) and its key window; capture defaults to the key window
+   and reuses the existing fidelity knobs (`scope`, `max_long_edge`, `format`/`quality`).
+6. **The element verb family** — additive over the v0 enum, capability-negotiated: `click` by
+   element-id or coordinates (existing), `drag`, `invoke_element_action` (named secondary action),
+   `set_element_value`, `set_text_selection` (select / caret-before / caret-after with
+   prefix/suffix disambiguation), `scroll_element` (by pages), `send_keys` (= existing `key`,
+   xdotool keysym chords), `enter_text` (= existing `type_text`), `observe`, and the
+   `enumerate_apps`/`list_windows` read surface on the query channel.
+7. **Physical events first** — pointer/keyboard verbs resolve elements to geometry and synthesize
+   real OS input (XTEST/CGEvent/SendInput); accessibility-interface invocation is the fallback (and
+   the primary mechanism only for the inherently element-interface verbs). This amends the earlier
+   semantic-first router priority in [aci-spec.md](aci-spec.md) §3.2.
+8. **Legible serialization grammar** — numbered, dot-indented lines with role + states +
+   title/desc/value + secondary actions and a focus trailer; the grammar is versioned with the ACI.
+9. **Per-app hint packs** — optional curated preambles injected once per app per session, recorded
+   in the observation.
+
+The Browser Runtime (a browser-specialized runtime preferring locator scripts / semantic node-ids /
+CDP pixels for web tasks) is outlined in the same document as designed/phase-next.
+
+### Alternatives (and why rejected)
+
+| Alternative | Why rejected |
+|---|---|
+| **Two observe verbs (pixel vs structured), harness picks the mode** | The harness can't know per step which tier a window rewards; the spike shows tier quality is per-window and per-moment. Bind both into one observation and let the model choose. |
+| **Full tree every observation** | Pays the full serialization cost every step; the measured win (~1–3% of screenshot bytes) comes from diffs, which require the identity layer anyway. |
+| **Per-observation ids (no stability)** | Every prior step's reasoning dangles; diffs are impossible; replay loses element-level continuity. Stability is what makes the tree a *state* rather than a rendering. |
+| **Best-effort id reuse without typed staleness** | A stale id silently resolving to a wrong control is a confidently wrong click — worse than a failure. Stale must be a typed, hinted error. |
+| **Fixed post-action sleeps** | The OSWorld anti-pattern (D7 bans it for eval); event-driven quiescence is cheaper and honest (`quiesced:false` when the deadline hits). |
+| **Semantic-first actuation (the previous router default)** | Programmatic invocation skips hover/focus/animation paths and behaves un-human in exactly the apps agents must master; physical events at resolved geometry are higher-fidelity, with the element interface kept as fallback. |
+| **Screen-scoped observation only** | Coverage and diff baselines are per-window properties; screen scope drags every background app into both tiers' cost. |
+
+### Consequences
+
+- **Positive:** the minimum-token steady-state loop (*act → settled diff → act*) with element-level
+  continuity; correctness levers (typed staleness, settle reporting, ambiguous-app rejection) built
+  into the contract; the verb family is additive behind capability negotiation, so old runtimes and
+  clients are untouched.
+- **Negative:** the identity/diff engine is genuinely hard in-house work (platform node identity is
+  unstable everywhere except CDP); the serialization grammar becomes a versioned model-facing
+  contract; per-OS engines must each implement settle + identity faithfully.
+- **Risks:** (1) identity mis-binding produces wrong-target actions — mitigation: conservative
+  matching that mints new ids when unsure, plus typed staleness; (2) diff quality on
+  change-blind surfaces (canvas, measured zero) — mitigation: the pixel tier is always present in
+  the same observation; (3) line budgets and quiet windows are tuning defaults, not measured —
+  first-party loop-level token/latency measurements must precede any SLA-grade claim.
+
+### Evidence
+
+- First-party coverage + diff-bandwidth measurements: [`../engineering/spike-a11y-coverage.md`](../engineering/spike-a11y-coverage.md), [`../../spikes/a11y-coverage/`](../../spikes/a11y-coverage)
+- Platform element/event APIs: AT-SPI2 <https://www.freedesktop.org/wiki/Accessibility/AT-SPI2/>; UI Automation <https://learn.microsoft.com/en-us/windows/win32/winauto/entry-uiauto-win32>; AXUIElement <https://developer.apple.com/documentation/applicationservices/axuielement_h>; CDP Accessibility/DOM/Input <https://chromedevtools.github.io/devtools-protocol/>
+- Actionability/auto-wait discipline (the settle prior art): Playwright <https://playwright.dev/docs/actionability>
+- Keysym chord notation: xdotool <https://github.com/jordansissel/xdotool>
+- Full specification: [`operation-layer.md`](operation-layer.md)
+
+---
+
+## D14 — macOS engine substrate: ScreenCaptureKit + AXUIElement + CGEvent under TCC
+
+**Status:** Accepted (phased). Designed-only — no macOS runtime is built (the proven slice is
+Linux/X11); this ADR fixes the API substrate the Phase-3 macOS engine implements, so the operation
+layer (D13) is specified against real platform surfaces. Readiness analysis:
+[macOS readiness spike](../engineering/spike-macos-readiness.md).
+
+### Context
+
+macOS is the second OS the operation layer targets (D10 sequences it with Phase 3). The platform
+offers exactly one modern sanctioned stack for each pillar: ScreenCaptureKit for capture (the
+legacy CGWindowList paths return blank content without consent and are deprecated), the AXUIElement
+API for reading other apps' element trees, and CGEvent synthesis for input — all gated by **TCC**
+(Transparency, Consent, and Control) user grants: **Screen Recording** for capture, **Accessibility**
+for tree reads and input synthesis. Chromium-family and Electron apps build their renderer
+accessibility tree lazily, only when something asks for it.
+
+### Decision
+
+The macOS engine is built on three public-API pillars under the platform consent model:
+
+- **Capture = ScreenCaptureKit**: `SCScreenshotManager`/`SCShareableContent` for one-shot
+  key-window and screen screenshots (per-window capture including occluded windows); `SCStream`
+  reserved for the later screencast path.
+- **Tree = AXUIElement**: walk the target app's AX tree into the normalized `Element` schema; for
+  Chromium/Electron targets, set the app-level accessibility-enable attributes
+  (`AXManualAccessibility`, with `AXEnhancedUserInterface` as the compatibility path) so renderer
+  content is exposed without a screen reader attached.
+- **Input = CGEvent synthesis**, posted per-pid where targeting allows — the physical-events-first
+  policy of D13, with AX action/value invocation as the fallback.
+- **TCC posture**: the engine runs on user-granted (or managed-profile pre-granted) Screen
+  Recording + Accessibility; while grants are pending, **observe returns a typed keep-alive
+  observation** naming the missing grants instead of failing, so a session survives the human
+  grant flow. No bypass of the consent model is in scope, by design.
+
+### Alternatives (and why rejected)
+
+| Alternative | Why rejected |
+|---|---|
+| **Legacy capture (CGWindowList/CGDisplayStream)** | Deprecated path; returns blank/placeholder content without consent; SCK is the sanctioned, per-window-capable replacement. |
+| **AppleScript/Apple Events as the actuation layer** | Consent is tracked per (source→target) app pair and per-app dialect coverage is wildly uneven; kept as a separately-gated capability, never the baseline loop. |
+| **Failing the session while TCC grants are pending** | Turns a one-time human setup step into an infra failure class; a typed keep-alive observation keeps the loop honest and alive. |
+| **Skipping the Chromium/Electron AX enable attributes** | The renderer tree simply isn't built; the spike's Electron evidence shows page content appears only when accessibility is explicitly enabled. |
+
+### Consequences
+
+- **Positive:** the operation layer's macOS behavior is specified against the only sanctioned
+  modern APIs; per-window capture (including occluded) matches the key-window scoping default
+  (D13); pool images can be made automation-ready via managed pre-grant.
+- **Negative:** the engine inherits TCC's operational reality — unmanaged images need an
+  interactive first-run; grants bind to the signing identity, so the runtime must ship signed with
+  a stable identity.
+- **Risks:** Chromium/Electron AX-enable behavior varies across app versions (the attributes are
+  honored by convention, not contract) — the pixel tier in the same observation is the safety net.
+
+### Evidence
+
+- ScreenCaptureKit: <https://developer.apple.com/documentation/screencapturekit>
+- AXUIElement: <https://developer.apple.com/documentation/applicationservices/axuielement_h>
+- CGEvent: <https://developer.apple.com/documentation/coregraphics/cgevent>
+- TCC preflight/grant APIs: <https://developer.apple.com/documentation/coregraphics/3656523-cgpreflightscreencaptureaccess> · <https://developer.apple.com/documentation/applicationservices/1459186-axisprocesstrusted>
+- Electron/Chromium accessibility enablement: <https://www.electronjs.org/docs/latest/tutorial/accessibility> · <https://chromium.googlesource.com/chromium/src/+/main/docs/accessibility/overview.md>
+- Readiness matrix (grants, pre-bake, clone behavior): [`../engineering/spike-macos-readiness.md`](../engineering/spike-macos-readiness.md)
+
+---
+
 ## Cross-cutting reconciliation
 
-The twelve decisions interlock; the load-bearing couplings:
+The fourteen decisions interlock; the load-bearing couplings:
 
 - **One CoW-fork primitive serves three masters:** instant reset (D1), replay-branching (D5), and N-replica eval (D7). Build it once, expose `fork/branch/restore` as first-class verbs.
 - **The structured event stream is one artifact in three roles:** the live stream (D4), the replay log (D5), and RL/SFT data (D12).
 - **The `tool_runner` boundary is where D2 and D6 meet:** code-as-action and every privileged action route through the controlled API that enforces the Cedar decision and the egress allowlist before executing.
 - **The Action Gateway (D9) is the single place D6 is enforced:** auth → rate → budget → Cedar → dispatch.
 - **GPU (D11) is the one tier that breaks the fork invariant (D1):** it is snapshot-light by physics (VFIO/vGPU state is non-migratable), opt-in, and the encode hardware must be physically separate from any A100/H100 AI fleet.
-- **a11y coverage (D3)** is the single most load-bearing unverified assumption across the design; **every "(vendor-published, unverified)"** number in this document requires the first-party measurement plan before it anchors an SLA.
+- **The operation layer (D13) is where D2 and D3 meet at the per-step loop:** the element verb family extends the D2 tagged-union, and the stable-id/diff/settle observation engine is how D3's structured track is actually consumed; the per-OS engines (Linux today, macOS per D14, Windows per D10) implement one contract.
+- **a11y coverage (D3)** — the formerly load-bearing unverified assumption — is now **first-party measured** (spike #2/E5: hybrid per-window verdict; D3's structured-default stays Provisional); **every remaining "(vendor-published, unverified)"** number in this document still requires the first-party measurement plan before it anchors an SLA.
 
 Open questions carried forward (do not paper over): a11y coverage on Electron/Qt/canvas/games; Windows-in-cloud licensing and the macOS 2-VM/host economics; no first-party perf numbers yet; the isolation & capability note ([`threat-model.md`](threat-model.md)); the multi-player / non-exclusive computer-use in/out decision; and protocol/event-schema versioning + upcasting. See [`../../notes/open-questions.md`](../../notes/open-questions.md).

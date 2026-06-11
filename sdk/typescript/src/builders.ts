@@ -1,4 +1,4 @@
-import type { Action, ElementSource, PointNormTarget, PointPxTarget, Target } from "./types.js";
+import type { Action, ElementSource, PointerButton, PointNormTarget, PointPxTarget, Target } from "./types.js";
 
 export function pointPx(x: number, y: number): PointPxTarget {
   return { kind: "point_px", x, y };
@@ -26,6 +26,27 @@ export function rightClick(target: Target): Action {
 
 export function move(target: Target): Action {
   return { verb: "move", target };
+}
+
+export function drag(target: Target, to: Target, durationMs?: number, button?: PointerButton): Action {
+  const action: Action = { verb: "drag", target, to };
+  if (durationMs !== undefined) action.duration_ms = durationMs;
+  if (button !== undefined) action.button = button;
+  return action;
+}
+
+export function mouseDown(target?: Target, button?: PointerButton): Action {
+  const action: Action = { verb: "mouse_down" };
+  if (target !== undefined) action.target = target;
+  if (button !== undefined) action.button = button;
+  return action;
+}
+
+export function mouseUp(target?: Target, button?: PointerButton): Action {
+  const action: Action = { verb: "mouse_up" };
+  if (target !== undefined) action.target = target;
+  if (button !== undefined) action.button = button;
+  return action;
 }
 
 export function scroll(target: Target | undefined, dy: number, dx?: number): Action {

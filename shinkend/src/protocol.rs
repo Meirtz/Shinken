@@ -49,6 +49,20 @@ pub struct Capabilities {
     /// runtimes reject unknown action fields.
     #[serde(default)]
     pub frame_dedup: bool,
+    /// Whether this runtime honors the per-action `observe` argument
+    /// (act-returns-observation): a mutating action's ack is followed by a fresh
+    /// observation with `cause` = the action's call_id. Defaults false when absent so
+    /// a welcome from an older runtime still parses — clients must not send `observe`
+    /// to a runtime that doesn't advertise this.
+    #[serde(default)]
+    pub observe_after_act: bool,
+    /// Whether this runtime ships the guest-side structured-observation engine
+    /// (`observe` with `structured`, element-ref actions, `invoke_action`/`set_value`).
+    /// A capability of the BINARY, like `image_formats`: AT-SPI availability is a
+    /// runtime condition and failures are typed errors. Defaults false when absent so
+    /// a welcome from a pre-engine runtime still parses.
+    #[serde(default)]
+    pub structured_observation: bool,
 }
 
 fn default_image_formats() -> Vec<String> {
@@ -191,6 +205,9 @@ pub fn capabilities() -> Capabilities {
             "double_click",
             "right_click",
             "move",
+            "drag",
+            "mouse_down",
+            "mouse_up",
             "scroll",
             "type_text",
             "key",
@@ -198,17 +215,21 @@ pub fn capabilities() -> Capabilities {
             "start_screencast",
             "stop_screencast",
             "wait",
+            // structured-observation family (M1b): the guest a11y engine
+            "observe",
+            "invoke_action",
+            "set_value",
         ]
         .iter()
         .map(|s| s.to_string())
         .collect(),
-        // Advertise only what is implemented today. element_ref targets need the
-        // a11y engine (M1b); a11y/som observation land later. Honest negotiation.
-        targets: ["point_px", "point_norm"]
+        // element_ref targets resolve through the guest observation engine (M1b):
+        // pointer verbs click the live element's bbox centre via XTEST.
+        targets: ["point_px", "point_norm", "element_ref"]
             .iter()
             .map(|s| s.to_string())
             .collect(),
-        observation_types: ["screenshot", "screencast"]
+        observation_types: ["screenshot", "screencast", "a11y"]
             .iter()
             .map(|s| s.to_string())
             .collect(),
@@ -223,6 +244,11 @@ pub fn capabilities() -> Capabilities {
         // has no raw capture, so it simply never emits a frame_hash (and thus never
         // matches) — a full frame is always the safe answer.
         frame_dedup: true,
+        // Act-returns-observation: the per-action `observe` argument is honored.
+        observe_after_act: true,
+        // The guest structured-observation engine (observe.rs + atspi_source.rs) is
+        // compiled into every shinkend; AT-SPI availability is checked at request time.
+        structured_observation: true,
     }
 }
 
@@ -420,9 +446,21 @@ pub fn ready_result(call_id: &str, r: crate::executor::Readiness) -> Message {
         serde_json::json!({
             "ready": r.ready,
             "x11_up": r.x11_up,
+            // Cross-platform alias for x11_up: "the display connection is up"
+            // (X11 connected on Linux; a live display on macOS).
+            "display_up": r.x11_up,
             "root_nonblack": r.root_nonblack,
+            // macOS TCC: whether user grants (Screen Recording/Accessibility) are
+            // still owed. null on backends with no permission concept (X11/virtual).
+            "permissions_pending": r.permissions_pending,
         }),
     )
+}
+
+/// Build a `list_windows` query result: the executor's EWMH window enumeration as a
+/// JSON array of `{id, title, pid, x, y, w, h, focused}` objects.
+pub fn list_windows_result(call_id: &str, windows: &[crate::executor::WindowInfo]) -> Message {
+    ok_result(call_id, serde_json::json!(windows))
 }
 
 fn err_result(call_id: &str, error: &str) -> Message {
@@ -462,6 +500,12 @@ pub fn respond(msg: Message) -> Option<Message> {
             "ready" => err_result(
                 &call_id,
                 "ready is answered by the session from the live executor",
+            ),
+            // And `list_windows`: only the live session (holding the executor) can
+            // enumerate real windows — never fabricated here.
+            "list_windows" => err_result(
+                &call_id,
+                "list_windows is answered by the session from the live executor",
             ),
             other => err_result(&call_id, &format!("unknown query: {other}")),
         }),
@@ -648,6 +692,32 @@ mod tests {
         }
     }
 
+    /// The structured-observation capability must exist in the published schema and
+    /// default false on welcomes from pre-engine runtimes (back-compat).
+    #[test]
+    fn structured_observation_capability_in_schema_and_back_compatible() {
+        assert!(capabilities().structured_observation);
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../schema/aci.schema.json");
+        let raw = std::fs::read_to_string(path).expect("read schema/aci.schema.json");
+        let schema: serde_json::Value = serde_json::from_str(&raw).expect("parse aci schema");
+        assert_eq!(
+            schema["$defs"]["Welcome"]["properties"]["capabilities"]["properties"]
+                ["structured_observation"]["type"],
+            "boolean",
+            "schema Welcome.capabilities must define structured_observation"
+        );
+        let old = r#"{"type":"welcome","v":0,
+            "server":{"name":"shinkend","version":"0.0.0","platform":"linux"},
+            "capabilities":{"schema_version":0,"verbs":[],"targets":[],
+                            "observation_types":[],"max_long_edge":2576}}"#;
+        match serde_json::from_str::<Message>(old).unwrap() {
+            Message::Welcome { capabilities, .. } => {
+                assert!(!capabilities.structured_observation);
+            }
+            other => panic!("expected welcome, got {other:?}"),
+        }
+    }
+
     /// The compact not_modified observation: cause + frame_hash + not_modified=true,
     /// and NO image/tiles — the shape the schema's ObservationMsg rule pins.
     #[test]
@@ -678,6 +748,78 @@ mod tests {
         match msg {
             Message::Welcome { capabilities, .. } => assert!(!capabilities.binary_frames),
             other => panic!("expected welcome, got {other:?}"),
+        }
+    }
+
+    /// The advertised act-returns-observation capability must exist in the published
+    /// schema, and a welcome from an older runtime (no field) must parse as false —
+    /// a client must never send `observe` to a runtime that didn't advertise it.
+    #[test]
+    fn observe_after_act_is_advertised_in_schema_and_back_compatible() {
+        assert!(capabilities().observe_after_act);
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../schema/aci.schema.json");
+        let raw = std::fs::read_to_string(path).expect("read schema/aci.schema.json");
+        let schema: serde_json::Value = serde_json::from_str(&raw).expect("parse aci schema");
+        assert_eq!(
+            schema["$defs"]["Welcome"]["properties"]["capabilities"]["properties"]
+                ["observe_after_act"]["type"],
+            "boolean",
+            "schema Welcome.capabilities must define observe_after_act"
+        );
+        // and the Action carries the observe argument per $defs.ObserveSpec
+        assert_eq!(
+            schema["$defs"]["Action"]["properties"]["observe"]["$ref"],
+            "#/$defs/ObserveSpec"
+        );
+        let old = r#"{"type":"welcome","v":0,
+            "server":{"name":"shinkend","version":"0.0.0","platform":"linux"},
+            "capabilities":{"schema_version":0,"verbs":[],"targets":[],
+                            "observation_types":[],"max_long_edge":2576}}"#;
+        let msg: Message = serde_json::from_str(old).unwrap();
+        match msg {
+            Message::Welcome { capabilities, .. } => assert!(!capabilities.observe_after_act),
+            other => panic!("expected welcome, got {other:?}"),
+        }
+    }
+
+    /// list_windows results serialize the executor's WindowInfo shape verbatim.
+    #[test]
+    fn list_windows_result_carries_the_window_array() {
+        let msg = list_windows_result(
+            "c1",
+            &[crate::executor::WindowInfo {
+                id: 7,
+                title: "xterm".into(),
+                pid: Some(123),
+                x: 0,
+                y: 0,
+                w: 200,
+                h: 100,
+                focused: false,
+            }],
+        );
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&msg).unwrap()).unwrap();
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["value"][0]["id"], 7);
+        assert_eq!(v["value"][0]["title"], "xterm");
+        assert_eq!(v["value"][0]["pid"], 123);
+        assert_eq!(v["value"][0]["focused"], false);
+    }
+
+    /// respond() must not fabricate a window list — only the live session can.
+    #[test]
+    fn respond_refuses_list_windows_like_ready() {
+        let msg: Message =
+            serde_json::from_str(r#"{"type":"query","call_id":"c1","q":"list_windows"}"#).unwrap();
+        match respond(msg) {
+            Some(Message::Result { ok, error, .. }) => {
+                assert!(!ok);
+                assert!(error
+                    .unwrap()
+                    .contains("list_windows is answered by the session"));
+            }
+            other => panic!("expected result, got {other:?}"),
         }
     }
 
@@ -838,7 +980,7 @@ mod tests {
             .map(|x| x.as_str().unwrap().to_string())
             .collect();
         q.sort();
-        assert_eq!(q, vec!["platform", "ready", "screen_size"]);
+        assert_eq!(q, vec!["list_windows", "platform", "ready", "screen_size"]);
     }
 
     /// respond() must not fabricate a `ready` answer — only the live session (which
@@ -857,13 +999,14 @@ mod tests {
     }
 
     #[test]
-    fn ready_result_serializes_the_three_fields() {
+    fn ready_result_serializes_the_readiness_fields() {
         let msg = ready_result(
             "c9",
             crate::executor::Readiness {
                 ready: false,
                 x11_up: false,
                 root_nonblack: None,
+                permissions_pending: None,
             },
         );
         let v: serde_json::Value =
@@ -872,7 +1015,25 @@ mod tests {
         assert_eq!(v["ok"], true); // the QUERY succeeded; readiness is in the value
         assert_eq!(v["value"]["ready"], false);
         assert_eq!(v["value"]["x11_up"], false);
+        assert_eq!(v["value"]["display_up"], false); // cross-platform alias of x11_up
         assert!(v["value"]["root_nonblack"].is_null());
+        // No permission concept on this backend → null, never a fabricated bool.
+        assert!(v["value"]["permissions_pending"].is_null());
+
+        // A macOS-shaped readiness round-trips the pending bit.
+        let msg = ready_result(
+            "c10",
+            crate::executor::Readiness {
+                ready: false,
+                x11_up: true,
+                root_nonblack: None,
+                permissions_pending: Some(true),
+            },
+        );
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&msg).unwrap()).unwrap();
+        assert_eq!(v["value"]["display_up"], true);
+        assert_eq!(v["value"]["permissions_pending"], true);
     }
 
     #[test]

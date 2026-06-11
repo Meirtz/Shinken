@@ -24,7 +24,7 @@ from .client import (
     aconnect,
     connect,
 )
-from .dialect import DialectError, parse_actions
+from .dialect import DialectError, parse_actions, parse_xml_actions
 from .errors import ACTION_STATUSES, SandboxDied, ShinkenError, classify_exception
 from .gateway import CapabilityDenied
 from .providers import DockerLocalProvider, ExternalProvider, SandboxSpec
@@ -44,6 +44,7 @@ __all__ = [
     "ACTION_STATUSES",
     "classify_exception",
     "parse_actions",
+    "parse_xml_actions",
     "DialectError",
     "DockerLocalProvider",
     "ExternalProvider",

@@ -55,6 +55,22 @@ class KimiVLAdapter:
         :class:`AdapterError` on empty, unparseable, or unsupported output."""
         return self._dispatch(self._action_call(output))
 
+    def from_text(self, output: str) -> list[dict]:
+        """Raw model text → an **ordered list** of canonical ACI actions. Text containing
+        a string-form XML tool-call grammar (``<tool_call>{…}</tool_call>``,
+        ``<function=…>`` parameter elements, …) routes through
+        :func:`shinken.dialect.parse_xml_actions`; otherwise the Kimi-VL/Aguvis
+        ``Toolcall:`` pyautogui DSL is parsed by :meth:`to_aci_action` (one action per
+        turn). Raises :class:`AdapterError` on unparseable or unsupported output."""
+        from shinken import dialect
+
+        if dialect.looks_like_xml(output):
+            try:
+                return dialect.parse_xml_actions(output)
+            except dialect.DialectError as exc:
+                raise AdapterError("from_text", str(exc)) from exc
+        return [self.to_aci_action(output)]
+
     def run_metadata(self) -> dict:
         """Adapter / model / coordinate-space metadata for callers that need run context."""
         return {

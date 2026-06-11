@@ -1,8 +1,8 @@
 {
   "suite": "delta_screencast",
   "meta": {
-    "generated_utc": "2026-06-10T21:55:08Z",
-    "git_commit": "5905354",
+    "generated_utc": "2026-06-11T01:16:47Z",
+    "git_commit": "212aa1f",
     "python": "3.13.9",
     "host_os": "macOS 26.5.1",
     "host_arch": "arm64",
@@ -32,7 +32,7 @@
   "reconstruction": {
     "checked": true,
     "frames": 2,
-    "tiles_applied": 8,
+    "tiles_applied": 10,
     "seq_gaps": 0,
     "identical": true
   },
@@ -46,7 +46,7 @@
       "n_tiles": null,
       "bytes": 18594,
       "wire_bytes": 18751,
-      "t_rel_s": 0.045
+      "t_rel_s": 0.041
     },
     {
       "mode": "full-png",
@@ -55,9 +55,20 @@
       "seq": 1,
       "kind": "full",
       "n_tiles": null,
-      "bytes": 26587,
-      "wire_bytes": 26744,
-      "t_rel_s": 0.11
+      "bytes": 18628,
+      "wire_bytes": 18785,
+      "t_rel_s": 0.106
+    },
+    {
+      "mode": "full-png",
+      "wire": "binary",
+      "phase": "typing",
+      "seq": 2,
+      "kind": "full",
+      "n_tiles": null,
+      "bytes": 26621,
+      "wire_bytes": 26778,
+      "t_rel_s": 0.212
     },
     {
       "mode": "full-png",
@@ -66,9 +77,9 @@
       "seq": 0,
       "kind": "full",
       "n_tiles": null,
-      "bytes": 26587,
-      "wire_bytes": 26746,
-      "t_rel_s": 0.016
+      "bytes": 26621,
+      "wire_bytes": 26780,
+      "t_rel_s": 0.011
     },
     {
       "mode": "full-jpeg-q80",
@@ -77,8 +88,8 @@
       "seq": 0,
       "kind": "full",
       "n_tiles": null,
-      "bytes": 22783,
-      "wire_bytes": 22943,
+      "bytes": 22831,
+      "wire_bytes": 22991,
       "t_rel_s": 0.047
     },
     {
@@ -88,9 +99,9 @@
       "seq": 0,
       "kind": "full",
       "n_tiles": null,
-      "bytes": 22783,
-      "wire_bytes": 22943,
-      "t_rel_s": 0.023
+      "bytes": 22831,
+      "wire_bytes": 22991,
+      "t_rel_s": 0.022
     },
     {
       "mode": "delta-png",
@@ -99,42 +110,42 @@
       "seq": 0,
       "kind": "full",
       "n_tiles": null,
-      "bytes": 26587,
-      "wire_bytes": 26746,
+      "bytes": 26621,
+      "wire_bytes": 26780,
+      "t_rel_s": 0.044
+    },
+    {
+      "mode": "delta-png",
+      "wire": "binary",
+      "phase": "idle",
+      "seq": 0,
+      "kind": "full",
+      "n_tiles": null,
+      "bytes": 26621,
+      "wire_bytes": 26782,
+      "t_rel_s": 0.014
+    },
+    {
+      "mode": "delta-jpeg-q80",
+      "wire": "binary",
+      "phase": "typing",
+      "seq": 0,
+      "kind": "full",
+      "n_tiles": null,
+      "bytes": 22831,
+      "wire_bytes": 22993,
       "t_rel_s": 0.047
     },
     {
-      "mode": "delta-png",
-      "wire": "binary",
-      "phase": "idle",
-      "seq": 0,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 26587,
-      "wire_bytes": 26748,
-      "t_rel_s": 0.018
-    },
-    {
-      "mode": "delta-jpeg-q80",
-      "wire": "binary",
-      "phase": "typing",
-      "seq": 0,
-      "kind": "full",
-      "n_tiles": null,
-      "bytes": 22783,
-      "wire_bytes": 22945,
-      "t_rel_s": 0.043
-    },
-    {
       "mode": "delta-jpeg-q80",
       "wire": "binary",
       "phase": "idle",
       "seq": 0,
       "kind": "full",
       "n_tiles": null,
-      "bytes": 22783,
-      "wire_bytes": 22945,
-      "t_rel_s": 0.026
+      "bytes": 22831,
+      "wire_bytes": 22993,
+      "t_rel_s": 0.032
     },
     {
       "mode": "full-png",
@@ -143,9 +154,9 @@
       "seq": 0,
       "kind": "full",
       "n_tiles": null,
-      "bytes": 26587,
-      "wire_bytes": 35594,
-      "t_rel_s": 0.02
+      "bytes": 26621,
+      "wire_bytes": 35638,
+      "t_rel_s": 0.012
     },
     {
       "mode": "full-png",
@@ -154,9 +165,9 @@
       "seq": 0,
       "kind": "full",
       "n_tiles": null,
-      "bytes": 26587,
-      "wire_bytes": 35594,
-      "t_rel_s": 0.015
+      "bytes": 26621,
+      "wire_bytes": 35638,
+      "t_rel_s": 0.014
     },
     {
       "mode": "full-jpeg-q80",
@@ -165,9 +176,9 @@
       "seq": 0,
       "kind": "full",
       "n_tiles": null,
-      "bytes": 22783,
-      "wire_bytes": 30523,
-      "t_rel_s": 0.043
+      "bytes": 22831,
+      "wire_bytes": 30587,
+      "t_rel_s": 0.053
     },
     {
       "mode": "full-jpeg-q80",
@@ -176,8 +187,8 @@
       "seq": 0,
       "kind": "full",
       "n_tiles": null,
-      "bytes": 22783,
-      "wire_bytes": 30523,
+      "bytes": 22831,
+      "wire_bytes": 30587,
       "t_rel_s": 0.023
     },
     {
@@ -187,9 +198,9 @@
       "seq": 0,
       "kind": "full",
       "n_tiles": null,
-      "bytes": 26587,
-      "wire_bytes": 35594,
-      "t_rel_s": 0.048
+      "bytes": 26621,
+      "wire_bytes": 35638,
+      "t_rel_s": 0.053
     },
     {
       "mode": "delta-png",
@@ -198,9 +209,9 @@
       "seq": 0,
       "kind": "full",
       "n_tiles": null,
-      "bytes": 26587,
-      "wire_bytes": 35596,
-      "t_rel_s": 0.017
+      "bytes": 26621,
+      "wire_bytes": 35640,
+      "t_rel_s": 0.014
     },
     {
       "mode": "delta-jpeg-q80",
@@ -209,9 +220,9 @@
       "seq": 0,
       "kind": "full",
       "n_tiles": null,
-      "bytes": 22783,
-      "wire_bytes": 30525,
-      "t_rel_s": 0.042
+      "bytes": 22831,
+      "wire_bytes": 30589,
+      "t_rel_s": 0.052
     },
     {
       "mode": "delta-jpeg-q80",
@@ -220,9 +231,9 @@
       "seq": 0,
       "kind": "full",
       "n_tiles": null,
-      "bytes": 22783,
-      "wire_bytes": 30525,
-      "t_rel_s": 0.024
+      "bytes": 22831,
+      "wire_bytes": 30589,
+      "t_rel_s": 0.03
     }
   ],
   "summary": [
@@ -230,24 +241,24 @@
       "mode": "full-png",
       "wire": "binary",
       "phase": "typing",
-      "frames": 2,
-      "keyframes": 2,
+      "frames": 3,
+      "keyframes": 3,
       "tile_frames": 0,
-      "total_bytes": 45181,
-      "total_wire_bytes": 45495,
+      "total_bytes": 63843,
+      "total_wire_bytes": 64314,
       "bytes_per_frame": {
-        "n": 2,
+        "n": 3,
         "min": 18594.0,
-        "p50": 18594.0,
-        "mean": 22590.5,
-        "max": 26587.0
+        "p50": 18628.0,
+        "mean": 21281.0,
+        "max": 26621.0
       },
       "wire_bytes_per_frame": {
-        "n": 2,
+        "n": 3,
         "min": 18751.0,
-        "p50": 18751.0,
-        "mean": 22747.5,
-        "max": 26744.0
+        "p50": 18785.0,
+        "mean": 21438.0,
+        "max": 26778.0
       },
       "tiles_per_frame": {}
     },
@@ -258,21 +269,21 @@
       "frames": 1,
       "keyframes": 1,
       "tile_frames": 0,
-      "total_bytes": 26587,
-      "total_wire_bytes": 26746,
+      "total_bytes": 26621,
+      "total_wire_bytes": 26780,
       "bytes_per_frame": {
         "n": 1,
-        "min": 26587.0,
-        "p50": 26587.0,
-        "mean": 26587.0,
-        "max": 26587.0
+        "min": 26621.0,
+        "p50": 26621.0,
+        "mean": 26621.0,
+        "max": 26621.0
       },
       "wire_bytes_per_frame": {
         "n": 1,
-        "min": 26746.0,
-        "p50": 26746.0,
-        "mean": 26746.0,
-        "max": 26746.0
+        "min": 26780.0,
+        "p50": 26780.0,
+        "mean": 26780.0,
+        "max": 26780.0
       },
       "tiles_per_frame": {}
     },
@@ -283,21 +294,21 @@
       "frames": 1,
       "keyframes": 1,
       "tile_frames": 0,
-      "total_bytes": 26587,
-      "total_wire_bytes": 35594,
+      "total_bytes": 26621,
+      "total_wire_bytes": 35638,
       "bytes_per_frame": {
         "n": 1,
-        "min": 26587.0,
-        "p50": 26587.0,
-        "mean": 26587.0,
-        "max": 26587.0
+        "min": 26621.0,
+        "p50": 26621.0,
+        "mean": 26621.0,
+        "max": 26621.0
       },
       "wire_bytes_per_frame": {
         "n": 1,
-        "min": 35594.0,
-        "p50": 35594.0,
-        "mean": 35594.0,
-        "max": 35594.0
+        "min": 35638.0,
+        "p50": 35638.0,
+        "mean": 35638.0,
+        "max": 35638.0
       },
       "tiles_per_frame": {}
     },
@@ -308,21 +319,21 @@
       "frames": 1,
       "keyframes": 1,
       "tile_frames": 0,
-      "total_bytes": 26587,
-      "total_wire_bytes": 35594,
+      "total_bytes": 26621,
+      "total_wire_bytes": 35638,
       "bytes_per_frame": {
         "n": 1,
-        "min": 26587.0,
-        "p50": 26587.0,
-        "mean": 26587.0,
-        "max": 26587.0
+        "min": 26621.0,
+        "p50": 26621.0,
+        "mean": 26621.0,
+        "max": 26621.0
       },
       "wire_bytes_per_frame": {
         "n": 1,
-        "min": 35594.0,
-        "p50": 35594.0,
-        "mean": 35594.0,
-        "max": 35594.0
+        "min": 35638.0,
+        "p50": 35638.0,
+        "mean": 35638.0,
+        "max": 35638.0
       },
       "tiles_per_frame": {}
     },
@@ -333,21 +344,21 @@
       "frames": 1,
       "keyframes": 1,
       "tile_frames": 0,
-      "total_bytes": 22783,
-      "total_wire_bytes": 22943,
+      "total_bytes": 22831,
+      "total_wire_bytes": 22991,
       "bytes_per_frame": {
         "n": 1,
-        "min": 22783.0,
-        "p50": 22783.0,
-        "mean": 22783.0,
-        "max": 22783.0
+        "min": 22831.0,
+        "p50": 22831.0,
+        "mean": 22831.0,
+        "max": 22831.0
       },
       "wire_bytes_per_frame": {
         "n": 1,
-        "min": 22943.0,
-        "p50": 22943.0,
-        "mean": 22943.0,
-        "max": 22943.0
+        "min": 22991.0,
+        "p50": 22991.0,
+        "mean": 22991.0,
+        "max": 22991.0
       },
       "tiles_per_frame": {}
     },
@@ -358,21 +369,21 @@
       "frames": 1,
       "keyframes": 1,
       "tile_frames": 0,
-      "total_bytes": 22783,
-      "total_wire_bytes": 22943,
+      "total_bytes": 22831,
+      "total_wire_bytes": 22991,
       "bytes_per_frame": {
         "n": 1,
-        "min": 22783.0,
-        "p50": 22783.0,
-        "mean": 22783.0,
-        "max": 22783.0
+        "min": 22831.0,
+        "p50": 22831.0,
+        "mean": 22831.0,
+        "max": 22831.0
       },
       "wire_bytes_per_frame": {
         "n": 1,
-        "min": 22943.0,
-        "p50": 22943.0,
-        "mean": 22943.0,
-        "max": 22943.0
+        "min": 22991.0,
+        "p50": 22991.0,
+        "mean": 22991.0,
+        "max": 22991.0
       },
       "tiles_per_frame": {}
     },
@@ -383,21 +394,21 @@
       "frames": 1,
       "keyframes": 1,
       "tile_frames": 0,
-      "total_bytes": 22783,
-      "total_wire_bytes": 30523,
+      "total_bytes": 22831,
+      "total_wire_bytes": 30587,
       "bytes_per_frame": {
         "n": 1,
-        "min": 22783.0,
-        "p50": 22783.0,
-        "mean": 22783.0,
-        "max": 22783.0
+        "min": 22831.0,
+        "p50": 22831.0,
+        "mean": 22831.0,
+        "max": 22831.0
       },
       "wire_bytes_per_frame": {
         "n": 1,
-        "min": 30523.0,
-        "p50": 30523.0,
-        "mean": 30523.0,
-        "max": 30523.0
+        "min": 30587.0,
+        "p50": 30587.0,
+        "mean": 30587.0,
+        "max": 30587.0
       },
       "tiles_per_frame": {}
     },
@@ -408,21 +419,21 @@
       "frames": 1,
       "keyframes": 1,
       "tile_frames": 0,
-      "total_bytes": 22783,
-      "total_wire_bytes": 30523,
+      "total_bytes": 22831,
+      "total_wire_bytes": 30587,
       "bytes_per_frame": {
         "n": 1,
-        "min": 22783.0,
-        "p50": 22783.0,
-        "mean": 22783.0,
-        "max": 22783.0
+        "min": 22831.0,
+        "p50": 22831.0,
+        "mean": 22831.0,
+        "max": 22831.0
       },
       "wire_bytes_per_frame": {
         "n": 1,
-        "min": 30523.0,
-        "p50": 30523.0,
-        "mean": 30523.0,
-        "max": 30523.0
+        "min": 30587.0,
+        "p50": 30587.0,
+        "mean": 30587.0,
+        "max": 30587.0
       },
       "tiles_per_frame": {}
     },
@@ -433,21 +444,21 @@
       "frames": 1,
       "keyframes": 1,
       "tile_frames": 0,
-      "total_bytes": 26587,
-      "total_wire_bytes": 26746,
+      "total_bytes": 26621,
+      "total_wire_bytes": 26780,
       "bytes_per_frame": {
         "n": 1,
-        "min": 26587.0,
-        "p50": 26587.0,
-        "mean": 26587.0,
-        "max": 26587.0
+        "min": 26621.0,
+        "p50": 26621.0,
+        "mean": 26621.0,
+        "max": 26621.0
       },
       "wire_bytes_per_frame": {
         "n": 1,
-        "min": 26746.0,
-        "p50": 26746.0,
-        "mean": 26746.0,
-        "max": 26746.0
+        "min": 26780.0,
+        "p50": 26780.0,
+        "mean": 26780.0,
+        "max": 26780.0
       },
       "tiles_per_frame": {}
     },
@@ -458,21 +469,21 @@
       "frames": 1,
       "keyframes": 1,
       "tile_frames": 0,
-      "total_bytes": 26587,
-      "total_wire_bytes": 26748,
+      "total_bytes": 26621,
+      "total_wire_bytes": 26782,
       "bytes_per_frame": {
         "n": 1,
-        "min": 26587.0,
-        "p50": 26587.0,
-        "mean": 26587.0,
-        "max": 26587.0
+        "min": 26621.0,
+        "p50": 26621.0,
+        "mean": 26621.0,
+        "max": 26621.0
       },
       "wire_bytes_per_frame": {
         "n": 1,
-        "min": 26748.0,
-        "p50": 26748.0,
-        "mean": 26748.0,
-        "max": 26748.0
+        "min": 26782.0,
+        "p50": 26782.0,
+        "mean": 26782.0,
+        "max": 26782.0
       },
       "tiles_per_frame": {}
     },
@@ -483,21 +494,21 @@
       "frames": 1,
       "keyframes": 1,
       "tile_frames": 0,
-      "total_bytes": 26587,
-      "total_wire_bytes": 35594,
+      "total_bytes": 26621,
+      "total_wire_bytes": 35638,
       "bytes_per_frame": {
         "n": 1,
-        "min": 26587.0,
-        "p50": 26587.0,
-        "mean": 26587.0,
-        "max": 26587.0
+        "min": 26621.0,
+        "p50": 26621.0,
+        "mean": 26621.0,
+        "max": 26621.0
       },
       "wire_bytes_per_frame": {
         "n": 1,
-        "min": 35594.0,
-        "p50": 35594.0,
-        "mean": 35594.0,
-        "max": 35594.0
+        "min": 35638.0,
+        "p50": 35638.0,
+        "mean": 35638.0,
+        "max": 35638.0
       },
       "tiles_per_frame": {}
     },
@@ -508,21 +519,21 @@
       "frames": 1,
       "keyframes": 1,
       "tile_frames": 0,
-      "total_bytes": 26587,
-      "total_wire_bytes": 35596,
+      "total_bytes": 26621,
+      "total_wire_bytes": 35640,
       "bytes_per_frame": {
         "n": 1,
-        "min": 26587.0,
-        "p50": 26587.0,
-        "mean": 26587.0,
-        "max": 26587.0
+        "min": 26621.0,
+        "p50": 26621.0,
+        "mean": 26621.0,
+        "max": 26621.0
       },
       "wire_bytes_per_frame": {
         "n": 1,
-        "min": 35596.0,
-        "p50": 35596.0,
-        "mean": 35596.0,
-        "max": 35596.0
+        "min": 35640.0,
+        "p50": 35640.0,
+        "mean": 35640.0,
+        "max": 35640.0
       },
       "tiles_per_frame": {}
     },
@@ -533,21 +544,21 @@
       "frames": 1,
       "keyframes": 1,
       "tile_frames": 0,
-      "total_bytes": 22783,
-      "total_wire_bytes": 22945,
+      "total_bytes": 22831,
+      "total_wire_bytes": 22993,
       "bytes_per_frame": {
         "n": 1,
-        "min": 22783.0,
-        "p50": 22783.0,
-        "mean": 22783.0,
-        "max": 22783.0
+        "min": 22831.0,
+        "p50": 22831.0,
+        "mean": 22831.0,
+        "max": 22831.0
       },
       "wire_bytes_per_frame": {
         "n": 1,
-        "min": 22945.0,
-        "p50": 22945.0,
-        "mean": 22945.0,
-        "max": 22945.0
+        "min": 22993.0,
+        "p50": 22993.0,
+        "mean": 22993.0,
+        "max": 22993.0
       },
       "tiles_per_frame": {}
     },
@@ -558,21 +569,21 @@
       "frames": 1,
       "keyframes": 1,
       "tile_frames": 0,
-      "total_bytes": 22783,
-      "total_wire_bytes": 22945,
+      "total_bytes": 22831,
+      "total_wire_bytes": 22993,
       "bytes_per_frame": {
         "n": 1,
-        "min": 22783.0,
-        "p50": 22783.0,
-        "mean": 22783.0,
-        "max": 22783.0
+        "min": 22831.0,
+        "p50": 22831.0,
+        "mean": 22831.0,
+        "max": 22831.0
       },
       "wire_bytes_per_frame": {
         "n": 1,
-        "min": 22945.0,
-        "p50": 22945.0,
-        "mean": 22945.0,
-        "max": 22945.0
+        "min": 22993.0,
+        "p50": 22993.0,
+        "mean": 22993.0,
+        "max": 22993.0
       },
       "tiles_per_frame": {}
     },
@@ -583,21 +594,21 @@
       "frames": 1,
       "keyframes": 1,
       "tile_frames": 0,
-      "total_bytes": 22783,
-      "total_wire_bytes": 30525,
+      "total_bytes": 22831,
+      "total_wire_bytes": 30589,
       "bytes_per_frame": {
         "n": 1,
-        "min": 22783.0,
-        "p50": 22783.0,
-        "mean": 22783.0,
-        "max": 22783.0
+        "min": 22831.0,
+        "p50": 22831.0,
+        "mean": 22831.0,
+        "max": 22831.0
       },
       "wire_bytes_per_frame": {
         "n": 1,
-        "min": 30525.0,
-        "p50": 30525.0,
-        "mean": 30525.0,
-        "max": 30525.0
+        "min": 30589.0,
+        "p50": 30589.0,
+        "mean": 30589.0,
+        "max": 30589.0
       },
       "tiles_per_frame": {}
     },
@@ -608,21 +619,21 @@
       "frames": 1,
       "keyframes": 1,
       "tile_frames": 0,
-      "total_bytes": 22783,
-      "total_wire_bytes": 30525,
+      "total_bytes": 22831,
+      "total_wire_bytes": 30589,
       "bytes_per_frame": {
         "n": 1,
-        "min": 22783.0,
-        "p50": 22783.0,
-        "mean": 22783.0,
-        "max": 22783.0
+        "min": 22831.0,
+        "p50": 22831.0,
+        "mean": 22831.0,
+        "max": 22831.0
       },
       "wire_bytes_per_frame": {
         "n": 1,
-        "min": 30525.0,
-        "p50": 30525.0,
-        "mean": 30525.0,
-        "max": 30525.0
+        "min": 30589.0,
+        "p50": 30589.0,
+        "mean": 30589.0,
+        "max": 30589.0
       },
       "tiles_per_frame": {}
     }

@@ -97,6 +97,12 @@ The provider lifecycle smoke runs the same Docker image through `DockerLocalProv
 single-sandbox baseline with create/readiness/connect/action/screencast timings. Larger `N=2/4`
 provider benchmarks are local/manual until the fleet layer exists.
 
+The structured-observation smoke (`scripts/observe_smoke.py`, part of the Docker image job) drives
+the guest a11y engine against a real AT-SPI app: it launches `zenity --entry` inside the container,
+asserts element ids are stable across two `observe`s, clicks the entry **by element id**
+(guest-side `element_ref` resolution), types, asserts the `observe` diff carries the change
+(`~ … Value:"…"`), and closes the dialog via `invoke_action` (the AX path).
+
 ## v0.0.1 Contract Tests Needed
 
 The v0.0.1 release gate should add tests for:

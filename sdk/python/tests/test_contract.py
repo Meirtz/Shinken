@@ -41,6 +41,25 @@ def _act(verb, **kw):
         # guest-side readiness query (S8): the cheap boot-time poll
         {"type": "query", "call_id": "q1", "q": "ready"},
         {"type": "query", "call_id": "q1", "q": "platform"},
+        # EWMH window enumeration — the Linux "enumerate apps" read primitive
+        {"type": "query", "call_id": "q1", "q": "list_windows"},
+        # coordinate-tier gesture verbs: drag (target → to) + decomposed button halves
+        _act(
+            "drag",
+            target={"kind": "point_px", "x": 1, "y": 2},
+            to={"kind": "point_px", "x": 300, "y": 200},
+            duration_ms=250,
+            button="left",
+        ),
+        _act("mouse_down", target={"kind": "point_px", "x": 1, "y": 2}, button="middle"),
+        _act("mouse_up"),  # release needs no target (acts at the current position)
+        # act-returns-observation: a mutating verb carrying the observe levers
+        _act(
+            "click",
+            target={"kind": "point_px", "x": 1, "y": 2},
+            observe={"format": "jpeg", "quality": 80, "max_long_edge": 640, "scope": "screen"},
+        ),
+        _act("type_text", text="hi", observe={}),
         _act("screenshot", scope="active_window"),
         _act("screenshot", scope="window:0x1f"),
         _act("screenshot", format="jpeg", quality=50),
@@ -63,6 +82,52 @@ def _act(verb, **kw):
             "cause": "c1",
             "not_modified": True,
             "frame_hash": "00ff00ff00ff00ff",
+        },
+        # structured observation (M1b): observe request + element verbs
+        _act("observe", structured=True),
+        _act("observe", structured=True, diff=True, settle_ms=120),
+        _act("observe"),
+        _act("invoke_action", target={"kind": "element_ref", "ref": "e7"}, text="click"),
+        _act("invoke_action", target={"kind": "element_ref", "ref": "e7"}),
+        _act("set_value", target={"kind": "element_ref", "ref": "e3"}, text="hello"),
+        _act("click", target={"kind": "element_ref", "ref": "e2"}),
+        # the structured observation reply: tree_text + full elements + revision
+        {
+            "type": "observation",
+            "obs_id": "obs-c1",
+            "cause": "c1",
+            "tree": "full",
+            "tree_text": 'app: zenity  (revision 1, 2 nodes)\ne1 frame "Win"\nfocus: (none)',
+            "revision": 1,
+            "node_count": 2,
+            "capture_ms": 12.5,
+            "elements": [
+                {"ref": "e1", "role": "frame", "name": "Win", "bbox": [0, 0, 800, 600]},
+                {
+                    "ref": "e2",
+                    "role": "push button",
+                    "name": "OK",
+                    "bbox": [10, 10, 80, 30],
+                    "states": ["enabled"],
+                    "actions": ["click"],
+                    "focused": True,
+                    "source": "atspi",
+                },
+            ],
+        },
+        # …and the diff form, carrying diff_of + focus
+        {
+            "type": "observation",
+            "obs_id": "obs-c2",
+            "cause": "c2",
+            "tree": "diff",
+            "tree_text": "app: zenity  (revision 2, diff of revision 1)\n~ e2 …\nfocus: e2",
+            "revision": 2,
+            "diff_of": 1,
+            "focus": "e2",
+            "node_count": 2,
+            "capture_ms": 3.0,
+            "elements": [],
         },
         {
             "type": "observation",
@@ -89,18 +154,19 @@ def _act(verb, **kw):
                 {"x": 64, "y": 64, "w": 36, "h": 6, "ref": "def"},  # edge tile
             ],
         },
-        # welcome advertising the codec capability (negotiation)
+        # welcome advertising the codec + act-returns-observation capabilities
         {
             "type": "welcome",
             "v": 0,
             "server": {"name": "shinkend", "version": "0", "platform": "linux"},
             "capabilities": {
                 "schema_version": 0,
-                "verbs": ["click"],
+                "verbs": ["click", "drag", "mouse_down", "mouse_up"],
                 "targets": ["point_px"],
                 "observation_types": ["screenshot"],
                 "max_long_edge": 2576,
                 "image_formats": ["png", "jpeg"],
+                "observe_after_act": True,
             },
         },
         # welcome advertising content-negotiated screenshots (frame_dedup)
@@ -132,6 +198,30 @@ def test_aci_wire_vocab_validates(msg):
         # the query vocabulary is a closed enum — drift fails loudly
         {"type": "query", "call_id": "q1", "q": "healthz"},
         _act("screenshot", scope="window:bad"),
+        # drag requires BOTH endpoints; button names are a closed enum
+        _act("drag", target={"kind": "point_px", "x": 1, "y": 2}),
+        _act(
+            "drag",
+            target={"kind": "point_px", "x": 1, "y": 2},
+            to={"kind": "point_px", "x": 3, "y": 4},
+            button="wheel",
+        ),
+        _act("mouse_down", button="Left"),  # names are lowercase, exactly
+        # observe admits only mutating verbs and only the screenshot-shaped keys
+        _act("screenshot", observe={}),
+        _act("wait", ms=10, observe={}),
+        _act("start_screencast", fps=5, observe={}),
+        _act("click", target={"kind": "point_px", "x": 1, "y": 2}, observe={"fps": 30}),
+        _act(
+            "click",
+            target={"kind": "point_px", "x": 1, "y": 2},
+            observe={"format": "webp"},
+        ),
+        _act(
+            "click",
+            target={"kind": "point_px", "x": 1, "y": 2},
+            observe={"quality": 0},
+        ),
         _act("start_screencast", resume_stream=7),  # must be a stream id string
         # codec contract: enum is exactly png|jpeg; quality bounded 1-100 (the runtime
         # REJECTS out-of-range rather than clamping — schema and runtime must agree)
@@ -166,6 +256,16 @@ def test_aci_wire_vocab_validates(msg):
             "frame_hash": "00ff00ff00ff00ff",
             "image": {"ref": "x", "w": 8, "h": 8},
         },
+        # element verbs: set_value requires text, both require a target
+        _act("set_value", target={"kind": "element_ref", "ref": "e3"}),
+        _act("invoke_action"),
+        _act("set_value", text="orphan value"),
+        # observe knobs are strictly typed
+        _act("observe", structured="yes"),
+        _act("observe", settle_ms=-5),
+        # observe knobs are gated to the observe verb
+        _act("click", target={"kind": "point_px", "x": 1, "y": 2}, structured=True),
+        _act("screenshot", diff=True),
         # a tile requires all of x/y/w/h/ref and admits nothing else
         {
             "type": "observation",

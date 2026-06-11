@@ -36,6 +36,15 @@ elif verb == "scroll":
     h = int(args[1]) if len(args) > 1 else 0
     if h and hasattr(pyautogui, "hscroll"):
         pyautogui.hscroll(h)
+elif verb == "drag":
+    # args: from_x, from_y, to_x, to_y, duration_secs, button
+    pyautogui.moveTo(float(args[0]), float(args[1]))
+    pyautogui.dragTo(float(args[2]), float(args[3]), duration=float(args[4]), button=args[5])
+elif verb in ("mouse_down", "mouse_up"):
+    # args: button, then either "-" (act at the current position) or x, y
+    if args[1] != "-":
+        pyautogui.moveTo(float(args[1]), float(args[2]))
+    (pyautogui.mouseDown if verb == "mouse_down" else pyautogui.mouseUp)(button=args[0])
 elif verb == "type_text":
     pyautogui.typewrite(args[0])
 elif verb == "key":
@@ -94,6 +103,16 @@ fn point_px(action: &ActionSpec) -> Result<(f64, f64)> {
     }
 }
 
+/// Validate a wire `button` name into the pyautogui button string (absent = left).
+fn button_name(name: Option<&str>) -> Result<&'static str> {
+    match name {
+        None | Some("left") => Ok("left"),
+        Some("middle") => Ok("middle"),
+        Some("right") => Ok("right"),
+        Some(other) => bail!("unknown pointer button: {other:?} (expected left, middle, or right)"),
+    }
+}
+
 /// Build the subprocess argv for an action — the command-construction unit, testable
 /// without a live desktop. Parameters are discrete `argv` entries, so no value is ever
 /// interpreted as code. Rejects verbs outside the supported synthetic-input subset.
@@ -121,6 +140,41 @@ pub fn build_argv(python: &str, action: &ActionSpec) -> Result<Vec<String>> {
             // is right, matching +dx. Magnitude tracks the X11 backend (~100 px / click).
             argv.push((-scroll_clicks(dy)).to_string());
             argv.push(scroll_clicks(dx).to_string());
+        }
+        "drag" => {
+            let (x, y) = point_px(action)?;
+            let (tx, ty) = match &action.to {
+                Some(Target::PointPx { x, y }) => (*x, *y),
+                Some(Target::PointNorm { .. }) => {
+                    bail!("pyautogui backend needs a point_px `to` target")
+                }
+                _ => bail!("drag requires a point_px `to` target"),
+            };
+            let button = button_name(action.button.as_deref())?;
+            let secs = action
+                .duration_ms
+                .unwrap_or(0)
+                .min(crate::executor::MAX_DRAG_MS) as f64
+                / 1000.0;
+            argv.extend([
+                x.to_string(),
+                y.to_string(),
+                tx.to_string(),
+                ty.to_string(),
+                secs.to_string(),
+                button.to_string(),
+            ]);
+        }
+        "mouse_down" | "mouse_up" => {
+            argv.push(button_name(action.button.as_deref())?.to_string());
+            // Optional target: "-" means act at the current pointer position.
+            if action.target.is_some() {
+                let (x, y) = point_px(action)?;
+                argv.push(x.to_string());
+                argv.push(y.to_string());
+            } else {
+                argv.push("-".to_string());
+            }
         }
         "type_text" => {
             argv.push(action.text.clone().context("type_text requires text")?);
@@ -211,6 +265,71 @@ mod tests {
 
         let w = build_argv("py", &spec(json!({"verb": "wait", "ms": 500}))).unwrap();
         assert_eq!(&w[3..], &["wait".to_string(), "0.5".to_string()]);
+    }
+
+    #[test]
+    fn builds_drag_and_mouse_button_argv() {
+        let d = build_argv(
+            "py",
+            &spec(json!({
+                "verb": "drag",
+                "target": {"kind": "point_px", "x": 10, "y": 20},
+                "to": {"kind": "point_px", "x": 300, "y": 200},
+                "duration_ms": 250,
+                "button": "left"
+            })),
+        )
+        .unwrap();
+        assert_eq!(
+            &d[3..],
+            &[
+                "drag".to_string(),
+                "10".to_string(),
+                "20".to_string(),
+                "300".to_string(),
+                "200".to_string(),
+                "0.25".to_string(), // duration_ms → seconds for pyautogui.dragTo
+                "left".to_string(),
+            ]
+        );
+        assert!(d[2].contains("pyautogui.dragTo"));
+
+        // mouse_down with a target moves first; mouse_up without one acts in place ("-")
+        let down = build_argv(
+            "py",
+            &spec(json!({
+                "verb": "mouse_down",
+                "target": {"kind": "point_px", "x": 5, "y": 6},
+                "button": "middle"
+            })),
+        )
+        .unwrap();
+        assert_eq!(
+            &down[3..],
+            &[
+                "mouse_down".to_string(),
+                "middle".to_string(),
+                "5".to_string(),
+                "6".to_string(),
+            ]
+        );
+        let up = build_argv("py", &spec(json!({"verb": "mouse_up"}))).unwrap();
+        assert_eq!(
+            &up[3..],
+            &["mouse_up".to_string(), "left".to_string(), "-".to_string()]
+        );
+
+        // missing `to` / unknown button are rejected before any subprocess spawns
+        assert!(build_argv(
+            "py",
+            &spec(json!({"verb": "drag", "target": {"kind": "point_px", "x": 1, "y": 2}}))
+        )
+        .is_err());
+        assert!(build_argv(
+            "py",
+            &spec(json!({"verb": "mouse_down", "button": "wheel"}))
+        )
+        .is_err());
     }
 
     #[test]

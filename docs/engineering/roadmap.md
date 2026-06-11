@@ -8,9 +8,11 @@
 
 > **What's actually built so far → [`STATUS.md`](status.md).** Phase 0's pixel slice (actions +
 > screenshot + real-time screencast + bandwidth levers + focused-window capture, Linux/X11) is
-> implemented and under live CI; the **a11y-coverage spike below is still ungated**, so the
-> structured fast path and everything gated on it remain unproven. This roadmap is the *plan*, not
-> the current state.
+> implemented and under live CI; the **a11y-coverage spike below has been measured (E5 — verdict:
+> hybrid per-window structured + pixel fallback; D3's structured-default stays Provisional)**, and
+> the operation layer that consumes it ([D13](../design/tech-decisions.md),
+> [operation-layer.md](../design/operation-layer.md)) is designed-only. This roadmap is the *plan*,
+> not the current state.
 
 Shinken's roadmap is deliberately **semantic-complete first, then optimize as we scale**. The
 scope is the full CUA infrastructure stack, not a narrow local demo. The first release,
@@ -87,10 +89,10 @@ gantt
 
 | Phase | Theme | Primary decisions exercised | External dependency | Gating spike(s) |
 |-------|-------|-----------------------------|---------------------|-----------------|
-| **0 / v0.0.1** | Feature-complete local/reference CUA runtime | D2, D3, D6, D7, D8 | none (local Docker/QEMU) | runtime-state support (checkpoint/fork/resume) advertised + Docker disk-tier reference impl; contract tests; a11y coverage measured, not a pixel-loop blocker (`.skn` audit ledger deferred to Phase 1+, #216) |
+| **0 / v0.0.1** | Feature-complete local/reference CUA runtime | D2, D3, D6, D7, D8, D13 | none (local Docker/QEMU) | runtime-state support (checkpoint/fork/resume) advertised + Docker disk-tier reference impl; contract tests; a11y coverage measured, not a pixel-loop blocker (`.skn` audit ledger deferred to Phase 1+, #216) |
 | **1** | Performance and productionization: Linux fast-fork + streaming + panel | D1, D3, D4, D6, D9 | `agent-sandbox` CRD, Vault, NICE DCV or WebRTC+NVENC | a11y-coverage, CoW-fork density, dual-channel latency |
 | **2** | Eval + OSWorld-Verified + first eval/training users | D5, D7, D8 | `agent-sandbox` CRD (parallel replicas) | reuses Phase 1 spikes |
-| **3** | Cross-OS (Windows + macOS) | D1, D10 | Apple hardware pool; Windows licensing | macOS-reset feasibility, Windows-licensing |
+| **3** | Cross-OS (Windows + macOS) | D1, D10, D14 | Apple hardware pool; Windows licensing | macOS-reset feasibility, Windows-licensing |
 | **4** | Cloud ultra-high-concurrency + optional GPU/TEE | D4, D9, D11 | NICE DCV, GPU-TEE/NRAS/Confidential Containers, vGPU/MIG | NVENC-density, GPU-TEE-attestation |
 | **Later** | Android + multi-player | D10 (Android), scope decision | redroid/Cuttlefish | touch-schema; multi-cursor |
 
@@ -127,6 +129,16 @@ No cluster substrate dependency yet. The limit is scale, not scope.
   full-frame/focused/region screenshots, screencast, AT-SPI and CDP normalized `Element` output,
   and `element_ref` resolution. Efficient diffs and SoM/OmniParser can improve later; the reference
   semantics must exist now.
+- **The deep operation layer is the designed v0.0.1 act/observe target**
+  ([D13](../design/tech-decisions.md), spec: [operation-layer.md](../design/operation-layer.md)):
+  one dual-tier `observe` (screenshot + element tree + focus pointer; the model picks the tier per
+  step, pixels the universal fallback), the **stable-id/diff observation engine**
+  (session-stable element ids, `~/+/-` diffs under a line budget, typed stale-ref + re-observe
+  hint, settle-before-observe), **act-returns-observation**, per-app/key-window scoping, and the
+  element verb family (`drag`, `invoke_element_action`, `set_element_value`, `set_text_selection`,
+  `scroll_element`, the `apps`/`windows` queries). The built reference paths above are its first
+  slice; the engine itself is **designed-only today** ([status](status.md)) and is the headline
+  token/correctness optimization this phase still owes.
 - **Runtime-state descriptors (the headline, built)** ([D1](../design/tech-decisions.md)): the
   stateful, branchable runtime — provider-advertised `snapshot`, `checkpoint`, `fork`, `restore`,
   and `resume` capabilities (so unsupported providers fail honestly) **plus a Docker disk-tier
@@ -156,6 +168,10 @@ No cluster substrate dependency yet. The limit is scale, not scope.
 - ACI v0 schema, strict fixtures, Python SDK, and contract tests across schema/Rust/Python.
 - Agent-native parser plus Anthropic/OpenAI adapter fixtures.
 - Pixel, focused/region, screencast, AT-SPI/CDP, and `element_ref` reference observation paths.
+- The operation-layer contract ([D13](../design/tech-decisions.md)): unified `observe`,
+  stable-id/diff engine, settle-before-observe, observe-after-act, app/window scoping, and the
+  element verb family (designed in [operation-layer.md](../design/operation-layer.md); built
+  incrementally on the reference paths).
 - Runtime-state descriptors + the Docker disk-tier checkpoint/fork/resume reference impl + `run_eval_forked`.
 - Capability envelope + local gateway shim + permission events.
 - File/artifact transfer API with checksums and content-addressed refs.
@@ -279,7 +295,7 @@ resource-scoping), and the Control Panel human UI.
 ### Goals
 
 - **Windows tier ([D1](../design/tech-decisions.md), heavier):** Cloud Hypervisor/QEMU + virtio-win + the Guest Runtime (UIA → the unified `Element` schema, [D3](../design/tech-decisions.md)). Longer-lived and snapshot-light. **Licensing-gated** — resolve the open question of whether commodity multi-tenant Windows is even permissible (no commodity multi-tenant desktop Windows exists without specific licensing programs; the realistic options are per-core Datacenter licensing for density vs customer-supplied/BYOL). This is a *gate*, not an assumption. The Windows golden-image pipeline (cloudbase-init + sysprep) follows the [Cloud Hypervisor Windows guide](https://github.com/cloud-hypervisor/cloud-hypervisor/blob/main/docs/windows.md).
-- **macOS tier ([D1](../design/tech-decisions.md), scarce premium):** **Apple Virtualization.framework on Apple hardware** (the tart/lume pattern). Hard caps acknowledged: Apple-hardware-only, **2 VMs per host** (Apple EULA, [confirmed by the Apple containerization issue tracker](https://github.com/apple/containerization/issues/737)), TCC pre-grant. Plan as **low-density standing pools**, not a fork tier — macOS/Windows fast-reset is largely infeasible with today's tooling.
+- **macOS tier ([D1](../design/tech-decisions.md), scarce premium):** **Apple Virtualization.framework on Apple hardware** (the tart/lume pattern). Hard caps acknowledged: Apple-hardware-only, **2 VMs per host** (Apple EULA, [confirmed by the Apple containerization issue tracker](https://github.com/apple/containerization/issues/737)), TCC pre-grant. Plan as **low-density standing pools**, not a fork tier — macOS/Windows fast-reset is largely infeasible with today's tooling. The in-guest engine is fixed by [D14](../design/tech-decisions.md): ScreenCaptureKit one-shot capture, the AXUIElement tree (incl. the Chromium/Electron accessibility-enable attributes), CGEvent input synthesis, and the TCC posture where a permissions-pending `observe` returns a typed keep-alive rather than failing ([operation-layer.md §9.1](../design/operation-layer.md)).
 - **Per-OS handler-factory beneath one ACI ([D10](../design/tech-decisions.md)):** AT-SPI (Linux) / UIA (Windows) / AX (macOS) / CDP (browser) all normalize into the one `Element` schema; the action schema and event stream are unchanged. macOS resource scoping = Seatbelt + TCC; Windows = restricted token + per-workspace capability-SID ([D6](../design/tech-decisions.md)).
 
 ### 🔬 SPIKE — macOS-reset feasibility & Windows-licensing

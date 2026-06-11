@@ -21,8 +21,29 @@ set -euo pipefail
 : "${SHINKEND_EXECUTOR:=x11_xtest}"
 export DISPLAY SHINKEND_ADDR SHINKEND_EXECUTOR
 
-# Accessibility bus (AT-SPI) — needed by the structured observation track (M1).
+# Accessibility bus (AT-SPI) — the structured-observation track (M1b). ONE session
+# D-Bus at a FIXED address, shared by shinkend (which asks org.a11y.Bus for the a11y
+# bus address) and every GUI app (whose toolkit a11y bridge publishes its tree onto
+# that a11y bus). Apps launched via `docker exec` must export the same DISPLAY +
+# DBUS_SESSION_BUS_ADDRESS pair to be observable. A stale socket is cleared first —
+# a disk-tier fork (`docker commit` of a live container) bakes it into the image,
+# like the X locks below. Non-fatal by design: if any of this fails, structured
+# observation answers a typed error and pixel observation still works.
 export NO_AT_BRIDGE=0
+export DBUS_SESSION_BUS_ADDRESS="unix:path=/tmp/shinken-session-bus"
+rm -f /tmp/shinken-session-bus 2>/dev/null || true
+dbus-daemon --session --address="$DBUS_SESSION_BUS_ADDRESS" --nofork --nopidfile \
+  >/tmp/dbus.log 2>&1 &
+# Start the a11y bus eagerly (--launch-immediately starts registryd too) once the
+# session-bus socket exists; D-Bus activation of org.a11y.Bus is the fallback if
+# this races or the launcher path moves.
+(
+  for _ in $(seq 1 100); do
+    [ -S /tmp/shinken-session-bus ] && break
+    sleep 0.05
+  done
+  /usr/libexec/at-spi-bus-launcher --launch-immediately >/tmp/atspi.log 2>&1 || true
+) &
 
 # Clear stale X locks before starting Xvfb. A snapshot/fork (`docker commit` of a *live*
 # container) bakes the running X server's lock files (/tmp/.X*-lock, /tmp/.X11-unix/X*)
@@ -31,6 +52,11 @@ export NO_AT_BRIDGE=0
 # Removing them makes the disk-tier fork (checkpoint→fork→resume, D5) boot a clean desktop.
 rm -f /tmp/.X*-lock 2>/dev/null || true
 rm -rf /tmp/.X11-unix/* 2>/dev/null || true
+# The socket DIR itself must exist (sticky, world-writable) BEFORE Xvfb starts: as a
+# non-root user Xvfb cannot create /tmp/.X11-unix and falls back to TCP-only — which
+# works, but some boots then race the root paint into a black-wallpaper state.
+mkdir -p /tmp/.X11-unix 2>/dev/null || true
+chmod 1777 /tmp/.X11-unix 2>/dev/null || true
 
 # Desktop boot, CONCURRENT with shinkend: Xvfb starts immediately; openbox/xterm need a
 # live display (they exit instantly without one), so a background subshell gates them on

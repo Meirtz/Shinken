@@ -6,12 +6,17 @@ computer-use agents** (a streaming-first successor to OSWorld). See [README.md](
 Linux/X11 vertical slice** — handshake/auth, pointer+keyboard actions, pixel observation
 (screenshot + real-time screencast + bandwidth levers + focused-window capture),
 Docker disk-tier checkpoint/fork/resume + `run_eval_forked`, a local capability-gateway shim,
-and a Python SDK, all under live CI. The **structured/a11y thesis (D3), production permission
-enforcement, `.skn` recording/playback, the control plane, and cross-platform are designed-only
-and not yet built**. The a11y-coverage spike (#2) has been **measured (E5) — verdict: hybrid
-per-window structured + pixel fallback, so D3's structured-default stays Provisional** (canvas is a
-measured zero with a change-blind diff, Electron is measured on both CDP and forced AT-SPI;
-games/native-GL still unmeasured, and the guest-runtime observation engine is unbuilt).
+the **guest structured-observation engine v1 (Linux/AT-SPI: `observe` with stable element ids,
+tree-text diff, settle; guest-side `element_ref` actions + `invoke_action`/`set_value`)**,
+and a Python SDK, all under live CI, plus a **macOS engine v1** (native CoreGraphics/CGEvent
+backend in `shinkend`; capture+input built, local-only proof — no mac CI, AX designed-only;
+[docs/engineering/macos-engine.md](docs/engineering/macos-engine.md)). **Production permission
+enforcement, `.skn` recording/playback, the control plane, and the rest of cross-platform
+(Windows, Wayland, macOS AX) are designed-only and not yet built**. The a11y-coverage spike (#2)
+has been **measured (E5) — verdict: hybrid per-window structured + pixel fallback, so D3's
+structured-default stays Provisional** (canvas is a measured zero with a change-blind diff,
+Electron is measured on both CDP and forced AT-SPI; games/native-GL still unmeasured; the
+in-guest CDP backend and UIA/AX tiers remain unbuilt).
 **[`docs/engineering/status.md`](docs/engineering/status.md) is the authoritative built-vs-designed map — read it before
 trusting present-tense claims in the vision docs. This file's status summary must track
 status.md; reconcile both when either changes.**
@@ -33,7 +38,7 @@ committed is world-readable.
 
 | Path | Tracked? | What |
 |------|----------|------|
-| `docs/` | ✅ | Authoritative docs: vision, PRD, architecture, OSWorld teardown, landscape, ADRs (D1–D12), roadmap, glossary, isolation & capability note, economics, Phase-0 plan, ACI spec |
+| `docs/` | ✅ | Authoritative docs: vision, PRD, architecture, OSWorld teardown, landscape, ADRs (D1–D14), roadmap, glossary, isolation & capability note, economics, Phase-0 plan, ACI spec, operation layer |
 | `notes/` | ✅ | 9 working notes: per-domain deep dives, open questions, sources |
 | `README.md`, `LICENSE` (Apache-2.0) | ✅ | front matter |
 | `schema/` | ✅ | ACI JSON Schema (`aci.schema.json`) |
@@ -46,7 +51,7 @@ committed is world-readable.
 
 ## Conventions
 
-- **The public design canon is `docs/design/tech-decisions.md`** — decisions are numbered **D1–D12**.
+- **The public design canon is `docs/design/tech-decisions.md`** — decisions are numbered **D1–D14**.
   When changing a design decision, update the relevant ADR and reconcile sibling docs to the same
   D-number.
 - Naming (use consistently): **Shinken** (platform), **Sandbox** / **Session**, **Guest Runtime**
@@ -59,11 +64,15 @@ committed is world-readable.
 
 ## Status & next steps
 
-**Built & proven (Linux/X11):** M0 transport/auth + M1 act-and-observe are done — pointer+keyboard
-actions, screenshot, real-time screencast (server-push) with idle-suppression + downscale,
+**Built & proven (Linux/X11):** M0 transport/auth + M1 act-and-observe are done — the **17-verb
+ACI surface** (pointer+keyboard incl. `drag`/`mouse_down`/`mouse_up`, act-returns-observation via
+the per-action `observe` argument, the `observe`/`invoke_action`/`set_value` structured family,
+`list_windows`), screenshot, real-time screencast (server-push) with idle-suppression + downscale,
 focused-window/`window:<id>` capture, **binary WS media frames** (negotiated; wire −25%,
 client-plane ceiling ~2.1×), and **XDamage event-driven capture** (idle ticks capture nothing —
-~0 guest CPU; damaged ticks fetch only the damaged region), all with live Xvfb/Docker CI smokes. **Docker disk-tier
+~0 guest CPU; damaged ticks fetch only the damaged region), all with live Xvfb/Docker CI smokes.
+String-form **XML tool calls** parse as first-class action input (`shinken.dialect.parse_actions`,
+`format="auto"|"xml"|"dialect"`). **Docker disk-tier
 checkpoint/fork/resume** (`docker commit`, #209) behind the provider interface, plus
 `eval.run_eval_forked` (golden→fork-N→score, #231), are built; a **local capability-gateway shim**
 (`sdk/python/src/shinken/gateway.py` + tests) is built. **Push-based boot readiness (S9)** is
@@ -89,12 +98,20 @@ The immediate work (per the recalibrated priorities):
    Electron; Electron also hits 0.32 over forced AT-SPI), weak GTK, absent terminals, **canvas
    measured at zero** (5 drawn controls → 2 inert AX nodes; a real click changes pixels but the
    tree diff reports nothing); tree-diff ~2 KiB vs ~77 KiB screenshot. **D3 stays Provisional —
-   hybrid, not structured-by-default.** Remaining: games/native-GL coverage + the guest-runtime
-   observation engine; the screenshot baseline still carries v0.0.1 usability.
-3. **Designed-only, not started:** the Capability Manager (production enforcement beyond the local
-   gateway shim), `.skn` recording/playback, the memory (CRIU) + sub-ms CoW fork fast tiers
+   hybrid, not structured-by-default.** The **guest observation engine v1 is now built for
+   Linux/AT-SPI** (live-smoked: zenity id-stability, diff-after-typing, element click by id,
+   invoke_action); remaining: games/native-GL coverage, the in-guest CDP backend, UIA/AX tiers;
+   the screenshot baseline still carries v0.0.1 usability.
+3. **Designed-only, not started:** the rest of the **operation layer** (D13,
+   `docs/design/operation-layer.md`: `set_text_selection`/`scroll_element`, app/window scoping
+   beyond `list_windows`, the in-guest CDP backend, the Browser Runtime); the Capability Manager
+   (production enforcement beyond the local gateway
+   shim), `.skn` recording/playback, the memory (CRIU) + sub-ms CoW fork fast tiers
    (CRIU spike now run: POSITIVE, 300 ms fork e2e ~25× — `spikes/criu-memory-tier/`; tier itself unbuilt),
-   control plane + concurrency, dual-channel WebRTC/NVENC, cross-platform (mac/Win) + **Wayland**.
+   control plane + concurrency, dual-channel WebRTC/NVENC, and the rest of cross-platform —
+   **Windows** + **Wayland** + macOS AX/ScreenCaptureKit (the **macOS engine v1**
+   capture+input slice IS built, local-only: `shinkend --backend macos`,
+   [docs/engineering/macos-engine.md](docs/engineering/macos-engine.md)).
 4. **CoW-fork density** and **dual-channel WebRTC latency** remain Phase-1 boundary spikes (D1/D4).
 
 The **2026-06 recalibration change inventory** (positioning / architecture / functionality / contract /

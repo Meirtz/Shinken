@@ -116,7 +116,30 @@ def boot(image: str = IMAGE, geometry: str = GEOMETRY):
     provider = DockerLocalProvider(image=image, name_prefix="shinken-bench")
     handle = provider.create(SandboxSpec(screen_geometry=geometry))
     env = provider.connect(handle)
+    _wait_for_desktop_window(env)
     return provider, handle, env
+
+
+def _wait_for_desktop_window(env, timeout_s: float = 15.0) -> None:
+    """The S9 readiness gate fires when the root paints (wallpaper) — the xterm the
+    image boots can appear a moment later. Suites that click/type into it must wait
+    for a real window, or their focus click lands on bare desktop and every
+    keystroke is lost (observed: typing workloads producing zero frames). Polls the
+    list_windows query when the runtime offers it; silently proceeds otherwise."""
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        try:
+            wins = env.list_windows()
+        except Exception:
+            return  # pre-list_windows runtime: keep the old behavior
+        if wins:
+            return
+        time.sleep(0.1)
+    print(
+        "warning: no desktop window appeared within "
+        f"{timeout_s:.0f}s; typing-based scenarios may be empty",
+        flush=True,
+    )
 
 
 def fill_xterm(env, lines: int = 40, settle_timeout: float = 15.0) -> None:

@@ -15,8 +15,9 @@ use base64::Engine as _;
 use serde::Deserialize;
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{
-    AtomEnum, ConnectionExt as _, ImageFormat as XImageFormat, Window, BUTTON_PRESS_EVENT,
-    BUTTON_RELEASE_EVENT, KEY_PRESS_EVENT, KEY_RELEASE_EVENT, MOTION_NOTIFY_EVENT,
+    AtomEnum, ConnectionExt as _, ImageFormat as XImageFormat, MapState, Window,
+    BUTTON_PRESS_EVENT, BUTTON_RELEASE_EVENT, KEY_PRESS_EVENT, KEY_RELEASE_EVENT,
+    MOTION_NOTIFY_EVENT,
 };
 use x11rb::protocol::xtest::ConnectionExt as _;
 
@@ -52,6 +53,22 @@ pub struct ActionSpec {
     pub verb: String,
     #[serde(default)]
     pub target: Option<Target>,
+    /// Drag destination: pointer down at `target`, interpolated moves, up at `to`.
+    #[serde(default)]
+    pub to: Option<Target>,
+    /// Pointer button for `drag`/`mouse_down`/`mouse_up` (`left`/`middle`/`right`);
+    /// omitted = left.
+    #[serde(default)]
+    pub button: Option<String>,
+    /// Drag gesture duration (ms), spread across the interpolated path; omitted = 0
+    /// (fastest). Clamped to [`MAX_DRAG_MS`].
+    #[serde(default)]
+    pub duration_ms: Option<u64>,
+    /// Act-returns-observation (#observe-after-act): on a mutating verb, capture a
+    /// fresh observation right after the action and push it with `cause` = the
+    /// action's call_id. Consumed by the dispatcher (connection.rs), never here.
+    #[serde(default)]
+    pub observe: Option<ObserveSpec>,
     #[serde(default)]
     pub text: Option<String>,
     #[serde(default)]
@@ -98,6 +115,56 @@ pub struct ActionSpec {
     /// pre-dedup runtime nacks an action carrying this).
     #[serde(default)]
     pub if_none_match: Option<String>,
+    /// For `observe`: capture the structured (a11y) tree. Omitted defaults to true —
+    /// `observe` IS the structured verb (pixels are `screenshot`); an explicit
+    /// `false` is rejected rather than silently aliased.
+    #[serde(default)]
+    pub structured: Option<bool>,
+    /// For `observe`: render the tree text as a diff (`~`/`+`/`-` lines) against this
+    /// session's previous revision. Omitted = full tree.
+    #[serde(default)]
+    pub diff: Option<bool>,
+    /// For `observe`: debounce a11y event notifications for this quiesce window (ms,
+    /// clamped) before walking, so the tree is captured after the UI settles. The
+    /// total settle wait is hard-capped runtime-side.
+    #[serde(default)]
+    pub settle_ms: Option<u64>,
+}
+
+/// Act-returns-observation parameters (schema `$defs.ObserveSpec`): the same capture
+/// levers as a one-shot `screenshot`, attached to a mutating action. Unknown fields are
+/// rejected so wire drift fails loudly, like [`ActionSpec`] itself.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ObserveSpec {
+    #[serde(default)]
+    pub scope: Option<String>,
+    #[serde(default)]
+    pub format: Option<String>,
+    #[serde(default)]
+    pub quality: Option<u8>,
+    #[serde(default)]
+    pub max_long_edge: Option<u32>,
+}
+
+/// One visible top-level window, answered by the `list_windows` query — the Linux
+/// "enumerate apps" read primitive (EWMH `_NET_CLIENT_LIST` etc.; see
+/// [`X11Executor::list_windows`]).
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct WindowInfo {
+    /// X11 window id — usable as the `window:<id>` capture scope.
+    pub id: u32,
+    /// Window title (`_NET_WM_NAME`, falling back to `WM_NAME`); empty if unset.
+    pub title: String,
+    /// Owning process id (`_NET_WM_PID`), when the window publishes one.
+    pub pid: Option<u32>,
+    /// Root-relative geometry (px).
+    pub x: i32,
+    pub y: i32,
+    pub w: u32,
+    pub h: u32,
+    /// Whether this is the EWMH `_NET_ACTIVE_WINDOW`.
+    pub focused: bool,
 }
 
 /// Wire image codec for a captured frame. PNG is the lossless default (back-compatible
@@ -190,6 +257,11 @@ pub struct Readiness {
     /// `None` when the backend has no display to sample (virtual/pyautogui) or X11
     /// is not up yet.
     pub root_nonblack: Option<bool>,
+    /// Whether the host still owes the runtime user-granted permissions before
+    /// observations/input can work — macOS TCC (Screen Recording / Accessibility).
+    /// `None` on backends with no such concept (X11/virtual): a display that is up
+    /// is fully usable there.
+    pub permissions_pending: Option<bool>,
 }
 
 /// Executes typed actions against a guest. Backends are swappable per OS.
@@ -263,7 +335,18 @@ pub trait Executor: Send + Sync {
             ready: true,
             x11_up: false,
             root_nonblack: None,
+            permissions_pending: None,
         }
+    }
+
+    /// Enumerate visible top-level windows (the `list_windows` query). Default:
+    /// unsupported — a backend without window enumeration answers the query with an
+    /// error rather than fabricating an empty desktop.
+    fn list_windows(&self) -> Result<Vec<WindowInfo>> {
+        bail!(
+            "list_windows not supported by the {} backend",
+            self.backend()
+        )
     }
 }
 
@@ -382,7 +465,7 @@ pub enum Scope {
 
 /// Parse a capture scope. `window:<id>` accepts decimal or `0x`-hex. Unknown scopes
 /// fall back to the full screen so a typo degrades gracefully rather than erroring.
-fn parse_scope(scope: &str) -> Scope {
+pub(crate) fn parse_scope(scope: &str) -> Scope {
     match scope {
         "screen" | "" => Scope::Screen,
         "active_window" | "active" => Scope::ActiveWindow,
@@ -408,10 +491,18 @@ fn norm_to_px(x: f64, y: f64, w: u16, h: u16) -> Result<(i16, i16)> {
     Ok((px(x, w), px(y, h)))
 }
 
+/// [`norm_to_px`] for backends that keep float pixel coordinates (macOS posts
+/// CGEvents in floating-point display points) — identical validation + mapping.
+#[cfg(all(target_os = "macos", feature = "macos-native"))]
+pub(crate) fn norm_to_px_f64(x: f64, y: f64, w: u16, h: u16) -> Result<(f64, f64)> {
+    let (px, py) = norm_to_px(x, y, w, h)?;
+    Ok((px as f64, py as f64))
+}
+
 /// Downscale an RGB8 buffer with nearest-neighbour sampling so its longer edge is at
 /// most `max_long_edge` px. Returns the buffer unchanged if it already fits (or the
 /// cap is 0). Cheap and dependency-free — good enough for a bandwidth preview.
-fn downscale_rgb(rgb: &[u8], w: u16, h: u16, max_long_edge: u32) -> (Vec<u8>, u16, u16) {
+pub(crate) fn downscale_rgb(rgb: &[u8], w: u16, h: u16, max_long_edge: u32) -> (Vec<u8>, u16, u16) {
     let (wu, hu) = (w as u32, h as u32);
     let long = wu.max(hu);
     if max_long_edge == 0 || long <= max_long_edge {
@@ -750,6 +841,9 @@ enum BackendChoice {
     X11Xtest,
     Virtual,
     PyAutoGui,
+    /// Native macOS backend (CoreGraphics capture + CGEvent input). Parses on
+    /// every platform; building it on a non-mac target fails loudly.
+    MacOs,
 }
 
 impl BackendChoice {
@@ -759,9 +853,10 @@ impl BackendChoice {
             "x11_xtest" | "x11/xtest" | "xtest" | "x11" => Ok(Self::X11Xtest),
             "virtual" => Ok(Self::Virtual),
             "pyautogui" | "pyautogui_subprocess" => Ok(Self::PyAutoGui),
+            "macos" | "macos/coregraphics" | "quartz" | "coregraphics" => Ok(Self::MacOs),
             other => bail!(
                 "unknown {EXECUTOR_ENV} value {other:?}; \
-                 expected auto, x11_xtest, virtual, or pyautogui"
+                 expected auto, x11_xtest, virtual, pyautogui, or macos"
             ),
         }
     }
@@ -776,26 +871,68 @@ impl BackendChoice {
 }
 
 /// Pick the configured executor. `auto` preserves the Phase-0 behavior: X11 if a
-/// display is reachable, otherwise the virtual test backend.
+/// display is reachable, otherwise (on macOS) the native CoreGraphics backend,
+/// otherwise the virtual test backend.
 pub fn default_executor() -> Result<Arc<dyn Executor>> {
     build_executor(BackendChoice::from_env()?)
 }
 
+/// Pick the executor for an explicit backend name (the `--backend` flag), or the
+/// `SHINKEND_EXECUTOR`/auto default when `name` is `None`.
+pub fn executor_for(name: Option<&str>) -> Result<Arc<dyn Executor>> {
+    match name {
+        Some(value) => build_executor(BackendChoice::parse(value)?),
+        None => default_executor(),
+    }
+}
+
+/// Try the native macOS backend, logging the geometry on success. `None` when it
+/// cannot be constructed (no display) — never a hard error on the auto path.
+#[cfg(all(target_os = "macos", feature = "macos-native"))]
+fn try_macos_backend() -> Option<Arc<dyn Executor>> {
+    match crate::executor_macos::MacExecutor::new() {
+        Ok(m) => {
+            let (w, h) = Executor::screen_size(&m);
+            eprintln!("shinkend: action backend = macos/coregraphics ({w}x{h})");
+            Some(Arc::new(m))
+        }
+        Err(e) => {
+            eprintln!("shinkend: macOS backend unavailable ({e})");
+            None
+        }
+    }
+}
+
 fn build_executor(choice: BackendChoice) -> Result<Arc<dyn Executor>> {
     match choice {
-        BackendChoice::Auto => match X11Executor::connect() {
-            Ok(x) => {
-                eprintln!(
-                    "shinkend: action backend = x11/xtest ({}x{})",
-                    x.width, x.height
-                );
-                Ok(Arc::new(x))
+        BackendChoice::Auto => {
+            // On macOS with no $DISPLAY there is no X server to wait for — the
+            // native backend is the auto default. With $DISPLAY set (XQuartz),
+            // X11 keeps priority; the native backend is the fallback.
+            #[cfg(all(target_os = "macos", feature = "macos-native"))]
+            if std::env::var_os("DISPLAY").is_none() {
+                if let Some(m) = try_macos_backend() {
+                    return Ok(m);
+                }
             }
-            Err(e) => {
-                eprintln!("shinkend: no X11 display ({e}); action backend = virtual (no-op)");
-                Ok(Arc::new(VirtualExecutor::default()))
+            match X11Executor::connect() {
+                Ok(x) => {
+                    eprintln!(
+                        "shinkend: action backend = x11/xtest ({}x{})",
+                        x.width, x.height
+                    );
+                    Ok(Arc::new(x))
+                }
+                Err(e) => {
+                    #[cfg(all(target_os = "macos", feature = "macos-native"))]
+                    if let Some(m) = try_macos_backend() {
+                        return Ok(m);
+                    }
+                    eprintln!("shinkend: no X11 display ({e}); action backend = virtual (no-op)");
+                    Ok(Arc::new(VirtualExecutor::default()))
+                }
             }
-        },
+        }
         BackendChoice::X11Xtest => {
             // Explicit X11 is LAZY: shinkend must be exec'd before the desktop so the
             // ACI listener is accepting within milliseconds of container start; the
@@ -829,16 +966,72 @@ fn build_executor(choice: BackendChoice) -> Result<Arc<dyn Executor>> {
             eprintln!("shinkend: action backend = pyautogui (subprocess)");
             Ok(Arc::new(e))
         }
+        #[cfg(all(target_os = "macos", feature = "macos-native"))]
+        BackendChoice::MacOs => {
+            let m = crate::executor_macos::MacExecutor::new().context("backend=macos")?;
+            let (w, h) = Executor::screen_size(&m);
+            eprintln!("shinkend: action backend = macos/coregraphics ({w}x{h}, configured)");
+            Ok(Arc::new(m))
+        }
+        #[cfg(not(all(target_os = "macos", feature = "macos-native")))]
+        BackendChoice::MacOs => bail!(
+            "the macos backend needs a macOS build with the `macos-native` feature \
+             (this build: {})",
+            crate::protocol::platform()
+        ),
     }
 }
 
 // ---- pointer button numbers (X11) ----
 const BTN_LEFT: u8 = 1;
+const BTN_MIDDLE: u8 = 2;
 const BTN_RIGHT: u8 = 3;
 const BTN_SCROLL_UP: u8 = 4;
 const BTN_SCROLL_DOWN: u8 = 5;
 const BTN_SCROLL_LEFT: u8 = 6;
 const BTN_SCROLL_RIGHT: u8 = 7;
+
+/// Map a wire `button` name to its X11 button number. Absent = left (the schema
+/// default); unknown names are rejected — the runtime must not guess a button.
+fn parse_button(name: Option<&str>) -> Result<u8> {
+    match name {
+        None | Some("left") => Ok(BTN_LEFT),
+        Some("middle") => Ok(BTN_MIDDLE),
+        Some("right") => Ok(BTN_RIGHT),
+        Some(other) => bail!("unknown pointer button: {other:?} (expected left, middle, or right)"),
+    }
+}
+
+/// Hard cap on a `drag` gesture's duration (ms) — mirrors `MAX_WAIT_MS` so a client
+/// can't park the action thread arbitrarily long with one action.
+pub const MAX_DRAG_MS: u64 = 10_000;
+
+/// Pixels of pointer travel per interpolated drag step. Small enough that toolkits
+/// tracking motion (DnD thresholds, hover targets) see a continuous path, big enough
+/// that a full-screen drag stays a handful of round trips.
+const DRAG_PX_PER_STEP: f64 = 16.0;
+const DRAG_MAX_STEPS: usize = 64;
+
+/// The interpolated pointer path of a drag, INCLUDING both endpoints (the first entry
+/// is `from`, the last is exactly `to`). Pure, so the gesture's shape is unit-testable
+/// without a display.
+fn drag_path(from: (i16, i16), to: (i16, i16)) -> Vec<(i16, i16)> {
+    let (dx, dy) = (
+        f64::from(to.0) - f64::from(from.0),
+        f64::from(to.1) - f64::from(from.1),
+    );
+    let dist = dx.hypot(dy);
+    let steps = ((dist / DRAG_PX_PER_STEP).ceil() as usize).clamp(1, DRAG_MAX_STEPS);
+    let mut path = Vec::with_capacity(steps + 1);
+    for i in 0..=steps {
+        let t = i as f64 / steps as f64;
+        path.push((
+            (f64::from(from.0) + dx * t).round() as i16,
+            (f64::from(from.1) + dy * t).round() as i16,
+        ));
+    }
+    path
+}
 /// Wire `dx`/`dy` are pixel-denominated (see docs/design/aci-spec.md); one wheel
 /// click ≈ this many pixels. Adapters that speak in wheel clicks convert at their edge.
 const SCROLL_PX_PER_STEP: f64 = 100.0;
@@ -1156,6 +1349,130 @@ impl X11Executor {
         self.fake(BUTTON_RELEASE_EVENT, button, x, y)
     }
 
+    /// Press or release `button` at the pointer's CURRENT position (XTEST ignores the
+    /// coordinates on button events; callers that were given a target move first).
+    fn button_event(&self, button: u8, press: bool) -> Result<()> {
+        let ty = if press {
+            BUTTON_PRESS_EVENT
+        } else {
+            BUTTON_RELEASE_EVENT
+        };
+        self.fake(ty, button, 0, 0)
+    }
+
+    /// One full drag gesture: move to `from`, button down, interpolated motion along
+    /// [`drag_path`] (`duration_ms` spread evenly across its segments), button up at
+    /// `to`. The release is attempted even if a mid-path motion fails, so an error can
+    /// never leave the synthetic button latched down.
+    fn drag(&self, from: (i16, i16), to: (i16, i16), button: u8, duration_ms: u64) -> Result<()> {
+        let path = drag_path(from, to);
+        let segments = (path.len() - 1).max(1) as u64;
+        let pause = std::time::Duration::from_millis(duration_ms / segments);
+        self.motion(from.0, from.1)?;
+        self.button_event(button, true)?;
+        let walked = path[1..].iter().try_for_each(|&(x, y)| {
+            if !pause.is_zero() {
+                std::thread::sleep(pause);
+            }
+            self.motion(x, y)
+        });
+        let released = self.button_event(button, false);
+        walked.and(released)
+    }
+
+    /// EWMH window enumeration (the `list_windows` query): `_NET_CLIENT_LIST` for the
+    /// managed top-level windows, `_NET_WM_NAME`/`WM_NAME` for titles, `_NET_WM_PID`
+    /// for owners, root-translated geometry, and `_NET_ACTIVE_WINDOW` for the focused
+    /// flag. On a WM-less display (bare Xvfb — no EWMH properties) it falls back to
+    /// the viewable, non-override-redirect children of the root, so the primitive
+    /// still enumerates mapped apps in CI. A window that vanishes mid-enumeration is
+    /// skipped, never an error.
+    fn list_windows_x11(&self) -> Result<Vec<WindowInfo>> {
+        let focused = self.active_window()?.unwrap_or(0);
+        let conn = self.conn.lock().expect("x11 conn lock");
+        let atom = |name: &[u8]| -> Result<u32> { Ok(conn.intern_atom(true, name)?.reply()?.atom) };
+        let net_client_list = atom(b"_NET_CLIENT_LIST")?;
+        let net_wm_name = atom(b"_NET_WM_NAME")?;
+        let utf8_string = atom(b"UTF8_STRING")?;
+        let net_wm_pid = atom(b"_NET_WM_PID")?;
+        let mut windows: Vec<Window> = if net_client_list != 0 {
+            conn.get_property(false, self.root, net_client_list, AtomEnum::WINDOW, 0, 4096)?
+                .reply()?
+                .value32()
+                .map(Iterator::collect)
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        if windows.is_empty() {
+            // WM-less fallback: mapped, non-override-redirect direct children of root.
+            for w in conn.query_tree(self.root)?.reply()?.children {
+                if let Ok(attrs) = conn.get_window_attributes(w)?.reply() {
+                    if attrs.map_state == MapState::VIEWABLE && !attrs.override_redirect {
+                        windows.push(w);
+                    }
+                }
+            }
+        }
+        let mut out = Vec::with_capacity(windows.len());
+        for win in windows {
+            // Geometry: w/h from the drawable, origin translated into root coords
+            // (get_geometry's x/y are parent-relative). Skip windows that vanished.
+            let Ok(geo) = conn
+                .get_geometry(win)
+                .map_err(anyhow::Error::from)
+                .and_then(|c| Ok(c.reply()?))
+            else {
+                continue;
+            };
+            let Ok(pos) = conn
+                .translate_coordinates(win, self.root, 0, 0)
+                .map_err(anyhow::Error::from)
+                .and_then(|c| Ok(c.reply()?))
+            else {
+                continue;
+            };
+            let mut title = String::new();
+            if net_wm_name != 0 && utf8_string != 0 {
+                if let Ok(prop) = conn
+                    .get_property(false, win, net_wm_name, utf8_string, 0, 1024)
+                    .map_err(anyhow::Error::from)
+                    .and_then(|c| Ok(c.reply()?))
+                {
+                    title = String::from_utf8_lossy(&prop.value).into_owned();
+                }
+            }
+            if title.is_empty() {
+                if let Ok(prop) = conn
+                    .get_property(false, win, AtomEnum::WM_NAME, AtomEnum::STRING, 0, 1024)
+                    .map_err(anyhow::Error::from)
+                    .and_then(|c| Ok(c.reply()?))
+                {
+                    title = String::from_utf8_lossy(&prop.value).into_owned();
+                }
+            }
+            let pid = if net_wm_pid != 0 {
+                conn.get_property(false, win, net_wm_pid, AtomEnum::CARDINAL, 0, 1)
+                    .ok()
+                    .and_then(|c| c.reply().ok())
+                    .and_then(|p| p.value32().and_then(|mut it| it.next()))
+            } else {
+                None
+            };
+            out.push(WindowInfo {
+                id: win,
+                title,
+                pid,
+                x: i32::from(pos.dst_x),
+                y: i32::from(pos.dst_y),
+                w: u32::from(geo.width),
+                h: u32::from(geo.height),
+                focused: win == focused,
+            });
+        }
+        Ok(out)
+    }
+
     fn resolve(&self, target: Option<&Target>) -> Result<(i16, i16)> {
         match target.context("action requires a target")? {
             // Validate point_px against the screen the same way point_norm is (#141):
@@ -1175,7 +1492,11 @@ impl X11Executor {
             }
             Target::PointNorm { x, y } => norm_to_px(*x, *y, self.width, self.height),
             Target::ElementRef { .. } => {
-                bail!("element_ref resolution needs the observation engine (M1b, #4)")
+                // The session resolves element_ref → point_px via its observation
+                // engine BEFORE execute() (connection::Session::dispatch_action);
+                // reaching here means a path skipped that resolution — refuse rather
+                // than guess.
+                bail!("element_ref must be resolved by the session's observation engine")
             }
         }
     }
@@ -1312,8 +1633,40 @@ fn key_keysym(key: &str) -> Option<u32> {
         "insert" | "ins" => Some(0xff63),
         "capslock" | "caps_lock" => Some(0xffe5),
         "numlock" | "num_lock" => Some(0xff7f),
+        "scrolllock" | "scroll_lock" => Some(0xff14),
+        "pause" | "break" => Some(0xff13),
         "printscreen" | "print" | "prtsc" => Some(0xff61),
         "menu" | "apps" => Some(0xff67),
+        // Symbol keys that cannot ride the single-char path inside a '+'-separated
+        // combo (xdotool-style names): "ctrl+plus" etc.
+        "plus" => Some(0x2b),
+        "minus" => Some(0x2d),
+        "equal" | "equals" => Some(0x3d),
+        "comma" => Some(0x2c),
+        "period" | "dot" => Some(0x2e),
+        "slash" => Some(0x2f),
+        "backslash" => Some(0x5c),
+        "semicolon" => Some(0x3b),
+        "apostrophe" | "quote" => Some(0x27),
+        "grave" | "backtick" => Some(0x60),
+        "bracketleft" => Some(0x5b),
+        "bracketright" => Some(0x5d),
+        // Numpad (XK_KP_*): digits are contiguous from XK_KP_0 = 0xffb0.
+        "kp_enter" => Some(0xff8d),
+        "kp_add" | "kp_plus" => Some(0xffab),
+        "kp_subtract" | "kp_minus" => Some(0xffad),
+        "kp_multiply" => Some(0xffaa),
+        "kp_divide" => Some(0xffaf),
+        "kp_decimal" => Some(0xffae),
+        kp if kp.starts_with("kp_")
+            && kp[3..]
+                .parse::<u32>()
+                .map(|n| n <= 9 && kp.len() == 4)
+                .unwrap_or(false) =>
+        {
+            let n: u32 = kp[3..].parse().unwrap();
+            Some(0xffb0 + n)
+        }
         // Function keys F1..F12 (XK_F1 = 0xffbe, contiguous).
         f if f.starts_with('f')
             && f[1..]
@@ -1328,8 +1681,9 @@ fn key_keysym(key: &str) -> Option<u32> {
     }
 }
 
-/// Split `"ctrl+shift+s"` into (`["ctrl","shift"]`, `"s"`).
-fn parse_combo(combo: &str) -> (Vec<&str>, &str) {
+/// Split `"ctrl+shift+s"` into (`["ctrl","shift"]`, `"s"`) — shared by every
+/// keyboard-synthesizing backend (X11, macOS).
+pub(crate) fn parse_combo(combo: &str) -> (Vec<&str>, &str) {
     let parts: Vec<&str> = combo
         .split('+')
         .map(str::trim)
@@ -1398,11 +1752,25 @@ impl Executor for X11Executor {
 
     fn readiness(&self) -> Readiness {
         let nonblack = self.sample_root_nonblack().unwrap_or(false);
+        // A black wallpaper is not an unusable desktop: if client windows are already
+        // mapped (xterm/WM up), observations are meaningful — some boots lose the
+        // xsetroot paint (e.g. Xvfb in TCP-only fallback) while the desktop is fine.
+        // Either signal flips ready; root_nonblack stays honestly what was sampled.
+        let windows_up = nonblack
+            || self
+                .list_windows_x11()
+                .map(|w| !w.is_empty())
+                .unwrap_or(false);
         Readiness {
-            ready: nonblack,
+            ready: nonblack || windows_up,
             x11_up: true,
             root_nonblack: Some(nonblack),
+            permissions_pending: None,
         }
+    }
+
+    fn list_windows(&self) -> Result<Vec<WindowInfo>> {
+        self.list_windows_x11()
     }
 
     fn execute(&self, a: &ActionSpec) -> Result<String> {
@@ -1427,6 +1795,34 @@ impl Executor for X11Executor {
                 self.click_button(BTN_LEFT, x, y)?;
                 self.click_button(BTN_LEFT, x, y)?;
                 Ok(format!("double-clicked {x},{y}"))
+            }
+            "drag" => {
+                let from = self.resolve(a.target.as_ref())?;
+                let to_target = a.to.as_ref().context("drag requires a `to` target")?;
+                let to = self.resolve(Some(to_target))?;
+                let button = parse_button(a.button.as_deref())?;
+                let ms = a.duration_ms.unwrap_or(0).min(MAX_DRAG_MS);
+                self.drag(from, to, button, ms)?;
+                Ok(format!(
+                    "dragged {},{} -> {},{}",
+                    from.0, from.1, to.0, to.1
+                ))
+            }
+            "mouse_down" | "mouse_up" => {
+                let press = a.verb == "mouse_down";
+                let button = parse_button(a.button.as_deref())?;
+                // Optional target: move first when given, else act at the pointer's
+                // current position — the decomposed form free-form gestures need
+                // (down → moves → up).
+                if let Some(t) = a.target.as_ref() {
+                    let (x, y) = self.resolve(Some(t))?;
+                    self.motion(x, y)?;
+                }
+                self.button_event(button, press)?;
+                Ok(format!(
+                    "{} button {button}",
+                    if press { "pressed" } else { "released" }
+                ))
             }
             "scroll" => {
                 let (x, y) = self.resolve(a.target.as_ref())?;
@@ -1598,11 +1994,18 @@ impl Executor for LazyX11Executor {
         true // the eventual X11 backend supports raw capture
     }
 
+    fn list_windows(&self) -> Result<Vec<WindowInfo>> {
+        self.try_connect()
+            .context("X11 display not available yet")?
+            .list_windows()
+    }
+
     fn readiness(&self) -> Readiness {
         let not_up = Readiness {
             ready: false,
             x11_up: false,
             root_nonblack: None,
+            permissions_pending: None,
         };
         let Ok(x) = self.try_connect() else {
             return not_up;
@@ -1612,6 +2015,7 @@ impl Executor for LazyX11Executor {
                 ready: nonblack,
                 x11_up: true,
                 root_nonblack: Some(nonblack),
+                permissions_pending: None,
             },
             Err(_) => {
                 // Root GetImage cannot fail on a live connection — the held one is
@@ -1685,6 +2089,12 @@ impl Executor for VirtualExecutor {
 
     fn supports_raw_capture(&self) -> bool {
         true
+    }
+
+    /// A virtual display has no windows — an empty enumeration is the honest answer
+    /// (unlike a backend that cannot enumerate at all, which keeps the bailing default).
+    fn list_windows(&self) -> Result<Vec<WindowInfo>> {
+        Ok(Vec::new())
     }
 }
 
@@ -1771,6 +2181,12 @@ mod tests {
         assert_eq!(
             BackendChoice::parse("virtual").unwrap(),
             BackendChoice::Virtual
+        );
+        // The macOS backend id parses on every platform (building it elsewhere fails).
+        assert_eq!(BackendChoice::parse("macos").unwrap(), BackendChoice::MacOs);
+        assert_eq!(
+            BackendChoice::parse("quartz").unwrap(),
+            BackendChoice::MacOs
         );
         assert!(BackendChoice::parse("python").is_err());
     }
@@ -2261,6 +2677,136 @@ mod tests {
             (vec!["ctrl", "shift"], "a")
         );
         assert_eq!(parse_combo("Return"), (Vec::<&str>::new(), "Return"));
+        // xdotool-style chords resolve end to end at the keysym level: every
+        // modifier and the key itself have a keysym.
+        let (mods, key) = parse_combo("super+shift+t");
+        assert_eq!(mods, vec!["super", "shift"]);
+        assert!(mods.iter().all(|m| mod_keysym(m).is_some()));
+        assert_eq!(key_keysym(key), Some(0x74));
+    }
+
+    #[test]
+    fn key_keysym_covers_numpad_and_named_symbols() {
+        // numpad digits are contiguous from XK_KP_0
+        assert_eq!(key_keysym("kp_0"), Some(0xffb0));
+        assert_eq!(key_keysym("kp_9"), Some(0xffb9));
+        assert_eq!(key_keysym("kp_enter"), Some(0xff8d));
+        assert_eq!(key_keysym("kp_add"), Some(0xffab));
+        assert_eq!(key_keysym("kp_decimal"), Some(0xffae));
+        assert_eq!(key_keysym("kp_10"), None); // not a single numpad digit
+        assert_eq!(key_keysym("kp_x"), None);
+        // named symbols (a literal '+' can't survive the combo splitter)
+        assert_eq!(key_keysym("plus"), Some(0x2b));
+        assert_eq!(key_keysym("minus"), Some(0x2d));
+        assert_eq!(key_keysym("equal"), Some(0x3d));
+        assert_eq!(key_keysym("period"), Some(0x2e));
+        assert_eq!(key_keysym("scroll_lock"), Some(0xff14));
+        assert_eq!(key_keysym("pause"), Some(0xff13));
+        // and a chord using them parses cleanly
+        assert_eq!(parse_combo("ctrl+plus"), (vec!["ctrl"], "plus"));
+    }
+
+    // ---- drag / mouse_down / mouse_up (coordinate-tier gesture verbs) ----
+
+    #[test]
+    fn parse_button_maps_names_and_rejects_unknown() {
+        assert_eq!(parse_button(None).unwrap(), BTN_LEFT); // schema default
+        assert_eq!(parse_button(Some("left")).unwrap(), BTN_LEFT);
+        assert_eq!(parse_button(Some("middle")).unwrap(), BTN_MIDDLE);
+        assert_eq!(parse_button(Some("right")).unwrap(), BTN_RIGHT);
+        for bad in ["Left", "wheel", "back", ""] {
+            assert!(parse_button(Some(bad)).is_err(), "{bad:?} must be rejected");
+        }
+    }
+
+    #[test]
+    fn drag_path_hits_both_endpoints_and_is_bounded() {
+        // endpoints are exact, including a same-point "drag"
+        let p = drag_path((10, 20), (10, 20));
+        assert_eq!(p.first(), Some(&(10, 20)));
+        assert_eq!(p.last(), Some(&(10, 20)));
+        // a short drag still interpolates at least one segment
+        let p = drag_path((0, 0), (4, 0));
+        assert_eq!(p, vec![(0, 0), (4, 0)]);
+        // a long drag is bounded at DRAG_MAX_STEPS segments and ends exactly at `to`
+        let p = drag_path((0, 0), (10_000, 5_000));
+        assert_eq!(p.len(), DRAG_MAX_STEPS + 1);
+        assert_eq!(p[0], (0, 0));
+        assert_eq!(*p.last().unwrap(), (10_000, 5_000));
+        // the path is monotonic toward the target on both axes
+        for w in p.windows(2) {
+            assert!(w[1].0 >= w[0].0 && w[1].1 >= w[0].1);
+        }
+        // a medium drag steps roughly every DRAG_PX_PER_STEP pixels
+        let p = drag_path((0, 0), (160, 0));
+        assert_eq!(p.len(), 11); // 160 / 16 = 10 segments + the origin
+    }
+
+    #[test]
+    fn parses_drag_with_to_button_duration_and_observe() {
+        let a = spec(
+            r#"{"verb":"drag",
+                "target":{"kind":"point_px","x":10,"y":20},
+                "to":{"kind":"point_px","x":300,"y":200},
+                "button":"left","duration_ms":250,
+                "observe":{"format":"jpeg","quality":70,"max_long_edge":640,"scope":"screen"}}"#,
+        );
+        assert_eq!(a.verb, "drag");
+        assert!(matches!(a.to, Some(Target::PointPx { .. })));
+        assert_eq!(a.button.as_deref(), Some("left"));
+        assert_eq!(a.duration_ms, Some(250));
+        let obs = a.observe.unwrap();
+        assert_eq!(obs.format.as_deref(), Some("jpeg"));
+        assert_eq!(obs.quality, Some(70));
+        assert_eq!(obs.max_long_edge, Some(640));
+        assert_eq!(obs.scope.as_deref(), Some("screen"));
+    }
+
+    #[test]
+    fn observe_spec_rejects_unknown_fields() {
+        let r = serde_json::from_str::<ActionSpec>(
+            r#"{"verb":"click","target":{"kind":"point_px","x":1,"y":2},"observe":{"fps":30}}"#,
+        );
+        assert!(r.is_err(), "unknown observe fields must be rejected");
+    }
+
+    #[test]
+    fn virtual_executor_lists_no_windows_and_logs_gesture_verbs() {
+        let ex = VirtualExecutor::default();
+        assert_eq!(ex.list_windows().unwrap(), Vec::<WindowInfo>::new());
+        ex.execute(&spec(
+            r#"{"verb":"mouse_down","target":{"kind":"point_px","x":1,"y":2}}"#,
+        ))
+        .unwrap();
+        ex.execute(&spec(r#"{"verb":"mouse_up"}"#)).unwrap();
+        assert_eq!(
+            ex.log.lock().unwrap().as_slice(),
+            ["mouse_down", "mouse_up"]
+        );
+    }
+
+    #[test]
+    fn window_info_serializes_the_query_value_shape() {
+        let w = WindowInfo {
+            id: 0x1a,
+            title: "xterm".into(),
+            pid: Some(42),
+            x: 4,
+            y: 8,
+            w: 200,
+            h: 100,
+            focused: true,
+        };
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&w).unwrap()).unwrap();
+        assert_eq!(v["id"], 26);
+        assert_eq!(v["title"], "xterm");
+        assert_eq!(v["pid"], 42);
+        assert_eq!(v["x"], 4);
+        assert_eq!(v["y"], 8);
+        assert_eq!(v["w"], 200);
+        assert_eq!(v["h"], 100);
+        assert_eq!(v["focused"], true);
     }
 
     #[test]

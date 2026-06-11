@@ -5,11 +5,17 @@
 //! [`executor::Executor`]. Connections run a [`connection::Session`] state machine
 //! (handshake-first, optional dev-token auth). Listens on `$SHINKEND_ADDR`
 //! (default `127.0.0.1:8765`); a non-loopback bind requires `$SHINKEND_TOKEN`.
-//! `$SHINKEND_EXECUTOR` selects the action backend (`auto`, `x11_xtest`, `virtual`,
-//! `pyautogui`).
+//! `$SHINKEND_EXECUTOR` (or the `--backend` flag, which wins) selects the action
+//! backend (`auto`, `x11_xtest`, `virtual`, `pyautogui`, `macos`). On macOS with
+//! no `$DISPLAY`, `auto` picks the native CoreGraphics backend.
 
+#[cfg(target_os = "linux")]
+mod atspi_source;
 mod connection;
 mod executor;
+#[cfg(all(target_os = "macos", feature = "macos-native"))]
+mod executor_macos;
+mod observe;
 mod protocol;
 mod pyautogui;
 
@@ -199,9 +205,25 @@ fn handshake_expired(authenticated: bool, elapsed: Duration) -> bool {
     !authenticated && elapsed >= HANDSHAKE_TIMEOUT
 }
 
+/// Extract `--backend <name>` / `--backend=<name>` from argv (it overrides
+/// `$SHINKEND_EXECUTOR`). Other args are ignored — shinkend stays env-configured.
+fn backend_arg(args: impl Iterator<Item = String>) -> Option<String> {
+    let mut args = args;
+    let mut found = None;
+    while let Some(a) = args.next() {
+        if a == "--backend" {
+            found = args.next();
+        } else if let Some(v) = a.strip_prefix("--backend=") {
+            found = Some(v.to_string());
+        }
+    }
+    found
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let addr = std::env::var("SHINKEND_ADDR").unwrap_or_else(|_| DEFAULT_ADDR.to_string());
+    let backend = backend_arg(std::env::args().skip(1));
     let token = std::env::var("SHINKEND_TOKEN")
         .ok()
         .filter(|t| !t.is_empty());
@@ -215,10 +237,20 @@ async fn main() -> Result<()> {
     }
 
     let listener = TcpListener::bind(&addr).await?;
-    let exec = executor::default_executor()?;
+    let exec = executor::executor_for(backend.as_deref())?;
     let connections = Arc::new(Semaphore::new(MAX_CONNECTIONS));
     let screencasts = Arc::new(Semaphore::new(MAX_SCREENCASTS));
     let streams = Arc::new(StreamRegistry::default());
+    // Structured observation (M1b): ONE AT-SPI worker thread shared by every
+    // session (per-session ids/diff state lives in each Session). It dials the
+    // a11y bus lazily, so this never delays the listener. Linux-only v1: on other
+    // hosts (e.g. the macOS engine) no tree source is attached, so the observe
+    // family answers the typed `structured_observation_unavailable` error.
+    #[cfg(target_os = "linux")]
+    let tree: Option<Arc<dyn observe::TreeSource>> =
+        Some(Arc::new(atspi_source::AtspiHandle::spawn()));
+    #[cfg(not(target_os = "linux"))]
+    let tree: Option<Arc<dyn observe::TreeSource>> = None;
     eprintln!(
         "shinkend v{} listening on ws://{addr} (platform: {}, backend: {}, auth: {})",
         env!("CARGO_PKG_VERSION"),
@@ -251,9 +283,10 @@ async fn main() -> Result<()> {
         let token = token.clone();
         let screencasts = screencasts.clone();
         let streams = streams.clone();
+        let tree = tree.clone();
         tokio::spawn(async move {
             let _conn_permit = conn_permit;
-            if let Err(e) = serve(stream, exec, token, screencasts, streams).await {
+            if let Err(e) = serve(stream, exec, token, screencasts, streams, tree).await {
                 eprintln!("connection {peer} closed with error: {e}");
             }
         });
@@ -279,6 +312,7 @@ async fn serve(
     token: Option<String>,
     screencasts: Arc<Semaphore>,
     streams: Arc<StreamRegistry>,
+    tree: Option<Arc<dyn observe::TreeSource>>,
 ) -> Result<()> {
     // Bound the WS HTTP upgrade itself by the pre-auth deadline. The connection permit
     // is already held by the caller, so an upgrade that never completes would squat a
@@ -308,6 +342,9 @@ async fn serve(
     });
 
     let mut session = Session::new(token, exec.clone());
+    if let Some(tree) = tree {
+        session = session.with_tree_source(tree);
+    }
     let mut screencast: Option<JoinHandle<()>> = None;
     let started = tokio::time::Instant::now();
 
@@ -469,6 +506,13 @@ async fn serve(
                     StreamCtl::None => {
                         if let Some(reply) = step.reply {
                             if out.send(ws_reply(reply)).await.is_err() {
+                                break Ok(());
+                            }
+                        }
+                        // Act-returns-observation: the fresh observation (or its typed
+                        // capture error) lands right after the ack, same ordered writer.
+                        if let Some(followup) = step.followup {
+                            if out.send(ws_reply(followup)).await.is_err() {
                                 break Ok(());
                             }
                         }
@@ -908,6 +952,26 @@ mod tests {
     }
 
     #[test]
+    fn backend_arg_parses_both_flag_forms() {
+        let args = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            backend_arg(args(&["--backend", "macos"]).into_iter()),
+            Some("macos".into())
+        );
+        assert_eq!(
+            backend_arg(args(&["--backend=virtual"]).into_iter()),
+            Some("virtual".into())
+        );
+        // last one wins; unrelated args are ignored; missing value is None
+        assert_eq!(
+            backend_arg(args(&["--backend=x11", "-v", "--backend", "macos"]).into_iter()),
+            Some("macos".into())
+        );
+        assert_eq!(backend_arg(args(&["-v"]).into_iter()), None);
+        assert_eq!(backend_arg(args(&["--backend"]).into_iter()), None);
+    }
+
+    #[test]
     fn loopback_detection() {
         assert!(is_loopback("127.0.0.1:8765"));
         assert!(is_loopback("localhost:8765"));
@@ -928,14 +992,19 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let exec: Arc<dyn Executor> = Arc::new(executor::VirtualExecutor::default());
+        // A scripted tree source so observe-family verbs work over a real WS e2e.
+        let tree: Arc<dyn observe::TreeSource> = Arc::new(observe::tests::FakeSource::new(
+            observe::tests::sample_tree(),
+        ));
         tokio::spawn(async move {
             loop {
                 let (stream, _) = listener.accept().await.unwrap();
                 let exec = exec.clone();
                 let screencasts = screencasts.clone();
                 let streams = streams.clone();
+                let tree = tree.clone();
                 tokio::spawn(async move {
-                    let _ = serve(stream, exec, None, screencasts, streams).await;
+                    let _ = serve(stream, exec, None, screencasts, streams, Some(tree)).await;
                 });
             }
         });
@@ -1693,6 +1762,53 @@ mod tests {
             .expect("channel open");
         assert!(frame.into_text().unwrap().contains("\"seq\":1"));
         handle.abort();
+    }
+
+    /// End-to-end structured observation (M1b): a real WS client sends `observe`
+    /// twice and an element click — ids stay stable across observes, the diff
+    /// carries the change, and the element click is acked.
+    #[tokio::test]
+    async fn observe_and_element_click_over_websocket() {
+        let addr = spawn_server().await;
+        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}"))
+            .await
+            .unwrap();
+        ws.send(WsMessage::Text(HELLO.into())).await.unwrap();
+        assert!(text(&mut ws)
+            .await
+            .contains("\"structured_observation\":true"));
+
+        ws.send(WsMessage::Text(
+            r#"{"type":"action","call_id":"o1","action":{"verb":"observe","structured":true,"settle_ms":10}}"#.into(),
+        ))
+        .await
+        .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&text(&mut ws).await).unwrap();
+        assert_eq!(v["type"], "observation");
+        assert_eq!(v["tree"], "full");
+        assert_eq!(v["revision"], 1);
+        assert!(v["tree_text"].as_str().unwrap().contains("e2 push button"));
+        assert_eq!(v["elements"][1]["ref"], "e2");
+
+        // Second observe (diff requested, nothing changed): ids stable, explicit no-change.
+        ws.send(WsMessage::Text(
+            r#"{"type":"action","call_id":"o2","action":{"verb":"observe","diff":true}}"#.into(),
+        ))
+        .await
+        .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&text(&mut ws).await).unwrap();
+        assert_eq!(v["tree"], "diff");
+        assert_eq!(v["elements"][1]["ref"], "e2", "ids stable across observes");
+        assert!(v["tree_text"].as_str().unwrap().contains("no change"));
+
+        // Element click by id: resolved guest-side, acked ok.
+        ws.send(WsMessage::Text(
+            r#"{"type":"action","call_id":"c1","action":{"verb":"click","target":{"kind":"element_ref","ref":"e2"}}}"#.into(),
+        ))
+        .await
+        .unwrap();
+        let ack = text(&mut ws).await;
+        assert!(ack.contains("\"ok\":true"), "{ack}");
     }
 
     /// Read server-pushed frames until the next `observation`, skipping acks.

@@ -47,7 +47,9 @@
             "max_long_edge": { "type": "integer", "minimum": 1 },
             "image_formats": { "type": "array", "items": { "$ref": "#/$defs/ImageFormat" }, "description": "image codecs this runtime can encode; a client must not request a format outside this list. Absent on pre-negotiation welcomes, which a client treats as png-only." },
             "binary_frames": { "type": "boolean", "description": "whether this runtime can deliver image-bearing observations as binary WebSocket messages when the client opts in via hello.accept.binary_frames (see $defs.BinaryFrameHeader). Absent on pre-binary welcomes, which a client treats as false (text frames only)." },
-            "frame_dedup": { "type": "boolean", "description": "whether this runtime understands content-negotiated screenshots: it emits `frame_hash` on screenshot observations, honors `if_none_match` on the screenshot action, and answers a hash match with the compact `not_modified` observation (no payload). Absent on older welcomes, which a client treats as false — a client MUST NOT send if_none_match unless this is advertised (older runtimes reject unknown action fields)." }
+            "frame_dedup": { "type": "boolean", "description": "whether this runtime understands content-negotiated screenshots: it emits `frame_hash` on screenshot observations, honors `if_none_match` on the screenshot action, and answers a hash match with the compact `not_modified` observation (no payload). Absent on older welcomes, which a client treats as false — a client MUST NOT send if_none_match unless this is advertised (older runtimes reject unknown action fields)." },
+            "observe_after_act": { "type": "boolean", "description": "whether this runtime honors the per-action `observe` argument (see $defs.ObserveSpec): a mutating action's ack is followed by a fresh observation with cause = the action's call_id. Absent on older welcomes, which a client treats as false (the client must not send `observe`)." },
+            "structured_observation": { "type": "boolean", "description": "whether this runtime ships the guest-side structured-observation engine: the `observe` verb (a11y tree with stable element refs, tree_text full/diff rendering, settle), element_ref action targets resolved guest-side, and the `invoke_action`/`set_value` element verbs. A capability of the binary — backend (AT-SPI) availability is a runtime condition answered with typed errors. Absent on pre-engine welcomes, which a client treats as false (SDK-local fallback)." }
           }
         }
       }
@@ -57,7 +59,7 @@
     "Query": {
       "type": "object", "additionalProperties": false,
       "required": ["type", "call_id", "q"],
-      "properties": { "type": { "const": "query" }, "call_id": { "type": "string" }, "q": { "enum": ["platform", "screen_size", "ready"] } }
+      "properties": { "type": { "const": "query" }, "call_id": { "type": "string" }, "q": { "enum": ["platform", "screen_size", "ready", "list_windows"] } }
     },
     "Result": {
       "type": "object", "additionalProperties": false,
@@ -84,7 +86,13 @@
         "stream": { "type": "string", "description": "screencast stream id (set on server-pushed frames)" },
         "seq": { "type": "integer", "minimum": 0, "description": "monotonic frame index within a stream" },
         "display": { "$ref": "#/$defs/CoordinateSpace" },
-        "tree": { "enum": ["full", "diff"] },
+        "tree": { "enum": ["full", "diff"], "description": "what tree_text contains: the full rendered tree, or a diff against revision diff_of (the structured `elements` array is always the FULL live list)" },
+        "tree_text": { "type": "string", "description": "legible serialization of the a11y tree for the model: a header line (app, window, revision), one numbered indented line per element (`e<id> <role> [(states)] [\"title\"] [Value:…] [Actions:…]`), and a `focus:` trailer. In diff form: `~` changed / `+` added lines plus a summarized `- removed:` id-range line, or an explicit no-change notice" },
+        "revision": { "type": "integer", "minimum": 1, "description": "per-session monotonic observation revision (increments on every structured observe)" },
+        "diff_of": { "type": "integer", "minimum": 1, "description": "the revision this diff was rendered against; only present when tree=diff" },
+        "focus": { "type": "string", "description": "element_ref of the focused element (e.g. \"e12\"); absent when nothing focused" },
+        "node_count": { "type": "integer", "minimum": 0, "description": "number of elements in this capture" },
+        "capture_ms": { "type": "number", "minimum": 0, "description": "guest-side capture time (settle + walk + render), milliseconds" },
         "elements": { "type": "array", "items": { "$ref": "#/$defs/Element" } },
         "delta": { "type": "object", "properties": { "added": { "type": "array", "items": { "$ref": "#/$defs/Element" } }, "removed": { "type": "array", "items": { "type": "string" } }, "changed": { "type": "array", "items": { "$ref": "#/$defs/Element" } } } },
         "image": { "type": "object", "required": ["ref", "w", "h"], "properties": { "ref": { "type": "string" }, "w": { "type": "integer" }, "h": { "type": "integer" }, "scope": { "$ref": "#/$defs/Scope" }, "format": { "$ref": "#/$defs/ImageFormat", "description": "codec of `ref` bytes; defaults to png when absent" } } },
@@ -159,6 +167,10 @@
       "properties": {
         "verb": { "$ref": "#/$defs/Verb" },
         "target": { "$ref": "#/$defs/Target" },
+        "to": { "$ref": "#/$defs/Target", "description": "drag destination — the pointer goes down at `target`, moves along an interpolated path, and releases at `to`" },
+        "button": { "$ref": "#/$defs/PointerButton", "description": "pointer button for drag/mouse_down/mouse_up; omitted = left" },
+        "duration_ms": { "type": "integer", "minimum": 0, "description": "drag gesture duration (ms) spread across the interpolated path; omitted = 0 (fastest). The runtime clamps absurd values" },
+        "observe": { "$ref": "#/$defs/ObserveSpec", "description": "act-returns-observation: on a mutating verb, the runtime follows the ack with a fresh observation (cause = this action's call_id), captured per these screenshot-shaped parameters. Requires the welcome's capabilities.observe_after_act; rejected on non-mutating verbs" },
         "text": { "type": "string" },
         "keys": { "type": "string", "description": "e.g. 'ctrl+s'" },
         "dx": { "type": "number" },
@@ -171,15 +183,35 @@
         "quality": { "type": "integer", "minimum": 1, "maximum": 100, "description": "jpeg quality 1-100 (ignored for png); omitted = runtime default" },
         "delta": { "type": "boolean", "description": "start_screencast: dirty-tile delta mode. The runtime diffs each captured frame against the previous delivered one in 64px tiles and pushes only the changed tiles (`tiles` on the observation) instead of a full `image`; a full keyframe is sent on the first frame, after a resume, and periodically thereafter. Unchanged frames are idle-suppressed as usual. Omitted = false (full frames)." },
         "resume_stream": { "type": "string", "description": "on start_screencast, asks the runtime to continue the named logical stream: if the runtime still holds that stream's state, pushed frames carry the SAME `stream` id and `seq` continues from where it left off (the frame gap is detectable from the first frame); otherwise a fresh stream starts (new id, seq 0) and the client learns continuity was lost" },
-        "if_none_match": { "type": "string", "description": "screenshot: a `frame_hash` from a previous screenshot observation (this session's or — across forked replicas with near-identical screens — another session's). If the freshly captured frame's raw-pixel hash equals it, the runtime answers with the compact `not_modified` observation instead of re-sending the payload. Only meaningful against a runtime advertising capabilities.frame_dedup; a client MUST NOT send it otherwise (older runtimes reject unknown action fields)." }
+        "if_none_match": { "type": "string", "description": "screenshot: a `frame_hash` from a previous screenshot observation (this session's or — across forked replicas with near-identical screens — another session's). If the freshly captured frame's raw-pixel hash equals it, the runtime answers with the compact `not_modified` observation instead of re-sending the payload. Only meaningful against a runtime advertising capabilities.frame_dedup; a client MUST NOT send it otherwise (older runtimes reject unknown action fields)." },
+        "structured": { "type": "boolean", "description": "observe: capture the structured (a11y) tree. Omitted defaults to true — observe IS the structured verb (pixels are `screenshot`); an explicit false is rejected by the runtime" },
+        "diff": { "type": "boolean", "description": "observe: render tree_text as a diff (`~`/`+`/`-` lines) against this session's previous revision; falls back to the full tree when no baseline exists or the diff exceeds the runtime's line budget. The `elements` array stays the full live list either way" },
+        "settle_ms": { "type": "integer", "minimum": 0, "description": "observe: debounce a11y change notifications for this quiesce window (ms, runtime-clamped) before walking, so the tree is captured after the UI settles; the total settle wait is hard-capped runtime-side" }
       },
       "allOf": [
         { "if": { "required": ["verb"], "properties": { "verb": { "enum": ["click", "double_click", "right_click", "move", "scroll"] } } }, "then": { "required": ["target"] } },
+        { "if": { "required": ["verb"], "properties": { "verb": { "const": "drag" } } }, "then": { "required": ["target", "to"] } },
         { "if": { "required": ["verb"], "properties": { "verb": { "const": "type_text" } } }, "then": { "required": ["text"] } },
-        { "if": { "required": ["verb"], "properties": { "verb": { "const": "key" } } }, "then": { "required": ["keys"] } }
+        { "if": { "required": ["verb"], "properties": { "verb": { "const": "key" } } }, "then": { "required": ["keys"] } },
+        { "if": { "required": ["verb"], "properties": { "verb": { "enum": ["invoke_action", "set_value"] } } }, "then": { "required": ["target"] } },
+        { "if": { "required": ["verb"], "properties": { "verb": { "const": "set_value" } } }, "then": { "required": ["text"] } },
+        { "if": { "required": ["observe"] }, "then": { "properties": { "verb": { "$ref": "#/$defs/MutatingVerb" } } } },
+        { "if": { "anyOf": [ { "required": ["structured"] }, { "required": ["diff"] }, { "required": ["settle_ms"] } ] }, "then": { "properties": { "verb": { "const": "observe" } } } }
       ]
     },
-    "Verb": { "enum": ["click", "double_click", "right_click", "move", "scroll", "type_text", "key", "screenshot", "start_screencast", "stop_screencast", "wait"] },
+    "Verb": { "enum": ["click", "double_click", "right_click", "move", "drag", "mouse_down", "mouse_up", "scroll", "type_text", "key", "screenshot", "start_screencast", "stop_screencast", "wait", "observe", "invoke_action", "set_value"] },
+    "MutatingVerb": { "enum": ["click", "double_click", "right_click", "move", "drag", "mouse_down", "mouse_up", "scroll", "type_text", "key", "invoke_action", "set_value"], "description": "the verbs that mutate guest state and therefore admit the per-action `observe` argument — the coordinate tier plus the element verbs (screenshot/screencast/observe/wait do not)" },
+    "PointerButton": { "enum": ["left", "middle", "right"], "description": "pointer button name; omitted = left" },
+    "ObserveSpec": {
+      "type": "object", "additionalProperties": false,
+      "description": "act-returns-observation parameters — the same capture levers as a one-shot screenshot. The follow-up observation carries cause = the action's call_id (after the ack; a binary-negotiated session receives it as a binary frame).",
+      "properties": {
+        "scope": { "$ref": "#/$defs/Scope" },
+        "format": { "$ref": "#/$defs/ImageFormat" },
+        "quality": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "max_long_edge": { "type": "integer", "minimum": 1 }
+      }
+    },
     "ActionBatch": { "type": "object", "additionalProperties": false, "required": ["actions"], "description": "SDK-side batching convention (#73), NOT a wire message: it is deliberately absent from the top-level oneOf. The SDK dispatches each action as an independent `action` frame and aggregates results; batch_id/stop_on_error never appear on the wire. This $def documents/validates that client-side batch shape only.", "properties": { "batch_id": { "type": "string" }, "stop_on_error": { "type": "boolean", "description": "halt the batch on the first failing action (default true)" }, "actions": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/Action" }, "description": "ordered actions executed serially under a shared batch_id (#73)" } } },
     "Scope": { "oneOf": [ { "enum": ["screen", "active_window"] }, { "type": "string", "pattern": "^window:(0x[0-9a-fA-F]+|[0-9]+)$" } ], "description": "capture region: screen, active_window, or window:<id> (decimal or 0x-hex)" },
     "Target": {
@@ -194,11 +226,14 @@
       "type": "object", "additionalProperties": false,
       "required": ["ref", "role", "bbox"],
       "properties": {
-        "ref": { "type": "string" },
+        "ref": { "type": "string", "description": "stable per-session element id (e<N>): monotonically minted, kept while the element lives, evicted (never reused) when it disappears; a stale ref on an action answers a machine-readable `stale_element_ref:` error meaning re-observe" },
         "role": { "type": "string" },
         "name": { "type": "string" },
+        "description": { "type": "string" },
         "value": { "type": "string" },
         "states": { "type": "array", "items": { "type": "string" } },
+        "actions": { "type": "array", "items": { "type": "string" }, "description": "AT-SPI action names invokable via the invoke_action verb" },
+        "focused": { "type": "boolean", "description": "whether this element holds keyboard focus (also surfaced as the observation's `focus` ref)" },
         "bbox": { "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4, "description": "[x, y, w, h] in display pixels" },
         "source": { "$ref": "#/$defs/ElementSource" },
         "provenance": { "type": "object", "description": "backend-specific node identity for re-resolution (e.g. CDP backendDOMNodeId/AX nodeId, AT-SPI path)" }

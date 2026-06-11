@@ -16,6 +16,9 @@ VERB_CAPABILITY: dict[str, str | None] = {
     "double_click": "input_automation",
     "right_click": "input_automation",
     "move": "input_automation",
+    "drag": "input_automation",
+    "mouse_down": "input_automation",
+    "mouse_up": "input_automation",
     "scroll": "input_automation",
     "type_text": "input_automation",
     "key": "input_automation",
@@ -23,6 +26,11 @@ VERB_CAPABILITY: dict[str, str | None] = {
     "start_screencast": "screenshot",
     "stop_screencast": "screenshot",
     "wait": None,
+    # structured-observation family (M1b): reading the tree is gated like the
+    # SDK-local a11y capture; element actuation is input automation.
+    "observe": "a11y",
+    "invoke_action": "input_automation",
+    "set_value": "input_automation",
 }
 
 
