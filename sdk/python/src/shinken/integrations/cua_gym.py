@@ -36,10 +36,12 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import posixpath
 import re
 import shlex
 import subprocess
 import tempfile
+import time
 import uuid
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
@@ -145,9 +147,13 @@ class CuaGymTaskSource:
 
     @staticmethod
     def _load(bundle: Path) -> tuple[CuaGymTask | None, str | None]:
-        cfg_path = bundle / "config.json"
-        if not cfg_path.is_file():
-            return None, "no config.json"
+        # exported bundles ship the config as config.json (pipeline output) or task.json
+        # (the released HF artifact, cua_gym_tasks_v1) — same OSWorld-shape content.
+        cfg_path = next(
+            (p for n in ("config.json", "task.json") if (p := bundle / n).is_file()), None
+        )
+        if cfg_path is None:
+            return None, "no config.json/task.json"
         try:
             cfg = json.loads(cfg_path.read_text())
         except (OSError, json.JSONDecodeError) as exc:
@@ -238,9 +244,10 @@ class _DockerExec:
     """Default exec channel for Docker-backed providers: ``docker exec`` on the handle's
     container (duck-typed off ``provider.docker_bin`` + ``handle.metadata['container_id']``)."""
 
-    def __init__(self, docker_bin: str, container_id: str) -> None:
+    def __init__(self, docker_bin: str, container_id: str, *, user: str | None = None) -> None:
         self.docker_bin = docker_bin
         self.container_id = container_id
+        self.user = user
 
     def __call__(
         self,
@@ -251,6 +258,8 @@ class _DockerExec:
         detach: bool = False,
     ) -> tuple[int, str, str]:
         cmd = [self.docker_bin, "exec"]
+        if self.user:
+            cmd += ["-u", self.user]
         if detach:
             cmd.append("-d")
         if workdir:
@@ -359,7 +368,7 @@ class ShinkenCuaGymEnv:
             try:
                 run = self._exec_channel(sess, base)
                 for step in self.task.setup_steps:
-                    self._apply_setup_step(step, sess, run)
+                    self._apply_setup_step(step, sess, run, handle=base)
                 return self.provider.checkpoint(base)
             finally:
                 with contextlib.suppress(Exception):
@@ -368,7 +377,7 @@ class ShinkenCuaGymEnv:
             with contextlib.suppress(Exception):
                 self.provider.destroy(base)
 
-    def _apply_setup_step(self, step: dict, sess: Any, run: GuestExec) -> None:
+    def _apply_setup_step(self, step: dict, sess: Any, run: GuestExec, handle: Any = None) -> None:
         kind = step.get("type")
         params = step.get("parameters") or {}
         if kind == "download":
@@ -380,14 +389,76 @@ class ShinkenCuaGymEnv:
                         f"setup references {name!r} which is not in the bundle "
                         f"{self.task.path} (remote URLs are not fetched)"
                     )
-                sess.put_file(str(src), str(f.get("path")))
+                dest = str(f.get("path"))
+                self._ensure_guest_dir(posixpath.dirname(dest), run, handle)
+                sess.put_file(str(src), dest)
+                # docker cp stages as root; hand the file to the unprivileged exec user
+                # (best-effort: a non-Docker provider may stage with correct ownership).
+                uid_rc, uid_out, _ = run(["id", "-u"])
+                owner = uid_out.strip() if uid_rc == 0 and uid_out.strip() else "1000"
+                with contextlib.suppress(Exception):
+                    self._root_exec(handle)(["chown", owner, dest])
         elif kind == "execute":
-            command = str(params.get("command", ""))
-            rc, out, err = run(["sh", "-c", command], timeout=self.setup_timeout)
+            command = params.get("command", "")
+            # OSWorld-shape configs carry the command as a string (shell) OR an argv list
+            # (the released CUA-Gym bundles use ["bash", "-c", ...]).
+            argv = (
+                [str(c) for c in command]
+                if isinstance(command, list)
+                else ["sh", "-c", str(command)]
+            )
+            rc, out, err = run(argv, timeout=self.setup_timeout)
             if rc != 0:
                 raise CuaGymError(f"setup command failed (rc={rc}): {command!r}: {err or out}")
+        elif kind == "launch":
+            command = params.get("command", "")
+            argv = (
+                [str(c) for c in command]
+                if isinstance(command, list)
+                else ["sh", "-c", str(command)]
+            )
+            run(argv, detach=True)
+        elif kind == "sleep":
+            time.sleep(float(params.get("seconds", 1)))
+        elif kind == "open":
+            # open a file with the desktop's default handler (OSWorld vocabulary); the
+            # session environment supplies DISPLAY for GUI handlers.
+            run(["xdg-open", str(params.get("path", ""))], detach=True)
         else:
             raise CuaGymError(f"unsupported setup step type: {kind!r}")
+
+    def _root_exec(self, handle: Any = None) -> GuestExec:
+        """Root-level guest channel for provisioning (docker exec -u 0); the typed ACI
+        exec runs as the unprivileged session user by design."""
+        handle = handle if handle is not None else self._handle
+        return _DockerExec(
+            str(getattr(self.provider, "docker_bin", "docker")),
+            str(
+                (getattr(handle, "metadata", None) or {}).get("container_id")
+                or getattr(handle, "sandbox_id", "")
+            ),
+            user="0",
+        )
+
+    def _ensure_guest_dir(self, path: str, run: GuestExec, handle: Any = None) -> None:
+        """Make a download destination directory exist and be writable by the guest exec
+        user. Task bundles assume OSWorld-style paths (``/home/user/...``) that a lean
+        image may not ship; a plain ``mkdir -p`` covers writable parents, and on a
+        permission failure a root-level ``docker exec`` provisions + chowns the directory
+        (non-Docker providers must ship images with the expected paths)."""
+        if not path or path == "/":
+            return
+        rc, _, _ = run(["mkdir", "-p", path])
+        if rc == 0:
+            return
+        root_run = self._root_exec(handle)
+        uid_rc, uid_out, _ = run(["id", "-u"])
+        owner = uid_out.strip() if uid_rc == 0 and uid_out.strip() else "1000"
+        rc, _, err = root_run(
+            ["sh", "-c", f"mkdir -p {shlex.quote(path)} && chown -R {owner} {shlex.quote(path)}"]
+        )
+        if rc != 0:
+            raise CuaGymError(f"cannot provision guest dir {path!r}: {err}")
 
     def evaluate(self) -> float:
         """Run the bundle's ``reward.py`` inside the current replica and parse its
@@ -397,8 +468,13 @@ class ShinkenCuaGymEnv:
         reward = parse_reward(str(result.get("output", "")))
         if reward is None:
             rc = result.get("returncode")
+            if rc == 0:
+                # Released-bundle convention: reward scripts may early-exit cleanly with a
+                # diagnostic (e.g. "result file missing") and no REWARD line — that is a
+                # scored 0.0, not a broken scorer.
+                return 0.0
             raise CuaGymError(
-                f"reward.py produced no 'REWARD: X.X' line (rc={rc}): "
+                f"reward.py failed with no 'REWARD: X.X' line (rc={rc}): "
                 f"{str(result.get('error') or result.get('output'))[:300]}"
             )
         return reward

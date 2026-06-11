@@ -189,7 +189,7 @@ def test_task_source_skips_malformed_bundles_visibly(tmp_path):
     src = cg.CuaGymTaskSource(tmp_path)
     assert len(src) == 1
     reasons = {p.name: why for p, why in src.skipped}
-    assert reasons == {"no_reward": "no reward.py", "no_config": "no config.json"}
+    assert reasons == {"no_reward": "no reward.py", "no_config": "no config.json/task.json"}
     with pytest.raises(KeyError, match="no_reward"):
         src.get("no_reward")
 
@@ -430,3 +430,17 @@ def test_live_fork_reset_and_reward(tmp_path):
         assert env.golden_checkpoint == golden
         assert env.download("/tmp/marker.txt") == b"golden"  # inherited golden state
         assert env.evaluate() == 1.0
+
+
+def test_task_json_bundles_load_like_config_json(tmp_path):
+    """The released HF artifact (cua_gym_tasks_v1) names the config task.json."""
+    import json
+
+    bundle = tmp_path / "hf-task"
+    bundle.mkdir()
+    (bundle / "task.json").write_text(
+        json.dumps({"id": "hf-task", "instruction": "do it", "app_type": "x", "config": []})
+    )
+    (bundle / "reward.py").write_text("print('REWARD: 1.0')")
+    src = cg.CuaGymTaskSource(tmp_path)
+    assert len(src) == 1 and src.get("hf-task").instruction == "do it"
