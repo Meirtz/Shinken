@@ -20,6 +20,10 @@ below links to first-party data you can rerun ([`benchmarks/`](benchmarks)) or a
 ([`docs/benchmarks/`](docs/benchmarks/README.md)). What is design-only is marked, here and in
 the [status map](docs/engineering/status.md).
 
+<p align="center">
+  <img src="docs/assets/shinken-agent-sandbox-overview.png" alt="Shinken — agent sandbox runtime" width="860">
+</p>
+
 ## Quickstart
 
 ```bash
@@ -231,7 +235,7 @@ failure mode is codec-visual, not actuation (Kimi K2.6: 4/4 exact transcriptions
 lossless control vs 0/4 at q50@1024, lost to single-glyph JPEG misreads). Full ladders and
 the fleet egress projections: [`docs/benchmarks/`](docs/benchmarks/README.md).
 
-<p align="center"><img src="docs/assets/bench/bandwidth_bars.png" width="680"></p>
+<p align="center"><img src="docs/assets/bench/obs_quality.png" width="820"></p>
 
 **Functional.** Single-task OSWorld gate passed (1 task of the 369-task suite: Kimi K2.6 over
 `shinkend`, official evaluator **score 1.0**, 6 steps, 110 s — a conformance sweep has not
@@ -316,6 +320,10 @@ Most computer-use sandboxes are *mogitō* — training swords: fine for demos an
 not built for real side effects, forkable state, or scale. **Shinken (真剣)** means a real
 sword — and idiomatically, *doing something in earnest*: a runtime with typed actions,
 checkpointable state, and eval on the same substrate production agents run on.
+
+<p align="center">
+  <img src="docs/assets/shinken-vs-mogito.png" alt="Mogito training sword versus Shinken real sword" width="820">
+</p>
 
 ## Repository layout
 
