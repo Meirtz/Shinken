@@ -205,6 +205,7 @@ def rollout_rows(
 
 # ------------------------------------------------------------------ engine
 
+
 def _parse_click_target(target: str) -> dict:
     """``'e7'`` → element ref; ``'640,420'`` → pixel point. Typed error otherwise."""
     t = target.strip()
@@ -435,6 +436,7 @@ class ShinkenComputerEngine:
 
 
 # ------------------------------------------------------------------ nemo_gym adapter
+
 
 def extract_task_id(payload: Mapping[str, Any]) -> str | None:
     """Pull ``metadata.task_id`` out of a seed-session body (the agent forwards its run
