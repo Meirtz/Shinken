@@ -46,6 +46,17 @@ sdk/python/.coverage
 
 # Claude Code harness state (worktrees, local agent scratch)
 .claude/
+.cursor/
+
+# Claude/Cursor session artifacts written into the working dir — transcripts, subagent
+# logs, tool-results, workflow journals, and the auto-memory mirror. These contain
+# internal references and API keys from the live session and must NEVER be committed.
+# (A `git add -A` once swept these into a PR; the no-internal guard caught it. Root-anchored
+# UUID-shaped globs match the per-session <uuid>.jsonl file and <uuid>/ dir.)
+/????????-????-????-????-????????????.jsonl
+/????????-????-????-????-????????????/
+/*.jsonl
+/memory/
 
 # local operator map (key files / secrets / branch state) — never upload
 map.md

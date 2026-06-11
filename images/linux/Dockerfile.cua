@@ -27,4 +27,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Not packaged by Debian: the two top Office writers task scripts import the most.
 RUN pip install --no-cache-dir --break-system-packages python-docx python-pptx
 
+# The desktop_app class (9.2k of 10.9k bundles; 6.5k LibreOffice) — setup scripts convert
+# documents with headless soffice and tweak the desktop with gsettings. arm64-native.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libreoffice-calc libreoffice-writer libreoffice-impress \
+        libglib2.0-bin dbus-x11 fonts-dejavu \
+    && rm -rf /var/lib/apt/lists/*
+
 USER shinken
