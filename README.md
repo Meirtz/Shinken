@@ -1,23 +1,36 @@
-# Shinken
+<p align="center">
+  <img src="docs/assets/logo.png" alt="Shinken" width="600">
+</p>
 
-[![CI](https://github.com/Meirtz/Shinken/actions/workflows/ci.yml/badge.svg)](https://github.com/Meirtz/Shinken/actions/workflows/ci.yml)
-[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+<p align="center">
+  <a href="https://github.com/Meirtz/Shinken/actions/workflows/ci.yml"><img src="https://github.com/Meirtz/Shinken/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache-2.0"></a>
+</p>
 
-> The open infrastructure stack for computer-use agents: **checkpoint / fork / resume of live
-> runtime state**, real desktops behind one typed interface, and evals, RL loops, and fleets
-> as thin orchestration over the same runtime production agents run on.
+> **Checkpoint a live desktop. Fork it into a fleet. Resume it later.**
+> Shinken is an open-source sandbox runtime for computer-use agents: real desktops your agent
+> clicks and types on, where the *running state* of the computer is something you can save,
+> copy, and hand around like a file.
 
-Shinken boots real desktops, drives them through a versioned **Agent-Computer Interface
-(ACI)**, and treats running state as a first-class object: name a checkpoint of a live
-session, spawn it into N verified replicas, resume it later. Everything downstream consumes
-that primitive — a gym whose `reset()` is a fork, evals that score N replicas of one golden
-state, fleets whose observation cost collapses because forked replicas render identical
-pixels. It is not a benchmark, a cloud browser, a VNC desktop, or a model adapter; **it is
-the runtime those plug into**.
+**Why it exists.** Agents that use real computers are trained and evaluated by the thousand,
+and most of that compute is spent rebuilding the same state over and over: boot the desktop,
+install the app, log in, navigate to step 7, fail, repeat. Shinken removes the repeat — reach
+a state **once**, checkpoint it **live** (the sandbox keeps running), and spawn verified
+replicas of that exact moment in **0.1–0.6 s** each.
 
-What is real today is a **measured Linux/X11 vertical slice under live CI** — every claim
-below links to first-party data you can rerun ([`benchmarks/`](benchmarks)) or audit
-([`docs/benchmarks/`](docs/benchmarks/README.md)). What is design-only is marked, here and in
+**Who it's for.**
+
+| you are | Shinken gives you |
+|---|---|
+| an **RL / agent trainer** | a gym whose `reset()` *is* a fork — **p50 ~60 ms** instead of re-provisioning per episode — plus drop-in adapters for uni-agent/verl, CUA-Gym, Agentix, ProRL-Agent-Server |
+| an **eval builder** | `run_eval_forked`: set a task up once, fork N replicas, score them all — on the same runtime production agents run on |
+| an **agent product team** | one typed, versioned interface (22 verbs) from keyless local Docker to a fleet: one process drives **128 real desktops**, one event loop holds **1,024 live sessions** |
+
+It is not a benchmark, a cloud browser, a VNC desktop, or a model adapter — **it is the
+runtime those plug into**. And it is honest about maturity: what is real today is a
+**measured Linux/X11 vertical slice under live CI** — every claim below links to first-party
+data you can rerun ([`benchmarks/`](benchmarks)) or audit
+([`docs/benchmarks/`](docs/benchmarks/README.md)); design-only parts are marked, here and in
 the [status map](docs/engineering/status.md).
 
 <p align="center">
@@ -145,6 +158,17 @@ away. Shinken's loop is typed at every edge and lands in checkpointable state:
 ```text
 observation (pixels now, hybrid structured designed) → typed action → verified result → checkpointable state
 ```
+
+## Why "Shinken"?
+
+Most computer-use sandboxes are *mogitō* — training swords: fine for demos and benchmarks,
+not built for real side effects, forkable state, or scale. **Shinken (真剣)** means a real
+sword — and idiomatically, *doing something in earnest*: a runtime with typed actions,
+checkpointable state, and eval on the same substrate production agents run on.
+
+<p align="center">
+  <img src="docs/assets/shinken-vs-mogito.png" alt="Mogito training sword versus Shinken real sword" width="820">
+</p>
 
 ## Measured results
 
@@ -315,17 +339,6 @@ numbers behind every "measured" are in [`docs/benchmarks/`](docs/benchmarks/READ
 | Sub-ms CoW fork fast tier | ○ designed | the Docker disk tier and the CRIU memory tier (`CriuDockerProvider`, privileged-only) are built + measured; the CoW/microVM fast tier remains designed (D5) |
 | macOS engine (D14) | 🟡 v1 slice | native CoreGraphics capture + CGEvent input in `shinkend` (`--backend macos`), TCC-honest readiness; local-only proof — no mac CI; AX tree designed |
 | Control plane, WebRTC/GPU, Windows/Wayland, `.skn` replay | ○ designed | reference path collapses these to one local `shinkend` |
-
-## Why "Shinken"?
-
-Most computer-use sandboxes are *mogitō* — training swords: fine for demos and benchmarks,
-not built for real side effects, forkable state, or scale. **Shinken (真剣)** means a real
-sword — and idiomatically, *doing something in earnest*: a runtime with typed actions,
-checkpointable state, and eval on the same substrate production agents run on.
-
-<p align="center">
-  <img src="docs/assets/shinken-vs-mogito.png" alt="Mogito training sword versus Shinken real sword" width="820">
-</p>
 
 ## Repository layout
 
