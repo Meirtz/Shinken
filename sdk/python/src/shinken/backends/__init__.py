@@ -36,7 +36,16 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from shinken.providers.base import SandboxProvider
 
-__all__ = ["register_backend", "get_backend", "list_backends"]
+from .routed import RoutedSession, dispatch_action, route_for_target
+
+__all__ = [
+    "register_backend",
+    "get_backend",
+    "list_backends",
+    "RoutedSession",
+    "dispatch_action",
+    "route_for_target",
+]
 
 #: name -> zero-arg-or-kwargs factory returning a configured SandboxProvider.
 _REGISTRY: dict[str, Callable[..., SandboxProvider]] = {}

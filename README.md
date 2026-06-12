@@ -388,6 +388,13 @@ with provider.session() as env:
   Route CU vs BU at the Operator level (by target app/URL) — that routing layer is the
   designed next step.
 
+**Compose CU + BU under one loop.** `shinken.backends.RoutedSession` holds named surfaces
+(e.g. `{"cu": desktop, "bu": browser}`), routes each ACI action to the right one (explicit
+`surface=`, or `navigate`/`eval` imply BU), and tags every action + observation with `source`
+provenance — the host-side CU↔BU split codex does. It quacks like a Sandbox, so the Operator
+loop drives it unchanged; partial surfaces degrade loudly (a verb a surface doesn't advertise
+raises). Example: [`examples/backends_routed_cu_bu.py`](examples/backends_routed_cu_bu.py).
+
 Register your own backend with `shinken.backends.register_backend`.
 
 ## Integrations
