@@ -24,7 +24,8 @@ from shinken.providers.base import UnsupportedProviderOperation  # noqa: E402
 
 
 class _Commands:
-    def run(self, cmd):
+    # the real e2b Commands.run shape: accepts timeout/background kwargs
+    def run(self, cmd, background=None, timeout=60, **_kw):
         return type(
             "R", (), {"stdout": f"$ {cmd}\n(ok)", "stderr": "", "exit_code": 0}
         )()
@@ -42,20 +43,20 @@ class FakeE2bDesktop:
     def get_screen_size(self):
         return (1280, 800)
 
-    def screenshot(self, fmt="bytes"):
+    def screenshot(self, format="bytes"):  # noqa: A002 - the real SDK's param name
         return bytearray(b"\x89PNG" + b"e2b-cloud-frame")
 
     def left_click(self, x=None, y=None):
-        self.log.append(f"left_click({x},{y})")
+        self.log.append("left_click()")
 
     def right_click(self, x=None, y=None):
-        self.log.append(f"right_click({x},{y})")
+        self.log.append("right_click()")
 
     def double_click(self, x=None, y=None):
-        self.log.append(f"double_click({x},{y})")
+        self.log.append("double_click()")
 
     def middle_click(self, x=None, y=None):
-        self.log.append(f"middle_click({x},{y})")
+        self.log.append("middle_click()")
 
     def move_mouse(self, x, y):
         self.log.append(f"move_mouse({x},{y})")
@@ -79,7 +80,7 @@ class FakeE2bDesktop:
         self.log.append(f"drag({fr}->{to})")
 
     def launch(self, application, uri=None):
-        self.log.append(f"launch({application})")
+        self.log.append(f"launch({application}{', ' + uri if uri else ''})")
 
     def kill(self):
         self.log.append("kill")

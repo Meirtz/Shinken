@@ -1,7 +1,7 @@
 # Shinken — Technical Decisions (ADRs)
 
 > The keystone document. Each Architecture Decision Record (ADR) below corresponds to one
-> of the fourteen decisions D1–D14 that define Shinken. Every ADR follows one template:
+> of the fifteen decisions D1–D15 that define Shinken. Every ADR follows one template:
 > **Title · Status · Context · Decision · Alternatives (and why rejected) ·
 > Consequences (positive / negative / risks) · Evidence**.
 >
@@ -44,6 +44,7 @@
 | **D12** | Business = open self-hostable core + optional hosted commercial layer | Accepted | No lock-in; runtime-state wedge; trajectory export as byproduct; optimized for NVIDIA where present |
 | **D13** | Operation layer = one dual-tier observe + stable element identity/diffs + an element verb family | Accepted (phased) | One observe returns pixels + tree + focus; stable ids → `~/+/-` diffs; settle-before-observe; act-returns-observation; per-app scoping; physical events first — design canon in [operation-layer.md](operation-layer.md) |
 | **D14** | macOS engine substrate = ScreenCaptureKit + AXUIElement + CGEvent under TCC | Accepted (phased) | One-shot SCK capture, AX tree (incl. Chromium/Electron enable attributes), CGEvent input; permissions-pending observe keeps the session alive |
+| **D15** | Operation-layer backends = a pluggable execution substrate under the typed ACI | Accepted | `SandboxProvider` → duck-typed Sandbox; honest capability negotiation (typed `UnsupportedProviderOperation`, never a silent no-op); lazy SDK-free registry; `RoutedSession` CU↔BU composition with `source` provenance |
 
 ---
 
@@ -807,10 +808,11 @@ The macOS engine is built on three public-API pillars under the platform consent
 
 ## D15 — Operation-layer backends: a pluggable execution substrate under the typed ACI
 
-**Status:** Accepted. **Built** (Linux-proven): `shinken.backends` ships four adapters —
+**Status:** Accepted. **Built** (fixture-verified): `shinken.backends` ships four adapters —
 `cua`, `mcp-computer` (codex-style AX MCP), `browser-runtime` (CDP), and `e2b` (E2B cloud
-desktop) — plus `RoutedSession` CU↔BU composition, all under live tests with protocol-faithful
-in-memory peers. This ADR fixes the *contract* those adapters implement so external systems are
+desktop) — plus `RoutedSession` CU↔BU composition, all under tests with protocol-faithful
+in-memory peers; **no live third-party driver runs in CI yet** (a real cua VM / MCP server /
+browser / e2b cloud smoke remains open). This ADR fixes the *contract* those adapters implement so external systems are
 a first-class substrate, not a fork. Implements the seam from D1 (substrate-pluggable
 provider) and D8 (native SDK core) at the operation layer (D13).
 
@@ -879,7 +881,8 @@ third party's API. The inherited `provider.session()` lifecycle works unchanged.
 
 - **Positive:** Shinken becomes the pluggable substrate — top: harnesses; middle: typed ACI +
   capability negotiation + fork-native state (which none of the four drivers have); bottom: many
-  execution backends. New backends are ~100 lines (the e2b adapter is the proof). The field's
+  execution backends. New backends are a few hundred lines (the e2b adapter is ~350,
+  most of it honest edge handling). The field's
   maturity is reused instead of re-implemented, and the contract stays vendor-neutral.
 - **Negative:** capability fragmentation is now first-class — a consumer must read
   `capabilities` and handle `UnsupportedProviderOperation`, not assume the full surface. The

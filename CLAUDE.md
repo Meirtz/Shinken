@@ -39,7 +39,7 @@ committed is world-readable.
 
 | Path | Tracked? | What |
 |------|----------|------|
-| `docs/` | ✅ | Authoritative docs: vision, PRD, architecture, OSWorld teardown, landscape, ADRs (D1–D14), roadmap, glossary, isolation & capability note, economics, Phase-0 plan, ACI spec, operation layer |
+| `docs/` | ✅ | Authoritative docs: vision, PRD, architecture, OSWorld teardown, landscape, ADRs (D1–D15), roadmap, glossary, isolation & capability note, economics, Phase-0 plan, ACI spec, operation layer |
 | `notes/` | ✅ | 9 working notes: per-domain deep dives, open questions, sources |
 | `README.md`, `LICENSE` (Apache-2.0) | ✅ | front matter |
 | `schema/` | ✅ | ACI JSON Schema (`aci.schema.json`) |
@@ -52,7 +52,7 @@ committed is world-readable.
 
 ## Conventions
 
-- **The public design canon is `docs/design/tech-decisions.md`** — decisions are numbered **D1–D14**.
+- **The public design canon is `docs/design/tech-decisions.md`** — decisions are numbered **D1–D15**.
   When changing a design decision, update the relevant ADR and reconcile sibling docs to the same
   D-number.
 - Naming (use consistently): **Shinken** (platform), **Sandbox** / **Session**, **Guest Runtime**
@@ -94,7 +94,11 @@ opt-in **warm-pool fork graft** (pre-booted containers + `docker diff` delta) se
 restore/fork without the boot (files-only, same tier as `docker commit`) — see
 [docs/engineering/benchmarks.md](docs/engineering/benchmarks.md) §1/§9. The Python SDK
 (sync facade + reader/demux, plus a pipelined `step()` — k actions + a fused observation in
-~1 RTT, S11-measured) ships too. `.skn` recording is **not** built (removed/deferred, #216/#217). Full built-vs-designed
+~1 RTT, S11-measured) ships too. The **operation-layer backend contract (D15,
+`shinken.backends`) is built**: `cua` / `mcp-computer` (codex-style AX MCP) / `browser-runtime`
+(CDP) / `e2b` adapters + `RoutedSession` CU↔BU composition with `source` provenance — honest
+capability negotiation, fixture-tested with protocol-faithful in-memory peers (no live
+third-party driver in CI yet). `.skn` recording is **not** built (removed/deferred, #216/#217). Full built-vs-designed
 map: **[docs/engineering/status.md](docs/engineering/status.md)**.
 
 The immediate work (per the recalibrated priorities):

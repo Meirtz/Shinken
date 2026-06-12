@@ -90,7 +90,9 @@ These appear in the vision/PRD/architecture/README in present-ish tense, but **n
 - **Browser Runtime** — the browser-specialized runtime profile (Playwright-locator-subset scripts /
   semantic node-ids over the DOM / pixels via CDP) outlined in
   [operation-layer.md §10](../design/operation-layer.md) is **designed-only**; only its CDP
-  coverage basis is first-party-measured (spike #2/E5).
+  coverage basis is first-party-measured (spike #2/E5). (Distinct from the **built** SDK-local
+  `browser-runtime` *backend* (D15, see ✅ above), which drives an *external* CDP browser through
+  the same three-surface shape — it is not this in-guest, Shinken-managed runtime.)
 - **Capability Manager panel + production resource-scoping layer** — the designed control-plane 3-layer model (Cedar decision + object-capability caretaker + OS-level scoping + egress proxy + secret broker) that scopes which resources a session can reach. Only the **local Action Gateway shim** exists today (see Partial, above); the production control-plane layer is **not implemented**.
 - **Runtime-state fast tier** — the Docker **disk** tier and the **CRIU memory tier** (`snapshot_kind="process"`, `CriuDockerProvider`) are both implemented (see Partial + the ✅ table; the spike that gated the memory tier is [`spikes/criu-memory-tier/`](../../spikes/criu-memory-tier)). What remains designed-only here: the **sub-second CoW fork-from-snapshot fast tier** (Firecracker/QEMU, Phase-1) and any incremental/lazy CRIU path (no SOFT_DIRTY/USERFAULTFD on the dev-machine kernel). The memory tier's standing caveats: privileged containers + root desktop tree (a latency/state-fidelity feature, never an isolation posture — the microVM tier remains the production boundary, D1), and `at-spi-bus-launcher` is replaced by a launcher-less single-bus a11y stack because CRIU 3.17 cannot dump pidfds (`images/linux/start-criu.sh`). Runtime-state time-travel is the **headline differentiator** (D1/D5, #206).
 - **Replay / `.skn` recording and playback** — deferred to later design work; no runtime or SDK implementation is shipped now.
@@ -133,5 +135,5 @@ The roadmap names these as the de-risking spikes:
   and the structured-observation evidence (Spike A — since measured, verdict: hybrid). Treat the
   🔵/🔬 sections as the honest v0.0.1 and post-v0.0.1 backlog, not as a reduced product scope.
 
-_See also: [roadmap](roadmap.md), [tech decisions D1–D14](../design/tech-decisions.md),
+_See also: [roadmap](roadmap.md), [tech decisions D1–D15](../design/tech-decisions.md),
 hardening backlog (#56), a11y-coverage gate (#2)._

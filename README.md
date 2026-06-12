@@ -382,7 +382,7 @@ with provider.session() as env:
   `press`/`scroll`/`drag` over xdotool, plus a real shell, so `exec` and `launch_app` are
   served). Pixel-only — no accessibility tree, so `structured_observation=False`; e2b's own
   cloud pause/resume is a different, 1:1 tier, so no Shinken fork (`supports_fork=False`). A
-  ~100-line adapter — the proof that a new backend is cheap. Example:
+  ~350-line adapter — the proof that a new backend is cheap. Example:
   [`examples/backends_e2b_shinken.py`](examples/backends_e2b_shinken.py) (scripted, no key, no cloud).
 - **Browser Runtime / BU** (e.g. [open-browser-use](https://github.com/iFurySt/open-browser-use)) —
   `shinken.backends.browser_runtime`: the browser half, alongside the desktop (CU) backends.
@@ -473,7 +473,7 @@ shinken/
 ├─ examples/       Runnable interop examples (CUA-Gym, Agentix, uni-agent — scripted, no model API)
 ├─ benchmarks/     Rerunnable benchmark suites + tracked raw results (local + remote CSVs)
 ├─ spikes/         a11y-coverage (E5) + CRIU memory-tier spike evidence
-├─ docs/           Design canon (ADRs D1–D14), engineering status, benchmark report
+├─ docs/           Design canon (ADRs D1–D15), engineering status, benchmark report
 └─ notes/          Working notes: per-domain deep dives, open questions, sources
 ```
 

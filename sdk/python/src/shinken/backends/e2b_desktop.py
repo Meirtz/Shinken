@@ -7,8 +7,9 @@ syntax), ``get_screen_size``, ``launch``/``open``, and ``commands.run`` (a real 
 :class:`E2bDesktopSandbox` adapts that surface to the duck-typed Sandbox the operation layer
 drives; :class:`E2bDesktopBackend` wraps it in the provider lifecycle.
 
-Honest capabilities: pointer/keyboard/scroll/screenshot/**exec** (e2b ships a shell, unlike
-the AX-only backends) + ``launch_app``. What it does NOT have: a structured observation tier
+Honest capabilities: pointer (click/drag)/keyboard/scroll/screenshot/pixel ``observe``/
+**exec** (e2b ships a shell, unlike the AX-only backends) + ``launch_app``. What it does NOT
+have: a structured observation tier
 (no accessibility tree → ``structured_observation=False``, pixel-only ``observe``) and no
 Shinken-style content-addressed fork (``supports_fork=False`` → ``checkpoint``/``spawn`` raise
 ``UnsupportedProviderOperation``; e2b's own cloud pause/resume is a different, 1:1 tier).
@@ -32,9 +33,41 @@ from ..providers.base import (
     SandboxHandle,
     SandboxProvider,
     SandboxSpec,
+    UnsupportedProviderOperation,
 )
 
-_E2B_VERBS = ["click", "type_text", "key", "scroll", "screenshot", "exec", "launch_app"]
+_E2B_VERBS = [
+    "click",
+    "drag",
+    "type_text",
+    "key",
+    "scroll",
+    "screenshot",
+    "observe",
+    "exec",
+    "launch_app",
+]
+
+# Shinken-canonical key spellings that e2b's map_key/xdotool would otherwise turn into a
+# SILENT no-op (xdotool prints "No such key name" and exits 0): map them to e2b KEYS entries
+# or exact X11 keysym names before press().
+_KEY_SPELLINGS = {
+    "pageup": "page_up",
+    "pgup": "page_up",
+    "pagedown": "page_down",
+    "pgdn": "page_down",
+    "ins": "insert",
+    "capslock": "caps_lock",
+    "numlock": "num_lock",
+    "scrolllock": "scroll_lock",
+    "printscreen": "print",
+    "prtsc": "print",
+    "equals": "equal",
+    "dot": "period",
+    "backtick": "grave",
+    "apps": "menu",
+    "return": "enter",
+}
 
 
 def _default_sandbox_factory(spec: SandboxSpec | None):  # pragma: no cover - needs E2B + key
@@ -46,7 +79,18 @@ def _default_sandbox_factory(spec: SandboxSpec | None):  # pragma: no cover - ne
             "(pip install e2b-desktop) and an E2B_API_KEY; pass sandbox_factory= to inject "
             "your own e2b_desktop.Sandbox"
         ) from exc
-    return Sandbox()
+    # The bare Sandbox() constructor is non-functional in e2b v2 (missing required internal
+    # args) and would not boot the desktop anyway — only create() starts Xvfb/xfce4/VNC.
+    kwargs: dict[str, Any] = {}
+    if spec is not None:
+        if spec.image:
+            kwargs["template"] = spec.image
+        geom = (spec.screen_geometry or "").split("x")
+        if len(geom) >= 2:
+            kwargs["resolution"] = (int(geom[0]), int(geom[1]))
+        if "timeout" in spec.metadata:
+            kwargs["timeout"] = spec.metadata["timeout"]
+    return Sandbox.create(**kwargs)
 
 
 class E2bDesktopSandbox:
@@ -94,6 +138,10 @@ class E2bDesktopSandbox:
 
     def screenshot(self, scope: str = "screen", **_kw: Any) -> dict:
         self._guard()
+        if scope != "screen":  # full-screen scrot only — never label pixels with a scope not served
+            raise UnsupportedProviderOperation(
+                f"e2b-desktop screenshot serves scope='screen' only (requested {scope!r})"
+            )
         png = self._sb.screenshot("bytes")
         w = h = None
         try:
@@ -110,6 +158,7 @@ class E2bDesktopSandbox:
         }
 
     def observe(self, structured: bool = False, source: Any = None, **_kw: Any) -> dict:
+        self._guard()
         if structured:  # e2b has no accessibility tree — degrade honestly, never fake one
             return {
                 "type": "observation",
@@ -138,14 +187,19 @@ class E2bDesktopSandbox:
         self._guard()
         if x is None or y is None:
             raise ValueError("e2b-desktop click requires pixel x,y (no element_ref support)")
-        if count >= 2:
-            self._sb.double_click(x, y)
-        elif button == "right":
-            self._sb.right_click(x, y)
-        elif button == "middle":
-            self._sb.middle_click(x, y)
+        # Move explicitly: the SDK's own click methods guard the move with `if x and y:`
+        # (truthiness), so a click at x==0 or y==0 would land at the previous cursor position.
+        self._sb.move_mouse(x, y)
+        single = {"right": self._sb.right_click, "middle": self._sb.middle_click}.get(
+            button, self._sb.left_click
+        )
+        if count >= 2 and button == "left":
+            self._sb.double_click()
+        elif count >= 2:  # SDK double_click is xdotool button 1 — never use it for right/middle
+            for _ in range(count):
+                single()
         else:
-            self._sb.left_click(x, y)
+            single()
         return {"ok": True}
 
     def type_text(self, text: str, **_kw: Any) -> dict:
@@ -155,14 +209,18 @@ class E2bDesktopSandbox:
 
     def key(self, keys: str, **_kw: Any) -> dict:
         self._guard()
-        parts = [p for p in keys.replace(" ", "").split("+") if p]
+        parts = [_KEY_SPELLINGS.get(p.lower(), p) for p in keys.replace(" ", "").split("+") if p]
         self._sb.press(parts if len(parts) > 1 else (parts[0] if parts else keys))
         return {"ok": True}
 
     def scroll(self, dx: int = 0, dy: int = 0, **_kw: Any) -> dict:
         self._guard()
+        if dx and not dy:  # e2b scroll is vertical-only — never actuate a different gesture
+            raise UnsupportedProviderOperation(
+                "e2b-desktop scroll is vertical-only (horizontal dx unsupported)"
+            )
         direction = "down" if dy >= 0 else "up"
-        self._sb.scroll(direction=direction, amount=max(1, abs(dy) or abs(dx) or 1))
+        self._sb.scroll(direction=direction, amount=max(1, abs(dy)))
         return {"ok": True}
 
     def drag(
@@ -192,7 +250,25 @@ class E2bDesktopSandbox:
     ) -> dict:
         self._guard()
         cmd = shell if shell is not None else shlex.join(argv or [])
-        res = self._sb.commands.run(cmd)
+        try:
+            # e2b's run() defaults to a 60 s cap; its documented "no limit" is timeout=0,
+            # which matches Shinken's timeout=None semantics.
+            res = self._sb.commands.run(cmd, timeout=0 if timeout is None else timeout)
+        except Exception as exc:  # noqa: BLE001 - converted to the typed result below
+            if getattr(exc, "exit_code", None) is not None:
+                # e2b RAISES CommandExitException (itself a CommandResult) on non-zero exit;
+                # the Shinken exec contract returns a typed result instead.
+                res = exc
+            elif "timeout" in type(exc).__name__.lower():
+                return {
+                    "stdout": "",
+                    "stderr": "",
+                    "exit_code": None,
+                    "returncode": None,
+                    "timed_out": True,
+                }
+            else:
+                raise
         rc = getattr(res, "exit_code", 0)
         return {
             "stdout": getattr(res, "stdout", "") or "",
@@ -204,7 +280,13 @@ class E2bDesktopSandbox:
 
     def launch_app(self, app: str, args: list[str] | None = None, **_kw: Any) -> dict:
         self._guard()
-        self._sb.launch(app)
+        if not args:
+            self._sb.launch(app)
+        elif len(args) == 1:
+            self._sb.launch(app, uri=args[0])  # gtk-launch carries exactly one URI
+        else:
+            # more than gtk-launch can carry — use the shell instead of dropping arguments
+            self._sb.commands.run(shlex.join([app, *args]), background=True, timeout=0)
         return {"ok": True}
 
     # -- runtime-state family: loud degrade (e2b cloud pause/resume is a different tier) --

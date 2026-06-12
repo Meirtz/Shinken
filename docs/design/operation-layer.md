@@ -7,11 +7,15 @@
 > [Observation backends](observation-backends.md) · [a11y spike report](../engineering/spike-a11y-coverage.md) ·
 > wire schema [`../../schema/aci.schema.json`](../../schema/aci.schema.json)
 >
-> **Reality check:** everything in this document is **design**, reconciled to the measured evidence
-> from the a11y-coverage spike (#2/E5). The built slice today is the Linux/X11 pixel loop plus
-> SDK-side AT-SPI/CDP reference paths; the guest-side observation engine, the stable-id/diff layer,
-> the new verbs, the macOS engine, and the Browser Runtime are **designed-only, not built** — see
-> [status.md](../engineering/status.md).
+> **Reality check:** the §12 table is the per-piece truth and
+> [status.md](../engineering/status.md) the authoritative map. The Linux v1 core of this contract
+> is **built** (pixel loop; stable-id/diff/settle observe; act-returns-observation; element verbs;
+> the G1–G3 desktop verbs), as is the **operation-layer backend contract** (§13/D15 — incl. the
+> SDK-local `browser-runtime` CDP backend). The macOS engine is a capture+input slice (local-only,
+> D14); the in-guest **Browser Runtime**, the remaining D13 verbs (`set_text_selection`,
+> `scroll_element`, per-app observe selector, hint packs), and the Windows engine are
+> **designed-only, not built** — all reconciled to the measured evidence from the a11y-coverage
+> spike (#2/E5).
 
 The ACI spec defines Shinken's north-star surface; this document specifies the **operation layer**
 beneath it — how an agent *actually* perceives and manipulates a real desktop, step by step, with
@@ -332,7 +336,10 @@ The Browser Runtime presents **three tab surfaces**, mirroring the desktop tier 
 Status honesty: the Browser Runtime is **designed/phase-next** — except that the **CDP coverage
 basis is already first-party-measured** by the spike (every labeled control on Chromium page
 content resolved over CDP, on both a browser and a real Electron app; canvas measured at zero).
-The surface design builds on that measurement; the runtime itself is not built.
+The surface design builds on that measurement; the runtime itself is not built. **Do not confuse
+it with the built `browser-runtime` *backend*** (§13/D15): that is an SDK-local adapter driving
+an *external* CDP browser through the same three-surface shape — this section's in-guest,
+Shinken-managed runtime remains designed-only.
 
 ## 11. Operating consent and app allow-lists
 
@@ -353,7 +360,7 @@ so the hot loop never prompts.
 | One dual-tier `observe`; stable-id + diff engine; settle-before-observe; act-returns-observation; app/window scoping; element verb family; serialization grammar; hint packs | **designed-only** (D13) |
 | macOS engine (ScreenCaptureKit + AXUIElement + CGEvent + TCC posture) | **designed-only** (D14) |
 | Windows engine (UIA + SendInput) | **designed-only** (D10) |
-| Browser Runtime (three tab surfaces) | **designed-only**; CDP coverage basis measured |
+| Browser Runtime (three tab surfaces, in-guest) | **designed-only**; CDP coverage basis measured (the built `browser-runtime` *backend* in the next row is the SDK-local adapter, not this runtime) |
 | Operation-layer backend contract (third-party drivers under the ACI; honest capability negotiation; `RoutedSession` CU↔BU) | **built** (D15; `shinken.backends` — `cua`/`mcp-computer`/`browser-runtime`/`e2b`/`routed`) |
 
 The authoritative built-vs-designed map remains [status.md](../engineering/status.md); wire shapes

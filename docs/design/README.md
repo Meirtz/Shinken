@@ -26,7 +26,7 @@ eval, substrates, streaming, and future cross-OS/GPU tiers.
 ## Rules
 
 - ADRs in [`tech-decisions.md`](tech-decisions.md) are the source of truth for design
-  decisions D1-D14.
+  decisions D1-D15.
 - Design docs may describe target architecture, but must distinguish target, v0.0.1, and later
   optimized/production tiers when that matters.
 - Current implementation claims should link to [`../engineering/status.md`](../engineering/status.md), not be duplicated.

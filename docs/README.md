@@ -24,7 +24,7 @@ compatibility stubs that preserve old external links; the canonical copies live 
 | 02 | [Architecture](design/architecture.md) | System architecture: control plane + Sandbox/Guest Runtime + Operator + Control Panel; the 3 planes; data flow; substrate matrix | ✅ |
 | 03 | [OSWorld teardown](design/osworld-analysis.md) | Deep analysis of OSWorld: how it works, what to keep, what's too primitive (with file:line), mapped to our decisions | ✅ |
 | 04 | [Competitive & tech landscape](design/landscape.md) | The 4-camp survey, per-competitor capsules, competitive matrix, per-domain tech options | ✅ |
-| 05 | [Technical decisions (ADRs)](design/tech-decisions.md) | One ADR per decision D1–D14: context, decision, alternatives, consequences, evidence | ✅ |
+| 05 | [Technical decisions (ADRs)](design/tech-decisions.md) | One ADR per decision D1–D15: context, decision, alternatives, consequences, evidence | ✅ |
 | 06 | [Roadmap](engineering/roadmap.md) | Phased plan: v0.0.1 semantic-complete reference runtime → performance/scale → eval at concurrency → cross-OS → cloud + GPU | ✅ |
 | 07 | [Glossary](design/glossary.md) | Shared vocabulary | ✅ |
 | 08 | [Isolation & capability note](design/threat-model.md) | Runtime design note: the isolation boundary (D1) and capability scoping (D6), built vs designed | ✅ |
