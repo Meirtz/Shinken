@@ -7,8 +7,8 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache-2.0"></a>
 </p>
 
-> **Checkpoint a live desktop. Fork it into a fleet of thousands. Drive 8K+ sandbox of them from
-> a laptop.**
+> **Checkpoint a live desktop. Fork it into a fleet of thousands. Drive 8K+ sandboxes from one
+> laptop.**
 > Shinken is the open-source runtime for **scalable computer-use environments**: real desktops
 > your agent clicks and types on, where the *running state* is something you save, fork, and
 > hand around like a file — and where scale is a property of the runtime, not your cloud bill.
