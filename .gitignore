@@ -47,6 +47,8 @@ sdk/python/.coverage
 # Claude Code harness state (worktrees, local agent scratch)
 .claude/
 .cursor/
+# agent-harness onboarding mirror (local-only; CLAUDE.md is the tracked canon)
+/AGENTS.md
 
 # Claude/Cursor session artifacts written into the working dir — transcripts, subagent
 # logs, tool-results, workflow journals, and the auto-memory mirror. These contain
