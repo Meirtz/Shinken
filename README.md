@@ -7,16 +7,19 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache-2.0"></a>
 </p>
 
-> **Checkpoint a live desktop. Fork it into a fleet. Resume it later.**
+> **Checkpoint a live desktop. Fork it into a fleet of thousands. Drive the whole fleet
+> from one laptop.**
 > Shinken is an open-source sandbox runtime for computer-use agents: real desktops your agent
 > clicks and types on, where the *running state* of the computer is something you can save,
-> copy, and hand around like a file.
+> copy, and hand around like a file — and where scale is a property of the runtime, measured,
+> not a property of your cloud bill.
 
 **Why it exists.** Agents that use real computers are trained and evaluated by the thousand,
 and most of that compute is spent rebuilding the same state over and over: boot the desktop,
 install the app, log in, navigate to step 7, fail, repeat. Shinken removes the repeat — reach
 a state **once**, checkpoint it **live** (the sandbox keeps running), and spawn verified
-replicas of that exact moment in **0.1–0.6 s** each.
+replicas of that exact moment in **0.1–0.6 s** each. Then it holds the fleet those replicas
+become: thousands of live sessions on a single event-loop thread, from a MacBook Pro.
 
 **Who it's for.**
 
@@ -24,7 +27,7 @@ replicas of that exact moment in **0.1–0.6 s** each.
 |---|---|
 | an **RL / agent trainer** | a gym whose `reset()` *is* a fork (**~60–120 ms** warm-pool), wired into the stack at the right seams: **training frameworks** (verl/uni-agent, NeMo Gym, ProRL-Agent-Server), **task suites** (OSWorld, CUA-Gym), **agent frameworks** (Agentix) |
 | an **eval builder** | `run_eval_forked`: set a task up once, fork N replicas, score them all — on the same runtime production agents run on |
-| an **agent product team** | one typed, versioned interface (22 verbs) from keyless local Docker to a fleet: one process drives **128 real desktops**, one event loop holds **3,096 live sessions** |
+| an **agent product team** | one typed, versioned interface from keyless local Docker to a fleet: one process drives **128 real desktops**, one event loop holds **3,096 live sessions** — measured to the test host's port-pool ceiling at 0.93 cores, with 8K+ per process as designed headroom |
 | a stack with its own driver | the same ACI runs **over your system**: trycua/cua, codex-style MCP desktop servers, CDP browsers, and E2B desktops plug in *under* the typed interface as backends (D15) |
 
 Benchmarks, cloud browsers, VNC desktops, and model adapters all plug into it — **Shinken is
@@ -166,20 +169,24 @@ Every sandbox stays addressable through `env.handle`; `shinken ps` lists what is
 
 Agent workloads multiply **environments** faster than anything else — an RL run wants
 thousands of rollouts, an eval wants N attempts per task, a swarm wants a desktop per agent.
-Shinken treats the environment plane as the thing that has to scale first, and measures it:
+Shinken treats the environment plane as the thing that has to scale first, and measures it.
+Every number below comes from **one MacBook Pro**; the WAN rows ran over an ordinary
+residential connection. No cluster was harmed:
 
 - one client process drives **128 real Docker desktops** (128/128 booted in 7.3 s,
   ~900 observations/s aggregate, 2 OS threads);
 - the client plane holds **3,096 live sessions on a single event-loop thread** — sustained
-  **2,320 frames/s ≈ 870 Mbps of decoded observations at 0.93 cores** — so driving the fleet
-  stays off the critical path;
+  **2,320 frames/s ≈ 870 Mbps of decoded observations at 0.93 cores**. What capped the test
+  was the laptop's loopback port pool; the runtime never left one core, so 8K+ sessions per
+  process is headroom in the architecture, and driving the fleet stays off the critical path;
 - forked fleets cut observation traffic **18.6×** (replicas render byte-identical pixels, so
   the fleet pays for each distinct screen once);
 - the pipelined `step()` holds a k-action step at **~1 RTT** over WAN, whatever k the policy
-  emits.
+  emits — measured from that same laptop on a home connection, against real remote sandboxes.
 
 Every number above is a measurement with tracked raw data and a rerun command:
-[docs/benchmarks](docs/benchmarks/README.md).
+[docs/benchmarks](docs/benchmarks/README.md). If one laptop on apartment WiFi holds this,
+a real fleet host is a formality — the architecture is the capacity.
 
 <p align="center"><img src="docs/assets/bench/client_scale.png" width="820"></p>
 
@@ -536,6 +543,20 @@ numbers behind every "measured" are in [`docs/benchmarks/`](docs/benchmarks/READ
 | Sub-ms CoW fork fast tier | ○ designed | the Docker disk tier and the CRIU memory tier (`CriuDockerProvider`, privileged-only) are built + measured; the CoW/microVM fast tier remains designed (D5) |
 | macOS engine (D14) | 🟡 v1 slice | native CoreGraphics capture + CGEvent input in `shinkend` (`--backend macos`), TCC-honest readiness; local-only proof — no mac CI; AX tree designed |
 | Control plane, WebRTC/GPU, Windows/Wayland, `.skn` replay | ○ designed | reference path collapses these to one local `shinkend` |
+
+## The numbers, in one place
+
+All first-party, all from one MacBook Pro, all rerunnable
+([docs/benchmarks](docs/benchmarks/README.md)):
+
+| | |
+|---|---|
+| live sessions, one event-loop thread | **3,096 measured** at 870 Mbps sustained, 0.93 cores — capped by the test host's port pool, never the runtime |
+| real desktops, one process | **128** (128/128 booted in 7.3 s) |
+| fork → usable replica | **0.12 s** warm-pool · 0.40 s live memory (CRIU) · 0.60 s disk |
+| fleet observation dedup | **18.6×** at a 94.6% hit rate |
+| act+observe step | **13.4 ms** — ~14× cheaper than the incumbent guest server |
+| RL loop | **closed** — GRPO learns on real sandboxes; 35B-class MoE updates driven |
 
 ## Repository layout
 
