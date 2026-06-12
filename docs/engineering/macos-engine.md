@@ -100,6 +100,32 @@ Permission state is re-probed per call, so the `ready` query flips as soon as ma
 honors the grant — clients poll `ready` exactly like they do during Linux desktop boot
 (`display_up` plays the role of `x11_up`).
 
+## Interaction model: v1 is exclusive-desktop; the co-use tier is designed, not built
+
+v1 posts input **globally** (`CGEventPost` to the HID tap): clicks move the *real* cursor
+and keystrokes go to whatever is frontmost. That is **exclusive-desktop semantics** — correct
+when the Mac is the agent's machine for the duration, wrong for *co-use* (a human keeps
+working while the agent operates one app). The co-use reference implementation in the field
+([open-codex-computer-use](https://github.com/iFurySt/open-codex-computer-use)) does three
+things v1 does not:
+
+- **per-app background input** — `CGEvent.postToPid(pid)` delivers clicks/keys into the
+  target app's event queue without moving the shared cursor or stealing focus
+  (`InputSimulation.swift`), with an AX-action fallback (`kAXRaiseAction` etc.);
+- **a software cursor for the human** — a click-through overlay panel
+  (`SoftwareCursorOverlay.swift`: `ignoresMouseEvents`, joins all Spaces, level tracks the
+  target window) animated by a motion model, so the user *sees* the agent act;
+- **cursor-free observations** — its SCK capture sets `showsCursor = false`
+  (`AccessibilitySnapshot.swift:416`); the model grounds on the element-indexed AX tree, the
+  human on the overlay.
+
+Shinken's captures are already cursor-free on both engines (CoreGraphics and X11
+`XGetImage` never composite the hardware cursor — load-bearing for fork-fleet frame-hash
+dedup and idle suppression). The missing co-use pieces are per-pid posting and the overlay —
+the **D14 co-use tier, designed-only**. Until it lands, the co-use answer on macOS is the
+**`mcp-computer` operation-layer backend** (D15): a codex-style AX server drives apps in the
+background under the same ACI.
+
 ## Input verbs and keymap coverage
 
 All shared coordinate-tier verbs are implemented: `move`, `click`, `double_click`

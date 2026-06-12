@@ -397,6 +397,15 @@ pub trait Executor: Send + Sync {
     fn clipboard_get(&self) -> Result<String> {
         bail!("clipboard not supported by the {} backend", self.backend())
     }
+
+    /// Live pointer position in CAPTURE PIXELS, or `None` when the backend cannot
+    /// report it. Observation **metadata only**: captures stay cursor-free by design
+    /// (neither X11 `XGetImage` nor CoreGraphics composites the hardware cursor —
+    /// load-bearing for frame-hash dedup and idle suppression), so this is how a
+    /// model learns where the pointer is without polluting the pixels.
+    fn pointer_position(&self) -> Option<(i32, i32)> {
+        None
+    }
 }
 
 // ---- XDamage-driven change tracking ----
@@ -1930,6 +1939,12 @@ impl Executor for X11Executor {
 
     fn screen_size(&self) -> (u16, u16) {
         (self.width, self.height) // real X11 root geometry (#138)
+    }
+
+    fn pointer_position(&self) -> Option<(i32, i32)> {
+        let conn = self.conn.lock().ok()?;
+        let reply = conn.query_pointer(self.root).ok()?.reply().ok()?;
+        Some((reply.root_x as i32, reply.root_y as i32))
     }
 
     fn screenshot(&self) -> Result<CapturedImage> {

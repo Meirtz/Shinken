@@ -209,6 +209,12 @@ pub enum Message {
         /// frame even on a binary session: there is no payload to carry).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         not_modified: Option<bool>,
+        /// Live pointer position in capture pixels `[x, y]` — observation METADATA
+        /// (captures stay cursor-free; frame-hash dedup depends on that). Set on
+        /// one-shot screenshot/not-modified replies when the backend can report it;
+        /// omitted on stream frames.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pointer: Option<(i32, i32)>,
     },
 }
 
@@ -318,6 +324,7 @@ pub fn stream_frame(stream_id: &str, seq: u64, image: ImageRef) -> Message {
         tiles: None,
         frame_hash: None,
         not_modified: None,
+        pointer: None,
     }
 }
 
@@ -332,6 +339,7 @@ pub fn stream_tiles_frame(stream_id: &str, seq: u64, tiles: Vec<TileRef>) -> Mes
         tiles: Some(tiles),
         frame_hash: None,
         not_modified: None,
+        pointer: None,
     }
 }
 
@@ -339,7 +347,11 @@ pub fn stream_tiles_frame(stream_id: &str, seq: u64, tiles: Vec<TileRef>) -> Mes
 /// frame's raw-pixel hash equals the request's `if_none_match`, so no payload is
 /// re-sent — only the hash the client already holds the bytes for. Travels as JSON
 /// text even on a binary-negotiated session (there is no payload to carry).
-pub fn not_modified_observation(call_id: &str, frame_hash: &str) -> Message {
+pub fn not_modified_observation(
+    call_id: &str,
+    frame_hash: &str,
+    pointer: Option<(i32, i32)>,
+) -> Message {
     Message::Observation {
         obs_id: format!("obs-{call_id}"),
         cause: Some(call_id.to_string()),
@@ -349,6 +361,7 @@ pub fn not_modified_observation(call_id: &str, frame_hash: &str) -> Message {
         tiles: None,
         frame_hash: Some(frame_hash.to_string()),
         not_modified: Some(true),
+        pointer,
     }
 }
 
@@ -492,6 +505,7 @@ pub fn binary_image_frame(
     stream: Option<&str>,
     seq: Option<u64>,
     frame_hash: Option<&str>,
+    pointer: Option<(i32, i32)>,
     meta: BinaryImageMeta<'_>,
     data: &[u8],
 ) -> Vec<u8> {
@@ -518,6 +532,9 @@ pub fn binary_image_frame(
     }
     if let Some(fh) = frame_hash {
         header["frame_hash"] = fh.into();
+    }
+    if let Some((px, py)) = pointer {
+        header["pointer"] = serde_json::json!([px, py]);
     }
     assemble_binary(&header, &[data])
 }
@@ -855,7 +872,7 @@ mod tests {
     /// and NO image/tiles — the shape the schema's ObservationMsg rule pins.
     #[test]
     fn not_modified_observation_is_compact_and_correlated() {
-        let msg = not_modified_observation("c7", "deadbeefdeadbeef");
+        let msg = not_modified_observation("c7", "deadbeefdeadbeef", Some((640, 360)));
         let text = serde_json::to_string(&msg).unwrap();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["type"], "observation");
@@ -980,6 +997,7 @@ mod tests {
             Some("s1"),
             Some(7),
             None,
+            None,
             BinaryImageMeta {
                 w: 640,
                 h: 400,
@@ -1012,6 +1030,7 @@ mod tests {
             None,
             None,
             Some("00ff00ff00ff00ff"),
+            Some((12, 34)),
             BinaryImageMeta {
                 w: 2,
                 h: 2,

@@ -350,7 +350,8 @@ fn observation_reply(
     binary: bool,
 ) -> Result<Reply, String> {
     let img = exec.capture(scope, opts).map_err(|e| e.to_string())?;
-    Ok(image_reply(call_id, scope, &img, None, binary))
+    let pointer = exec.pointer_position();
+    Ok(image_reply(call_id, scope, &img, None, binary, pointer))
 }
 
 /// Validate an `observe` spec's capture parameters (same rules as `screenshot`:
@@ -728,15 +729,17 @@ fn screenshot_reply(
     exec: &dyn Executor,
     binary: bool,
 ) -> Reply {
+    let pointer = exec.pointer_position();
     if exec.supports_raw_capture() {
         return match exec.capture_raw(scope, opts.max_long_edge) {
             Ok((rgb, w, h)) => {
                 let hash = crate::executor::frame_hash_hex(&rgb, w, h);
                 if if_none_match == Some(hash.as_str()) {
                     // Not modified: no encode, no payload — text even on a binary
-                    // session (there are no payload bytes to frame).
+                    // session (there are no payload bytes to frame). The pointer
+                    // rides along: the frame is unchanged, the metadata is fresh.
                     return Reply::Text(encode(&protocol::not_modified_observation(
-                        call_id, &hash,
+                        call_id, &hash, pointer,
                     )));
                 }
                 // capture_raw already downscaled; encoding must not downscale again.
@@ -745,7 +748,7 @@ fn screenshot_reply(
                     ..opts
                 };
                 match crate::executor::encode_frame(&rgb, w, h, encode_opts) {
-                    Ok(img) => image_reply(call_id, scope, &img, Some(&hash), binary),
+                    Ok(img) => image_reply(call_id, scope, &img, Some(&hash), binary, pointer),
                     Err(e) => ack(call_id, false, Some(e.to_string())),
                 }
             }
@@ -753,7 +756,7 @@ fn screenshot_reply(
         };
     }
     match exec.capture(scope, opts) {
-        Ok(img) => image_reply(call_id, scope, &img, None, binary),
+        Ok(img) => image_reply(call_id, scope, &img, None, binary, pointer),
         Err(e) => ack(call_id, false, Some(e.to_string())),
     }
 }
@@ -768,6 +771,7 @@ fn image_reply(
     img: &crate::executor::CapturedImage,
     frame_hash: Option<&str>,
     binary: bool,
+    pointer: Option<(i32, i32)>,
 ) -> Reply {
     if binary {
         return Reply::Binary(protocol::binary_image_frame(
@@ -776,6 +780,7 @@ fn image_reply(
             None,
             None,
             frame_hash,
+            pointer,
             protocol::BinaryImageMeta {
                 w: img.w,
                 h: img.h,
@@ -800,6 +805,7 @@ fn image_reply(
         tiles: None,
         frame_hash: frame_hash.map(str::to_string),
         not_modified: None,
+        pointer,
     }))
 }
 
@@ -1026,6 +1032,9 @@ mod tests {
         fn supports_raw_capture(&self) -> bool {
             true
         }
+        fn pointer_position(&self) -> Option<(i32, i32)> {
+            Some((11, 22))
+        }
     }
 
     /// A backend with ONLY encoded capture (no raw pixels) — like the pyautogui
@@ -1069,13 +1078,16 @@ mod tests {
         );
         assert_eq!(v["type"], "observation");
         assert!(v["image"]["ref"].is_string());
+        // Pointer metadata rides the one-shot screenshot (capture pixels, [x, y]).
+        assert_eq!(v["pointer"], serde_json::json!([11, 22]));
         let hash = v["frame_hash"]
             .as_str()
             .expect("frame_hash on screenshot")
             .to_string();
         assert!(v.get("not_modified").is_none());
 
-        // Hash hit → not_modified, no payload, same hash, correlated by cause.
+        // Hash hit → not_modified, no payload, same hash, correlated by cause —
+        // and the pointer still rides along (fresh metadata over unchanged pixels).
         let v = obs_json(s.on_text(&format!(
             r#"{{"type":"action","call_id":"c2","action":{{"verb":"screenshot","if_none_match":"{hash}"}}}}"#,
         )));
@@ -1083,6 +1095,7 @@ mod tests {
         assert_eq!(v["not_modified"], true);
         assert_eq!(v["frame_hash"], hash.as_str());
         assert_eq!(v["cause"], "c2");
+        assert_eq!(v["pointer"], serde_json::json!([11, 22]));
         assert!(v.get("image").is_none() && v.get("tiles").is_none());
 
         // Stale hash → full frame again (with the current hash attached).

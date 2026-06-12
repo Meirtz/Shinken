@@ -254,6 +254,11 @@ def _image_payload(reply: dict) -> dict:
     frame_hash = reply.get("frame_hash")
     if frame_hash is not None:
         out["frame_hash"] = frame_hash
+    pointer = reply.get("pointer")
+    if pointer is not None:
+        # live pointer position in capture pixels [x, y] — observation metadata;
+        # the frame itself is cursor-free (frame-hash dedup depends on that)
+        out["pointer"] = pointer
     return out
 
 

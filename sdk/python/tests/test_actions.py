@@ -30,6 +30,9 @@ def test_screenshot_returns_png(mock_shinkend):
         # Default codec is the lossless PNG; `bytes` aliases `png`.
         assert shot["format"] == "png"
         assert shot["bytes"] == shot["png"]
+        # Pointer METADATA passes through untouched: capture pixels, [x, y] — the
+        # frame itself stays cursor-free (frame-hash dedup depends on that).
+        assert shot["pointer"] == [11, 22]
 
 
 def test_screenshot_format_and_quality_travel_the_wire(mock_shinkend):

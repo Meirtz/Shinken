@@ -67,6 +67,10 @@ with shinken.connect() as env:                        # connect + ACI handshake
     shot = env.screenshot(format="jpeg", quality=80)  # opt-in bandwidth lever
 ```
 
+<p align="center"><img src="docs/assets/demo/sandbox_writer.png" width="840" alt="A real LibreOffice Writer inside a Shinken sandbox, written by an agent over the ACI"></p>
+<p align="center"><sub>Real capture from a live sandbox, not a mockup: the agent launched LibreOffice Writer, typed the
+text, and took this screenshot — all through the same 22-verb ACI (<code>images/linux/Dockerfile.cua</code> image).</sub></p>
+
 **Runtime state is the product.** Reach a state once, checkpoint it live, spawn replicas that
 *prove* they inherited it:
 
@@ -175,14 +179,14 @@ cargo run --manifest-path shinkend/Cargo.toml -- --backend macos
 python scripts/macos_smoke.py        # non-destructive: readiness, capture, hover
 ```
 
-<p align="center"><img src="docs/assets/demo/macos_textedit.png" width="780" alt="A real macOS TextEdit window driven by the Shinken ACI — the agent typed the text and captured its own focused window"></p>
-<p align="center"><sub>Real capture, not a mockup: the agent typed this text over native CGEvent and took this
-focused-window screenshot over CoreGraphics — <code>screenshot(scope="active_window")</code>, Retina, through the same ACI the Linux engine serves.</sub></p>
-
-> **macOS caveat** — it requires TCC grants (Screen Recording + Accessibility) and its
-> clicks land on your actual screen. Use the Docker provider for isolation; the macOS
-> engine is a local-only v1 slice (no mac CI yet);
-> [docs/engineering/macos-engine.md](docs/engineering/macos-engine.md).
+> **macOS caveat — exclusive-desktop semantics.** v1 needs TCC grants (Screen Recording +
+> Accessibility) and posts **global** CGEvents: its clicks move the *real* cursor and land
+> on your actual screen, so treat the desktop as the agent's while it runs. The **co-use
+> tier** — per-app background input (`CGEventPostToPid`), a software cursor overlay so the
+> human sees the agent act, AX-action fallback — is **designed, not built** (D14;
+> real-desktop capture proof in [docs/engineering/macos-engine.md](docs/engineering/macos-engine.md)).
+> Today's co-use answer on macOS is the **`mcp-computer` backend** (D15): it drives a
+> codex-style AX server that operates apps in the background without touching your cursor.
 
 ## Architecture
 

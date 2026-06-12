@@ -924,6 +924,17 @@ impl Executor for MacExecutor {
             .unwrap_or((1280, 800))
     }
 
+    fn pointer_position(&self) -> Option<(i32, i32)> {
+        // CGEvent's location is in display POINTS; the ACI speaks capture pixels.
+        let src = CGEventSource::new(CGEventSourceStateID::HIDSystemState).ok()?;
+        let loc = CGEvent::new(src).ok()?.location();
+        let g = self.geometry().ok()?;
+        Some((
+            (loc.x / g.pt_per_px_x).round() as i32,
+            (loc.y / g.pt_per_px_y).round() as i32,
+        ))
+    }
+
     fn screenshot(&self) -> Result<CapturedImage> {
         self.capture("screen", EncodeOpts::default())
     }

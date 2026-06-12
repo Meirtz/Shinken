@@ -948,6 +948,7 @@ fn full_frame_msg(
             Some(&spec.stream_id),
             Some(seq),
             None,
+            None, // stream frames carry no pointer metadata
             protocol::BinaryImageMeta {
                 w: img.w,
                 h: img.h,

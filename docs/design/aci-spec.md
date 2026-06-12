@@ -421,6 +421,18 @@ resolution, for the agent loop; (2) **continuous video** for the human Control P
 **observation event** (`a11y` full→diff with stable element refs) is recorded alongside screenshots
 when available and can become the low-bandwidth default for tree-rich apps.
 
+**Pointer metadata, not pointer pixels (built).** Captures are **cursor-free** on every engine
+(neither X11 `XGetImage` nor CoreGraphics composites the hardware cursor) — deliberately:
+cursor pixels would break frame-hash dedup (a moving cursor makes forked replicas'
+byte-identical frames diverge) and idle suppression. The field splits here — e2b-desktop
+(`scrot --pointer`) and Anthropic's quickstart (`gnome-screenshot -p`) burn the pointer into
+the pixels so the model can see it; OSWorld/cua/codex-style AX servers don't (the codex-style
+co-use reference captures with `showsCursor = false` and shows the *human* a software overlay
+cursor instead). Shinken serves the model's need structurally: one-shot `screenshot` (and
+`not_modified`) observations carry **`pointer: [x, y]`** — the live pointer position in
+capture pixels as observation METADATA, omitted on screencast stream frames and on backends
+that cannot report it. The frame stays clean; the model still knows where the pointer is.
+
 **Content-negotiated screenshots (frame dedup, built).** A `frame_dedup` runtime stamps every
 one-shot screenshot with a `frame_hash` computed over the RAW pixels (post-scope/downscale,
 pre-encode — codec-independent, so a hash minted under PNG matches a JPEG request over the same

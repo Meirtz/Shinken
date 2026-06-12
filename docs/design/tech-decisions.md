@@ -769,7 +769,17 @@ The macOS engine is built on three public-API pillars under the platform consent
   (`AXManualAccessibility`, with `AXEnhancedUserInterface` as the compatibility path) so renderer
   content is exposed without a screen reader attached.
 - **Input = CGEvent synthesis**, posted per-pid where targeting allows — the physical-events-first
-  policy of D13, with AX action/value invocation as the fallback.
+  policy of D13, with AX action/value invocation as the fallback. Two interaction tiers: the
+  **exclusive-desktop tier** (global HID-tap posting; the Mac is the agent's machine for the
+  duration — this is the **built v1**) and the **co-use tier** (designed, not built): per-app
+  background delivery via `CGEventPostToPid` so the human keeps the cursor and focus, plus a
+  **software cursor overlay** (a click-through panel tracking the target window) so the human
+  still *sees* the agent act — the model the field's co-use reference implements
+  (<https://github.com/iFurySt/open-codex-computer-use>: `postToPid` input, an overlay cursor,
+  `showsCursor = false` capture). Observations are **cursor-free in both tiers** (CoreGraphics
+  never composites the hardware cursor) — load-bearing for fork-fleet frame dedup; pointer
+  position belongs in *structured* observation metadata, not in the pixels. Until the co-use
+  tier lands, co-use on macOS is served by the `mcp-computer` backend (D15).
 - **TCC posture**: the engine runs on user-granted (or managed-profile pre-granted) Screen
   Recording + Accessibility; while grants are pending, **observe returns a typed keep-alive
   observation** naming the missing grants instead of failing, so a session survives the human
