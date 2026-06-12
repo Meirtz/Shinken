@@ -78,9 +78,12 @@ def _ensure_builtins() -> None:
     if _BUILTINS_LOADED:
         return
     _BUILTINS_LOADED = True
+    from .browser_runtime import BrowserRuntimeBackend
     from .cua import CuaBackendProvider
     from .mcp_computer import McpComputerBackend
 
     register_backend("cua", CuaBackendProvider)
     # iFurySt/open-codex-computer-use (and any codex-style 9-tool MCP computer-use server)
     register_backend("mcp-computer", McpComputerBackend)
+    # the BU half: a CDP browser runtime (e.g. iFurySt/open-browser-use) — D13 §10
+    register_backend("browser-runtime", BrowserRuntimeBackend)

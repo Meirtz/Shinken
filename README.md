@@ -377,6 +377,17 @@ with provider.session() as env:
   own guest engine, which is what fills the macOS-AX gap. Non-invasive, so no `exec`; no fork
   tier. Example: [`examples/backends_mcp_computer_shinken.py`](examples/backends_mcp_computer_shinken.py).
 
+- **Browser Runtime / BU** (e.g. [open-browser-use](https://github.com/iFurySt/open-browser-use)) —
+  `shinken.backends.browser_runtime`: the browser half, alongside the desktop (CU) backends.
+  Realizes Shinken's designed Browser Runtime (D13 §10) as a backend over a CDP browser, with
+  the **three tab surfaces**: pixels (`screenshot` + `click(x,y)`), **semantic node-ids**
+  (`observe(structured=True)` reuses the same `parse_ax_tree`→a11y path the guest engine uses,
+  so it serves `element_ref`), and locator/script (`navigate`/`eval`). No shell `exec`; tabs
+  are ephemeral so no fork tier. Example:
+  [`examples/backends_browser_runtime_shinken.py`](examples/backends_browser_runtime_shinken.py).
+  Route CU vs BU at the Operator level (by target app/URL) — that routing layer is the
+  designed next step.
+
 Register your own backend with `shinken.backends.register_backend`.
 
 ## Integrations
