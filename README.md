@@ -67,9 +67,9 @@ with shinken.connect() as env:                        # connect + ACI handshake
     shot = env.screenshot(format="jpeg", quality=80)  # opt-in bandwidth lever
 ```
 
-<p align="center"><img src="docs/assets/demo/sandbox_writer.png" width="840" alt="A real LibreOffice Writer inside a Shinken sandbox, written by an agent over the ACI"></p>
-<p align="center"><sub>Real capture from a live sandbox, not a mockup: the agent launched LibreOffice Writer, typed the
-text, and took this screenshot — all through the same 22-verb ACI (<code>images/linux/Dockerfile.cua</code> image).</sub></p>
+<p align="center"><img src="docs/assets/hero-three-platforms.png" width="860" alt="One typed interface, every desktop: Linux, macOS, Windows and mobile screens driven by the same ACI verbs — type_text, click e7, observe, fork x16"></p>
+<p align="center"><sub>Illustration — but the loop it depicts is the real one: the same 22-verb ACI
+(<code>type_text</code> · <code>click e7</code> · <code>observe</code> · <code>fork ×16</code>) drives every surface above.</sub></p>
 
 **Runtime state is the product.** Reach a state once, checkpoint it live, spawn replicas that
 *prove* they inherited it:
@@ -115,6 +115,17 @@ with provider.session(SandboxSpec()) as env:
         fleet.map(lambda e: e.destroy())
         ckpt.delete()
 ```
+
+**And it scales — measured, not projected.** One client process drives **128 real Docker
+desktops** (128/128 booted in 7.3 s, ~900 observations/s aggregate, 2 OS threads). The
+client plane alone holds **3,096 live sessions on a single event-loop thread** — sustained
+**2,320 frames/s ≈ 870 Mbps of decoded observations at 0.93 cores** — so the per-fleet cost
+of *driving* sandboxes never becomes the bottleneck; forked fleets then cut observation
+traffic **18.6×** (replicas render identical pixels, so the fleet pays for each distinct
+screen once), and the pipelined `step()` holds a k-action step at **~1 RTT** over WAN. Raw
+data and rerun commands: [docs/benchmarks](docs/benchmarks/README.md).
+
+<p align="center"><img src="docs/assets/bench/client_scale.png" width="820"></p>
 
 **Observe on demand, act by element id** — the agent decides when to look. A structured
 observation is a numbered tree whose element ids are **stable across observations** (never
@@ -162,14 +173,23 @@ Every sandbox stays addressable through `env.handle`; `shinken ps` lists what is
 
 ## Platforms
 
-One wire contract, one SDK, per-OS engines inside `shinkend`. Maturity is uneven and
-labeled honestly:
+One wire contract, one SDK — and **two ways onto every platform**: Shinken's own per-OS
+engines inside `shinkend`, or an [operation-layer backend](#operation-layer-backends) that
+drives a system you already run (trycua/cua, a codex-style AX server, a CDP browser, an E2B
+cloud desktop) through the same typed interface:
 
-| platform | act + observe (pixels) | structured observation | fork tiers | CI |
+| platform | drive it today with | act + observe | structured observation | fork tiers |
 |---|---|---|---|---|
-| **Linux/X11** (Docker sandbox) | ✅ all 22 verbs | ✅ guest AT-SPI engine: stable ids, diffs, settle | ✅ disk · warm-pool · CRIU memory | ✅ live (9 jobs) |
-| **macOS** (native, real desktop) | 🟡 v1: capture + pointer/keyboard, Retina-correct, TCC-honest | ○ designed (AXUIElement tier, D14) | — (no sandbox boundary) | local smoke only |
-| **Windows · Linux/Wayland** | ○ designed | ○ designed (UIA tier) | — | — |
+| **Linux** | native engine (Docker sandbox) | ✅ all 22 verbs | ✅ stable element ids, diffs, settle | ✅ disk · warm-pool · CRIU memory |
+| **macOS** | native engine v1 (real desktop) **or** the `mcp-computer` backend | ✅ capture + pointer/keyboard (native); background app control (backend) | ✅ element tree via the backend; native AX tier designed | — (no sandbox boundary; fork needs a sandboxed substrate) |
+| **Windows** | the `cua` / `e2b` backends (VM / cloud desktop) | ✅ via backend | per backend | native engine + UIA tier designed |
+| **any CDP browser** | the `browser-runtime` backend | ✅ pixels + input | ✅ semantic node ids | — (tabs are ephemeral) |
+
+Native-engine maturity is uneven and labeled honestly — Linux is the proven, CI-gated slice;
+macOS v1 is a local capture+input slice; Windows/Wayland engines are designed, not built
+(full map: [docs/engineering/status.md](docs/engineering/status.md)). The backend rows are
+built and fixture-tested today (D15), with honest capability negotiation: what a backend
+can't serve raises a typed error instead of pretending.
 
 The macOS engine drives the **real desktop** of your Mac — same wire contract, no
 container:
@@ -276,7 +296,6 @@ holds **3,096 live ACI sessions on one event-loop thread** — sustained **2,320
 ~870 Mbps decoded ingest at 0.93 cores** (183,216 measured observations; protocol-faithful
 synthetic peers).
 
-<p align="center"><img src="docs/assets/bench/client_scale.png" width="820"></p>
 <p align="center"><img src="docs/assets/bench/local_fanout.png" width="820"></p>
 
 **3 — Fleet observation dedup: the fork dividend.** Replicas forked from one checkpoint render
