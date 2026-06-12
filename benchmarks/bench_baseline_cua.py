@@ -714,7 +714,7 @@ def plot(summary: dict) -> None:
 
     # panel 1 — lifecycle + local runtime-state verbs (seconds, linear)
     ax = axes[0]
-    verbs = ("boot $\\to$ usable", "checkpoint\n(live)", "fork $\\to$ usable")
+    verbs = ("boot $\\to$\npainted desktop", "checkpoint\n(live)", "fork $\\to$\npainted replica")
     sk_vals = [boot_sk, ckpt_sk or 0.0, fork_sk or 0.0]
     xs = range(len(verbs))
     ax.bar(
@@ -768,7 +768,7 @@ def plot(summary: dict) -> None:
     ax.set_ylim(0, boot_cu / 1000.0 * 1.38)
     ax.legend(loc="upper right", framealpha=0.95)
     ax.set_title(
-        f"boot $\\to$ usable: {boot_ratio:.1f}$\\times$ faster —\nand cua has no local checkpoint/fork"
+        f"boot to a painted desktop: {boot_ratio:.1f}$\\times$ faster —\nand cua has no local checkpoint/fork"
     )
 
     # panel 2 — the per-step agent loop (click + full screenshot), log scale

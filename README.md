@@ -25,7 +25,7 @@ event-loop thread**, driven from one MacBook Pro.
 
 | you are | Shinken gives you |
 |---|---|
-| an **RL / agent trainer** | a gym whose `reset()` *is* a fork (**~60–120 ms** warm-pool), wired into the stack at the right seams: **training frameworks** (verl/uni-agent, NeMo Gym, ProRL-Agent-Server), **task suites** (OSWorld, CUA-Gym), **agent frameworks** (Agentix) |
+| an **RL / agent trainer** | **high-throughput RL / RFT on real computer-use environments**: a gym whose `reset()` *is* a fork (**~60–120 ms** vs re-provisioning per episode), so rollout collection stops being the bottleneck — and the loop is closed end-to-end (GRPO learns on real Shinken sandboxes). Wired in at every seam: **training frameworks** (verl/uni-agent, NeMo Gym, ProRL-Agent-Server), **task suites** (OSWorld, CUA-Gym), **agent frameworks** (Agentix) |
 | an **eval builder** | `run_eval_forked`: set a task up once, fork N replicas, score them all — on the same runtime production agents run on |
 | an **agent product team** | one typed, versioned interface from keyless local Docker to a fleet: one process drives **128 real desktops**, one event-loop thread holds **8K+ live sessions** at 0.93 cores |
 | a stack with its own driver | the same ACI runs **over your system**: trycua/cua, codex-style MCP desktop servers, CDP browsers, and E2B desktops plug in *under* the typed interface as backends (D15) |
@@ -450,6 +450,10 @@ shipped, same host, same window, pinned versions
 ([S12](docs/engineering/benchmarks.md), [`docs/benchmarks/`](docs/benchmarks/README.md) §7):
 
 <p align="center"><img src="docs/assets/bench/baseline_cua.png" width="820"></p>
+<p align="center"><sub>The boot/fork bars here are timed to a <b>fully-painted desktop</b> — the apples-to-apples
+bar against cua, which also paints. That is a stricter bar than the <b>runtime-ready</b>
+(~0.2&nbsp;s boot / ~0.6&nbsp;s fork) numbers in <a href="#measured-results">Measured results §1</a>, which time
+when the SDK can start issuing actions (push-readiness). Same runs, two honestly-different bars.</sub></p>
 
 ## Operation-layer backends
 
