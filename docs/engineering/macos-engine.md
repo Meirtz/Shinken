@@ -6,6 +6,10 @@
 > observation engine is **out of v1 scope** (see [Seams](#seams--whats-deliberately-not-in-v1)).
 > Built-vs-designed map: [status.md](status.md).
 
+<p align="center"><img src="../assets/demo/macos_textedit.png" width="760" alt="A real macOS TextEdit window driven through the engine"></p>
+<p align="center"><sub>Live proof: the agent typed this text over CGEvent and captured its own focused window
+(<code>screenshot(scope="active_window")</code>, CoreGraphics, Retina) through the same ACI the Linux engine serves.</sub></p>
+
 The macOS backend lives in `shinkend/src/executor_macos.rs`, gated by
 `cfg(target_os = "macos")` + the `macos-native` cargo feature (default-on; it compiles
 to nothing on non-macOS targets, so the Linux build is untouched). It reuses the entire

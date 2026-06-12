@@ -237,11 +237,12 @@ the same cliff) are in `benchmarks/results/obs_quality.json`, methodology + cave
 
 ---
 
-## 3. Concurrency — the measured ladder to 1024
+## 3. Concurrency — the measured ladder to 3,096
 
-The "manage 1024 sandboxes" question splits into a guest-resource half (how many sandboxes a
-host can *run*) and a client-plane half (how many live sessions one process can *drive*). Each
-rung below is measured; only the egress chart at the end is a projection, and is labeled as one.
+The "manage a thousand sandboxes" question splits into a guest-resource half (how many
+sandboxes a host can *run*) and a client-plane half (how many live sessions one process can
+*drive*). Each rung below is measured — the client plane to **N=3,096** — and only the egress
+chart at the end is a projection, labeled as one.
 
 ### 3a. Real sandboxes, one process — N ≤ 128 `[local — rerunnable]`
 
@@ -265,32 +266,36 @@ Docker VM — exactly the boundary the client-plane rung isolates next.
 
 ![local fan-out](../assets/bench/local_fanout.png)
 
-### 3b. Client plane to N=1024, realistic payloads `[local — rerunnable]`
+### 3b. Client plane to N=3,096, realistic payloads `[local — rerunnable]`
 
-S6 (`bench_client_scale.py`): one client process, N ∈ {16, 64, 256, **1024**} concurrent
+S6 (`bench_client_scale.py`): one client process, N ∈ {16, 64, 256, 1024, **3096**} concurrent
 sessions (`aconnect` + `asyncio.gather`, one event loop, `ping_jitter` engaged at N≥256),
 against **protocol-faithful synthetic ACI peers in separate processes** — real handshake,
-real loopback WebSockets, the real SDK; only the frame payloads are synthetic. Frame payloads are synthetic bytes sized to three measured operating
-points (13 / 48 / 87 KiB ≈ JPEG q50@512 / q80@1024 / q80@1080p — payload *size classes*
-for the transport; as observation tiers the sub-native cells carry the §2d legibility
-caveat). 88,928 measured observations:
+real loopback WebSockets, the real SDK; only the frame payloads are synthetic, sized to three
+measured operating points (13 / 48 / 87 KiB ≈ JPEG q50@512 / q80@1024 / q80@1080p — payload
+*size classes* for the transport; as observation tiers the sub-native cells carry the §2d
+legibility caveat). 183,216 measured observations:
 
 | N | payload | observe p50 / p99 | round wall p50 | aggregate ingest | RSS | threads |
 |---:|---|---:|---:|---:|---:|---:|
-| 256 | 48 KiB | 130 / 255 ms | 263 ms | 366 Mbps | 353 MiB | 1 |
-| 1024 | 13 KiB | 148 / 177 ms | 182 ms | 609 Mbps | 687 MiB | 1 |
-| 1024 | 48 KiB | 246 / 412 ms | 374 ms | **997 Mbps** | 1.2 GiB | 1 |
-| 1024 | 87 KiB | 395 / 697 ms | 685 ms | 1,015 Mbps | 1.6 GiB | 1 |
+| 256 | 48 KiB | 131 / 272 ms | 283 ms | 340 Mbps | 366 MiB | 1 |
+| 1024 | 13 KiB | 167 / 286 ms | 231 ms | 438 Mbps | 807 MiB | 1 |
+| 1024 | 48 KiB | 315 / 868 ms | 897 ms | 427 Mbps | 1.0 GiB | 1 |
+| 3096 | 13 KiB | 627 / 923 ms | 742 ms | 422 Mbps | 1.5 GiB | 1 |
+| 3096 | 48 KiB | 828 / 1,715 ms | 1,292 ms | **865 Mbps** | 2.3 GiB | 1 |
+| 3096 | 87 KiB | 1,164 / 2,097 ms | 2,135 ms | **985 Mbps** | 2.7 GiB | 1 |
 
-**Sustained** (not a burst): 20.4 s of back-to-back rounds at N=1024 × 48 KiB —
-**2,356 frames/s ≈ 884 Mbps of decoded frames through one event-loop thread at 0.99 CPU
-cores**, observe p99 476 ms, 47 consecutive rounds. The client plane saturates at ~1 Gbps
-decoded ingest per core on this host; it is not the scaling bottleneck.
+**Sustained** (not a burst): 21.4 s of back-to-back rounds at N=**3,096** × 48 KiB —
+**2,320 frames/s ≈ 870 Mbps of decoded frames through one event-loop thread at 0.93 CPU
+cores** (observe p50 815 / p99 1,817 ms, 16 consecutive rounds, RSS 2.0 GiB). The client
+plane saturates at ~1 Gbps decoded ingest per core on this host; it is not the scaling
+bottleneck — tripling N past 1,024 costs latency (rounds queue behind one core), not
+failures: every session stays connected and every round completes.
 
 Thread-model contrast, same synthetic peers: the sync facade spends **one OS thread per session**
-(N=256 → 256 threads; 1024 was deliberately not run — that thread model is what this design
-retires), while `SharedLoop` holds 1024 sync sessions and the async core holds 1024 concurrent
-sessions on **one** thread each.
+(N=256 → 256 threads; 1024+ was deliberately not run — that thread model is what this design
+retires), while `SharedLoop` holds 1024 sync sessions and the async core holds **3,096**
+concurrent sessions on **one** thread each.
 
 ![client scale](../assets/bench/client_scale.png)
 

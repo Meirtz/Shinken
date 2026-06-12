@@ -22,9 +22,10 @@ replicas of that exact moment in **0.1–0.6 s** each.
 
 | you are | Shinken gives you |
 |---|---|
-| an **RL / agent trainer** | a gym whose `reset()` *is* a fork — **p50 ~60 ms** instead of re-provisioning per episode — plus drop-in adapters for uni-agent/verl, CUA-Gym, Agentix, ProRL-Agent-Server |
+| an **RL / agent trainer** | a gym whose `reset()` *is* a fork — **~60–120 ms** on the warm-pool tier instead of re-provisioning per episode — plus drop-in adapters for uni-agent/verl, CUA-Gym, Agentix, ProRL-Agent-Server, NeMo Gym |
 | an **eval builder** | `run_eval_forked`: set a task up once, fork N replicas, score them all — on the same runtime production agents run on |
-| an **agent product team** | one typed, versioned interface (22 verbs) from keyless local Docker to a fleet: one process drives **128 real desktops**, one event loop holds **1,024 live sessions** |
+| an **agent product team** | one typed, versioned interface (22 verbs) from keyless local Docker to a fleet: one process drives **128 real desktops**, one event loop holds **3,096 live sessions** |
+| a stack with its own driver | the same ACI runs **over your system**: trycua/cua, codex-style MCP desktop servers, CDP browsers, and E2B desktops plug in *under* the typed interface as backends (D15) |
 
 It is not a benchmark, a cloud browser, a VNC desktop, or a model adapter — **it is the
 runtime those plug into**. And it is honest about maturity: what is real today is a
@@ -174,6 +175,10 @@ cargo run --manifest-path shinkend/Cargo.toml -- --backend macos
 python scripts/macos_smoke.py        # non-destructive: readiness, capture, hover
 ```
 
+<p align="center"><img src="docs/assets/demo/macos_textedit.png" width="780" alt="A real macOS TextEdit window driven by the Shinken ACI — the agent typed the text and captured its own focused window"></p>
+<p align="center"><sub>Real capture, not a mockup: the agent typed this text over native CGEvent and took this
+focused-window screenshot over CoreGraphics — <code>screenshot(scope="active_window")</code>, Retina, through the same ACI the Linux engine serves.</sub></p>
+
 > **macOS caveat** — it requires TCC grants (Screen Recording + Accessibility) and its
 > clicks land on your actual screen. Use the Docker provider for isolation; the macOS
 > engine is a local-only v1 slice (no mac CI yet);
@@ -198,7 +203,8 @@ flowchart LR
   Provider["Provider<br/>boot · checkpoint · spawn/fork · resume<br/>(runtime state lives here)"] -.manages.-> box
   Provider --> Eval["fork-native consumers<br/>gym reset()=fork · run_eval_forked · fleets"]
 
-  SDK -.-> A11Y["structured observation<br/>AT-SPI · CDP · UIA · AX (D3, hybrid)"]:::d
+  SK --> OBS["structured observation v1<br/>guest AT-SPI engine: stable ids · diff · settle"]
+  OBS -.-> A11Y["further tiers<br/>in-guest CDP · UIA · AX (D3, hybrid)"]:::d
   CP["Control Plane<br/>scheduling · capability scoping"]:::d -.-> Provider
   Human["human reviewer"]:::d -.-> Panel["Control Panel<br/>watch / take over"]:::d
   Panel -.-> CP
@@ -255,14 +261,15 @@ necessity: a latency/state-fidelity tier, not an isolation posture). Cold boot �
 
 **2 — Fork-native consumption: what the ladder buys when loops run on it.** The gym facade's
 `reset()` *is* a fork: task setup runs once into a golden checkpoint and every episode forks a
-replica — **reset p50 ~60 ms** on the warm-pool tier (`info["reset_ms"]`, live-gated), where
+replica — **reset ~60–120 ms** on the warm-pool tier (`info["reset_ms"]`, live-gated), where
 every other shipped gym re-provisions the sandbox per episode
 ([`examples/gym_rollout.py`](examples/gym_rollout.py)). `run_eval_forked` is the same loop for
 evals — golden → fork-N → score, one setup amortized over N attempts. And the parallel pool is
 real: one process drives **128 real Docker desktops** (128/128 booted in 7.3 s, ~57 ms
 amortized per replica, observe-all at 142 ms p50, 2 OS threads), and the client plane alone
-holds **1,024 live ACI sessions on one event-loop thread** (~884 Mbps sustained decoded
-ingest; protocol-faithful synthetic peers).
+holds **3,096 live ACI sessions on one event-loop thread** — sustained **2,320 frames/s,
+~870 Mbps decoded ingest at 0.93 cores** (183,216 measured observations; protocol-faithful
+synthetic peers).
 
 <p align="center"><img src="docs/assets/bench/local_fanout.png" width="820"></p>
 
@@ -288,8 +295,8 @@ cannot offer this: it works because fork makes pixels identical, not approximate
 servers in one sandbox against the same display at verified frame parity (0.0 mean pixel
 delta). Over distance the win compounds: the **pipelined `step()`** sends k actions plus a
 fused observation before awaiting any reply, so a 5-action step at 150 ms WAN RTT drops from
-**937 ms to 165 ms** of runtime overhead (~1 RTT per step; **8.5× at 300 ms**) — the per-step
-tax stops scaling with how many actions the policy emits.
+**937 ms to 165 ms** of runtime overhead (~1 RTT per step; **5.8× at 300 ms, 8.5× for an
+8-action step**) — the per-step tax stops scaling with how many actions the policy emits.
 
 <p align="center"><img src="docs/assets/bench/step_pipeline.png" width="820"></p>
 
@@ -323,9 +330,9 @@ the fleet egress projections: [`docs/benchmarks/`](docs/benchmarks/README.md).
 
 **Functional.** Single-task OSWorld gate passed (1 task of the 369-task suite: Kimi K2.6 over
 `shinkend`, official evaluator **score 1.0**, 6 steps, 110 s — a conformance sweep has not
-been run). 98 Rust + 518 Python tests in a 9-job CI; line coverage measured (**78% Rust / 87%
-Python**) with per-verb test traceability; every README snippet is itself executed by the
-test suite.
+been run). Tested in a 9-job CI with measured line coverage (**78% Rust / 87% Python**,
+[report §6b](docs/benchmarks/README.md)) and per-verb test traceability; every README
+snippet is itself executed by the test suite.
 
 ## How it compares
 
@@ -335,7 +342,7 @@ Shinken's wedge is the unclaimed intersection, not winning any single axis. Surv
 
 | | cross-OS desktop | runtime fork | structured + pixel obs | eval on same runtime | streaming |
 |---|---|---|---|---|---|
-| **Shinken** | designed (Linux built) | **disk tier built + measured, local-first** | hybrid (coverage measured) | **yes — `run_eval_forked` built** | PNG/JPEG/delta built; WebRTC designed |
+| **Shinken** | designed (Linux built) | **disk + CRIU memory tiers built + measured, local-first** (live process+memory fork ~0.4 s) | hybrid (coverage measured) | **yes — `run_eval_forked` built** | PNG/JPEG/delta built; WebRTC designed |
 | trycua/cua | yes | cloud-only — local `snapshot()` raises (measured); local verbs = `docker pause` / stopped-VM clone | a11y trees | recreates env per reset | VNC + polled PNG (measured: 174 ms/step vs our 2.9 ms) |
 | E2B desktop | Linux | cloud pause/resume, 1:1 (API-key required — no keyless/local mode, measured) | none | n/a | raw VNC |
 | Morph | Linux | **ms-class CoW (vendor-published P99 ~1.3 ms)** | none | n/a | n/a |
@@ -355,7 +362,11 @@ backend adapter wraps a third-party computer-control system as a duck-typed Sand
 loop, model adapters, the gym where the substrate allows it) work unchanged — and each
 backend advertises **honest capabilities** (a backend with no snapshot tier leaves
 `supports_fork=False`; its `checkpoint`/`resume` raise `UnsupportedProviderOperation`; its
-`capabilities.verbs` list only what it really serves, so consumers degrade loudly):
+`capabilities.verbs` list only what it really serves, so consumers degrade loudly). All four
+are fixture-tested against protocol-faithful in-memory peers (no SDK/VM/key needed), and each
+has an env-gated live smoke (`tests/test_backends_live.py`) — the **browser backend is proven
+against a real headless Chrome** (real AX tree → `element_ref` click landed); the e2b/cua/mcp
+gates are written but unrun:
 
 ```python
 from shinken.backends import get_backend
@@ -451,11 +462,12 @@ numbers behind every "measured" are in [`docs/benchmarks/`](docs/benchmarks/READ
 |---|---|---|
 | Runtime state | ✅ built + measured | Docker disk-tier **checkpoint / spawn (fork) / resume** behind a provider interface; checkpoint ~0.53 s live; fork→usable ~0.6 s classic / **~0.12 s warm-pool graft** (marker-verified; `pixels`/`fs` verifier levels reported); boot→usable ~0.2 s after S9 push-based readiness; **CRIU memory tier built + measured** (privileged-only): donor-live checkpoint ~0.70 s, live process+memory fork→usable ~0.40 s, in-heap-marker-verified |
 | Fork-native consumption | ✅ built | `run_eval_forked` (golden → fork-N → score), fork-native gym (`reset()` = fork, p50 ~60 ms warm-pool, HF-datasets exporter, pool), tiny verifier harness, typed exit-reason, subprocess scorer isolation; the single-task functional gate above (1/369; no conformance sweep) |
-| Fleet concurrency | ✅ built + measured | async core + fleet fan-out: **128 real sandboxes** on 2 threads (128/128 in 7.3 s); client plane held to **1,024 live ACI sessions on one loop thread** (~884 Mbps sustained ingest, protocol-faithful synthetic peers); fork-aware observation dedup (18.6× suite-wide at the static ceiling, 94.6% hit rate, divergence floor measured); `ping_jitter` fleet decorrelation |
+| Fleet concurrency | ✅ built + measured | async core + fleet fan-out: **128 real sandboxes** on 2 threads (128/128 in 7.3 s); client plane held to **3,096 live ACI sessions on one loop thread** (2,320 frames/s, ~870 Mbps sustained ingest at 0.93 cores; protocol-faithful synthetic peers); fork-aware observation dedup (18.6× suite-wide at the static ceiling, 94.6% hit rate, divergence floor measured); `ping_jitter` fleet decorrelation |
 | ACI v0 (typed actions + observation) | ✅ built | handshake/auth, pointer+keyboard via X11/XTEST (incl. `drag` + `mouse_down`/`mouse_up`), screenshot, act-returns-observation (`observe`), pipelined `step()` (~1 RTT per k-action step), real-time screencast (idle-suppress, downscale, reconnect), focused-window capture, `list_windows`, typed in-guest `exec` (argv/shell, buffered + streamed, gateway-audited), desktop verbs (`clipboard_get`/`clipboard_set`, `launch_app`, `activate_window`); **22 verbs**, contract-tested |
 | Structured observation (Linux v1) | ✅ built | guest `observe` engine in `shinkend` (AT-SPI): stable **never-rebind** element ids, `tree_text` diff rendering, settle; guest-resolved `element_ref` targets + `invoke_action`/`set_value`; live Docker smoke |
 | Observation transport | ✅ built + measured | PNG lossless default; opt-in JPEG/downscale lever **~1–21× content-dependent** (~131× stacked on content-rich frames); **legibility envelope measured (S13)**: q80@native + delta stream 100% legible, any downscale breaks small text; lossless dirty-tile delta ~11× on text; binary WS frames; XDamage idle ~0 CPU |
 | SDK + adapters | ✅ built | Python SDK (sync + async), TypeScript SDK, Anthropic/OpenAI/Kimi-VL adapters → canonical ACI (`act_model`) |
+| Operation-layer backends (D15) | ✅ built | `shinken.backends`: **cua · mcp-computer · browser-runtime · e2b** adapters + `RoutedSession` (CU↔BU composition, `source` provenance); honest capability negotiation (missing tier ⇒ typed `UnsupportedProviderOperation`); fixture-tested + env-gated live smokes (browser proven on real Chrome) |
 | Structured a11y/DOM default (D3) | ⏳ provisional | coverage measured (E5): hybrid per-window structured + pixel fallback, *not* structured-by-default |
 | Capability scoping (D6) | ○ mostly designed | a sandbox is granted the resources its task needs; local gateway shim records the envelope; control-plane enforcement designed |
 | Sub-ms CoW fork fast tier | ○ designed | the Docker disk tier and the CRIU memory tier (`CriuDockerProvider`, privileged-only) are built + measured; the CoW/microVM fast tier remains designed (D5) |
@@ -470,7 +482,8 @@ shinken/
 ├─ shinkend/       Rust Guest Runtime inside the Sandbox
 ├─ sdk/python/     Python SDK + CLI       sdk/typescript/  TS control-surface SDK
 ├─ images/linux/   Local Linux Sandbox image
-├─ examples/       Runnable interop examples (CUA-Gym, Agentix, uni-agent — scripted, no model API)
+├─ examples/       Runnable interop + backend examples (gym, CUA-Gym, Agentix, uni-agent, NeMo Gym;
+│                  backends: cua / MCP / CDP browser / e2b / routed CU+BU — scripted, no model API)
 ├─ benchmarks/     Rerunnable benchmark suites + tracked raw results (local + remote CSVs)
 ├─ spikes/         a11y-coverage (E5) + CRIU memory-tier spike evidence
 ├─ docs/           Design canon (ADRs D1–D15), engineering status, benchmark report

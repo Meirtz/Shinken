@@ -12,11 +12,15 @@ print(env.screen_size())         # {'w': 1280, 'h': 800}
 env.close()
 ```
 
-> **Status:** the SDK has moved beyond the original M0 handshake. It supports connect/query/ping,
-> typed actions, screenshot/focused capture, screencast consumption, provider-backed file transfer,
-> and Docker disk-tier checkpoint/fork/resume helpers. v0.0.1 fills in agent-native dialects/adapters,
-> structured observation, server-side capabilities, and tiny eval. See [`docs/user/quickstart.md`](../../docs/user/quickstart.md),
-> [`docs/engineering/v0.0.1-plan.md`](../../docs/engineering/v0.0.1-plan.md), and
+> **Status:** the full v0.0.1 surface is built. Connect/query/ping, the 22 typed action verbs,
+> screenshot/focused capture + screencast consumption, **structured observation**
+> (`observe(structured=True)`, `element_ref`, `invoke_action`/`set_value`), model
+> adapters/dialects (Anthropic/OpenAI/Kimi-VL + XML action grammars), checkpoint/fork/resume
+> (Docker disk tier + CRIU memory tier), the **fork-native gym** (`shinken.gym`:
+> `reset()` = fork) and `run_eval_forked`, **operation-layer backends** (`shinken.backends`:
+> cua / MCP / CDP browser / e2b under the same ACI), a pipelined `step()` (~1 RTT per
+> k-action step), and a local capability-gateway shim. Authoritative map:
+> [`docs/engineering/status.md`](../../docs/engineering/status.md); spec:
 > [`docs/design/aci-spec.md`](../../docs/design/aci-spec.md).
 
 ## Develop

@@ -8,19 +8,28 @@ current canonical plan at [`../engineering/v0.0.1-plan.md`](../engineering/v0.0.
 
 ## What You Can Run Today
 
-Current implementation: Linux/X11 reference slice.
+Current implementation: Linux/X11 reference slice (plus the local-only macOS capture+input
+engine, `--backend macos`). Authoritative built-vs-designed map:
+[`../engineering/status.md`](../engineering/status.md).
 
-- `shinkend` WebSocket Guest Runtime.
-- Python SDK and CLI.
-- ACI v0 handshake and capability negotiation.
-- Pointer actions, keyboard actions, screenshots.
-- Screencast and focused-window/region capture.
-- Docker disk-tier checkpoint/fork/resume through the provider API.
-- Docker Linux sandbox image smoke test.
+- `shinkend` WebSocket Guest Runtime — the **22-verb ACI**: pointer/keyboard (incl. `drag`,
+  `mouse_down`/`mouse_up`), screenshot + real-time screencast + focused-window capture,
+  typed in-guest `exec` (argv/shell, buffered + streamed), `clipboard_get`/`clipboard_set`,
+  `launch_app`, `activate_window`, `list_windows`.
+- **Structured observation** (Linux/AT-SPI guest engine v1): `observe` with stable element
+  ids + tree diffs + settle; `element_ref` targets, `invoke_action`/`set_value`.
+- Python SDK and CLI (sync + async, pipelined `step()`), TypeScript control-surface SDK,
+  model adapters (Anthropic/OpenAI/Kimi-VL) and XML/dialect action parsing.
+- Checkpoint / fork / resume: Docker disk tier, warm-pool graft, and the opt-in
+  **CRIU memory tier** (privileged-only) — plus the fork-native gym (`reset()` = fork)
+  and `run_eval_forked`.
+- Operation-layer **backends** (D15): drive the same ACI over trycua/cua, a codex-style MCP
+  desktop server, a CDP browser, or an E2B desktop (`shinken.backends`).
+- File transfer (`put_file`/`get_file`) through the provider; local capability-gateway shim.
 
-Not implemented yet: provider adapters, a11y trees, `element_ref`, file/artifact transfer,
-production capability enforcement, `.skn` recording/replay, cloud control plane. (The Docker
-disk-tier checkpoint/fork/resume above is built; the memory/CoW fast tiers are not.)
+Not implemented yet: production capability enforcement (the control-plane layer),
+`.skn` recording/replay, the cloud control plane, the sub-ms CoW fork fast tier,
+Windows/Wayland engines, and the macOS AX observation tier.
 
 ## Run The Guest Runtime
 
