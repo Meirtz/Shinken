@@ -165,8 +165,10 @@ class BrowserRuntimeSandbox:
             if el is None:
                 raise KeyError(f"unknown element_ref {ref!r}; call observe(structured=True) first")
             bbox = el.get("bbox")
-            if not bbox:
-                raise ValueError(f"element {ref!r} has no bbox; use a pixel target")
+            # a missing DOMSnapshot bound serializes as the [0,0,0,0] sentinel — a zero-area
+            # box is "no bounds", never a (0,0) click
+            if not bbox or not (bbox[2] and bbox[3]):
+                raise ValueError(f"element {ref!r} has no layout bounds; use a pixel target")
             bx, by, bw, bh = bbox
             self._mouse(bx + bw / 2, by + bh / 2, button, count)
         elif x is not None and y is not None:

@@ -23,6 +23,7 @@ runs with no cua install and no VM.
 from __future__ import annotations
 
 import asyncio
+import os
 import shlex
 import time
 import uuid
@@ -50,6 +51,36 @@ _CUA_VERBS = [
 ]
 
 
+def _computer_kwargs(spec: SandboxSpec | None) -> dict:
+    """Resolve the real cua ``Computer()`` kwargs from the spec metadata + ``SHINKEN_CUA_*``
+    env. The ctor's own default provider is the macOS lume daemon, which can never serve a
+    Linux sandbox — cua's docs say Linux runs over the docker provider, so that is our
+    Linux default. Knobs: metadata ``provider_type``/``name``/``image``/``api_key``/
+    ``use_host_computer_server``, or env ``SHINKEN_CUA_PROVIDER``/``SHINKEN_CUA_NAME``/
+    ``SHINKEN_CUA_IMAGE``/``CUA_API_KEY``/``SHINKEN_CUA_HOST_SERVER=1``."""
+    os_type = (spec.os if spec else "linux") or "linux"
+    meta = (spec.metadata if spec else None) or {}
+    if meta.get("use_host_computer_server") or os.environ.get("SHINKEN_CUA_HOST_SERVER") == "1":
+        return {"os_type": os_type, "use_host_computer_server": True}
+    kwargs: dict[str, Any] = {
+        "os_type": os_type,
+        "provider_type": (
+            meta.get("provider_type")
+            or os.environ.get("SHINKEN_CUA_PROVIDER")
+            or ("docker" if os_type == "linux" else "lume")
+        ),
+    }
+    for key, env_key in (
+        ("name", "SHINKEN_CUA_NAME"),
+        ("image", "SHINKEN_CUA_IMAGE"),
+        ("api_key", "CUA_API_KEY"),
+    ):
+        val = meta.get(key) or os.environ.get(env_key)
+        if val:
+            kwargs[key] = val
+    return kwargs
+
+
 def _default_interface_factory(spec: SandboxSpec | None):  # pragma: no cover - needs cua + VM
     """Build a real cua computer interface. Imported lazily so the package never hard-depends
     on cua. Returns an object with cua's async ``BaseComputerInterface`` surface."""
@@ -61,8 +92,7 @@ def _default_interface_factory(spec: SandboxSpec | None):  # pragma: no cover - 
             "(pip install cua-computer) and a reachable cua sandbox; pass interface_factory= "
             "to inject your own cua BaseComputerInterface"
         ) from exc
-    os_type = (spec.os if spec else "linux") or "linux"
-    computer = Computer(os_type=os_type)
+    computer = Computer(**_computer_kwargs(spec))
     loop = asyncio.new_event_loop()
     loop.run_until_complete(computer.run())
     return computer.interface, computer, loop
@@ -165,7 +195,21 @@ class CuaSandbox:
                 "available": False,
                 "detail": "cua interface exposes no get_accessibility_tree",
             }
-        tree = self._run(self._if.get_accessibility_tree())
+        if self._closed:
+            raise RuntimeError("CuaSandbox is closed")
+        try:
+            tree = self._run(self._if.get_accessibility_tree())
+        except Exception as exc:  # noqa: BLE001 - the real cua RAISES when it can't serve the
+            # tree (the method exists on every interface, so hasattr can never catch this)
+            return {
+                "type": "observation",
+                "tree": "none",
+                "available": False,
+                "detail": f"cua a11y tree unavailable: {exc}",
+                "error": type(exc).__name__,
+            }
+        if isinstance(tree, dict) and "tree" in tree:
+            tree = tree["tree"]  # the real cua wraps the payload in a {"success", "tree"} result
         return {
             "type": "observation",
             "tree": "full",

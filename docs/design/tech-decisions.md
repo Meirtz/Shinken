@@ -811,8 +811,12 @@ The macOS engine is built on three public-API pillars under the platform consent
 **Status:** Accepted. **Built** (fixture-verified): `shinken.backends` ships four adapters —
 `cua`, `mcp-computer` (codex-style AX MCP), `browser-runtime` (CDP), and `e2b` (E2B cloud
 desktop) — plus `RoutedSession` CU↔BU composition, all under tests with protocol-faithful
-in-memory peers; **no live third-party driver runs in CI yet** (a real cua VM / MCP server /
-browser / e2b cloud smoke remains open). This ADR fixes the *contract* those adapters implement so external systems are
+in-memory peers, **plus env-gated live smokes for all four against the real drivers**
+(`tests/test_backends_live.py`, `SHINKEN_{BROWSER,E2B,CUA,MCP}_LIVE=1`: the browser one is
+locally proven against a real headless Chrome — real AX tree → `element_ref` click landed —
+the other three are **written but unrun** (each needs its external system), and **none run in
+CI**). This ADR fixes the
+*contract* those adapters implement so external systems are
 a first-class substrate, not a fork. Implements the seam from D1 (substrate-pluggable
 provider) and D8 (native SDK core) at the operation layer (D13).
 

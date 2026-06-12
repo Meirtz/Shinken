@@ -97,8 +97,10 @@ restore/fork without the boot (files-only, same tier as `docker commit`) — see
 ~1 RTT, S11-measured) ships too. The **operation-layer backend contract (D15,
 `shinken.backends`) is built**: `cua` / `mcp-computer` (codex-style AX MCP) / `browser-runtime`
 (CDP) / `e2b` adapters + `RoutedSession` CU↔BU composition with `source` provenance — honest
-capability negotiation, fixture-tested with protocol-faithful in-memory peers (no live
-third-party driver in CI yet). `.skn` recording is **not** built (removed/deferred, #216/#217). Full built-vs-designed
+capability negotiation, fixture-tested with protocol-faithful in-memory peers + env-gated
+live smokes against the real drivers (`tests/test_backends_live.py`,
+`SHINKEN_{BROWSER,E2B,CUA,MCP}_LIVE=1` — browser proven locally against real headless
+Chrome; e2b/cua/mcp written but unrun; none in CI). `.skn` recording is **not** built (removed/deferred, #216/#217). Full built-vs-designed
 map: **[docs/engineering/status.md](docs/engineering/status.md)**.
 
 The immediate work (per the recalibrated priorities):

@@ -138,6 +138,66 @@ def test_structured_observe_absent_degrades_honestly():
         assert obs["available"] is False
 
 
+class _FakeCuaWrappedTree(FakeCua):
+    """The REAL cua shape: get_accessibility_tree returns a command-result wrapper, not
+    the bare tree."""
+
+    async def get_accessibility_tree(self):
+        return {
+            "success": True,
+            "tree": {"role": "window", "name": "W", "children": [{"role": "button", "name": "OK"}]},
+        }
+
+
+class _FakeCuaRaisingTree(FakeCua):
+    """The REAL cua failure shape: the method exists on every interface and RAISES when the
+    server can't serve the tree (hasattr can never select the degrade branch)."""
+
+    async def get_accessibility_tree(self):
+        raise RuntimeError("Failed to get accessibility tree: not supported")
+
+
+def test_structured_observe_unwraps_real_cua_result_wrapper():
+    prov = CuaBackendProvider(interface_factory=lambda spec: _FakeCuaWrappedTree())
+    with prov.session() as env:
+        obs = env.observe(structured=True)
+        assert obs["available"] and 'window "W"' in obs["tree_text"]
+        assert '  button "OK"' in obs["tree_text"]  # serialized the payload, not the wrapper
+
+
+def test_structured_observe_real_raise_becomes_typed_unavailable():
+    prov = CuaBackendProvider(interface_factory=lambda spec: _FakeCuaRaisingTree())
+    with prov.session() as env:
+        obs = env.observe(structured=True)
+        assert obs["available"] is False and "not supported" in obs["detail"]
+        assert obs["error"] == "RuntimeError"
+
+
+def test_computer_kwargs_defaults_linux_to_docker(monkeypatch):
+    from shinken.backends.cua import _computer_kwargs
+    from shinken.providers.base import SandboxSpec
+
+    for var in (
+        "SHINKEN_CUA_PROVIDER",
+        "SHINKEN_CUA_NAME",
+        "SHINKEN_CUA_IMAGE",
+        "CUA_API_KEY",
+        "SHINKEN_CUA_HOST_SERVER",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    # the cua ctor default (lume) can never serve a linux sandbox — docker is our default
+    assert _computer_kwargs(None) == {"os_type": "linux", "provider_type": "docker"}
+    assert _computer_kwargs(SandboxSpec(os="macos"))["provider_type"] == "lume"
+    # metadata wins, env fills, host-server short-circuits
+    spec = SandboxSpec(os="linux", metadata={"provider_type": "cloud", "name": "vm-1"})
+    kw = _computer_kwargs(spec)
+    assert kw["provider_type"] == "cloud" and kw["name"] == "vm-1"
+    monkeypatch.setenv("SHINKEN_CUA_IMAGE", "trycua/cua-ubuntu:latest")
+    assert _computer_kwargs(None)["image"] == "trycua/cua-ubuntu:latest"
+    monkeypatch.setenv("SHINKEN_CUA_HOST_SERVER", "1")
+    assert _computer_kwargs(None) == {"os_type": "linux", "use_host_computer_server": True}
+
+
 def test_fork_family_degrades_loudly():
     with _provider().session() as env:
         with pytest.raises(UnsupportedProviderOperation, match="checkpoint"):
