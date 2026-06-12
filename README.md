@@ -439,7 +439,7 @@ Shinken's wedge is the unclaimed intersection of the axes below. Survey date
 
 On **cross-OS**: rather than wait for a native engine on every OS, Shinken reaches all three
 desktops *now* through the operation-layer backends (D15) — the same typed ACI driving a
-cross-platform AX/UIA/AT-SPI server (`mcp-computer`, e.g. open-computer-use) or a
+cross-platform AX/UIA/AT-SPI server (`mcp-computer`, e.g. open-codex-computer-use) or a
 macOS/Linux/Windows VM (`cua`). Linux is native and CI-gated; macOS has a native v1 too; the
 native Windows/Wayland engines are the designed follow-ups. The waist is the portability layer.
 
