@@ -58,6 +58,10 @@ class FakeSurface:
         self.calls.append(("scroll", dx, dy))
         return {"ok": True}
 
+    def launch_app(self, app, args=None, **kw):
+        self.calls.append(("launch_app", app))
+        return {"ok": True}
+
     def navigate(self, url):
         self.calls.append(("navigate", url))
         return {"ok": True, "url": url}
@@ -71,7 +75,9 @@ class FakeSurface:
 
 
 def _cu():
-    return FakeSurface("cu", ["observe", "screenshot", "click", "type_text", "key", "scroll"])
+    return FakeSurface(
+        "cu", ["observe", "screenshot", "click", "type_text", "key", "scroll", "launch_app"]
+    )
 
 
 def _bu():
@@ -98,6 +104,12 @@ def test_dispatch_element_ref_and_type_and_key():
     dispatch_action(s, {"verb": "key", "keys": "ctrl+s"})
     assert ("click", None, None, "e7", "left", 1) in s.calls
     assert ("type_text", "hi") in s.calls and ("key", "ctrl+s") in s.calls
+
+
+def test_dispatch_launch_app():
+    s = _cu()
+    dispatch_action(s, {"verb": "launch_app", "app": "xterm"})
+    assert ("launch_app", "xterm") in s.calls
 
 
 def test_dispatch_unadvertised_verb_raises():

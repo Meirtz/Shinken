@@ -354,6 +354,35 @@ so the hot loop never prompts.
 | macOS engine (ScreenCaptureKit + AXUIElement + CGEvent + TCC posture) | **designed-only** (D14) |
 | Windows engine (UIA + SendInput) | **designed-only** (D10) |
 | Browser Runtime (three tab surfaces) | **designed-only**; CDP coverage basis measured |
+| Operation-layer backend contract (third-party drivers under the ACI; honest capability negotiation; `RoutedSession` CU↔BU) | **built** (D15; `shinken.backends` — `cua`/`mcp-computer`/`browser-runtime`/`e2b`/`routed`) |
 
 The authoritative built-vs-designed map remains [status.md](../engineering/status.md); wire shapes
 for the new verbs and diff observations are illustrated in [aci-spec §3.3/§4.1](aci-spec.md).
+
+## 13. Operation-layer backends — the narrow waist (D15)
+
+The same verb surface this document specifies is the seam at which **third-party computer-control
+systems plug in *underneath* the ACI**. Shinken ships its own backend (`shinkend`), but the
+operation layer is a narrow waist: anything presenting the `Sandbox` verb surface can sit beneath
+it. The contract is fixed by
+**[D15](tech-decisions.md#d15--operation-layer-backends-a-pluggable-execution-substrate-under-the-typed-aci)**:
+
+- A backend is a `SandboxProvider` subclass whose `connect()` returns a **duck-typed Sandbox**
+  translating the verbs of §6 onto the third party's API; the inherited `provider.session()`
+  lifecycle and every consumer (the Operator loop, eval, the gym) work unchanged.
+- **Honest capability negotiation** is the contract: `capabilities.verbs`/`targets`/
+  `structured_observation` advertise only what the backend really serves, and missing capabilities
+  degrade *loudly* (`UnsupportedProviderOperation`) — never a silent no-op or a fabricated tree. A
+  pixels-only backend advertises `point_px` and `structured_observation=False`; one with an a11y
+  tree (or a CDP/AX bridge) serves the §2 `element_ref` family. No fork tier ⇒
+  `supports_fork=False`.
+- **CU↔BU composition** (the host-side split a tool like Codex.app runs — desktop CU beside browser
+  BU) is `RoutedSession`: named surfaces behind one Sandbox-shaped object the Operator loop drives
+  unchanged, routing per action with `source` provenance on every action and observation.
+
+Built backends: `cua` (trycua), `mcp-computer` (codex-style AX MCP — serves the structured
+`element_ref` family, filling the macOS-AX gap until D14 is built), `browser-runtime` (the §10
+Browser Runtime as a CDP backend), and `e2b` (E2B cloud desktop, pixels + shell). OSWorld is a
+one-way *coarsening* of this contract (pixel/`pyautogui`/full-screenshot-poll), not a peer
+backend — compatible (M5 gate, score 1.0) but fork/structured-observe/capability-negotiation do
+not round-trip.

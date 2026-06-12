@@ -805,9 +805,105 @@ The macOS engine is built on three public-API pillars under the platform consent
 
 ---
 
+## D15 — Operation-layer backends: a pluggable execution substrate under the typed ACI
+
+**Status:** Accepted. **Built** (Linux-proven): `shinken.backends` ships four adapters —
+`cua`, `mcp-computer` (codex-style AX MCP), `browser-runtime` (CDP), and `e2b` (E2B cloud
+desktop) — plus `RoutedSession` CU↔BU composition, all under live tests with protocol-faithful
+in-memory peers. This ADR fixes the *contract* those adapters implement so external systems are
+a first-class substrate, not a fork. Implements the seam from D1 (substrate-pluggable
+provider) and D8 (native SDK core) at the operation layer (D13).
+
+### Context
+
+The operation layer is a **narrow waist**: the verb surface a `Sandbox` exposes
+(`screenshot`/`click`/`type_text`/`key`/`scroll`/`drag`/`exec`/`observe`/`launch_app`/
+`clipboard_*`/`screen_size`) is the only thing every consumer — the Operator loop, model
+adapters, `run_eval_forked`, the fork-native gym — depends on. Shinken maintains its own
+backend (`shinkend` behind `DockerLocalProvider`), but a growing field of computer-use drivers
+already exists: trycua/cua, e2b-desktop, codex-style AX MCP servers, CDP browser runtimes.
+Re-implementing each from scratch wastes their maturity and fractures the field. The question
+this ADR answers: **how does a third-party driver plug in *under* the ACI without weakening the
+typed contract or faking capabilities it doesn't have?**
+
+The risk is a lowest-common-denominator trap — either every backend is forced to claim the full
+verb set (so consumers call methods that silently no-op), or the ACI collapses to pixels-only to
+match the weakest backend (so Shinken's own structured-observe and fork-native state are thrown
+away). Both are unacceptable: the contract has to let a backend serve *exactly* what it can and
+**say so**, so consumers degrade loudly rather than silently.
+
+### Decision
+
+An operation-layer backend is a `SandboxProvider` subclass whose `connect()` returns a
+**duck-typed Sandbox** — same method names consumers call, translating each verb to the
+third party's API. The inherited `provider.session()` lifecycle works unchanged. The contract:
+
+- **Honest capability negotiation is the contract surface.** Each backend's `capabilities`
+  envelope (`verbs`, `targets`, `observation_types`, `structured_observation`) advertises only
+  what it really serves. A backend with an accessibility tree advertises `structured_observation`
+  + `element_ref` targets; a pixel-only one advertises neither (`targets=["point_px"]`). The
+  provider's `ProviderCapabilities` declares `supports_fork`/`supports_snapshot` truthfully.
+- **Degrade loudly, never silently.** A capability a backend lacks raises a typed
+  `UnsupportedProviderOperation` — never `AttributeError`, never a silent no-op. No fork tier ⇒
+  `supports_fork=False` and `checkpoint`/`spawn` delegate to the provider and raise; no a11y tree
+  ⇒ `observe(structured=True)` returns a typed *unavailable* observation, not a fabricated tree.
+- **A lazy registry, no SDK coupling.** `register_backend`/`get_backend`/`list_backends`;
+  built-ins register on first use so importing `shinken.backends` never pulls a third-party SDK.
+- **Injectable factories.** Each backend takes an `interface_factory`/`transport_factory`/
+  `client_factory`/`sandbox_factory` so examples and tests run against protocol-faithful
+  in-memory peers (no install, no VM, no key) — matching the repo's "scripted, no model API"
+  convention — and swap to the real driver by passing the default factory.
+- **Composition is explicit and provenance-tagged.** `RoutedSession` holds named surfaces
+  (`{"cu": desktop, "bu": browser}`) behind one Sandbox-shaped object the Operator loop drives
+  unchanged; it routes each action to a surface (explicit `surface=`, or browser verbs imply
+  `bu`), tags every action and observation with a `source`, unions capabilities with a
+  `per_source` breakdown, and `dispatch_action` is the standalone verb-dict→method glue (gated on
+  `capabilities.verbs`). This is the CU↔BU model a host like Codex.app runs (a desktop CU surface
+  with OS trust beside a browser BU surface with URL-origin scope), expressed as composition.
+- **OSWorld interop is a one-way coarsening, not a backend.** OSWorld's
+  pixel/`pyautogui`-string/full-screenshot-poll surface maps *down* from the typed ACI (proven:
+  M5 gate, score 1.0); fork, structured-observe, and capability negotiation are ACI-only adds
+  that do not round-trip. It is a compatibility target, not a peer of the backend contract.
+
+### Alternatives (and why rejected)
+
+| Alternative | Why rejected |
+|---|---|
+| **Lowest-common-denominator ACI** (collapse to pixels to match the weakest backend) | Throws away Shinken's structured-observe (D13) and fork-native state (D1) — the actual differentiators — to accommodate backends that lack them. Capability negotiation keeps the full contract *and* admits weak backends. |
+| **Force every backend to implement the full verb set** | Backends fake methods they can't serve; consumers call them and get silent no-ops. The whole point is loud degradation. |
+| **A new "backend" abstraction parallel to `SandboxProvider`** | A second seam doing what the provider seam already does. Reusing `SandboxProvider`/`Sandbox` means every existing consumer (operator, eval, gym) works over a backend for free. |
+| **Wrap each driver as a full harness on top of Shinken** (direction A only) | Useful and also supported, but it makes Shinken *a* harness rather than *the* substrate. Backends (direction B) are what make Shinken the pluggable waist; the two compose. |
+| **Hard-route browser vs desktop in the tool layer** | Tool-enforced routing is brittle and host-specific; `RoutedSession` routing is a convenience the host can always override, with provenance for audit. |
+
+### Consequences
+
+- **Positive:** Shinken becomes the pluggable substrate — top: harnesses; middle: typed ACI +
+  capability negotiation + fork-native state (which none of the four drivers have); bottom: many
+  execution backends. New backends are ~100 lines (the e2b adapter is the proof). The field's
+  maturity is reused instead of re-implemented, and the contract stays vendor-neutral.
+- **Negative:** capability fragmentation is now first-class — a consumer must read
+  `capabilities` and handle `UnsupportedProviderOperation`, not assume the full surface. The
+  fork-native gym and `run_eval_forked` only work over backends whose substrate supports fork
+  (Shinken's own, today); on others they degrade loudly by design.
+- **Risks:** third-party verb surfaces drift across versions; the in-memory peers must track the
+  real SDKs or tests pass against a stale shape (mitigated by pinning the studied clones in
+  `references/` and keeping the peer faithful to the documented surface).
+
+### Evidence
+
+- Built adapters + contract: `shinken.backends` (`cua`, `mcp_computer`, `browser_runtime`,
+  `e2b_desktop`, `routed`); examples `backends_cua_shinken.py`, `backends_mcp_computer_shinken.py`,
+  `backends_browser_runtime_shinken.py`, `backends_e2b_shinken.py`, `backends_routed_cu_bu.py`.
+- Sibling contract docs: [operation layer](operation-layer.md) (D13 verb surface),
+  [observation backends](observation-backends.md) (the observe contract a backend serves).
+- Studied prior art (pinned in `references/`): trycua/cua, e2b-dev/desktop,
+  iFurySt/open-codex-computer-use, iFurySt/open-browser-use.
+
+---
+
 ## Cross-cutting reconciliation
 
-The fourteen decisions interlock; the load-bearing couplings:
+The fifteen decisions interlock; the load-bearing couplings:
 
 - **One CoW-fork primitive serves three masters:** instant reset (D1), replay-branching (D5), and N-replica eval (D7). Build it once, expose `fork/branch/restore` as first-class verbs.
 - **The structured event stream is one artifact in three roles:** the live stream (D4), the replay log (D5), and RL/SFT data (D12).
@@ -815,6 +911,7 @@ The fourteen decisions interlock; the load-bearing couplings:
 - **The Action Gateway (D9) is the single place D6 is enforced:** auth → rate → budget → Cedar → dispatch.
 - **GPU (D11) is the one tier that breaks the fork invariant (D1):** it is snapshot-light by physics (VFIO/vGPU state is non-migratable), opt-in, and the encode hardware must be physically separate from any A100/H100 AI fleet.
 - **The operation layer (D13) is where D2 and D3 meet at the per-step loop:** the element verb family extends the D2 tagged-union, and the stable-id/diff/settle observation engine is how D3's structured track is actually consumed; the per-OS engines (Linux today, macOS per D14, Windows per D10) implement one contract.
+- **The backend contract (D15) is the substrate seam (D1) reused at the operation layer:** a third-party driver plugs in as a `SandboxProvider` returning a duck-typed Sandbox, and honest capability negotiation is what lets the *same* typed ACI admit a pixels-only backend without the fork-native state (D1) and structured-observe (D3/D13) that distinguish Shinken's own — consumers degrade loudly off `capabilities`, never silently.
 - **a11y coverage (D3)** — the formerly load-bearing unverified assumption — is now **first-party measured** (spike #2/E5: hybrid per-window verdict; D3's structured-default stays Provisional); **every remaining "(vendor-published, unverified)"** number in this document still requires the first-party measurement plan before it anchors an SLA.
 
 Open questions carried forward (do not paper over): a11y coverage on Electron/Qt/canvas/games; Windows-in-cloud licensing and the macOS 2-VM/host economics; no first-party perf numbers yet; the isolation & capability note ([`threat-model.md`](threat-model.md)); the multi-player / non-exclusive computer-use in/out decision; and protocol/event-schema versioning + upcasting. See [`../../notes/open-questions.md`](../../notes/open-questions.md).

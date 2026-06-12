@@ -89,6 +89,8 @@ def dispatch_action(env: Any, action: dict) -> dict:
             if verb == "invoke_action"
             else env.set_value(ref, action.get("text", ""))
         )
+    if verb == "launch_app":
+        return env.launch_app(action.get("app", action.get("name", "")), args=action.get("args"))
     if verb == "navigate":
         return env.navigate(action["url"])
     if verb == "eval":

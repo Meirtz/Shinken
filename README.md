@@ -377,6 +377,13 @@ with provider.session() as env:
   own guest engine, which is what fills the macOS-AX gap. Non-invasive, so no `exec`; no fork
   tier. Example: [`examples/backends_mcp_computer_shinken.py`](examples/backends_mcp_computer_shinken.py).
 
+- **E2B cloud desktop** ([e2b-dev/desktop](https://github.com/e2b-dev/desktop)) —
+  `shinken.backends.e2b`: drives the ACI over an E2B cloud Linux desktop (`left_click`/`write`/
+  `press`/`scroll`/`drag` over xdotool, plus a real shell, so `exec` and `launch_app` are
+  served). Pixel-only — no accessibility tree, so `structured_observation=False`; e2b's own
+  cloud pause/resume is a different, 1:1 tier, so no Shinken fork (`supports_fork=False`). A
+  ~100-line adapter — the proof that a new backend is cheap. Example:
+  [`examples/backends_e2b_shinken.py`](examples/backends_e2b_shinken.py) (scripted, no key, no cloud).
 - **Browser Runtime / BU** (e.g. [open-browser-use](https://github.com/iFurySt/open-browser-use)) —
   `shinken.backends.browser_runtime`: the browser half, alongside the desktop (CU) backends.
   Realizes Shinken's designed Browser Runtime (D13 §10) as a backend over a CDP browser, with
@@ -385,8 +392,7 @@ with provider.session() as env:
   so it serves `element_ref`), and locator/script (`navigate`/`eval`). No shell `exec`; tabs
   are ephemeral so no fork tier. Example:
   [`examples/backends_browser_runtime_shinken.py`](examples/backends_browser_runtime_shinken.py).
-  Route CU vs BU at the Operator level (by target app/URL) — that routing layer is the
-  designed next step.
+  Route CU vs BU at the Operator level (by target app/URL) via `RoutedSession`, below.
 
 **Compose CU + BU under one loop.** `shinken.backends.RoutedSession` holds named surfaces
 (e.g. `{"cu": desktop, "bu": browser}`), routes each ACI action to the right one (explicit

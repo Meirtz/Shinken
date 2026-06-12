@@ -89,6 +89,7 @@ def _ensure_builtins() -> None:
     _BUILTINS_LOADED = True
     from .browser_runtime import BrowserRuntimeBackend
     from .cua import CuaBackendProvider
+    from .e2b_desktop import E2bDesktopBackend
     from .mcp_computer import McpComputerBackend
 
     register_backend("cua", CuaBackendProvider)
@@ -96,3 +97,5 @@ def _ensure_builtins() -> None:
     register_backend("mcp-computer", McpComputerBackend)
     # the BU half: a CDP browser runtime (e.g. iFurySt/open-browser-use) — D13 §10
     register_backend("browser-runtime", BrowserRuntimeBackend)
+    # e2b-dev/desktop: a cloud Linux desktop (pixel-only + shell exec; no fork tier)
+    register_backend("e2b", E2bDesktopBackend)
