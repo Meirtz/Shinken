@@ -27,8 +27,10 @@ replicas of that exact moment in **0.1–0.6 s** each.
 | an **agent product team** | one typed, versioned interface (22 verbs) from keyless local Docker to a fleet: one process drives **128 real desktops**, one event loop holds **3,096 live sessions** |
 | a stack with its own driver | the same ACI runs **over your system**: trycua/cua, codex-style MCP desktop servers, CDP browsers, and E2B desktops plug in *under* the typed interface as backends (D15) |
 
-It is not a benchmark, a cloud browser, a VNC desktop, or a model adapter — **it is the
-runtime those plug into**. And it is honest about maturity: what is real today is a
+Benchmarks, cloud browsers, VNC desktops, and model adapters all plug into it — **Shinken is
+the runtime underneath**, built around two properties agent workloads need most: **runtime
+state** (checkpoint/fork/resume) and **fleet scale** (thousands of live environments per
+process, measured below). And it is honest about maturity: what is real today is a
 **measured Linux/X11 vertical slice under live CI** — every claim below links to first-party
 data you can rerun ([`benchmarks/`](benchmarks)) or audit
 ([`docs/benchmarks/`](docs/benchmarks/README.md)); design-only parts are marked, here and in
@@ -116,17 +118,6 @@ with provider.session(SandboxSpec()) as env:
         ckpt.delete()
 ```
 
-**And it scales — measured, not projected.** One client process drives **128 real Docker
-desktops** (128/128 booted in 7.3 s, ~900 observations/s aggregate, 2 OS threads). The
-client plane alone holds **3,096 live sessions on a single event-loop thread** — sustained
-**2,320 frames/s ≈ 870 Mbps of decoded observations at 0.93 cores** — so the per-fleet cost
-of *driving* sandboxes never becomes the bottleneck; forked fleets then cut observation
-traffic **18.6×** (replicas render identical pixels, so the fleet pays for each distinct
-screen once), and the pipelined `step()` holds a k-action step at **~1 RTT** over WAN. Raw
-data and rerun commands: [docs/benchmarks](docs/benchmarks/README.md).
-
-<p align="center"><img src="docs/assets/bench/client_scale.png" width="820"></p>
-
 **Observe on demand, act by element id** — the agent decides when to look. A structured
 observation is a numbered tree whose element ids are **stable across observations** (never
 rebound), so the model can say "click e7" across turns; a re-observation comes back as a
@@ -171,6 +162,27 @@ with provider.session(SandboxSpec()) as env:
 Every sandbox stays addressable through `env.handle`; `shinken ps` lists what is alive and
 `shinken gc` reaps anything leaked.
 
+## Scale: environments are the multiplier
+
+Agent workloads multiply **environments** faster than anything else — an RL run wants
+thousands of rollouts, an eval wants N attempts per task, a swarm wants a desktop per agent.
+Shinken treats the environment plane as the thing that has to scale first, and measures it:
+
+- one client process drives **128 real Docker desktops** (128/128 booted in 7.3 s,
+  ~900 observations/s aggregate, 2 OS threads);
+- the client plane holds **3,096 live sessions on a single event-loop thread** — sustained
+  **2,320 frames/s ≈ 870 Mbps of decoded observations at 0.93 cores** — so driving the fleet
+  stays off the critical path;
+- forked fleets cut observation traffic **18.6×** (replicas render byte-identical pixels, so
+  the fleet pays for each distinct screen once);
+- the pipelined `step()` holds a k-action step at **~1 RTT** over WAN, whatever k the policy
+  emits.
+
+Every number above is a measurement with tracked raw data and a rerun command:
+[docs/benchmarks](docs/benchmarks/README.md).
+
+<p align="center"><img src="docs/assets/bench/client_scale.png" width="820"></p>
+
 ## Platforms
 
 One wire contract, one SDK — and **two ways onto every platform**: Shinken's own per-OS
@@ -189,7 +201,7 @@ Native-engine maturity is uneven and labeled honestly — Linux is the proven, C
 macOS v1 is a local capture+input slice; Windows/Wayland engines are designed, not built
 (full map: [docs/engineering/status.md](docs/engineering/status.md)). The backend rows are
 built and fixture-tested today (D15), with honest capability negotiation: what a backend
-can't serve raises a typed error instead of pretending.
+can't serve raises a typed error.
 
 The macOS engine drives the **real desktop** of your Mac — same wire contract, no
 container:
@@ -309,7 +321,7 @@ figure is the static-fleet ceiling** (N=16 at steady state, no divergence) and i
 such; the trainer-shaped **concurrent mode** pays one first-touch-race round then matches it;
 and **policy-driven full divergence decays the hit rate to zero** (~1× bytes — the measured
 floor: dedup's value is bounded by how often screens repeat). A general-purpose sandbox API
-cannot offer this: it works because fork makes pixels identical, not approximately similar.
+cannot offer this: it works because fork makes the replicas' pixels byte-identical.
 
 <p align="center"><img src="docs/assets/bench/fork_dedup.png" width="820"></p>
 
@@ -326,7 +338,7 @@ fused observation before awaiting any reply, so a 5-action step at 150 ms WAN RT
 <p align="center"><img src="docs/assets/bench/step_pipeline.png" width="820"></p>
 
 **5 — Structured observation: hybrid, built on identity.** The structured layer's contract is
-*identity, not snapshots*: an on-screen control keeps the same element id across observations
+*identity*: an on-screen control keeps the same element id across observations
 within a session, and **an id is never rebound to a different control** (a control that
 disappears and returns may get a new id; an id never silently migrates) — where the prevailing
 pattern elsewhere is per-snapshot refs that go stale on every observation. On that identity
@@ -337,7 +349,7 @@ the verdict is **hybrid** (spike E5): strong for Qt (0.87 addressable) and Chrom
 is a measured zero with a change-blind diff — so the shipped design is per-window structured +
 pixel fallback, and the structured-by-default thesis (D3) stays provisional.
 
-**Transport hygiene.** Supporting engineering, not a contribution — the wire is kept
+**Transport hygiene.** Supporting engineering — the wire is kept
 change-proportional: opt-in JPEG/downscale levers cut content-rich frames ~20–131×
 (content-dependent; PNG outright wins on flat UI), negotiated binary WS frames remove the
 base64+JSON tax (wire −25%), the lossless dirty-tile delta stream cuts typing traffic 11.3×
@@ -359,7 +371,7 @@ snippet is itself executed by the test suite.
 
 ## How it compares
 
-Shinken's wedge is the unclaimed intersection, not winning any single axis. Survey date
+Shinken's wedge is the unclaimed intersection of the axes below. Survey date
 2026-06; competitor figures are vendor-published, sources in
 [`docs/design/landscape.md`](docs/design/landscape.md).
 
