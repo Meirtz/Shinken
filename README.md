@@ -346,6 +346,39 @@ The cua and e2b cells marked *measured* are first-party, rerunnable numbers — 
 shipped, same host, same window, pinned versions
 ([S12](docs/engineering/benchmarks.md), [`docs/benchmarks/`](docs/benchmarks/README.md) §7).
 
+## Operation-layer backends
+
+The operation layer is a narrow waist: Shinken ships its own backend (`shinkend`), but
+anything that presents the verb surface a `Sandbox` exposes can sit **underneath** it. A
+backend adapter wraps a third-party computer-control system as a duck-typed Sandbox behind a
+`SandboxProvider`, so the inherited `provider.session()` and every Sandbox consumer (operator
+loop, model adapters, the gym where the substrate allows it) work unchanged — and each
+backend advertises **honest capabilities** (a backend with no snapshot tier leaves
+`supports_fork=False`; its `checkpoint`/`resume` raise `UnsupportedProviderOperation`; its
+`capabilities.verbs` list only what it really serves, so consumers degrade loudly):
+
+```python
+from shinken.backends import get_backend
+provider = get_backend("cua")          # trycua/cua's computer interface, under the Shinken ACI
+with provider.session() as env:
+    env.click(x=640, y=420); env.type_text("hello"); env.observe(structured=True)
+```
+
+- **trycua/cua** ([trycua/cua](https://github.com/trycua/cua)) — `shinken.backends.cua`:
+  drives the ACI over cua's `BaseComputerInterface` (pointer/keyboard/scroll/screenshot/exec
+  + a11y-tree `observe`); no fork tier, so it degrades loudly. Example:
+  [`examples/backends_cua_shinken.py`](examples/backends_cua_shinken.py) (scripted, no cua
+  install).
+- **MCP computer-use** (e.g. [open-codex-computer-use](https://github.com/iFurySt/open-codex-computer-use)) —
+  `shinken.backends.mcp_computer`: drives the ACI over any MCP server exposing a codex-style
+  desktop computer-use surface (`get_app_state` + `click`/`type_text`/`press_key`/`scroll`/…).
+  Because that server observes via a numbered Accessibility tree and clicks by element index,
+  this backend serves **structured `observe` + `element_ref`** — the same shape as Shinken's
+  own guest engine, which is what fills the macOS-AX gap. Non-invasive, so no `exec`; no fork
+  tier. Example: [`examples/backends_mcp_computer_shinken.py`](examples/backends_mcp_computer_shinken.py).
+
+Register your own backend with `shinken.backends.register_backend`.
+
 ## Integrations
 
 Adapters that plug Shinken under stacks that already exist (duck-typed protocol shapes, no

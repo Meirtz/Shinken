@@ -46,6 +46,18 @@ _README = Path(__file__).resolve().parents[3] / "README.md"
 #: api-surface-checked always and executed only behind SHINKEN_DOCTEST_DOCKER=1.
 _DOCKER_MARKERS = {"DockerLocalProvider", "run_eval_forked"}
 
+#: A block touching one of these drives a THIRD-PARTY operation-layer backend (cua/e2b/…)
+#: whose SDK + sandbox aren't present in CI. API-surface-checked always; never executed
+#: (the example ships its own protocol-faithful fake under examples/).
+_EXTERNAL_BACKEND_MARKERS = {"get_backend"}
+
+
+def _needs_external_backend(code: str) -> bool:
+    for node in ast.walk(ast.parse(code)):
+        if isinstance(node, ast.Name) and node.id in _EXTERNAL_BACKEND_MARKERS:
+            return True
+    return False
+
 #: Anthropic computer-use ``tool_use`` *input* (what a model emits for the versioned
 #: ``computer`` tool — see shinken/adapters/anthropic.py). A ``type`` action is
 #: load-bearing here: its payload lives OUTSIDE verb/target, so a consumption pattern
@@ -105,8 +117,8 @@ def _needs_docker(code: str) -> bool:
 
 
 _BLOCKS = _extract_blocks()
-_MOCK_BLOCKS = [b for b in _BLOCKS if not _needs_docker(b[2])]
-_DOCKER_BLOCKS = [b for b in _BLOCKS if _needs_docker(b[2])]
+_MOCK_BLOCKS = [b for b in _BLOCKS if not _needs_docker(b[2]) and not _needs_external_backend(b[2])]
+_DOCKER_BLOCKS = [b for b in _BLOCKS if _needs_docker(b[2]) and not _needs_external_backend(b[2])]
 
 
 def _ids(blocks: list[tuple[int, int, str]]) -> list[str]:
