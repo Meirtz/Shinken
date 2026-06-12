@@ -430,12 +430,18 @@ Shinken's wedge is the unclaimed intersection of the axes below. Survey date
 
 | | cross-OS desktop | runtime fork | structured + pixel obs | eval on same runtime | streaming |
 |---|---|---|---|---|---|
-| **Shinken** | designed (Linux built) | **disk + CRIU memory tiers built + measured, local-first** (live process+memory fork ~0.4 s) | hybrid (coverage measured) | **yes — `run_eval_forked` built** | PNG/JPEG/delta built; WebRTC designed |
+| **Shinken** | **Linux native (CI) + macOS v1; macOS/Windows reachable today via backends** (cua · mcp-computer, same ACI); native Win/Wayland designed | **disk + CRIU memory tiers built + measured, local-first** (live process+memory fork ~0.4 s) | hybrid (coverage measured) | **yes — `run_eval_forked` built** | PNG/JPEG/delta built; WebRTC designed |
 | trycua/cua | yes | cloud-only — local `snapshot()` raises (measured); local verbs = `docker pause` / stopped-VM clone | a11y trees | recreates env per reset | VNC + polled PNG (measured: 174 ms/step vs our 2.9 ms) |
 | E2B desktop | Linux | cloud pause/resume, 1:1 (API-key required — no keyless/local mode, measured) | none | n/a | raw VNC |
 | Morph | Linux | **ms-class CoW (vendor-published P99 ~1.3 ms)** | none | n/a | n/a |
 | OSWorld | Linux (in practice) | slow revert, no fork | full-XML per step | *is* the benchmark | full-frame PNG poll |
 | browser SaaS | no (Chromium only) | no | DOM | no | WebRTC/HLS |
+
+On **cross-OS**: rather than wait for a native engine on every OS, Shinken reaches all three
+desktops *now* through the operation-layer backends (D15) — the same typed ACI driving a
+cross-platform AX/UIA/AT-SPI server (`mcp-computer`, e.g. open-computer-use) or a
+macOS/Linux/Windows VM (`cua`). Linux is native and CI-gated; macOS has a native v1 too; the
+native Windows/Wayland engines are the designed follow-ups. The waist is the portability layer.
 
 The cua and e2b cells marked *measured* are first-party, rerunnable numbers — both stacks as
 shipped, same host, same window, pinned versions
