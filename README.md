@@ -214,7 +214,9 @@ underneath is the variable, and you pick it per platform:
   compatibility map on the same interface.
 - **macOS** — Shinken's **native engine v1** drives the real desktop (capture + input,
   Retina-correct); for background app control with an element tree today, plug an
-  **open-source** codex-style AX server in as the `mcp-computer` backend.
+  open-source codex-style AX server —
+  [open-codex-computer-use](https://github.com/iFurySt/open-codex-computer-use) — in as the
+  `mcp-computer` backend.
 - **Windows** — **open-source** drivers through the same interface today: the `cua` backend
   (VM) or the `e2b` backend (cloud desktop); the native engine (UIA tier) is designed.
 - **Browser** — any CDP browser through the `browser-runtime` backend: pixels, input, and
@@ -439,7 +441,7 @@ Shinken's wedge is the unclaimed intersection of the axes below. Survey date
 
 On **cross-OS**: rather than wait for a native engine on every OS, Shinken reaches all three
 desktops *now* through the operation-layer backends (D15) — the same typed ACI driving a
-cross-platform AX/UIA/AT-SPI server (`mcp-computer`, e.g. open-codex-computer-use) or a
+cross-platform AX/UIA/AT-SPI server (`mcp-computer`, e.g. [open-codex-computer-use](https://github.com/iFurySt/open-codex-computer-use)) or a
 macOS/Linux/Windows VM (`cua`). Linux is native and CI-gated; macOS has a native v1 too; the
 native Windows/Wayland engines are the designed follow-ups. The waist is the portability layer.
 
