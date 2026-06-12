@@ -1,15 +1,18 @@
 # Shinken CUA-Gym TASK image — NOT the production base.
 #
-# Extends the lean base (shinken/sandbox-linux) with what the released CUA-Gym task
-# bundles' setup/reward scripts actually use (measured over all 10,910 bundles of
-# cua_gym_tasks_v1: python-docx 7.5k, openpyxl 5.6k, python-pptx 5.5k, requests 3.0k,
-# pymupdf 0.5k, lxml/PIL/odfpy/pandas/numpy/PyPDF2 in the tail), plus pip and the
-# CLI utilities task scripts shell out to. The base image stays lean; this is the
-# Dockerfile.a11y pattern applied to the RL-task surface.
+# Extends the lean base (shinken/sandbox-linux) with what released CUA-Gym task
+# bundles' setup/reward scripts and domain taxonomy need: Office/document
+# writers, browser/web tooling, PDF/image/media utilities, common CLI/dev tools,
+# and the Python libraries declared by CUA-Gym plus reward-script tail deps.
+#
+# This is a broad containerized task image, not a byte-for-byte clone of the
+# upstream cloud VM: root/systemd/kernel-management tasks and the Aliyun/ECS
+# lifecycle remain outside the container contract.
 #
 # Build (from repo root, AFTER building the base):
 #   docker build -f images/linux/Dockerfile -t shinken/sandbox-linux .
 #   docker build -f images/linux/Dockerfile.cua -t shinken/sandbox-cua .
+# (deployments may retag freely; the in-repo examples reference shinken/sandbox-cua)
 
 FROM shinken/sandbox-linux
 
@@ -18,20 +21,42 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Task setup scripts pip-install their own deps (measured); let them through PEP 668.
 ENV PIP_BREAK_SYSTEM_PACKAGES=1
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3-pip \
+        ca-certificates curl wget git jq unzip zip tar rsync file tree less \
+        vim nano build-essential make gcc g++ \
+        python3-pip python3-venv python-is-python3 \
         python3-openpyxl python3-requests python3-lxml python3-pil python3-odf \
-        python3-pandas python3-numpy python3-pypdf2 python3-fitz python3-reportlab \
-        python3-matplotlib \
-        poppler-utils xdg-utils zip unzip curl wget file \
+        python3-pypdf2 python3-fitz python3-reportlab \
+        poppler-utils qpdf ghostscript mupdf-tools evince xdg-utils \
+        wmctrl xclip xsel scrot \
+        ffmpeg imagemagick libimage-exiftool-perl \
+        thunar mousepad file-roller \
+        nodejs npm \
     && rm -rf /var/lib/apt/lists/*
-# Not packaged by Debian: the two top Office writers task scripts import the most.
-RUN pip install --no-cache-dir --break-system-packages python-docx python-pptx
+# Not packaged by Debian, too old in Debian, or declared by the public CUA-Gym
+# pyproject for setup/reward/mock-web tooling.
+RUN pip install --no-cache-dir --break-system-packages \
+        openai anthropic aiohttp "pydantic>=2" PyYAML \
+        python-docx python-pptx "Pillow>=10" "PyMuPDF>=1.23" \
+        playwright Flask Django \
+        scikit-image imagehash pypdf pdfplumber fpdf2 \
+        beautifulsoup4 pyautogui python-xlib psutil \
+    && pip install --no-cache-dir --break-system-packages --ignore-installed --upgrade \
+        numpy pandas matplotlib opencv-python-headless
 
 # The desktop_app class (9.2k of 10.9k bundles; 6.5k LibreOffice) — setup scripts convert
 # documents with headless soffice and tweak the desktop with gsettings. arm64-native.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        libreoffice-calc libreoffice-writer libreoffice-impress \
-        libglib2.0-bin dbus-x11 fonts-dejavu \
+        libreoffice libreoffice-calc libreoffice-writer libreoffice-impress \
+        libreoffice-java-common \
+        libglib2.0-bin dbus-x11 \
+        fonts-dejavu fonts-liberation fonts-noto fonts-noto-cjk fonts-noto-color-emoji \
+        chromium chromium-driver \
+        gimp vlc \
     && rm -rf /var/lib/apt/lists/*
+
+# Many generated setup scripts ask for Chrome by its Google binary names. Debian's
+# portable browser package is Chromium, so expose compatibility shims.
+RUN ln -sf /usr/bin/chromium /usr/local/bin/google-chrome \
+    && ln -sf /usr/bin/chromium /usr/local/bin/google-chrome-stable
 
 USER shinken
