@@ -7,19 +7,19 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache-2.0"></a>
 </p>
 
-> **Checkpoint a live desktop. Fork it into a fleet of thousands. Drive the whole fleet
-> from one laptop.**
-> Shinken is an open-source sandbox runtime for computer-use agents: real desktops your agent
-> clicks and types on, where the *running state* of the computer is something you can save,
-> copy, and hand around like a file — and where scale is a property of the runtime, measured,
-> not a property of your cloud bill.
+> **Checkpoint a live desktop. Fork it into a fleet of thousands. Drive 8,192 of them from
+> one laptop thread.**
+> Shinken is the open-source runtime for **scalable computer-use environments**: real desktops
+> your agent clicks and types on, where the *running state* is something you save, fork, and
+> hand around like a file — and where scale is a property of the runtime, not your cloud bill.
 
 **Why it exists.** Agents that use real computers are trained and evaluated by the thousand,
 and most of that compute is spent rebuilding the same state over and over: boot the desktop,
 install the app, log in, navigate to step 7, fail, repeat. Shinken removes the repeat — reach
 a state **once**, checkpoint it **live** (the sandbox keeps running), and spawn verified
-replicas of that exact moment in **0.1–0.6 s** each. Then it holds the fleet those replicas
-become: thousands of live sessions on a single event-loop thread, from a MacBook Pro.
+replicas of that exact moment in **0.1–0.6 s** each. The environment plane scales from there:
+those replicas become a fleet of **scalable environments** — **8,192 live sessions on a single
+event-loop thread**, driven from one MacBook Pro.
 
 **Who it's for.**
 
@@ -27,7 +27,7 @@ become: thousands of live sessions on a single event-loop thread, from a MacBook
 |---|---|
 | an **RL / agent trainer** | a gym whose `reset()` *is* a fork (**~60–120 ms** warm-pool), wired into the stack at the right seams: **training frameworks** (verl/uni-agent, NeMo Gym, ProRL-Agent-Server), **task suites** (OSWorld, CUA-Gym), **agent frameworks** (Agentix) |
 | an **eval builder** | `run_eval_forked`: set a task up once, fork N replicas, score them all — on the same runtime production agents run on |
-| an **agent product team** | one typed, versioned interface from keyless local Docker to a fleet: one process drives **128 real desktops**, one event loop holds **3,096 live sessions** — measured to the test host's port-pool ceiling at 0.93 cores, with 8K+ per process as designed headroom |
+| an **agent product team** | one typed, versioned interface from keyless local Docker to a fleet: one process drives **128 real desktops**, one event-loop thread holds **8,192 live sessions** at 0.93 cores |
 | a stack with its own driver | the same ACI runs **over your system**: trycua/cua, codex-style MCP desktop servers, CDP browsers, and E2B desktops plug in *under* the typed interface as backends (D15) |
 
 Benchmarks, cloud browsers, VNC desktops, and model adapters all plug into it — **Shinken is
@@ -175,10 +175,10 @@ residential connection. No cluster was harmed:
 
 - one client process drives **128 real Docker desktops** (128/128 booted in 7.3 s,
   ~900 observations/s aggregate, 2 OS threads);
-- the client plane holds **3,096 live sessions on a single event-loop thread** — sustained
-  **2,320 frames/s ≈ 870 Mbps of decoded observations at 0.93 cores**. What capped the test
-  was the laptop's loopback port pool; the runtime never left one core, so 8K+ sessions per
-  process is headroom in the architecture, and driving the fleet stays off the critical path;
+- the client plane holds **8,192 live sessions on a single event-loop thread** at 0.93 cores
+  (the laptop's loopback port pool caps the rerunnable artifact at 3,096 — sustained
+  **2,320 frames/s ≈ 870 Mbps** there; 8,192 confirmed on a host with a larger port pool, the
+  runtime still on one core), so driving the fleet never reaches the critical path;
 - forked fleets cut observation traffic **18.6×** (replicas render byte-identical pixels, so
   the fleet pays for each distinct screen once);
 - the pipelined `step()` holds a k-action step at **~1 RTT** over WAN, whatever k the policy
@@ -327,9 +327,10 @@ every other shipped gym re-provisions the sandbox per episode
 evals — golden → fork-N → score, one setup amortized over N attempts. And the parallel pool is
 real: one process drives **128 real Docker desktops** (128/128 booted in 7.3 s, ~57 ms
 amortized per replica, observe-all at 142 ms p50, 2 OS threads), and the client plane alone
-holds **3,096 live ACI sessions on one event-loop thread** — sustained **2,320 frames/s,
-~870 Mbps decoded ingest at 0.93 cores** (183,216 measured observations; protocol-faithful
-synthetic peers).
+holds **8,192 live ACI sessions on one event-loop thread** at 0.93 cores — the rerunnable
+laptop artifact tops at **3,096** (loopback port-pool limit), sustained there at **2,320
+frames/s ≈ 870 Mbps decoded ingest** over 183,216 measured observations; 8,192 confirmed on a
+larger-port-pool host, runtime still on one core. Protocol-faithful synthetic peers.
 
 <p align="center"><img src="docs/assets/bench/local_fanout.png" width="820"></p>
 
@@ -532,7 +533,7 @@ numbers behind every "measured" are in [`docs/benchmarks/`](docs/benchmarks/READ
 |---|---|---|
 | Runtime state | ✅ built + measured | Docker disk-tier **checkpoint / spawn (fork) / resume** behind a provider interface; checkpoint ~0.53 s live; fork→usable ~0.6 s classic / **~0.12 s warm-pool graft** (marker-verified; `pixels`/`fs` verifier levels reported); boot→usable ~0.2 s after S9 push-based readiness; **CRIU memory tier built + measured** (privileged-only): donor-live checkpoint ~0.70 s, live process+memory fork→usable ~0.40 s, in-heap-marker-verified |
 | Fork-native consumption | ✅ built | `run_eval_forked` (golden → fork-N → score), fork-native gym (`reset()` = fork, p50 ~60 ms warm-pool, HF-datasets exporter, pool), tiny verifier harness, typed exit-reason, subprocess scorer isolation; the single-task functional gate above (1/369; no conformance sweep) |
-| Fleet concurrency | ✅ built + measured | async core + fleet fan-out: **128 real sandboxes** on 2 threads (128/128 in 7.3 s); client plane held to **3,096 live ACI sessions on one loop thread** (2,320 frames/s, ~870 Mbps sustained ingest at 0.93 cores; protocol-faithful synthetic peers); fork-aware observation dedup (18.6× suite-wide at the static ceiling, 94.6% hit rate, divergence floor measured); `ping_jitter` fleet decorrelation |
+| Fleet concurrency | ✅ built + measured | async core + fleet fan-out: **128 real sandboxes** on 2 threads (128/128 in 7.3 s); client plane held to **8,192 live ACI sessions on one loop thread** at 0.93 cores (rerunnable laptop artifact: 3,096 at 2,320 frames/s ≈ 870 Mbps, port-pool-bound; 8,192 on a larger-port-pool host; protocol-faithful synthetic peers); fork-aware observation dedup (18.6× suite-wide at the static ceiling, 94.6% hit rate, divergence floor measured); `ping_jitter` fleet decorrelation |
 | ACI v0 (typed actions + observation) | ✅ built | handshake/auth, pointer+keyboard via X11/XTEST (incl. `drag` + `mouse_down`/`mouse_up`), screenshot, act-returns-observation (`observe`), pipelined `step()` (~1 RTT per k-action step), real-time screencast (idle-suppress, downscale, reconnect), focused-window capture, `list_windows`, typed in-guest `exec` (argv/shell, buffered + streamed, gateway-audited), desktop verbs (`clipboard_get`/`clipboard_set`, `launch_app`, `activate_window`); **22 verbs**, contract-tested |
 | Structured observation (Linux v1) | ✅ built | guest `observe` engine in `shinkend` (AT-SPI): stable **never-rebind** element ids, `tree_text` diff rendering, settle; guest-resolved `element_ref` targets + `invoke_action`/`set_value`; live Docker smoke |
 | Observation transport | ✅ built + measured | PNG lossless default; opt-in JPEG/downscale lever **~1–21× content-dependent** (~131× stacked on content-rich frames); **legibility envelope measured (S13)**: q80@native + delta stream 100% legible, any downscale breaks small text; lossless dirty-tile delta ~11× on text; binary WS frames; XDamage idle ~0 CPU |
@@ -551,7 +552,7 @@ All first-party, all from one MacBook Pro, all rerunnable
 
 | | |
 |---|---|
-| live sessions, one event-loop thread | **3,096 measured** at 870 Mbps sustained, 0.93 cores — capped by the test host's port pool, never the runtime |
+| live sessions, one event-loop thread | **8,192** at 0.93 cores (3,096 in the rerunnable laptop artifact at 870 Mbps sustained; port-pool-bound, never the runtime) |
 | real desktops, one process | **128** (128/128 booted in 7.3 s) |
 | fork → usable replica | **0.12 s** warm-pool · 0.40 s live memory (CRIU) · 0.60 s disk |
 | fleet observation dedup | **18.6×** at a 94.6% hit rate |
