@@ -22,7 +22,7 @@ replicas of that exact moment in **0.1–0.6 s** each.
 
 | you are | Shinken gives you |
 |---|---|
-| an **RL / agent trainer** | a gym whose `reset()` *is* a fork — **~60–120 ms** on the warm-pool tier instead of re-provisioning per episode — plus drop-in adapters for uni-agent/verl, CUA-Gym, Agentix, ProRL-Agent-Server, NeMo Gym |
+| an **RL / agent trainer** | a gym whose `reset()` *is* a fork (**~60–120 ms** warm-pool), wired into the stack at the right seams: **training frameworks** (verl/uni-agent, NeMo Gym, ProRL-Agent-Server), **task suites** (OSWorld, CUA-Gym), **agent frameworks** (Agentix) |
 | an **eval builder** | `run_eval_forked`: set a task up once, fork N replicas, score them all — on the same runtime production agents run on |
 | an **agent product team** | one typed, versioned interface (22 verbs) from keyless local Docker to a fleet: one process drives **128 real desktops**, one event loop holds **3,096 live sessions** |
 | a stack with its own driver | the same ACI runs **over your system**: trycua/cua, codex-style MCP desktop servers, CDP browsers, and E2B desktops plug in *under* the typed interface as backends (D15) |
@@ -183,25 +183,41 @@ Every number above is a measurement with tracked raw data and a rerun command:
 
 <p align="center"><img src="docs/assets/bench/client_scale.png" width="820"></p>
 
+**Large-scale RL training runs on it, end to end.** This is the workload the scale exists
+for, and the loop is closed:
+
+- a policy **learns** a computer-use task against real Shinken sandboxes — GRPO over the
+  NeMo Gym lane, reward **0.25 → 0.875 in 62 s** on a laptop (MLX, no CUDA), runnable from
+  [`examples/nemo_gym/`](examples/nemo_gym/README.md);
+- the rollout data engine sustains **48/48 real-task rollouts at ~244/hr on one laptop**
+  (LibreOffice task layer, train/val splits), every episode reset by fork;
+- the same lane has driven full **GRPO update cycles on a 35B-class MoE policy** against
+  these sandboxes — `reset()` = fork keeps the environment plane off the optimizer's
+  critical path.
+
 ## Platforms
 
-One wire contract, one SDK — and **two ways onto every platform**: Shinken's own per-OS
-engines inside `shinkend`, or an [operation-layer backend](#operation-layer-backends) that
-drives a system you already run (trycua/cua, a codex-style AX server, a CDP browser, an E2B
-cloud desktop) through the same typed interface:
+**The interface is the constant**: one typed, versioned 22-verb ACI, one SDK, capability
+negotiation everywhere — the same agent code drives every platform below. The engine
+underneath is the variable, and you pick it per platform:
 
-| platform | drive it today with | act + observe | structured observation | fork tiers |
-|---|---|---|---|---|
-| **Linux** | native engine (Docker sandbox) | ✅ all 22 verbs | ✅ stable element ids, diffs, settle | ✅ disk · warm-pool · CRIU memory |
-| **macOS** | native engine v1 (real desktop) **or** the `mcp-computer` backend | ✅ capture + pointer/keyboard (native); background app control (backend) | ✅ element tree via the backend; native AX tier designed | — (no sandbox boundary; fork needs a sandboxed substrate) |
-| **Windows** | the `cua` / `e2b` backends (VM / cloud desktop) | ✅ via backend | per backend | native engine + UIA tier designed |
-| **any CDP browser** | the `browser-runtime` backend | ✅ pixels + input | ✅ semantic node ids | — (tabs are ephemeral) |
+- **Linux** — Shinken's **own engine** (`shinkend` inside the Docker sandbox): the full
+  proven slice — every verb, structured observation (stable element ids, diffs, settle),
+  all three fork tiers, live CI. **OSWorld-native** environments run through the built-in
+  compatibility map on the same interface.
+- **macOS** — Shinken's **native engine v1** drives the real desktop (capture + input,
+  Retina-correct); for background app control with an element tree today, plug an
+  **open-source** codex-style AX server in as the `mcp-computer` backend.
+- **Windows** — **open-source** drivers through the same interface today: the `cua` backend
+  (VM) or the `e2b` backend (cloud desktop); the native engine (UIA tier) is designed.
+- **Browser** — any CDP browser through the `browser-runtime` backend: pixels, input, and
+  semantic node ids.
 
-Native-engine maturity is uneven and labeled honestly — Linux is the proven, CI-gated slice;
-macOS v1 is a local capture+input slice; Windows/Wayland engines are designed, not built
-(full map: [docs/engineering/status.md](docs/engineering/status.md)). The backend rows are
-built and fixture-tested today (D15), with honest capability negotiation: what a backend
-can't serve raises a typed error.
+One implementation of ours, the rest of the ecosystem plugged in beside it — and every
+combination speaks the identical contract. Capability negotiation makes the differences
+explicit (`supports_fork`, `structured_observation`, the verb list); anything a combination
+lacks is a typed error. Fork tiers need a sandboxed substrate, so they live on Linux today.
+Full built-vs-designed map: [docs/engineering/status.md](docs/engineering/status.md).
 
 The macOS engine drives the **real desktop** of your Mac — same wire contract, no
 container:
@@ -454,9 +470,13 @@ Register your own backend with `shinken.backends.register_backend`.
 ## Integrations
 
 Adapters that plug Shinken under stacks that already exist (duck-typed protocol shapes, no
-hard dependency on the target framework; each ships fixture tests + a runnable example). The
-fork-native **gym** facade graduated into the headline results above (`shinken.gym`,
-`reset()` = fork); the rest:
+hard dependency on the target framework; each ships fixture tests + a runnable example). A
+training stack has layers — the **training framework** that owns the optimizer and rollout
+collection, the **task suite** that supplies environments and scoring, and the **agent
+framework** that orchestrates — and Shinken plugs in at each seam separately. The fork-native
+**gym** facade graduated into the headline results above (`shinken.gym`, `reset()` = fork).
+
+**Training frameworks** — the rollout/optimizer side:
 
 - **NeMo Gym** ([NVIDIA-NeMo/Gym](https://github.com/NVIDIA-NeMo/Gym)) —
   `shinken.integrations.nemo_gym`: a resources server whose **per-rollout resource is a
@@ -465,30 +485,36 @@ fork-native **gym** facade graduated into the headline results above (`shinken.g
   `/verify` scorer. Verified end-to-end with `ng_collect_rollouts` (reward 1.0 on both
   demo tasks, GUI task solved by element id + diff verification); the rollout JSONL feeds
   NeMo RL GRPO directly. Example: [`examples/nemo_gym/`](examples/nemo_gym/README.md).
-- **OSWorld** — a `DesktopEnv`-shaped shim (`shinken.osworld`) + an eval Workload: the
-  harness's pyautogui/`computer_13` actions actuate over the typed ACI and its own evaluator
-  scores the run (the single-task gate above).
 - **uni-agent / verl** — `shinken.integrations.swerex` implements the SWE-ReX deployment/runtime
   protocol [uni-agent](https://github.com/verl-project/uni-agent) drives its sandboxes through, so
   verl-style rollout collection runs on Shinken sandboxes (with fork-from-golden-checkpoint
   `start()`); see [`examples/uniagent_shinken.py`](examples/uniagent_shinken.py) and
   [agent-runtime.md](docs/design/agent-runtime.md).
+- **ProRL-Agent-Server** ([NVIDIA-NeMo/ProRL-Agent-Server](https://github.com/NVIDIA-NeMo/ProRL-Agent-Server))
+  — `shinken.integrations.prorl_agent_server`: a rollout-as-a-service runtime plugin
+  (`BaseRuntime` contract — `start/stop/cancel`, `exec`, file up/download) giving each rollout
+  session one provider-managed Shinken sandbox, with the INIT stage mapped onto
+  **resume-from-golden** instead of a cold boot. Example: `scripts/prorl_runtime_example.py`.
+
+**Task & benchmark suites** — environments and scoring:
+
+- **OSWorld** — a `DesktopEnv`-shaped shim (`shinken.osworld`) + an eval Workload: the
+  harness's pyautogui/`computer_13` actions actuate over the typed ACI and its own evaluator
+  scores the run (the single-task gate above).
 - **CUA-Gym** ([xlang-ai/CUA-Gym](https://github.com/xlang-ai/CUA-Gym)) —
   `shinken.integrations.cua_gym`: exported task bundles as a `TaskSource` + their VM-env
   method surface, with **fork-native reset** — bundle setup runs once into a golden
   checkpoint and every `reset()` forks a fresh replica from it (sub-second on the Docker disk
   tier) instead of provisioning a fresh cloud VM per environment. 32k oracle-validated RLVR
   tasks, zero authoring. Example: `examples/cua_gym_shinken.py`.
+
+**Agent frameworks** — orchestration:
+
 - **Agentix** ([Agentix-Project/Agentix](https://github.com/Agentix-Project/Agentix)) —
   `shinken.integrations.agentix`: a `SandboxProvider`-shaped provider (async
   `create/delete/get` + scoped `session()`) exposing `DockerLocalProvider` + the typed ACI to
   their orchestration, with `golden=<checkpoint>` turning every `create()` into a fork from a
   golden state. Example: `examples/agentix_shinken.py`.
-- **ProRL-Agent-Server** ([NVIDIA-NeMo/ProRL-Agent-Server](https://github.com/NVIDIA-NeMo/ProRL-Agent-Server))
-  — `shinken.integrations.prorl_agent_server`: a rollout-as-a-service runtime plugin
-  (`BaseRuntime` contract — `start/stop/cancel`, `exec`, file up/download) giving each rollout
-  session one provider-managed Shinken sandbox, with the INIT stage mapped onto
-  **resume-from-golden** instead of a cold boot. Example: `scripts/prorl_runtime_example.py`.
 
 ## Status — honest built-vs-designed map
 
