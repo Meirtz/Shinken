@@ -764,37 +764,54 @@ def _summarize(payload: dict) -> None:
 
 
 # ----------------------------------------------------------------------- figure
-_TIER_COLORS = {
-    "png-native": PALETTE["png"],
+# Left panel: color = tier FAMILY (the three native-scale codecs collapse into one
+# family — they are indistinguishable at 100%), marker = scene. Colorblind-safe:
+# blue ramp for the @1024 pair, orange/brown for the aggressive downscales.
+_NATIVE_TIERS = ("png-native", "jpeg-q80-native", "delta-jpeg-q80-native")
+_TIER_FAMILY = {
+    "png-native": "#1b4f72",
     "jpeg-q80-native": "#1b4f72",
-    "jpeg-q80-1024": PALETTE["jpeg"],
-    "jpeg-q50-1024": "#5dade2",
+    "delta-jpeg-q80-native": "#1b4f72",
+    "jpeg-q80-1024": "#2e86c1",
+    "jpeg-q50-1024": "#85c1e9",
     "jpeg-q10-768": "#e67e22",
-    "jpeg-q50-512": "#85c1e9",
-    "delta-jpeg-q80-native": PALETTE["delta"],
+    "jpeg-q50-512": "#935116",
 }
-_TIER_LABELS = {
-    "png-native": "PNG native (control)",
-    "jpeg-q80-native": "q80 @1280",
-    "jpeg-q80-1024": "q80 @1024",
-    "jpeg-q50-1024": "q50 @1024",
-    "jpeg-q10-768": "q10 @768",
-    "jpeg-q50-512": "q50 @512",
-    "delta-jpeg-q80-native": "delta-JPEG q80 (composited)",
-}
+_FAMILY_LEGEND = [  # <= 6 entries, grouped by tier family
+    ("native 1280 (PNG / q80 / delta)", "#1b4f72"),
+    ("q80 @1024", "#2e86c1"),
+    ("q50 @1024", "#85c1e9"),
+    ("q10 @768", "#e67e22"),
+    ("q50 @512", "#935116"),
+]
 _SCENE_MARKERS = {
     "desktop": "^",
     "dense-text": "o",
     "text-strata": "s",
     "gui-zenity": "D",
 }
-_STRATUM_STYLE = {
-    "term-6x13": (PALETTE["png"], "xterm fixed 6x13 (desktop)"),
-    "term-6x13-dense": ("#78281f", "xterm fixed 6x13 (dense)"),
-    "fs8": (PALETTE["accent"], "DejaVu Mono -fs 8"),
-    "fs11": (PALETTE["jpeg"], "DejaVu Mono -fs 11"),
-    "fs16": (PALETTE["delta"], "DejaVu Mono -fs 16"),
-    "gui": (PALETTE["neutral"], "GTK dialog (zenity)"),
+_SCENE_KEY = [  # inline marker key (scene), keeps the legend at 5 entries
+    ("^", "desktop"),
+    ("o", "dense text"),
+    ("s", "mixed fonts"),
+    ("D", "GTK dialog"),
+]
+_TIER_TICKS = {
+    "png-native": "PNG native",
+    "jpeg-q80-native": "q80 @1280",
+    "jpeg-q80-1024": "q80 @1024",
+    "jpeg-q50-1024": "q50 @1024",
+    "jpeg-q10-768": "q10 @768",
+    "jpeg-q50-512": "q50 @512",
+    "delta-jpeg-q80-native": "delta-q80",
+}
+_STRATUM_STYLE = {  # color + marker per stratum (no red/green pair)
+    "term-6x13": ("#0b3d66", "o", "fixed 6x13 (desktop)"),
+    "term-6x13-dense": ("#2e86c1", "s", "fixed 6x13 (dense)"),
+    "fs8": ("#dc7633", "v", "mono fs8"),
+    "fs11": ("#935116", "D", "mono fs11"),
+    "fs16": ("#6c3483", "^", "mono fs16"),
+    "gui": (PALETTE["neutral"], "X", "GTK dialog"),
 }
 
 
@@ -802,69 +819,139 @@ def plot(payload: dict) -> None:
     from _common import new_axes, save_plot
     from matplotlib.lines import Line2D
 
-    fig, (ax1, ax2) = new_axes(2, width=7.0)
+    fig, (ax1, ax2) = new_axes(2, width=5.8, height=5.1)
     cells = payload["cells"]
     tiers = payload["tiers"]
 
     # Panel 1 — the Pareto the byte stories were missing: bytes vs legibility.
-    for c in cells:
-        if c["legible_frac"] is None:
-            continue  # photo: no text
-        kib = c["bytes"]["mean"] / 1024.0
+    text_cells = [c for c in cells if c["legible_frac"] is not None]  # photo: no text
+    for c in text_cells:
         ax1.scatter(
-            kib,
+            c["bytes"]["mean"] / 1024.0,
             100.0 * c["legible_frac"],
-            s=64,
+            s=70,
             marker=_SCENE_MARKERS[c["scene"]],
-            color=_TIER_COLORS[c["tier"]],
+            color=_TIER_FAMILY[c["tier"]],
             edgecolors="white",
             linewidths=0.6,
             zorder=3,
         )
+    # Title claims come from the payload, never hardcoded.
+    native_min = min(
+        c["legible_frac"]
+        for c in text_cells
+        if c["tier"] in ("jpeg-q80-native", "delta-jpeg-q80-native")
+    )
+    down_max = max(
+        c["legible_frac"] for c in text_cells if c["tier"] not in _NATIVE_TIERS
+    )
+    ax1.set_title(
+        f"q80 at native scale stays {100 * native_min:.0f}% legible;\n"
+        f"every downscale breaks text (best cell {100 * down_max:.0f}%)"
+    )
     ax1.axhline(99.0, color=PALETTE["neutral"], ls=":", lw=1.2)
     ax1.text(
-        0.985, 0.915, "99% envelope", transform=ax1.transAxes, ha="right", fontsize=8
+        0.02,
+        0.915,
+        "99% legibility bar",
+        transform=ax1.transAxes,
+        fontsize=11,
+        color=PALETTE["neutral"],
     )
     ax1.set_xscale("log")
-    ax1.set_xlabel("KiB per frame (delta cell: whole stream), log")
-    ax1.set_ylabel("\\% elements legible (control-conditioned)")
+    ax1.set_xlabel("KiB per frame, log (delta tier: whole stream)")
+    ax1.set_ylabel("% elements legible (control-conditioned)")
     ax1.set_ylim(-4, 112)
-    ax1.set_title("Legibility vs bytes — every (scene x tier) cell")
-    tier_handles = [
-        Line2D([], [], marker="o", ls="", color=_TIER_COLORS[t], label=_TIER_LABELS[t])
-        for t in tiers
-    ]
-    scene_handles = [
-        Line2D([], [], marker=m, ls="", color=PALETTE["neutral"], label=s)
-        for s, m in _SCENE_MARKERS.items()
-    ]
     ax1.legend(
-        handles=tier_handles + scene_handles, loc="lower left", fontsize=7, ncols=2
+        handles=[
+            Line2D([], [], marker="s", ls="", ms=8, color=col, label=lab)
+            for lab, col in _FAMILY_LEGEND
+        ],
+        loc="upper right",
+        bbox_to_anchor=(0.99, 0.86),
+        fontsize=11,
+        labelspacing=0.35,
+        borderpad=0.35,
+        handletextpad=0.5,
     )
+    ax1.text(
+        0.60,
+        0.355,
+        "marker = scene",
+        transform=ax1.transAxes,
+        fontsize=11,
+        style="italic",
+        color="0.25",
+        va="top",
+    )
+    for i, (m, name) in enumerate(_SCENE_KEY):
+        row, col = divmod(i, 2)
+        kx, ky = 0.60 + 0.21 * col, 0.272 - 0.072 * row
+        ax1.plot(
+            [kx],
+            [ky],
+            transform=ax1.transAxes,
+            marker=m,
+            ms=7,
+            ls="",
+            color="0.35",
+            mec="white",
+            mew=0.5,
+        )
+        ax1.text(
+            kx + 0.025, ky, name, transform=ax1.transAxes, fontsize=11, va="center"
+        )
 
     # Panel 2 — the font-size stratification: where the envelope edge lives.
     env_rows = payload["envelope"]
     xs = list(range(len(tiers)))
-    for stratum, (color, label) in _STRATUM_STYLE.items():
+    for i, (stratum, (color, marker, label)) in enumerate(_STRATUM_STYLE.items()):
         pts = {e["tier"]: e for e in env_rows if e["stratum"] == stratum}
-        if not pts:
-            continue
         xv = [
             x
             for x, t in zip(xs, tiers, strict=True)
             if t in pts and pts[t]["legible_frac"] is not None
         ]
+        if not xv:
+            continue
+        off = (i - (len(_STRATUM_STYLE) - 1) / 2.0) * 0.05  # dodge exact overlaps
         yv = [100.0 * pts[tiers[x]]["legible_frac"] for x in xv]
-        ax2.plot(xv, yv, marker="o", ms=5, lw=1.6, color=color, label=label)
+        ax2.plot(
+            [x + off for x in xv],
+            yv,
+            marker=marker,
+            ms=6,
+            lw=1.7,
+            color=color,
+            mec="white",
+            mew=0.4,
+            label=label,
+        )
     ax2.axhline(99.0, color=PALETTE["neutral"], ls=":", lw=1.2)
+    ax2.text(
+        0.02,
+        0.835,
+        "99% bar",
+        transform=ax2.transAxes,
+        fontsize=11,
+        color=PALETTE["neutral"],
+    )
     ax2.set_xticks(xs)
     ax2.set_xticklabels(
-        [_TIER_LABELS[t] for t in tiers], rotation=20, ha="right", fontsize=8
+        [_TIER_TICKS[t] for t in tiers], rotation=20, ha="right", fontsize=11
     )
-    ax2.set_ylabel("\\% elements legible (control-conditioned)")
+    ax2.set_ylabel("% elements legible (control-conditioned)")
     ax2.set_ylim(-4, 112)
     ax2.set_title("Legibility by font size — small text breaks first")
-    ax2.legend(loc="lower left", fontsize=7)
+    ax2.legend(
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.34),
+        ncols=3,
+        fontsize=11,
+        frameon=False,
+        columnspacing=1.2,
+        handletextpad=0.5,
+    )
     save_plot(fig, "obs_quality")
 
 

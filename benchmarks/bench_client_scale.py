@@ -421,17 +421,30 @@ def plot(payload: dict) -> None:
 
     d = payload["datapoints"]
     ns = payload["ns"]
+    n_max = ns[-1]
     labels = list(payload["payloads_kib"])
     # All three payloads are JPEG operating points: shades of the jpeg blue,
     # disambiguated by marker (light->dark as payload grows).
     shades = ["#7fb3d5", PALETTE["jpeg"], "#1a5276"]
     markers = ["o", "s", "^"]
     pstyle = {lbl: (shades[i], markers[i]) for i, lbl in enumerate(labels)}
+    sus = d["sustained"]
 
-    fig, axes = new_axes(2, nrows=2)
+    fig, axes = new_axes(2, nrows=2, width=5.65, height=4.0)
     (ax_a, ax_b), (ax_c, ax_d) = axes
 
+    # Headline = the figure's claim, every number straight from the payload.
+    thread_word = "ONE thread" if sus["threads"] == 1 else f"{sus['threads']} threads"
+    fig.suptitle(
+        f"{sus['n']:,} live sessions on {thread_word} — "
+        f"{sus['sustained_frames_per_s']:,.0f} frames/s, "
+        f"{sus['sustained_decoded_mbps']:.0f} Mbps sustained at "
+        f"{sus['client_cpu_cores']:.2f} cores",
+        y=1.02,
+    )
+
     # (a) observe-all round wall vs N, per payload — log-log, min-max band
+    wall_p50_at_max: dict[str, float] = {}
     for label in labels:
         color, marker = pstyle[label]
         per_n = [
@@ -443,6 +456,7 @@ def plot(payload: dict) -> None:
             for n in ns
         ]
         p50s = [w[len(w) // 2] for w in per_n]
+        wall_p50_at_max[label] = p50s[-1]
         ax_a.fill_between(
             ns,
             [w[0] for w in per_n],
@@ -459,10 +473,14 @@ def plot(payload: dict) -> None:
             label=f"{label} ({payload['payloads_kib'][label]:g} KiB)",
         )
     log_axis(ax_a, "x", ns)
-    log_axis(ax_a, "y", [4, 16, 64, 256, 1024], base=4)
+    log_axis(ax_a, "y", [4, 16, 64, 256, 1024, 4096], base=4)
     ax_a.set_xlabel("concurrent sessions N (one process, one event loop)")
     ax_a.set_ylabel("observe-all round wall (ms, log)")
-    ax_a.set_title("Observe-all round wall vs N")
+    wall_lo = min(wall_p50_at_max.values()) / 1000
+    wall_hi = max(wall_p50_at_max.values()) / 1000
+    ax_a.set_title(
+        f"One loop sweeps all {n_max:,} sessions in {wall_lo:.1f}–{wall_hi:.1f} s"
+    )
     ax_a.legend(loc="upper left")
     ax_a.text(
         0.97,
@@ -471,11 +489,12 @@ def plot(payload: dict) -> None:
         transform=ax_a.transAxes,
         ha="right",
         va="bottom",
-        fontsize=10,
+        fontsize=11,
         color=PALETTE["neutral"],
     )
 
-    # (b) aggregate decoded throughput vs N, y from 0, sustained point annotated
+    # (b) aggregate decoded throughput vs N, y from 0 — the sustained point is
+    # the panel's protagonist: big star + bold callout, not a footnote.
     for label in labels:
         color, marker = pstyle[label]
         tput = [
@@ -493,33 +512,41 @@ def plot(payload: dict) -> None:
             color=color,
             label=f"{label} ({payload['payloads_kib'][label]:g} KiB)",
         )
-    s = d["sustained"]
     ax_b.plot(
-        [s["n"]],
-        [s["sustained_decoded_mbps"]],
+        [sus["n"]],
+        [sus["sustained_decoded_mbps"]],
         "*",
         color=PALETTE["accent"],
-        markersize=15,
-        zorder=5,
+        markersize=24,
+        markeredgecolor="white",
+        markeredgewidth=0.8,
+        zorder=6,
     )
     ax_b.annotate(
-        f"{s['sustained_decoded_mbps']:.0f} Mbps sustained {s['window_s']:.0f} s",
-        xy=(s["n"], s["sustained_decoded_mbps"]),
-        xytext=(0.42, 0.55),
+        f"{sus['sustained_decoded_mbps']:.0f} Mbps · "
+        f"{sus['sustained_frames_per_s']:,.0f} frames/s\n"
+        f"sustained {sus['window_s']:.0f} s at {sus['client_cpu_cores']:.2f} cores",
+        xy=(sus["n"], sus["sustained_decoded_mbps"]),
+        xytext=(0.40, 0.66),
         textcoords="axes fraction",
         ha="center",
-        fontsize=10,
+        fontsize=12.5,
+        fontweight="bold",
         color=PALETTE["accent"],
-        arrowprops=dict(arrowstyle="->", color=PALETTE["accent"], lw=1.0),
+        arrowprops=dict(arrowstyle="->", color=PALETTE["accent"], lw=1.4),
     )
     log_axis(ax_b, "x", ns)
-    ax_b.set_ylim(bottom=0)
+    ax_b.set_ylim(0, max(sus["sustained_decoded_mbps"], 0) * 1.35)
     ax_b.set_xlabel("concurrent sessions N")
     ax_b.set_ylabel("aggregate decoded throughput (Mbps)")
-    ax_b.set_title("Client-plane ingest vs N")
-    ax_b.legend(loc="upper left")
+    ax_b.set_title(
+        f"Sustained ingest: {sus['sustained_decoded_mbps']:.0f} Mbps at N={sus['n']:,}"
+    )
+    ax_b.legend(loc="lower right")
 
-    # (c) thread cost of holding N sessions
+    # (c) thread cost of holding N sessions. Orange (not red) for the facade so the
+    # panel never encodes meaning as a red/green pair.
+    sync_color = "#e67e22"
     tm = d["thread_model"]
     async_ns = sorted({t["n"] for t in d["tiers"]})
     ax_c.plot(
@@ -532,7 +559,7 @@ def plot(payload: dict) -> None:
     )
     for mode, color, marker, lbl in (
         ("shared_loop", PALETTE["shared"], "s", "SharedLoop (1 thread total)"),
-        ("sync_facade", PALETTE["sync"], "o", "sync facade (1 thread/session)"),
+        ("sync_facade", sync_color, "o", "sync facade (1 thread/session)"),
     ):
         xs = [r["n"] for r in tm if r["mode"] == mode]
         ys = [r["loop_threads"] for r in tm if r["mode"] == mode]
@@ -542,26 +569,29 @@ def plot(payload: dict) -> None:
     )
     if sync_pts:
         ax_c.annotate(
-            "sync facade intentionally not run at 1024\n"
-            "(1024 OS threads is the anti-pattern\nthis design retires)",
+            f"facade stopped at N={sync_pts[-1][0]}: N threads is the anti-pattern",
             xy=sync_pts[-1],
-            xytext=(0.97, 0.30),
+            xytext=(0.97, 0.32),
             textcoords="axes fraction",
             ha="right",
             va="center",
-            fontsize=10,
-            color=PALETTE["sync"],
-            arrowprops=dict(arrowstyle="->", color=PALETTE["sync"], lw=1.0),
+            fontsize=11,
+            color=sync_color,
+            arrowprops=dict(arrowstyle="->", color=sync_color, lw=1.0),
         )
     log_axis(ax_c, "x", async_ns)
     log_axis(ax_c, "y", [1, 4, 16, 64, 256, 1024], base=4)
     ax_c.set_xlabel("sessions N held by one client process")
     ax_c.set_ylabel("client OS threads (log)")
-    ax_c.set_title("Thread cost of holding N sessions")
+    ax_c.set_title(f"Holding {async_ns[-1]:,} sessions costs 1 thread, not N")
     ax_c.legend(loc="upper left")
 
-    # (d) observe latency CDFs at N=1024, one per payload — distribution evidence
-    n_max = ns[-1]
+    # (d) observe latency CDFs at N=n_max, one per payload — distribution evidence
+    p50_at_max = [
+        t["observe_ms"]["p50"]
+        for t in d["tiers"]
+        if t["n"] == n_max and t["payload"] in labels
+    ]
     for label in labels:
         color, marker = pstyle[label]
         samples = next(
@@ -586,20 +616,22 @@ def plot(payload: dict) -> None:
         )
     ax_d.set_xlim(left=0)
     ax_d.set_ylim(0, 1.02)
-    ax_d.set_xlabel(f"per-observation latency at N={n_max} (ms)")
+    ax_d.set_xlabel(f"per-observation latency at N={n_max:,} (ms)")
     ax_d.set_ylabel("fraction of observations $\\leq$ x")
-    ax_d.set_title(f"Observe latency CDF at N={n_max}")
+    ax_d.set_title(
+        f"Fair sharing at N={n_max:,}: p50 latency "
+        f"{min(p50_at_max) / 1000:.2f}–{max(p50_at_max) / 1000:.2f} s"
+    )
     ax_d.legend(loc="lower right")
 
     fig.text(
         0.5,
         -0.005,
-        "sessions terminate on out-of-process synthetic ACI peers — real handshake, "
-        "WebSocket transport, and SDK; synthetic frame payloads sized to measured codec "
-        "operating points (client plane only)",
+        "real handshake/WebSocket/SDK against out-of-process synthetic ACI peers; "
+        "payloads sized to measured codec points (client plane only)",
         ha="center",
         va="top",
-        fontsize=10,
+        fontsize=11,
         color=PALETTE["neutral"],
         style="italic",
     )

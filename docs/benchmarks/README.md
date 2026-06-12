@@ -1,20 +1,36 @@
 # Shinken benchmarks — first-party measurements
 
 Every number in this report is first-party (this repo's runtime + SDK). Each table is labeled
-with one of three **evidence classes**, so a reader always knows what kind of claim they are
-looking at:
+with an **evidence class**, so a reader always knows what kind of claim they are looking at:
 
 - **[local — rerunnable]** measured by the tracked suites in [`benchmarks/`](../../benchmarks)
   on a local Docker sandbox; raw datapoints in `benchmarks/results/*.json`; rerun with
   `make benchmarks`. Methodology + caveats: [engineering/benchmarks.md](../engineering/benchmarks.md).
+  Variants: **[local — partial]** (a measured local cell where the counterpart path could not
+  run — the table says why) and **[local — measured absence]** (the measurement is that the
+  path *fails*, e.g. a vendor's local snapshot raising).
+- **[local spike]** a one-off local measurement with tracked evidence and a tracked harness in
+  `spikes/` — rerunnable in spirit, but not wired into `make benchmarks`.
 - **[remote WAN — one-off]** measured once against a generic remote Linux sandbox over an
   intercontinental WAN (~0.28 s RTT; substrate not identified — vendor-neutral). The raw data is
   tracked (`benchmarks/results/remote/*.csv`) but the driving harness is not published, so these
   tables are auditable, not rerunnable. Single-shot: **n=1 per cell**, no variance available.
+- **[vendor-published]** a competitor's own published number, quoted for context — never
+  treated as a measurement of ours.
 - **[projection]** arithmetic from measured inputs, never presented as a measurement.
 
+## The headline numbers
+
+| claim | number | class | figure | rerun |
+|---|---|---|---|---|
+| Fork a mid-task sandbox into a usable replica | **disk 0.60 s · CRIU memory 0.40 s (live process+heap) · warm-pool 0.12 s**; checkpoint stays live (0.53 s / 0.70 s) | local — rerunnable | [fork ladder](../assets/bench/fork_ladder.png) | `benchmarks/bench_fork.py` (+ `SHINKEN_BENCH_FORK_MODE=memory\|pool`) |
+| One process drives real desktops | **128 Docker desktops, 128/128 booted in 7.3 s, observe-all 142 ms p50, 2 OS threads** | local — rerunnable | [local fan-out](../assets/bench/local_fanout.png) | `benchmarks/bench_fanout.py` |
+| One event-loop thread holds the client plane | **3,096 live sessions — 2,320 frames/s ≈ 870 Mbps sustained at 0.93 cores** | local — rerunnable | [client scale](../assets/bench/client_scale.png) | `SHINKEN_BENCH_NS=16,64,256,1024,3096 benchmarks/bench_client_scale.py` |
+| Forked fleets pay for each distinct screen once | **18.6× whole-suite wire cut at 94.6% hit rate** (static ceiling ~654×; honest divergence floor ~1×) | local — rerunnable | [fork dedup](../assets/bench/fork_dedup.png) | `benchmarks/bench_fork_dedup.py` |
+| Per-step loop cost vs the incumbent guest server | **13.4 ms vs ~190 ms as shipped (~14×)**, frame-parity-verified | local — rerunnable | [OSWorld loop](../assets/bench/osworld_loop.png) | `benchmarks/bench_osworld_loop.py` |
+
 Figures live in [`docs/assets/bench/`](../assets/bench) and regenerate from tracked data only:
-`python benchmarks/replot.py && python benchmarks/plot_remote.py` (no Docker needed).
+`python benchmarks/replot.py && python benchmarks/plot_remote.py` (no Docker, no TeX needed).
 
 | artifact | class | what it holds |
 |---|---|---|
@@ -43,20 +59,20 @@ checkpoint). Post-readiness-fix numbers (S9, push-based
 readiness — see the boot waterfall below; the pre-fix 8.57 s fork p50 is preserved in the
 tracked baseline):
 
-| leg | p50 | n |
-|---|---:|---:|
-| cold boot → usable (create + connect + first obs) | **0.196 s** | 16 |
-| checkpoint (`docker commit`, sandbox stays live) | **0.57 s** | 16 |
-| fork → usable, classic (boot from the committed image) | **0.70 s** | 62 |
-| fork → usable, **warm-pool graft** (S4b, replica available) | **0.100 s** | 32 |
+| leg | p50 | n | tracked raw |
+|---|---:|---:|---|
+| cold boot → usable (create + connect + first obs) | **0.198 s** | 16 | `fork_resume.json` |
+| checkpoint (`docker commit`, sandbox stays live) | **0.53 s** | 16 | `fork_resume.json` |
+| fork → usable, classic (boot from the committed image) | **0.60 s** | 61 | `fork_resume.json` |
+| fork → usable, **warm-pool graft** (S4b, replica available) | **0.118 s** | 30 | `fork_resume_pool.json` |
 
 | classic fan-out from ONE checkpoint | wall-clock | wall / replica | verified |
 |---:|---:|---:|---|
-| N=1 | 0.43 s | 0.43 s | 1/1 |
-| N=8 | 1.24 s | 0.155 s | 8/8 |
-| N=16 | 2.07 s | **0.129 s** | 16/16 |
+| N=1 | 0.42 s | 0.42 s | 1/1 |
+| N=8 | 1.30 s | 0.162 s | 8/8 |
+| N=16 | 2.10 s | **0.132 s** | 16/16 |
 
-Checkpointing a live sandbox is sub-second and non-disruptive. A classic fork is ~0.7 s
+Checkpointing a live sandbox is sub-second and non-disruptive. A classic fork is ~0.6 s
 (committed-layer instantiation + desktop bring-up — readiness theater no longer hides it),
 and the opt-in **warm pool** (pre-booted base containers + the checkpoint's `docker diff`
 delta grafted in) brings fork→usable to **~0.1 s** while staying files-only — the same state
@@ -103,10 +119,14 @@ against its own new content. Old runtimes and clients are unaffected (capability
 No general-purpose sandbox API can offer this: it works because fork makes the replicas'
 pixels identical, not approximately similar.
 
+![the fork ladder — every rung state-verified](../assets/bench/fork_ladder.png)
+
 ![forked-fleet observation dedup](../assets/bench/fork_dedup.png)
 
-![fork and fan-out](../assets/bench/fork_resume.png)
-![warm-pool graft](../assets/bench/fork_resume_pool.png)
+Per-rung distributions: [`fork_resume.png`](../assets/bench/fork_resume.png) ·
+[`fork_resume_pool.png`](../assets/bench/fork_resume_pool.png) ·
+[`fork_resume_memory.png`](../assets/bench/fork_resume_memory.png) (the appendix detail —
+the ladder figure above is the summary).
 
 **Boot waterfall (S9, `bench_boot_waterfall.py`)** — where the old 8 s went: shinkend used to
 be exec'd behind shell poll loops (listener up at ~5.4 s) and the SDK polled readiness at
@@ -318,12 +338,15 @@ cost/quota, not the client — which is what §3a/§3b establish independently.
 If N sandboxes each emit one 48.3 KiB JPEG q80 @1280 frame per second: **~405 Mbps at
 N=1024** — a datacenter NIC. The same workload in full-res PNG (1804.5 KiB) projects to
 **~15 Gbps**, infeasible anywhere. These are decoded payload bytes; base64+JSON wire framing
-adds ~33% until binary frames land. (Legibility caveat: this q80 @1280 cell downscales a
+would add ~33% — on text sessions only: **binary WS frames are built and the negotiated
+default** (§2c measures wire/payload at 1.006×). (Legibility caveat: this q80 @1280 cell downscales a
 1920×1080 frame to 1280 long edge — ~0.67× scale. §2d measured that sub-native scales break
 small on-screen text well before they break the byte budget, so for fleets whose agents
 must *read* small text the honest projection input is the native-scale q80 frame of the
-target resolution, ~87 KiB here → **~730 Mbps at N=1024**.) The chart marks the one *measured* point at N=1024 — the
-§3b sustained client-plane ingest — alongside the projected curves. For fleets of **forked
+target resolution, ~87 KiB here → **~730 Mbps at N=1024**.) The chart marks one *measured*
+anchor at N=1024 alongside the projected curves; the §3b ladder now extends past it — the
+sustained client-plane point is **N=3,096 at ~870 Mbps**, comfortably above the chart's
+projection at the same per-frame budget. For fleets of **forked
 replicas** there is a measured lever beyond the codec: content-negotiated observation dedup
 collapses the N near-identical streams to ~one (§1 — 18.6× measured over a 16-replica
 fleet's observe rounds at the sequential static ceiling, ~654× at steady state).
@@ -443,7 +466,7 @@ the verb traceability below are for.
 
 ### 6c. ACI verb → test traceability
 
-All **11 schema verbs** are pinned by two suite-wide agreement tests —
+All **22 schema verbs** are pinned by two suite-wide agreement tests —
 `protocol.rs::advertised_verbs_match_schema` (runtime advertises exactly the schema enum) and
 `tests/test_contract.py` (the SDK's emitted wire vocabulary validates against the schema; the
 mock runtime in `tests/conftest.py` rejects any verb the real runtime would not accept) — plus
@@ -470,8 +493,14 @@ smoke on a real display).
 `double_click`/`right_click`/`move` have **no dedicated Rust actuation fixture** — they ride
 the same parameterized pointer arm that `click`'s fixture exercises, so a verb-specific
 regression (e.g. wrong button/click-count argv) would not be caught; (3) `double_click`,
-`right_click`, `scroll`, and `wait` appear in **no live smoke**. Python test paths are under
-`sdk/python/tests/`, Rust tests in `shinkend/src/`.
+`right_click`, `scroll`, and `wait` appear in **no live smoke**; (4) **the per-verb table
+above traces only the original 11 v0 verbs** — the 11 later additions (`drag`,
+`mouse_down`/`mouse_up`, `observe`, `invoke_action`/`set_value`, `exec`,
+`clipboard_get`/`clipboard_set`, `launch_app`, `activate_window`) are pinned by the same two
+agreement tests and carry per-verb evidence in their landing suites (`test_exec.py`,
+`test_a11y.py`, `test_clipboard_app.py`, the Docker-gated live smokes), but their table rows
+have not been written. Python test paths are under `sdk/python/tests/`, Rust tests in
+`shinkend/src/`.
 
 ---
 

@@ -63,7 +63,6 @@ from pathlib import Path
 from _common import (
     GEOMETRY,
     IMAGE,
-    PALETTE,
     fs_digest,
     new_axes,
     now_ms,
@@ -206,17 +205,24 @@ def _concurrent_phase(handles: list, n: int) -> dict:
     async def inner() -> dict:
         cache = shinken.FrameCache(max_entries=4 * n)
         sessions = await asyncio.gather(
-            *(shinken.aconnect(h.addr, token=h.token, frame_cache=cache) for h in handles)
+            *(
+                shinken.aconnect(h.addr, token=h.token, frame_cache=cache)
+                for h in handles
+            )
         )
         rounds: list[dict] = []
         try:
             for r in range(ROUNDS):
                 t0 = now_ms()
-                shots = await asyncio.gather(*(s.screenshot(dedup=True, **FMT) for s in sessions))
+                shots = await asyncio.gather(
+                    *(s.screenshot(dedup=True, **FMT) for s in sessions)
+                )
                 row = {
                     "round": r,
                     "wall_ms": round(now_ms() - t0, 1),
-                    "wire_bytes": sum(sh.get("wire_len") or len(sh["bytes"]) for sh in shots),
+                    "wire_bytes": sum(
+                        sh.get("wire_len") or len(sh["bytes"]) for sh in shots
+                    ),
                     "payload_bytes": sum(len(sh["bytes"]) for sh in shots),
                     "hits": sum(1 for sh in shots if sh.get("deduped")),
                     "observes": len(shots),
@@ -362,7 +368,9 @@ def _run_fleet(provider, ckpt_id: str, n: int, golden_state: dict) -> dict:
     finally:
         for env in envs:
             env.close()
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(handles))) as pool:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=max(1, len(handles))
+        ) as pool:
             list(pool.map(provider.destroy, handles))
     return out
 
@@ -418,105 +426,141 @@ def _mean_wire_kib(rounds: list[dict]) -> float:
 
 def plot(payload: dict) -> None:
     fleets = sorted(payload["datapoints"]["fleets"], key=lambda f: f["n"])
-    fig, (ax1, ax2, ax3) = new_axes(3)
-    colors = (PALETTE["jpeg"], PALETTE["accent"], PALETTE["delta"])
+    # Two stacked rows (README-width friendly: ~1400 px wide, never a 3-up strip).
+    fig, (ax1, ax2) = new_axes(1, nrows=2, width=10.0, height=3.8)
+    # Okabe-Ito (colorblind-safe): orange = dedup off, blues = dedup on,
+    # reddish-purple = the concurrent mode. Never a red/green pair.
+    c_off, c_on, c_div, c_conc = "#E69F00", "#0072B2", "#56B4E9", "#CC79A7"
 
-    # Panel 1: bytes moved per observe-all round — off, static ceiling, and the
+    # Headline numbers, recomputed from the tracked datapoints (the same formulas
+    # main() uses for the JSON summary block).
+    total_off = sum(r["wire_bytes"] for f in fleets for r in f["rounds_off"])
+    total_static = sum(r["wire_bytes"] for f in fleets for r in f["rounds_static"])
+    static_hits = sum(r["hits"] for f in fleets for r in f["rounds_static"])
+    static_obs = sum(r["observes"] for f in fleets for r in f["rounds_static"])
+    cut = total_off / max(1, total_static)
+    hit = static_hits / max(1, static_obs)
+    pol_div = [r for f in fleets for r in f["policy"]["rounds"] if r["diverged"]]
+    n_off_rounds = len([r for f in fleets for r in f["rounds_off"]])
+    pol_vs_off = (sum(r["wire_bytes"] for r in pol_div) / max(1, len(pol_div))) / max(
+        1, total_off / max(1, n_off_rounds)
+    )
+
+    # Row 1: bytes moved per observe-all round — off, static ceiling, and the
     # fully diverged policy steady state (rounds where every replica acted).
     xs = range(len(fleets))
     off = [_mean_wire_kib(f["rounds_off"]) for f in fleets]
     static = [_mean_wire_kib(f["rounds_static"]) for f in fleets]
-    policy = [_mean_wire_kib([r for r in f["policy"]["rounds"] if r["diverged"]]) for f in fleets]
-    width = 0.27
-    ax1.bar([x - width for x in xs], off, width, color=PALETTE["png"], label="dedup off")
-    ax1.bar(
-        xs,
-        static,
-        width,
-        color=PALETTE["delta"],
-        label="dedup on, static fleet (ceiling)",
-    )
+    policy = [
+        _mean_wire_kib([r for r in f["policy"]["rounds"] if r["diverged"]])
+        for f in fleets
+    ]
+    width = 0.26
+    ax1.bar([x - width for x in xs], off, width, color=c_off, label="dedup off")
+    ax1.bar(xs, static, width, color=c_on, label="dedup on — static fleet (ceiling)")
     ax1.bar(
         [x + width for x in xs],
         policy,
         width,
-        color=PALETTE["neutral"],
-        label="dedup on, every replica diverging",
+        color=c_div,
+        label="dedup on — every replica diverging",
     )
     for x, (o, s) in enumerate(zip(off, static, strict=False)):
         if s > 0:
-            ax1.text(x, max(o, s) * 1.03, f"{o / s:.1f}$\\times$", ha="center", fontsize=9)
+            ax1.text(
+                x,
+                max(o, policy[x]) * 1.06,
+                f"{o / s:.1f}× cut",
+                ha="center",
+                fontsize=12,
+                fontweight="bold",
+                color=c_on,
+            )
+    ax1.set_ylim(0, max(off + policy) * 1.32)
     ax1.set_xticks(list(xs))
     ax1.set_xticklabels([f"N={f['n']}" for f in fleets])
-    ax1.set_ylabel("wire KiB per observe-all round (mean)")
-    ax1.set_title("Bytes per round: ceiling vs full divergence")
-    ax1.legend(loc="upper left", fontsize=8)
+    ax1.set_xlabel("fleet size (replicas forked from one golden checkpoint)")
+    ax1.set_ylabel("wire KiB / observe-all round")
+    ax1.set_title(
+        f"Static fleet pays each screen once; full divergence re-pays ≈ baseline "
+        f"({pol_vs_off:.1f}× of off)"
+    )
+    ax1.legend(loc="upper left")
 
-    # Panel 2: the sequential static-ceiling hit-rate curve (2-of-N divergence
-    # event) — the mechanism's best case, kept and labeled.
-    for f, color in zip(fleets, colors, strict=False):
-        rounds = f["rounds_static"]
-        ax2.plot(
-            [r["round"] for r in rounds],
-            [r["hits"] / max(1, r["observes"]) for r in rounds],
-            "o-",
-            color=color,
-            label=f"N={f['n']}",
+    # Row 2: the hit-rate mechanics for the largest fleet — static ceiling
+    # (sequential, 2-of-N event), concurrent first-touch races, and the honest
+    # policy-divergence decay to 0%. N=4/8 trace the same shape (see JSON).
+    f = fleets[-1]
+    n = f["n"]
+
+    def _rate(rounds: list[dict]) -> list[float]:
+        return [r["hits"] / max(1, r["observes"]) for r in rounds]
+
+    stat, conc, pol = (
+        f["rounds_static"],
+        f["concurrent"]["rounds"],
+        f["policy"]["rounds"],
+    )
+    ax2.plot(
+        [r["round"] for r in stat],
+        _rate(stat),
+        "o-",
+        color=c_on,
+        label="static fleet, sequential",
+    )
+    ax2.plot(
+        [r["round"] for r in conc],
+        _rate(conc),
+        "s--",
+        color=c_conc,
+        label="concurrent observes (gather)",
+    )
+    ax2.plot(
+        [r["round"] for r in pol],
+        _rate(pol),
+        "^-",
+        color=c_div,
+        label="policy-diverging fleet",
+    )
+    ann = dict(fontsize=11, arrowprops=dict(arrowstyle="->", lw=1.0, color="#555555"))
+    ax2.annotate(
+        f"round 0: first-touch races —\nall {n} concurrent observes miss",
+        xy=(0.05, 0.02),
+        xytext=(0.35, 0.26),
+        **ann,
+    )
+    d_at = f.get("static_diverge_at")
+    k = f.get("static_diverged_replicas")
+    if d_at is not None:
+        hit_at = stat[d_at]["hits"] / max(1, stat[d_at]["observes"])
+        ax2.annotate(
+            f"{k} of {n} replicas type different text",
+            xy=(d_at - 0.08, hit_at),
+            xytext=(d_at - 1.9, 0.62),
+            **ann,
         )
-    if fleets:
-        d_at = fleets[0].get("static_diverge_at")
-        k = fleets[0].get("static_diverged_replicas")
-        if d_at is not None:
-            ax2.axvline(d_at, color="#888888", linestyle="--", linewidth=1)
-            ax2.annotate(
-                f"{k} replicas type\ndifferent text",
-                xy=(d_at, 0.45),
-                xytext=(d_at + 0.25, 0.30),
-                fontsize=8.5,
-                arrowprops=dict(arrowstyle="->", lw=0.8, color="#555555"),
-            )
-    ax2.set_ylim(-0.04, 1.06)
-    ax2.set_xlabel("observe-all round (dedup on, sequential)")
+    if f["policy"].get("diverge_at") is not None:
+        ax2.annotate(
+            "every replica acts on a distinct path:\n0% hits — full frames re-paid each round",
+            xy=(3.0, 0.02),
+            xytext=(3.1, 0.32),
+            **ann,
+        )
+    ax2.set_ylim(-0.06, 1.10)
+    ax2.set_xlim(-0.4, max(r["round"] for r in pol) + 0.4)
+    ax2.set_xlabel("observe-all round (dedup on)")
     ax2.set_ylabel("dedup hit rate")
-    ax2.set_title("Static ceiling: 2-of-N divergence, sequential")
-    ax2.legend(loc="lower right", fontsize=9)
+    ax2.set_title(
+        f"Hit rate follows true divergence (N={n}): races miss once, static ~100%, diverged 0%"
+    )
+    ax2.legend(loc="upper right")
 
-    # Panel 3: the trainer-shaped modes — concurrent observes (first-touch races)
-    # and policy-driven full divergence (decay to steady state).
-    for f, color in zip(fleets, colors, strict=False):
-        conc = f["concurrent"]["rounds"]
-        ax3.plot(
-            [r["round"] for r in conc],
-            [r["hits"] / max(1, r["observes"]) for r in conc],
-            "s--",
-            color=color,
-            alpha=0.6,
-            label=f"N={f['n']} concurrent",
-        )
-        pol = f["policy"]["rounds"]
-        ax3.plot(
-            [r["round"] for r in pol],
-            [r["hits"] / max(1, r["observes"]) for r in pol],
-            "o-",
-            color=color,
-            label=f"N={f['n']} policy-diverge",
-        )
-    if fleets:
-        d_at = fleets[0]["policy"].get("diverge_at")
-        if d_at is not None:
-            ax3.axvline(d_at, color="#888888", linestyle="--", linewidth=1)
-            ax3.annotate(
-                "every replica acts\n(distinct path), every round",
-                xy=(d_at, 0.5),
-                xytext=(d_at + 0.3, 0.62),
-                fontsize=8.5,
-                arrowprops=dict(arrowstyle="->", lw=0.8, color="#555555"),
-            )
-    ax3.set_ylim(-0.04, 1.06)
-    ax3.set_xlabel("observe-all round (dedup on)")
-    ax3.set_ylabel("dedup hit rate")
-    ax3.set_title("Trainer shape: concurrent races + full divergence")
-    ax3.legend(loc="center right", fontsize=7.5)
+    fig.suptitle(
+        f"Forked fleets pay for each distinct screen once: "
+        f"{cut:.1f}× wire cut at {hit:.1%} dedup hit rate",
+        y=1.01,
+        va="bottom",
+    )
     save_plot(fig, SUITE)
 
 
@@ -563,9 +607,13 @@ def main() -> int:
             "note": "sequential observes over an almost-identical fleet — best case",
             "wire_bytes_off_total": total_off,
             "wire_bytes_on_total": total_static,
-            "bytes_cut_factor": round(total_off / total_static, 2) if total_static else None,
+            "bytes_cut_factor": round(total_off / total_static, 2)
+            if total_static
+            else None,
             "hit_rate": round(static_hits / static_obs, 3) if static_obs else None,
-            "round_wall_off_ms": summarize([r["wall_ms"] for f in fleets for r in f["rounds_off"]]),
+            "round_wall_off_ms": summarize(
+                [r["wall_ms"] for f in fleets for r in f["rounds_off"]]
+            ),
             "round_wall_on_ms": summarize(
                 [r["wall_ms"] for f in fleets for r in f["rounds_static"]]
             ),
@@ -580,7 +628,8 @@ def main() -> int:
                 (total_off / max(1, len([r for f in fleets for r in f["rounds_off"]])))
                 / max(
                     1,
-                    sum(r["wire_bytes"] for r in conc_steady) / max(1, len(conc_steady)),
+                    sum(r["wire_bytes"] for r in conc_steady)
+                    / max(1, len(conc_steady)),
                 ),
                 2,
             ),
@@ -588,7 +637,10 @@ def main() -> int:
         "policy_divergence": {
             "note": "every replica takes a distinct action path each round",
             "hit_rate_curves": {
-                f["n"]: [round(r["hits"] / max(1, r["observes"]), 3) for r in f["policy"]["rounds"]]
+                f["n"]: [
+                    round(r["hits"] / max(1, r["observes"]), 3)
+                    for r in f["policy"]["rounds"]
+                ]
                 for f in fleets
             },
             "diverged_hit_rate": hit_rate(pol_diverged),
@@ -597,14 +649,17 @@ def main() -> int:
                 (sum(r["wire_bytes"] for r in pol_diverged) / max(1, len(pol_diverged)))
                 / max(
                     1,
-                    total_off / max(1, len([r for f in fleets for r in f["rounds_off"]])),
+                    total_off
+                    / max(1, len([r for f in fleets for r in f["rounds_off"]])),
                 ),
                 3,
             ),
         },
         "state_verify": _verify_counts(fleets),
         "identity": {
-            f["n"]: f"{f['identity']['identical_screens']}/{f['n'] - f['infra_failures']}"
+            f[
+                "n"
+            ]: f"{f['identity']['identical_screens']}/{f['n'] - f['infra_failures']}"
             for f in fleets
         },
         "infra_failures": sum(f["infra_failures"] for f in fleets),

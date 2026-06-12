@@ -687,140 +687,130 @@ def _p50(stats: dict | None) -> float | None:
 
 
 def plot(summary: dict) -> None:
-    fig, axes = new_axes(3, width=4.9)
+    # replot.py hands plot() the FULL result payload ({"summary": {...}, ...});
+    # this suite's own main() hands it the inner summary dict. Unwrap either
+    # shape (the inner dict never carries a "summary" key).
+    summary = summary.get("summary", summary)
+    sk = summary.get("shinken", {})
+    cu = summary.get("cua_docker", {})
 
-    palette = {"shinken": "#2a7de1", "cua_docker": "#e8833a", "cua_lume": "#7a52c7"}
-    labels = {
-        "shinken": "Shinken\n(Docker, Linux)",
-        "cua_docker": "cua container\n(Docker, Linux)",
-        "cua_lume": "cua lume VM\n(Vz.fw, macOS)",
-    }
+    boot_sk = _p50(sk.get("boot_to_usable_ms"))
+    boot_cu = _p50(cu.get("boot_to_usable_ms"))
+    step_sk = _p50(sk.get("step_ms"))
+    step_cu = _p50(cu.get("step_ms"))
+    ckpt_sk = _p50(sk.get("checkpoint_ms"))
+    fork_sk = _p50(sk.get("fork_to_usable_ms"))
+    pause_cu = (_p50(cu.get("suspend_ms")) or 0.0) + (_p50(cu.get("resume_ms")) or 0.0)
+    if not (boot_sk and boot_cu and step_sk and step_cu):
+        raise SystemExit(
+            "baseline_cua plot: summary is missing the shinken/cua_docker p50s"
+        )
+    step_ratio = step_cu / step_sk
+    boot_ratio = boot_cu / boot_sk
 
-    # panel 1 — boot → usable
+    fig, axes = new_axes(2, width=5.5, height=4.5)
+    c_sk, c_cu = "#2a7de1", "#e8833a"  # blue vs orange — colorblind-safe pair
+    labels = ("Shinken\n(Docker, Linux)", "cua container\n(Docker, Linux)")
+
+    # panel 1 — lifecycle + local runtime-state verbs (seconds, linear)
     ax = axes[0]
-    names = [
-        n
-        for n in ("shinken", "cua_docker", "cua_lume")
-        if "boot_to_usable_ms" in summary.get(n, {})
-    ]
-    vals = [summary[n]["boot_to_usable_ms"]["p50"] / 1000.0 for n in names]
-    bars = ax.bar(
-        [labels[n] for n in names], vals, color=[palette[n] for n in names], width=0.55
+    verbs = ("boot $\\to$ usable", "checkpoint\n(live)", "fork $\\to$ usable")
+    sk_vals = [boot_sk, ckpt_sk or 0.0, fork_sk or 0.0]
+    xs = range(len(verbs))
+    ax.bar(
+        [x - 0.21 for x in xs],
+        [v / 1000.0 for v in sk_vals],
+        width=0.4,
+        color=c_sk,
+        label=labels[0],
     )
-    for b, v in zip(bars, vals):
+    ax.bar([0.21], [boot_cu / 1000.0], width=0.4, color=c_cu, label=labels[1])
+    for x, v in zip(xs, sk_vals):
         ax.annotate(
-            f"{v:.1f} s",
-            (b.get_x() + b.get_width() / 2, v),
+            f"{v / 1000.0:.2f} s",
+            (x - 0.21, v / 1000.0),
             ha="center",
             va="bottom",
-            fontsize=9,
+            fontsize=11,
         )
-    ax.set_ylabel("seconds (p50)")
-    ax.set_title("boot $\\to$ usable\n(create + connect + first screenshot)")
-
-    # panel 2 — act+observe step
-    ax = axes[1]
-    names = [
-        n
-        for n in ("shinken", "cua_docker", "cua_lume")
-        if "step_ms" in summary.get(n, {})
-    ]
-    click = [summary[n]["click_ms"]["p50"] for n in names]
-    shot = [summary[n]["screenshot_ms"]["p50"] for n in names]
-    xs = list(range(len(names)))
-    ax.bar(xs, click, color=[palette[n] for n in names], width=0.55, label="click")
-    ax.bar(
-        xs,
-        shot,
-        bottom=click,
-        color=[palette[n] for n in names],
-        width=0.55,
-        alpha=0.45,
-        label="screenshot",
+    ax.annotate(
+        f"{boot_cu / 1000.0:.2f} s",
+        (0.21, boot_cu / 1000.0),
+        ha="center",
+        va="bottom",
+        fontsize=11,
     )
-    for x, c, s in zip(xs, click, shot):
-        ax.annotate(f"{c + s:.0f} ms", (x, c + s), ha="center", va="bottom", fontsize=9)
-    ax.set_xticks(xs, [labels[n] for n in names])
-    ax.set_ylabel("ms (p50)")
-    ax.set_title("act + observe step\n(click + full screenshot, solid=click)")
+    for x in (1, 2):  # cua ships neither verb locally — measured absence, not omission
+        ax.annotate(
+            "cua: not shipped\nlocally",
+            (x + 0.21, 0.15),
+            ha="center",
+            va="bottom",
+            fontsize=11,
+            color="#b45f1d",
+            rotation=90,
+        )
+    ax.text(
+        0.98,
+        0.60,
+        "cua local snapshot() $\\to$ NotImplementedError;\n"
+        f"its nearest verb, pause+unpause ({pause_cu / 1000.0:.2f} s),\n"
+        "copies no state and makes no replica",
+        transform=ax.transAxes,
+        ha="right",
+        va="top",
+        fontsize=11,
+        color="0.3",
+    )
+    ax.set_xticks(list(xs), verbs)
+    ax.set_xlim(-0.65, 2.65)  # keep the x=2.21 "not shipped" marker inside the axes
+    ax.set_ylabel("seconds (p50)")
+    ax.set_ylim(0, boot_cu / 1000.0 * 1.38)
+    ax.legend(loc="upper right", framealpha=0.95)
+    ax.set_title(
+        f"boot $\\to$ usable: {boot_ratio:.1f}$\\times$ faster —\nand cua has no local checkpoint/fork"
+    )
 
-    # panel 3 — local runtime-state verbs (log scale)
-    ax = axes[2]
-    lume = summary.get("cua_lume", {})
-    rows: list[tuple[str, float | None, str, str]] = [
-        (
-            "checkpoint (live)",
-            _p50(summary.get("shinken", {}).get("checkpoint_ms")),
-            "shinken",
-            "shinken",
-        ),
-        (
-            "fork $\\to$ usable",
-            _p50(summary.get("shinken", {}).get("fork_to_usable_ms")),
-            "shinken",
-            "shinken",
-        ),
-        ("snapshot/fork", None, "cua_docker", "cua container"),
-        (
-            "pause+unpause",
-            (
-                (_p50(summary.get("cua_docker", {}).get("suspend_ms")) or 0)
-                + (_p50(summary.get("cua_docker", {}).get("resume_ms")) or 0)
+    # panel 2 — the per-step agent loop (click + full screenshot), log scale
+    ax = axes[1]
+    ax.bar([0, 1], [step_sk, step_cu], width=0.5, color=[c_sk, c_cu])
+    for x, v, leg in ((0, step_sk, sk), (1, step_cu, cu)):
+        click, shot = _p50(leg.get("click_ms")), _p50(leg.get("screenshot_ms"))
+        txt = f"{v:.1f} ms" if v < 10 else f"{v:.0f} ms"
+        if click and shot:
+            split = (
+                f"click {click:.1f} + shot {shot:.1f}"
+                if v < 10
+                else f"click {click:.0f} + shot {shot:.0f}"
             )
-            or None,
-            "cua_docker",
-            "cua container",
-        ),
-    ]
-    if lume.get("clone_stopped_ms"):
-        rows.append(
-            ("clone (stopped)", _p50(lume["clone_stopped_ms"]), "cua_lume", "cua lume")
-        )
-    elif lume.get("clone_probe_ms"):
-        rows.append(
-            (
-                "clone (stopped,\nmechanism probe)",
-                _p50(lume["clone_probe_ms"]),
-                "cua_lume",
-                "cua lume",
-            )
-        )
-    if lume.get("checkpoint_running_ms"):
-        rows.append(
-            (
-                "checkpoint (stop+\nclone+restart)",
-                _p50(lume["checkpoint_running_ms"]),
-                "cua_lume",
-                "cua lume",
-            )
-        )
-    xs, heights, colors, ticklabels = [], [], [], []
-    for i, (verb, val, legname, stack) in enumerate(rows):
-        xs.append(i)
-        ticklabels.append(f"{verb}\n[{stack}]")
-        colors.append(palette[legname])
-        heights.append(val if val else 0.0)
-    ax.bar(xs, [max(h, 0.001) for h in heights], color=colors, width=0.6)
+            txt += f"\n({split})"
+        ax.annotate(txt, (x, v), ha="center", va="bottom", fontsize=11)
+    ax.annotate(
+        "",
+        (0.5, step_cu),
+        (0.5, step_sk),
+        arrowprops={"arrowstyle": "<->", "color": "0.35", "linewidth": 1.2},
+    )
+    ax.text(
+        0.56,
+        (step_sk * step_cu) ** 0.5,
+        f"{step_ratio:.0f}$\\times$",
+        fontsize=17,
+        fontweight="bold",
+        va="center",
+        color="0.25",
+    )
     ax.set_yscale("log")
-    ax.set_ylim(bottom=1.0)
-    for x, h in zip(xs, heights):
-        if h:
-            txt = f"{h / 1000.0:.2f} s" if h >= 1000 else f"{h:.0f} ms"
-            ax.annotate(txt, (x, max(h, 1.0)), ha="center", va="bottom", fontsize=8)
-        else:
-            ax.annotate(
-                "not shipped\nlocally",
-                (x, 1.4),
-                ha="center",
-                va="bottom",
-                fontsize=8,
-                color="#a33",
-            )
-    ax.set_xticks(xs)
-    ax.set_xticklabels(ticklabels, fontsize=7, rotation=28, ha="right")
-    ax.set_ylabel("ms (p50, log)")
-    ax.set_title("local runtime-state verbs\n(what each stack ships locally)")
+    ax.set_ylim(1.0, step_cu * 6)
+    ax.set_xticks([0, 1], labels)
+    ax.set_xlim(-0.6, 1.6)
+    ax.set_ylabel("ms per step (p50, log)")
+    ax.set_title(f"act + observe step:\n{step_sk:.1f} ms vs {step_cu:.0f} ms")
 
+    fig.suptitle(
+        f"Same laptop, both stacks as shipped: {step_ratio:.0f}$\\times$ cheaper per act+observe step than trycua/cua",
+        y=1.04,
+    )
     save_plot(fig, "baseline_cua")
 
 

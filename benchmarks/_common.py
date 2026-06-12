@@ -465,7 +465,14 @@ def write_result(suite: str, payload: dict[str, Any]) -> Path:
 def style() -> None:
     """Apply the one shared matplotlib style (Agg, no display). Idempotent; called
     by ``new_axes`` and importable by any plotting script outside this package.
-    Paper aesthetic: seaborn whitegrid + real LaTeX text (usetex) in Times."""
+
+    Paper aesthetic WITHOUT a TeX dependency: serif text via matplotlib's own
+    renderer (``usetex`` made ``replot.py`` fail on any machine without a LaTeX
+    install — a contributor-facing reproducibility bug) and font sizes chosen for
+    the README embed width (820 px): GitHub scales a 2-panel figure to ~0.6x, so
+    a 13 pt base lands ~8 pt effective — the floor for legibility. Suites should
+    keep export width <= 2 panels (~1640 px) and put the TAKEAWAY in the title,
+    not the axis statement."""
     import matplotlib
 
     matplotlib.use("Agg")
@@ -476,19 +483,21 @@ def style() -> None:
     plt.rcParams.update(
         {
             "figure.dpi": 140,
-            "text.usetex": True,
-            "text.latex.preamble": "",
-            "font.family": "Times New Roman",
-            "font.serif": ["Times New Roman"],
+            "text.usetex": False,
+            "font.family": "serif",
+            "font.serif": ["Times New Roman", "STIXGeneral", "DejaVu Serif"],
             "mathtext.fontset": "stix",
             "pdf.fonttype": 42,
             "ps.fonttype": 42,
-            "font.size": 12,
-            "axes.titlesize": 13,
-            "axes.labelsize": 12,
-            "legend.fontsize": 10,
-            "xtick.labelsize": 11,
-            "ytick.labelsize": 11,
+            "font.size": 13,
+            "axes.titlesize": 15,
+            "axes.titleweight": "bold",
+            "axes.labelsize": 13,
+            "legend.fontsize": 11,
+            "xtick.labelsize": 12,
+            "ytick.labelsize": 12,
+            "figure.titlesize": 17,
+            "figure.titleweight": "bold",
             "axes.grid": True,
             "grid.alpha": 0.35,
             "grid.linewidth": 0.6,

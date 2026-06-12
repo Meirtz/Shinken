@@ -30,7 +30,6 @@ import time
 
 from _common import (
     image_bytes,
-    PALETTE,
     boot,
     fill_xterm,
     new_axes,
@@ -153,12 +152,15 @@ def _cell(
     ]
 
 
-# JPEG = blue family (downscale by shade), PNG = red family — semantics from PALETTE.
-_JPEG_SHADES = {None: "#1b4f72", 1024: PALETTE["jpeg"], 768: "#5dade2", 512: "#85c1e9"}
-_PNG_SHADES = {None: "#78281f", 1024: PALETTE["png"], 768: "#e74c3c", 512: "#f1948a"}
-_SCALE_MARKERS = {None: "o", 1024: "s", 768: "^", 512: "D"}
-_SCEN_LS = {"dense-text": "-", "desktop": "--", "photo": ":"}
-_SCEN_MARKERS = {"dense-text": "o", "desktop": "^", "photo": "s"}
+# Scene = hue (Okabe–Ito, colorblind-safe; no red/green comparison pair); codec is
+# carried by linestyle everywhere (JPEG solid, PNG dashed + open markers).
+_SCEN_HUES = {"desktop": "#0072B2", "dense-text": "#E69F00", "photo": "#CC79A7"}
+_SCEN_MARKERS = {"desktop": "^", "dense-text": "o", "photo": "s"}
+_SCEN_LABELS = {
+    "desktop": "desktop (flat UI)",
+    "dense-text": "dense text",
+    "photo": "photo",
+}
 
 
 def _log_ticks(
@@ -199,97 +201,152 @@ def _band(points: list[dict], scen: str, fmt: str, q: int | None, scale: int | N
 
 
 def plot(payload: dict) -> None:
-    """2x2: one bytes-vs-quality panel per scenario (min-max band over reps, PNG
-    baselines dashed), plus the downscale ladder. Per-rep latency stays in the JSON
-    (the action-latency suite carries the latency story)."""
+    """Two panels on ONE shared log-KiB scale: (1) bytes vs JPEG quality at the
+    native 1280 px, all three scenes overlaid with their PNG baselines dashed;
+    (2) the downscale ladder at JPEG q80 vs PNG. The suptitle states the measured
+    takeaway, with every number computed from the payload. Per-rep latency stays
+    in the JSON (the action-latency suite carries the latency story)."""
     from matplotlib.lines import Line2D
 
     points = payload["datapoints"]
     qualities = payload["qualities"]
     scenarios = payload["scenarios"]
-    fig, axes = new_axes(2, nrows=2)
-    flat = [ax for row in axes for ax in row]
-    scen_axes = flat[: len(scenarios)]
-    ax_d = flat[len(scenarios)] if len(flat) > len(scenarios) else flat[-1]
-
-    for ax, scen in zip(scen_axes, scenarios):
-        ymin, ymax = [], []
-        for scale in payload["scales"]:
-            stats = [_band(points, scen, "jpeg", q, scale) for q in qualities]
-            means = [s[0] for s in stats]
-            ax.plot(
-                qualities,
-                means,
-                marker=_SCALE_MARKERS[scale],
-                ms=4.5,
-                lw=1.6,
-                color=_JPEG_SHADES[scale],
-                label=f"JPEG {scale or 1280} px",
-            )
-            ax.fill_between(
-                qualities,
-                [s[1] for s in stats],
-                [s[2] for s in stats],
-                color=_JPEG_SHADES[scale],
-                alpha=0.18,
-                lw=0,
-            )
-            png = _band(points, scen, "png", None, scale)
-            ax.axhline(png[0], color=_PNG_SHADES[scale], ls="--", lw=1.3, alpha=0.85)
-            ymin.append(min(means + [png[0]]))
-            ymax.append(max(means + [png[0]]))
-        ax.set_yscale("log")
-        ticks = _log_ticks(ax, [min(ymin), max(ymax)])
-        ax.set_ylim(
-            top=ticks[-1] * 1.35
-        )  # free a top band so the legend covers no data
-        ax.set_xlabel("JPEG quality")
-        ax.set_ylabel("KiB / frame (log)")
-        ax.set_title(f"Bytes vs JPEG quality — {scen}")
-        handles, labels = ax.get_legend_handles_labels()
-        handles.append(Line2D([], [], color=PALETTE["png"], ls="--", lw=1.3))
-        labels.append("PNG (same scale)")
-        ax.legend(
-            handles,
-            labels,
-            loc="upper left",
-            ncols=3,
-            columnspacing=1.0,
-            handlelength=1.6,
-        )
-
-    # last panel — the downscale ladder at fixed JPEG q80 vs the PNG baseline.
     ladder = sorted((s or 1280, s) for s in payload["scales"])
-    xs = [px for px, _ in ladder]
-    dmin, dmax = [], []
-    for fmt, q, color in (("png", None, PALETTE["png"]), ("jpeg", 80, PALETTE["jpeg"])):
-        for scen in scenarios:
+    xs_px = [px for px, _ in ladder]
+
+    fig, (ax_q, ax_d) = new_axes(2, width=5.7, height=4.5)
+    all_kib: list[float] = []
+
+    # Panel 1 — bytes vs JPEG quality at native resolution, PNG baselines dashed.
+    for scen in scenarios:
+        hue = _SCEN_HUES[scen]
+        stats = [_band(points, scen, "jpeg", q, None) for q in qualities]
+        means = [s[0] for s in stats]
+        ax_q.plot(
+            qualities, means, marker=_SCEN_MARKERS[scen], ms=5.5, lw=2.0, color=hue
+        )
+        ax_q.fill_between(
+            qualities,
+            [s[1] for s in stats],
+            [s[2] for s in stats],
+            color=hue,
+            alpha=0.18,
+            lw=0,
+        )
+        png = _band(points, scen, "png", None, None)[0]
+        ax_q.axhline(png, color=hue, ls="--", lw=1.8, alpha=0.9)
+        all_kib += means + [png]
+
+    # The headline gap, drawn where it happens: PNG vs JPEG q80 on the photo scene.
+    png_photo = _band(points, "photo", "png", None, None)[0]
+    j80_photo = _band(points, "photo", "jpeg", 80, None)[0]
+    ax_q.annotate(
+        "",
+        xy=(80, j80_photo * 1.15),
+        xytext=(80, png_photo * 0.87),
+        arrowprops=dict(arrowstyle="<->", color=_SCEN_HUES["photo"], lw=1.6),
+    )
+    ax_q.text(
+        78.5,
+        j80_photo * 2.2,  # the clear band between the dense-text and photo curves
+        f"{png_photo / j80_photo:.0f}× at q80",
+        color=_SCEN_HUES["photo"],
+        ha="right",
+        va="center",
+        fontsize=12,
+        fontweight="bold",
+        bbox=dict(facecolor="white", alpha=0.8, edgecolor="none", pad=1.5),
+    )
+
+    # Panel 2 — the downscale ladder: JPEG q80 (solid) vs PNG (dashed, open markers).
+    for scen in scenarios:
+        hue = _SCEN_HUES[scen]
+        for fmt, q, ls, mfc, lw in (
+            ("png", None, "--", "white", 1.8),
+            ("jpeg", 80, "-", None, 2.0),
+        ):
             stats = [_band(points, scen, fmt, q, scale) for _, scale in ladder]
             means = [s[0] for s in stats]
             ax_d.errorbar(
-                xs,
+                xs_px,
                 means,
                 yerr=[
                     [m - s[1] for m, s in zip(means, stats)],
                     [s[2] - m for m, s in zip(means, stats)],
                 ],
                 marker=_SCEN_MARKERS[scen],
-                ms=5,
-                lw=1.6,
-                ls=_SCEN_LS[scen],
-                color=color,
-                capsize=3,
-                label=f"{fmt.upper()}{f' q{q}' if q else ''} — {scen}",
+                ms=5.5,
+                lw=lw,
+                ls=ls,
+                color=hue,
+                markerfacecolor=mfc or hue,
+                capsize=2.5,
             )
-            dmin.append(min(means))
-            dmax.append(max(means))
-    ax_d.set_yscale("log")
-    _log_ticks(ax_d, [min(dmin), max(dmax)])
-    ax_d.set_xticks(xs)
+            all_kib += means
+
+    # One shared y-scale so the panels compare directly.
+    for ax in (ax_q, ax_d):
+        ax.set_yscale("log")
+        _log_ticks(ax, [min(all_kib), max(all_kib)])
+        ax.set_ylabel("KiB per frame (log)")
+    ax_q.set_xlabel("JPEG quality")
+    ax_q.set_title("Bytes vs JPEG quality — native 1280 px")
+    ax_d.set_xticks(xs_px)
     ax_d.set_xlabel("max long edge (px)")
-    ax_d.set_ylabel("KiB / frame (log)")
-    ax_d.set_title("Downscale ladder — PNG vs JPEG q80")
-    ax_d.legend(loc="upper left", fontsize=8, ncols=2)
+    ax_d.set_title("Downscale ladder — JPEG q80 vs PNG")
+
+    # The compounded lever, where panel 2 shows it: photo PNG@1280 vs JPEG q80@512.
+    j80_512_photo = _band(points, "photo", "jpeg", 80, 512)[0]
+    ax_d.text(
+        xs_px[-1],
+        min(all_kib) * 1.05,
+        f"photo, PNG 1280 px → q80 512 px: {png_photo / j80_512_photo:.0f}× smaller",
+        color=_SCEN_HUES["photo"],
+        ha="right",
+        va="bottom",
+        fontsize=12,
+        fontweight="bold",
+    )
+
+    # Takeaway suptitle — every figure computed from the tracked payload.
+    j80_dense = _band(points, "dense-text", "jpeg", 80, None)[0]
+    png_dense = _band(points, "dense-text", "png", None, None)[0]
+    levers = [
+        _band(points, s, "jpeg", 80, None)[0] / _band(points, s, "jpeg", 80, 512)[0]
+        for s in scenarios
+    ]
+    lever = sum(levers) / len(levers)
+    fig.suptitle(
+        f"JPEG q80 cuts the photo frame {png_photo / j80_photo:.0f}× vs PNG but only "
+        f"{png_dense / j80_dense:.1f}× on dense text (PNG wins the flat desktop);\n"
+        f"downscaling 1280 → 512 px is a uniform ~{lever:.1f}× lever on every scene",
+        y=1.10,
+    )
+
+    # One figure-level legend below both panels: scene = hue, codec = linestyle.
+    handles = [
+        Line2D(
+            [],
+            [],
+            color=_SCEN_HUES[s],
+            marker=_SCEN_MARKERS[s],
+            ms=6,
+            lw=2.0,
+            label=_SCEN_LABELS[s],
+        )
+        for s in scenarios
+    ] + [
+        Line2D([], [], color="0.3", lw=2.0, label="JPEG (solid)"),
+        Line2D([], [], color="0.3", lw=1.8, ls="--", label="PNG, lossless (dashed)"),
+    ]
+    fig.legend(
+        handles=handles,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.0),
+        ncols=5,
+        frameon=False,
+        columnspacing=1.6,
+    )
     save_plot(fig, "codec_ladder")
 
 
