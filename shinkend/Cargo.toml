@@ -31,7 +31,7 @@ x11rb = { version = "0.13", features = ["xtest", "damage"] }
 png = "0.17"
 # Pure-Rust baseline JPEG encoder (no C deps) — keeps the static musl build portable
 # while giving the screenshot/screencast bandwidth lever (PNG ~1.8 MB → JPEG ~0.1 MB @1080p).
-jpeg-encoder = "0.6"
+jpeg-encoder = "0.7"
 base64 = "0.22"
 # XXH3-128 for the wire `frame_hash` (screenshot dedup identity) and XXH3-64 for
 # screencast idle suppression. Chosen over `blake3`: both are pure Rust (musl-static
