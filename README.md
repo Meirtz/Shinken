@@ -43,6 +43,20 @@ the [status map](docs/engineering/status.md).
   <img src="docs/assets/shinken-agent-sandbox-overview.png" alt="Shinken — agent sandbox runtime" width="860">
 </p>
 
+## The numbers, at a glance
+
+One MacBook Pro. Every figure first-party and rerunnable
+([docs/benchmarks](docs/benchmarks/README.md)).
+
+| | |
+|:--|:--|
+| **live sessions**, one event-loop thread | **8K+** at 0.93 cores · 870 Mbps sustained *(3,096 in the rerunnable artifact)* |
+| **real desktops**, one process | **128** — all booted in 7.3 s |
+| **fork → usable replica** | **0.12 s** warm-pool · **0.40 s** live memory (CRIU) · **0.60 s** disk |
+| **fleet observation dedup** | **18.6×** at a 94.6% hit rate |
+| **act + observe step** | **13.4 ms** — ~14× cheaper than the incumbent guest server |
+| **RL loop** | **closed** — GRPO learns on real sandboxes; 35B-class MoE updates driven |
+
 ## Quickstart
 
 ```bash
@@ -247,58 +261,34 @@ python scripts/macos_smoke.py        # non-destructive: readiness, capture, hove
 
 ## Architecture
 
-The narrow waist: one typed ACI, with consumers above and interchangeable execution substrates
-below. Solid = built (Linux/X11 in CI; macOS v1 local-only). Dashed = designed, not yet built.
+One typed ACI; the substrate under it is interchangeable. Solid = built (Linux/X11 in CI; macOS
+v1 local). Dashed = designed, not yet built.
 
 ```mermaid
 flowchart TB
   classDef d stroke-dasharray:5 5,stroke:#9aa,color:#99a;
 
-  subgraph top["1 · agents &amp; training stacks plug in on top"]
-    direction LR
+  subgraph proc["one client process"]
     Agent["Agent / Operator<br/>Anthropic · OpenAI · Kimi · harness dialects"]
-    Train["training &amp; eval<br/>verl/uni-agent · NeMo Gym · ProRL · CUA-Gym · OSWorld"]
+    SDK["Shinken SDK · canonical ACI<br/>22 typed verbs · action ⇄ observation · capability negotiation"]
+    Agent <--> SDK
   end
 
-  SDK["2 · Shinken SDK + canonical ACI<br/>one typed contract · 22 verbs · action ⇄ observation · capability negotiation"]
+  SDK <==>|"WebSocket · act + observe · PNG/JPEG/tile-delta"| SK
+  SDK ==>|"or: drive a system you already run"| BK
 
-  subgraph mid["3 · runtime state + scale"]
-    direction LR
-    Provider["Provider<br/>checkpoint · fork · resume<br/>disk · warm-pool · CRIU memory"]
-    Fleet["fleet / fork fan-out<br/>8K+ live sessions, one thread<br/>gym reset()=fork · run_eval_forked"]
-    Provider --> Fleet
+  subgraph engine["Shinken's own engine · shinkend (Rust)"]
+    SK["shinkend Guest Runtime"] --> Desk["real desktop<br/>Linux/X11 built+CI · macOS v1 local · Windows/Wayland designed"]
   end
 
-  subgraph subs["4 · execution substrates — the SAME ACI underneath"]
-    direction LR
-    subgraph own["Shinken's own engine · shinkend (Rust)"]
-      direction TB
-      Lin["Linux/X11 — built, in CI<br/>22 verbs · structured obs · fork tiers"]
-      Mac["macOS v1 — built, local"]
-      Win["Windows · Wayland"]:::d
-    end
-    subgraph bk["operation-layer backends (D15)<br/>drive a system you already run"]
-      direction TB
-      Cua["cua"]
-      Mcp["mcp-computer · AX"]
-      Bu["browser-runtime · CDP"]
-      E2b["e2b desktop"]
-    end
-  end
+  BK["operation-layer backends (D15)<br/>cua · mcp-computer · browser-runtime · e2b<br/>same ACI · no fork tier"]
 
-  top --> SDK
-  SDK <--> Provider
-  SDK <-->|"WebSocket · PNG/JPEG · tile-delta"| own
-  SDK <-->|"capability negotiation"| bk
-  Provider -.manages.-> own
+  Prov["Provider — runtime state (Shinken's engine)<br/>checkpoint · fork · resume · disk/warm-pool/CRIU"]
+  Prov -.manages.-> engine
+  Prov ==> Fleet["fork-native consumers + scale<br/>gym reset()=fork · run_eval_forked · 8K+ live sessions, one thread"]
 
-  subgraph cp["designed — control plane (not built yet)"]
-    direction LR
-    CP["Control Plane<br/>scheduling · capability scoping"]
-    Panel["Control Panel<br/>human watch / take over"]
-  end
-  class cp,CP,Panel d
-  Provider -.-> CP
+  CP["Control Plane · Control Panel (designed)<br/>scheduling · capability scoping · human take-over"]:::d
+  Prov -.-> CP
 ```
 
 **The agent decides when to look.** Observation is a tool the model calls — `observe`,
@@ -588,20 +578,6 @@ numbers behind every "measured" are in [`docs/benchmarks/`](docs/benchmarks/READ
 | Sub-ms CoW fork fast tier | ○ designed | the Docker disk tier and the CRIU memory tier (`CriuDockerProvider`, privileged-only) are built + measured; the CoW/microVM fast tier remains designed (D5) |
 | macOS engine (D14) | 🟡 v1 slice | native CoreGraphics capture + CGEvent input in `shinkend` (`--backend macos`), TCC-honest readiness; local-only proof — no mac CI; AX tree designed |
 | Control plane, WebRTC/GPU, Windows/Wayland, `.skn` replay | ○ designed | reference path collapses these to one local `shinkend` |
-
-## The numbers, in one place
-
-All first-party, all from one MacBook Pro, all rerunnable
-([docs/benchmarks](docs/benchmarks/README.md)):
-
-| | |
-|---|---|
-| live sessions, one event-loop thread | **8K+** at 0.93 cores (3,096 in the rerunnable laptop artifact at 870 Mbps sustained; port-pool-bound, never the runtime) |
-| real desktops, one process | **128** (128/128 booted in 7.3 s) |
-| fork → usable replica | **0.12 s** warm-pool · 0.40 s live memory (CRIU) · 0.60 s disk |
-| fleet observation dedup | **18.6×** at a 94.6% hit rate |
-| act+observe step | **13.4 ms** — ~14× cheaper than the incumbent guest server |
-| RL loop | **closed** — GRPO learns on real sandboxes; 35B-class MoE updates driven |
 
 ## Repository layout
 
