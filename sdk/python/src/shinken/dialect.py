@@ -49,7 +49,7 @@ canonical ACI actions:
 
 Parsing is *tolerant* (markdown fences, namespace prefixes, unclosed tags, unquoted
 attributes, trailing-comma / truncated JSON) but **never silently drops**: an unknown verb,
-an unsupported action (drag, middle-click, …), or an action-shaped tag the parser cannot
+an unsupported action (middle-click, triple-click, …), or an action-shaped tag the parser cannot
 map raises a typed :class:`DialectError` carrying the offending snippet. Multiple calls in
 one message yield an **ordered** action list. Argument normalization: pixel coordinates are
 coerced to ints (``coordinate: [x, y]``, ``x``/``y``, ``point`` "x y", ``start_box``
@@ -294,6 +294,10 @@ _XML_VERB_ALIASES: dict[str, str] = {
     "scroll": "scroll",
     "hscroll": "scroll",
     "vscroll": "scroll",
+    "drag": "drag",
+    "left_click_drag": "drag",
+    "click_and_drag": "drag",
+    "drag_to": "drag",
     "screenshot": "screenshot",
     "take_screenshot": "screenshot",
     "wait": "wait",
@@ -307,8 +311,6 @@ _XML_DONE_VERBS = {"done", "stop", "terminate", "finished", "finish", "complete"
 _XML_UNSUPPORTED: dict[str, str] = {
     "middle_click": "the middle button has no ACI v0 wire verb",
     "triple_click": "triple-click has no ACI v0 wire verb",
-    "left_click_drag": "drag has no ACI v0 wire verb",
-    "drag": "drag has no ACI v0 wire verb",
     "cursor_position": "cursor_position is a read with no ACI equivalent",
     "hold_key": "key holds have no ACI v0 wire verb",
     "left_mouse_down": "raw mouse holds have no ACI v0 wire verb",
@@ -348,6 +350,18 @@ _XML_ALLOWED: dict[str, set[str]] = {
         "amount",
         "scroll_amount",
         "clicks",
+    },
+    "drag": _XML_TARGET_KEYS
+    | {
+        "start_coordinate",
+        "start_box",
+        "from",
+        "to",
+        "to_x",
+        "to_y",
+        "end_coordinate",
+        "end_box",
+        "button",
     },
     "type_text": {"text", "content", "value"},
     "key": {"keys", "combo", "key", "text"},
@@ -703,6 +717,8 @@ def _build_xml_action(canon: str, verb: str, args: dict, snippet: str) -> dict:
                     f"(use right_click for the right button; 'middle' has no ACI wire verb)"
                 )
         return {"verb": resolved, "target": target}
+    if canon == "drag":
+        return _xml_drag(verb, args, snippet)
     if canon == "scroll":
         return _xml_scroll(verb, args, snippet)
     if canon == "type_text":
@@ -860,11 +876,51 @@ def _xml_target(verb: str, args: dict, snippet: str) -> dict | None:
                 break
     if pair is None:
         return None
+    return _pair_to_target(pair)
+
+
+def _pair_to_target(pair: tuple[float | int, float | int]) -> dict:
+    """An (x, y) pair → a point target: integral pairs are pixels; fractional pairs within
+    [0, 1] are normalized."""
     x, y = pair
     fx, fy = float(x), float(y)
     if (isinstance(x, float) or isinstance(y, float)) and 0.0 <= fx <= 1.0 and 0.0 <= fy <= 1.0:
         return {"kind": "point_norm", "x": fx, "y": fy}
     return {"kind": "point_px", "x": int(round(fx)), "y": int(round(fy))}
+
+
+def _xml_drag(verb: str, args: dict, snippet: str) -> dict:
+    """Build a ``drag`` (down → interpolated moves → up) from a start and an end point.
+    Start: ``start_coordinate``/``start_box``/``from``, or ``x,y`` (the legacy single point).
+    End: ``coordinate``/``end_coordinate``/``end_box``/``to``/``point``, or ``to_x,to_y``.
+    Matches Anthropic ``left_click_drag`` (start_coordinate + coordinate) and OSWorld DRAG_TO."""
+    start = None
+    for key in ("start_coordinate", "start_box", "from"):
+        if key in args:
+            start = _pair_to_target(_coord_pair(verb, key, args[key], snippet))
+            break
+    if start is None and ("x" in args and "y" in args):
+        start = _pair_to_target(
+            (_xml_num(verb, "x", args["x"], snippet), _xml_num(verb, "y", args["y"], snippet))
+        )
+    end = None
+    for key in ("coordinate", "coordinates", "end_coordinate", "end_box", "to", "point"):
+        if key in args:
+            end = _pair_to_target(_coord_pair(verb, key, args[key], snippet))
+            break
+    if end is None and ("to_x" in args and "to_y" in args):
+        end = _pair_to_target(
+            (
+                _xml_num(verb, "to_x", args["to_x"], snippet),
+                _xml_num(verb, "to_y", args["to_y"], snippet),
+            )
+        )
+    if start is None or end is None:
+        raise DialectError(
+            f"<{verb}>: drag needs a start (start_coordinate/start_box/x,y) and an end "
+            f"(coordinate/end_box/to_x,to_y) (near {_snip(snippet)!r})"
+        )
+    return {"verb": "drag", "target": start, "to": end}
 
 
 def _coord_pair(

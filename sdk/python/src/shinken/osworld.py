@@ -109,6 +109,9 @@ class DesktopEnv:
         self._instruction = ""
         self._terminal: str | None = None  # "DONE" / "FAIL" once the agent terminates
         self._screen_wh: tuple[int, int] | None = None  # cached for normalized-coord scaling
+        # last pointer position — pyautogui dragTo()/computer_13 DRAG_TO drag FROM the current
+        # cursor (set by a prior moveTo/click), so we track it to form the ACI drag's source.
+        self._last_xy: tuple[int, int] | None = None
 
     def reset(self, task_config: dict | None = None) -> dict:
         if self._env is None:
@@ -188,12 +191,15 @@ class DesktopEnv:
             return False
         if t == "MOVE_TO":
             self._env.move(x=a["x"], y=a["y"])
+            self._last_xy = (a["x"], a["y"])
         elif t == "CLICK":
             self._click(a, double=a.get("num_clicks", 1) >= 2, button=a.get("button", "left"))
         elif t == "RIGHT_CLICK":
             self._click(a, button="right")
         elif t == "DOUBLE_CLICK":
             self._click(a, double=True)
+        elif t == "DRAG_TO":
+            self._drag_to(a["x"], a["y"])
         elif t == "TYPING":
             self._env.type_text(a.get("text", ""))
         elif t == "PRESS":
@@ -203,6 +209,15 @@ class DesktopEnv:
         else:
             raise ValueError(f"unsupported computer_13 action_type: {t!r}")
         return False
+
+    def _drag_to(self, x: int, y: int) -> None:
+        """Drag from the current cursor (last move/click) to (x, y) — the ACI ``drag`` verb.
+        Raises if no prior position is known (a bare drag has no source to anchor)."""
+        if self._last_xy is None:
+            raise ValueError("DRAG_TO needs a prior MOVE_TO/CLICK to set the drag source")
+        sx, sy = self._last_xy
+        self._env.drag(x=sx, y=sy, to_x=x, to_y=y)
+        self._last_xy = (x, y)
 
     def _scroll(self, *, dx: int = 0, dy: int = 0, x: int | None = None, y: int | None = None):
         """OSWorld/pyautogui scroll → ACI scroll. OSWorld's wheel counts **clicks** with
@@ -252,6 +267,7 @@ class DesktopEnv:
             self._env.double_click(x=x, y=y)
         else:
             self._env.click(x=x, y=y)
+        self._last_xy = (x, y)
 
     def _pyautogui(self, code: str) -> bool:
         executed = False
@@ -273,11 +289,20 @@ class DesktopEnv:
                     pending_down = []
                     executed = True
                 continue
+            # dragTo FIRST: it substring-contains nothing of the patterns but a moveTo/click
+            # pattern must not shadow it; resolve it before the generic pointer loop.
+            m = re.search(r"(?:pyautogui\.)?dragTo\(\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)", line)
+            if m:
+                tx, ty = self._to_px(m.group(1), m.group(2))
+                self._drag_to(tx, ty)
+                executed = True
+                continue
             for pat, verb in _PYAUTOGUI_PATTERNS:
                 m = pat.search(line)
                 if m:
                     x, y = self._to_px(m.group(1), m.group(2))
                     getattr(self._env, verb)(x=x, y=y)
+                    self._last_xy = (x, y)
                     executed = True
                     break
             else:
@@ -297,8 +322,6 @@ class DesktopEnv:
                     self._env.key("+".join(keys))
                     executed = True
                     continue
-                if re.search(r"(?:pyautogui\.)?dragTo\(", line):
-                    raise ValueError("pyautogui.dragTo is unsupported by ACI v0 (no drag verb)")
                 m = re.search(r"(?:pyautogui\.)?hscroll\(\s*(-?\d+)", line)
                 if m:  # horizontal wheel — check before scroll() (which substring-matches)
                     self._scroll(dx=int(m.group(1)))

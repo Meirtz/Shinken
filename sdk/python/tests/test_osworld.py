@@ -149,12 +149,36 @@ def test_parsed_pyautogui_drives_the_shim(mock_shinkend):
         env.close()
 
 
-def test_pyautogui_dragto_is_explicitly_unsupported(mock_shinkend):
+def test_pyautogui_dragto_becomes_a_drag_from_the_last_position(mock_shinkend):
+    # pyautogui drags FROM the current cursor; a prior moveTo sets the source, dragTo the dest.
     env = DesktopEnv(address=mock_shinkend, action_space="pyautogui")
     try:
         env.reset()
-        with pytest.raises(ValueError, match="dragTo"):
-            env.step("pyautogui.dragTo(10, 20)")
+        env.step("pyautogui.moveTo(10, 20)\npyautogui.dragTo(30, 40)")
+        drags = env._env.query("state")["drags"]
+        assert drags[-1]["from"] == {"x": 10, "y": 20} and drags[-1]["to"] == {"x": 30, "y": 40}
+    finally:
+        env.close()
+
+
+def test_dragto_without_prior_position_raises(mock_shinkend):
+    env = DesktopEnv(address=mock_shinkend, action_space="pyautogui")
+    try:
+        env.reset()
+        with pytest.raises(ValueError, match="prior MOVE_TO/CLICK"):
+            env.step("pyautogui.dragTo(30, 40)")
+    finally:
+        env.close()
+
+
+def test_computer13_drag_to(mock_shinkend):
+    env = DesktopEnv(address=mock_shinkend, action_space="computer_13")
+    try:
+        env.reset()
+        env.step({"action_type": "CLICK", "x": 5, "y": 6})
+        env.step({"action_type": "DRAG_TO", "x": 50, "y": 60})
+        drags = env._env.query("state")["drags"]
+        assert drags[-1]["from"] == {"x": 5, "y": 6} and drags[-1]["to"] == {"x": 50, "y": 60}
     finally:
         env.close()
 
