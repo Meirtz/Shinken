@@ -2,7 +2,9 @@
 
 > Status: design-only (nothing here is being built now — §7 lists the explicit triggers) ·
 > Audience: maintainers + the first train-Workload implementer.
-> Reconciles to **D2** (exec is not an ACI wire verb in v0.0.1), **D5** (runtime state),
+> Reconciles to **D2** (exec was not an ACI wire verb when this was drafted — the typed
+> in-guest `exec` channel has SINCE LANDED, G1; PTY/file wire verbs remain designed-only,
+> see [status](../engineering/status.md)), **D5** (runtime state),
 > **D6** (capability classes), **D7** (eval layer), and the 2026-06 recalibration's interop
 > targets (A‑1/A‑2 in [`../engineering/recalibration-2026-06.md`](../engineering/recalibration-2026-06.md)).
 > Exec **semantics** (argv-not-shell, bounded, structured errors) are owned by

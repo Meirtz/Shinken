@@ -1,6 +1,6 @@
 # 07 — Glossary
 
-Shared vocabulary for the Shinken design corpus. This is the canonical reference for every term used in the sibling docs ([Vision](vision.md), [PRD](prd.md), [Architecture](architecture.md), [OSWorld teardown](osworld-analysis.md), [Landscape](landscape.md), [Tech Decisions](tech-decisions.md), [Roadmap](../engineering/roadmap.md), [Isolation & capability note](threat-model.md), [Economics & Build-vs-Buy](economics-and-build-vs-buy.md)). Decisions are referenced by their **D-number** (see [05 — Tech Decisions](tech-decisions.md)) so each definition reconciles to the choice that owns it. Speed/density/cost numbers are tagged **(vendor-published, unverified)** — no first-party Shinken measurements exist yet, and a measurement spike is a tracked open question (see [Roadmap](../engineering/roadmap.md) and [notes/open-questions.md](../../notes/open-questions.md)). Date of record: **2026-05-30**.
+Shared vocabulary for the Shinken design corpus. This is the canonical reference for every term used in the sibling docs ([Vision](vision.md), [PRD](prd.md), [Architecture](architecture.md), [OSWorld teardown](osworld-analysis.md), [Landscape](landscape.md), [Tech Decisions](tech-decisions.md), [Roadmap](../engineering/roadmap.md), [Isolation & capability note](threat-model.md), [Economics & Build-vs-Buy](economics-and-build-vs-buy.md)). Decisions are referenced by their **D-number** (see [05 — Tech Decisions](tech-decisions.md)) so each definition reconciles to the choice that owns it. Speed/density/cost numbers from third parties keep their **(vendor-published, unverified)** tags; Shinken's own figures are **first-party measured** — the rerunnable suites and headline report live in [docs/benchmarks/README.md](../benchmarks/README.md). Date of record: **2026-05-30**; measurement notes updated **2026-06**.
 
 Terms are alphabetical. Cross-references use *italics*. External sources are cited inline by URL and collected in [notes/sources.md](../../notes/sources.md).
 
@@ -8,11 +8,11 @@ Terms are alphabetical. Cross-references use *italics*. External sources are cit
 
 ### accessibility tree (AT-SPI / UIA / AX)
 
-The OS-native, structured representation of the on-screen UI: a hierarchy of elements carrying role, name, value, state, and bounding box. Shinken's observation model (**D3**) normalizes the platform sources — **AT-SPI** (Linux GTK/Qt), **UIA** (Windows UI Automation), **AX** (macOS `AXUIElement`), and *CDP* for browsers — into one `Element{ref, role, name, value, states, bbox, source, ...}` schema with stable per-session refs. Screenshots are the universal baseline; this structured rung is the intended fast path for tree-rich apps and is replay-stable. Published anchors suggest ~6× token saving (~25k vs ~150k tokens/task, vendor-published, unverified). **Caveat:** a11y coverage on Electron/Qt/canvas/games is the load-bearing *unverified* assumption (see [notes/open-questions.md](../../notes/open-questions.md)) and needs a measurement spike. CDP accessibility domain: [chromedevtools.github.io/devtools-protocol](https://chromedevtools.github.io/devtools-protocol/tot/Accessibility/).
+The OS-native, structured representation of the on-screen UI: a hierarchy of elements carrying role, name, value, state, and bounding box. Shinken's observation model (**D3**) normalizes the platform sources — **AT-SPI** (Linux GTK/Qt), **UIA** (Windows UI Automation), **AX** (macOS `AXUIElement`), and *CDP* for browsers — into one `Element{ref, role, name, value, states, bbox, source, ...}` schema with stable per-session refs. Screenshots are the universal baseline; this structured rung is the intended fast path for tree-rich apps and is replay-stable. Published anchors suggest ~6× token saving (~25k vs ~150k tokens/task, vendor-published, unverified). **Coverage — measured 2026-06 (spike #2/E5):** strong Qt/AT-SPI (0.87 addressable), Chromium-family controls via CDP (1.00 of labeled controls; 0.23 of all nodes — browser *and* Electron; Electron over forced AT-SPI 0.32), weak GTK, absent terminals, **canvas zero**; games/native-GL remain unmeasured. Verdict: **hybrid** per-window structured + pixel fallback — D3's structured-default stays Provisional. CDP accessibility domain: [chromedevtools.github.io/devtools-protocol](https://chromedevtools.github.io/devtools-protocol/tot/Accessibility/).
 
 ### ACI (Agent-Computer Interface)
 
-The versioned protocol plus typed action/observation schema that every agent uses to drive a *Sandbox* (**D2**). The action schema is one canonical tagged-union discriminated by `verb` (~16 verbs), with `target = oneof{ point_px | point_norm | element_ref }` and an explicit *CoordinateSpace* on every observation. It is semver-versioned with capability negotiation at handshake, and exposes **version-pinned bidirectional adapters** as the only model-facing surface (Anthropic `computer_2024xxxx/2025xxxx`, OpenAI `computer_call`, UI-TARS, OSWorld `computer_13`). The ACI is the seam Shinken differentiates on: screenshot-first correctness with structured/pixels-on-demand upgrades, rather than screenshot polling as the whole product. Adapter targets: [Anthropic computer use](https://code.claude.com/docs/en/computer-use), [OpenAI computer-use tool](https://developers.openai.com/api/docs/guides/tools-computer-use).
+The versioned protocol plus typed action/observation schema that every agent uses to drive a *Sandbox* (**D2**). The action schema is one canonical tagged-union discriminated by `verb` (22 verbs as built — see [status](../engineering/status.md)), with `target = oneof{ point_px | point_norm | element_ref }` and an explicit *CoordinateSpace* on every observation. It is semver-versioned with capability negotiation at handshake, and exposes **version-pinned bidirectional adapters** as the only model-facing surface (Anthropic `computer_2024xxxx/2025xxxx`, OpenAI `computer_call`, UI-TARS, OSWorld `computer_13`). The ACI is the seam Shinken differentiates on: screenshot-first correctness with structured/pixels-on-demand upgrades, rather than screenshot polling as the whole product. Adapter targets: [Anthropic computer use](https://code.claude.com/docs/en/computer-use), [OpenAI computer-use tool](https://developers.openai.com/api/docs/guides/tools-computer-use).
 
 ### Artifact / file transfer
 
@@ -28,7 +28,7 @@ The single choke point in the *Control Plane* for session lifecycle, budgets, bo
 
 ### Capability
 
-A typed sandbox power — the unit the *Capability Manager* grants, narrows, revokes, and records (**D6**). Shinken defines **8 boundary/entitlement classes**: `net.egress`, `fs.scope` / host mounts, `clipboard`, `gpu`, `install.privileged/sudo`, `persistence`, `credentials`, `peripheral` / OS automation. Ordinary in-sandbox actions run inside the provisioned envelope; boundary capabilities are scoped and *taint-aware* (see *taint-tracking*).
+A typed sandbox power — the unit the *Capability Manager* grants, narrows, revokes, and records (**D6**). Shinken defines **8 boundary/entitlement classes**: `net.egress`, `fs.scope` / host mounts, `clipboard`, `gpu`, `install.privileged/sudo`, `persistence`, `credentials`, `peripheral` / OS automation. Ordinary in-sandbox actions run inside the provisioned envelope; boundary capabilities are explicitly scoped, granted, and recorded.
 
 ### CDP (Chrome DevTools Protocol)
 
@@ -69,6 +69,27 @@ The three logical planes of the streaming *ACI* (**D4**). **Control plane** — 
 
 The explicit declaration, carried on every observation, of the coordinate frame an action target lives in (e.g. raw device pixels vs normalized 0–1 vs an element ref). Required by **D2** so that the pixels the model reasons over equal the pixels the runtime acts on; it removes the resolution-sensitivity and clamping bugs seen in pixel-coordinate computer-use models.
 
+### element id / `element_ref`
+
+The stable per-session identity of a UI element in the structured observation tier (**D13**). The
+guest observation engine assigns each element a monotonic id (`e<N>`) on first sight; an id **never
+rebinds** to a different element — evicted ids are never reused, and acting on a stale id returns a
+machine-readable `stale_element_ref` error whose remedy is to re-*observe*. `element_ref` is the
+third member of the action `target` union (alongside pixel and normalized points): the guest
+resolves a live ref to its bounding-box centre and emits a physical click, with
+`invoke_action`/`set_value` as the AX-path fallback for geometry-less elements. **Built for
+Linux/AT-SPI (v1)**; identity rides on AT-SPI object path + role + parent. See
+[operation-layer.md](operation-layer.md) and [status](../engineering/status.md).
+
+### exclusive-desktop / co-use interaction tiers
+
+The two interaction tiers of the macOS engine substrate (**D14**). **Exclusive-desktop** (v1,
+**built**, local-only — no mac CI): input posts to the global HID event tap and moves the real
+cursor, so the agent owns the desktop while it acts. **Co-use** (designed-only): per-app background
+input via `CGEventPostToPid` plus a software cursor overlay, so a human keeps using the machine
+alongside the agent; until it lands, co-use on macOS is served by the `mcp-computer`
+*operation-layer backend* (**D15**). See [macos-engine.md](../engineering/macos-engine.md).
+
 ### Fleet Manager
 
 The *Control Plane* component that owns *Sandbox* supply (**D9**): per-image/region/tier warm pools, fork-on-demand from the warm-parent snapshot, and cold-pool replenish. It is shaped like the OSS *kubernetes-sigs/agent-sandbox* CRD. It also runs the dual-timer session lifecycle (idle ~15 min reset-on-activity; max-lifetime ~4–8 h; auto-suspend-to-snapshot on idle, since idle is the dominant cost).
@@ -81,8 +102,11 @@ Shinken's reset and branching primitive (**D1**, **D5**): instead of terminate-a
 
 Creating a new live Sandbox or run branch from a *checkpoint*. Fork is the runtime operation behind
 instant reset, N-run eval replicas, best-of-N exploration, and counterfactual reruns from a replay
-step. On the Linux fast-fork tier it should be CoW memory/disk fork; on Docker, Windows, macOS, or
-GPU providers it may be unsupported or degrade to slower restore/recreate semantics.
+step. On the Linux fast-fork tier it should be CoW memory/disk fork; on Windows, macOS, or GPU
+providers it may be unsupported or degrade to slower restore/recreate semantics. Measured 2026-06
+(first-party, [benchmarks](../benchmarks/README.md)): Docker disk-tier fork 0.60 s (warm-pool
+graft 0.118 s) and a live process+memory fork via the privileged-only CRIU memory tier in 0.40 s;
+the sub-ms CoW tier remains designed-only.
 
 ### GPU-TEE
 
@@ -112,9 +136,30 @@ NVIDIA's remote attestation service for GPU TEE state — it proves to a relying
 
 NVIDIA's dedicated hardware video-encode engine, used by Shinken for the on-demand H.264/AV1 *media plane* (**D4**, **D11**). Critical constraint: **the encode tier never runs on A100/H100/H200/B200 (zero NVENC engines)** — use **Ada L4** (density) or **L40S** (premium 4K/AV1 + render). The consumer 8-session cap does not apply to datacenter GPUs. AV1 NVENC saves ~40% bitrate vs H.264 at high frame rates on Ada (vendor-published, unverified). References: [NVENC application note](https://docs.nvidia.com/video-technologies/video-codec-sdk/13.0/nvenc-application-note/index.html), session-cap discussion at [Nvidia NVENC (Wikipedia)](https://en.wikipedia.org/wiki/Nvidia_NVENC).
 
+### observe
+
+The dual-tier observation verb of the operation layer (**D13**): one call returns the pixel tier
+(screenshot) and — where the guest advertises `structured_observation` — the structured tier (the
+element tree with stable *element ids* plus the focus pointer), so the model picks the tier per
+step with pixels always the universal fallback. A re-observation renders a *tree diff* against the
+previous revision, and capture *settles* before it is taken. **Built for Linux/AT-SPI (v1)**,
+live-smoked; the measured verdict behind the shape (#2/E5, 2026-06) is **hybrid per-window
+structured + pixel fallback**, so D3's structured-default upgrade stays Provisional.
+
 ### ocap / caretaker
 
 The object-capability layer (layer 2 of the permission model, **D6**) sitting between *Cedar* and the OS. A *caretaker* (membrane) wraps a granted capability handle so it can be revoked in O(1) — instant revoke without re-evaluating policy. Cedar decides; the caretaker holds the handle and can sever it. Background: [object-capability model](https://en.wikipedia.org/wiki/Object-capability_model), [caretaker/revocation patterns](https://tersesystems.github.io/ocaps/guide/management.html).
+
+### operation-layer backend
+
+The pluggable execution substrate under the typed *ACI* (**D15**): a third-party computer-control
+system plugs in as a `SandboxProvider` returning a duck-typed Sandbox, with **honest capability
+negotiation** — the backend advertises only the verbs/targets/observation tiers it actually serves,
+and a missing capability raises a typed `UnsupportedProviderOperation`, never a silent no-op or a
+faked tree. **Built** (`shinken.backends`): `cua` (trycua), `mcp-computer` (codex-style AX MCP —
+fills the macOS-AX gap), `browser-runtime` (CDP), and `e2b` — fixture-tested, with env-gated live
+smokes (browser proven against real headless Chrome; the e2b/cua/mcp live gates are written but
+unrun). See [tech-decisions.md](tech-decisions.md) D15 and [operation-layer.md](operation-layer.md) §13.
 
 ### Operator
 
@@ -148,9 +193,24 @@ Continuing a paused, suspended, or snapshotted Sandbox/Session from runtime stat
 computer live again; replay only shows or analyzes the event timeline. A provider must advertise
 whether resume is memory-backed, disk-only, provider-managed, or unsupported.
 
+### RoutedSession
+
+The CU↔BU composition object of the backend layer (**D15**): one Sandbox-shaped surface over a
+computer-use backend and a browser-use backend together, routing each action to the right surface
+and stamping every observation with `source` provenance so a trajectory records which substrate
+served each step. The Operator loop drives it unchanged. **Built** (`shinken.backends`,
+fixture-tested).
+
 ### Set-of-Marks (SoM)
 
 A grounding technique: overlay numbered/labeled marks on the screen so the model emits a stable mark ID instead of regressing raw pixel coordinates. In Shinken's layered observation (**D3**), SoM is **Rung 1** — a server-side GPU microservice (OmniParser-style), invoked on demand when the *accessibility tree* (Rung 0) is insufficient, before falling back to region/zoom pixels (Rung 2) or full frame (Rung 3). ID-based grounding is the single biggest accuracy lever. Reference: [OmniParser V2](https://www.microsoft.com/en-us/research/articles/omniparser-v2-turning-any-llm-into-a-computer-use-agent/), [github.com/microsoft/OmniParser](https://github.com/microsoft/OmniParser).
+
+### settle
+
+The capture discipline of the *observe* verb (**D13**): observation waits — a bounded debounce on
+accessibility change notifications — until the UI quiesces, so the tree (and its *tree diff*)
+describes a stable screen rather than a mid-transition one. Always bounded by a deadline. Built
+into the Linux/AT-SPI guest observation engine v1.
 
 ### SFU (Selective Forwarding Unit)
 
@@ -192,6 +252,16 @@ A pluggable virtualization backend under a *Sandbox*. Candidates: Firecracker (h
 
 The generic boundary pattern Shinken adopts: the agent loop runs *outside* the sandbox where useful, and boundary-crossing tool calls route through a controlled API that enforces the egress allowlist and capability policy (**D2**, **D6**). Code-as-action (`exec`/`bash`/`edit`) can be an ordinary in-sandbox power for disposable guests, but host filesystem, credentials, external egress, persistence, and production side effects remain boundary capabilities.
 
+### tree diff
+
+The `~`/`+`/`-` rendering a re-*observe* returns instead of the full element tree (**D13**):
+changed (`~`), added (`+`), and removed (`-`) lines against the previous revision, with removed-id
+range summarization under a line budget and a full-tree fallback. Measured 2026-06 (E5): a
+typing-burst diff is ~2 KiB vs ~77 KiB for the screenshot of the same moment — the headline token
+saving of the structured tier — with the honest caveat that canvas UIs are change-blind (a real
+click changes pixels while the diff reports nothing), which is part of why the hybrid verdict
+stands. Built for Linux/AT-SPI v1.
+
 ### vGPU
 
 NVIDIA virtual GPU — time-sliced sharing of one physical GPU across many guests. In Shinken it is the **density** GPU pool for light desktops (**D11**), the counterpart to the isolation-focused *MIG*-backed pool: time-sliced vGPU maximizes tenant count; MIG maximizes isolation. A public NVIDIA technology option for the optional GPU tier. References: [vGPU user guide](https://docs.nvidia.com/vgpu/latest/grid-vgpu-user-guide/index.html), [time-sliced vs MIG-backed vGPU](https://docs.nvidia.com/ai-enterprise/release-8/latest/infra-software/vgpu/features/mig-backed-vgpu.html).
@@ -214,11 +284,14 @@ The standard HTTP-based WebRTC signaling protocols. **WHIP** (WebRTC-HTTP Ingest
 | accessibility tree, SoM, CDP, observation rungs | D3 |
 | control/event/media planes, NVENC, SFU, WHIP/WHEP, virtio-vsock, NICE DCV | D4 |
 | `.skn` bundle, Snapshot, Checkpoint, Fork, Resume, CoW | D1, D5 |
-| Capability, Capability Manager, Cedar, ocap/caretaker, taint-tracking, boundary controls | D6 |
+| Capability, Capability Manager, Cedar, ocap/caretaker, boundary controls | D6 |
 | pass@k / pass^k, OSWorld / OSWorld-Verified eval | D7 |
 | Action Gateway, Fleet Manager, Control Plane, Session timers | D9 |
 | Substrate/Provider, fork-from-snapshot, kubernetes-sigs/agent-sandbox, Guest Runtime (cross-OS) | D1, D10 |
 | GPU-TEE, NRAS, Confidential Containers, MIG, vGPU, NVENC tier | D11 |
 | Open-core positioning, Shinken, Operator | D12 |
+| observe, element id / `element_ref`, tree diff, settle (operation layer) | D13 |
+| exclusive-desktop / co-use interaction tiers (macOS engine) | D14 |
+| operation-layer backend, RoutedSession | D15 |
 
-> **Unverified-claims reminder.** Every latency/density/cost figure above is vendor-published and unverified. A first-party measurement plan is required before any number here is load-bearing. See [05 — Tech Decisions](tech-decisions.md), [06 — Roadmap](../engineering/roadmap.md), and [notes/open-questions.md](../../notes/open-questions.md).
+> **Claims provenance.** Third-party latency/density/cost figures above keep their **(vendor-published, unverified)** tags. Shinken's own numbers are first-party measured (2026-06): the fork/restore ladder, codec levers, client-plane scale, and act+observe step latency are reported with rerunnable suites in [docs/benchmarks/README.md](../benchmarks/README.md). See [05 — Tech Decisions](tech-decisions.md), [06 — Roadmap](../engineering/roadmap.md), and [notes/open-questions.md](../../notes/open-questions.md).

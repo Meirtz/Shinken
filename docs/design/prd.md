@@ -19,9 +19,11 @@ and human supervision. This PRD enumerates the personas and their top journeys, 
 [D9], interfaces/SDK/MCP [D8]), the **non-functional requirements** (concurrency, latency budgets,
 cost, isolation & resource scoping, availability, multi-tenancy, compliance), explicit **in/out-of-scope**, and
 **success KPIs**. Every requirement carries an ID (`FR-<SUBSYS>-N` / `NFR-<CLASS>-N`) and is
-reconciled to its governing decision **D1–D12** (see [05 Tech decisions](tech-decisions.md)).
+reconciled to its governing decision **D1–D15** (see [05 Tech decisions](tech-decisions.md)).
 Numeric speed/density/cost figures are marked **(vendor-published, unverified)** unless first-party;
-these gate a first-party measurement plan and are *not* load-bearing for v0.0.1 correctness.
+first-party measurements now exist for the built slice (see
+[docs/benchmarks](../benchmarks/README.md)), and vendor figures remain *not* load-bearing for
+v0.0.1 correctness.
 
 **Release interpretation.** This PRD describes the full product. v0.0.1 must implement the core
 semantics at local/reference scale, even where this PRD later specifies cloud-scale SLOs. Later
@@ -100,7 +102,7 @@ The **ACI** is the versioned protocol plus typed action/observation schema. The 
 
 | ID | Requirement | Reconciles |
 |----|-------------|-----------|
-| FR-ACI-1 | The action schema MUST be a single tagged union of ~16 `verb`s, expressed as a versioned JSON Schema / protobuf with `schema_version` (semver), defined as a near-superset of the Anthropic `computer` tool grammar and OpenAI's `computer_call`. | D2 |
+| FR-ACI-1 | The action schema MUST be a single tagged union of `verb`s (22 in the built v1 surface), expressed as a versioned JSON Schema / protobuf with `schema_version` (semver), defined as a near-superset of the Anthropic `computer` tool grammar and OpenAI's `computer_call`. | D2 |
 | FR-ACI-2 | Every spatial verb's `target` MUST be a discriminated union `oneof{ point_px{x,y} \| point_norm{x,y∈0..1} \| element_ref{handle,source} }`, so one verb serves pixel models, normalized models, and ref-based models. | D2, D3 |
 | FR-ACI-3 | Coordinate normalization MUST live in the protocol, once: every observation carries an explicit **`CoordinateSpace`** `{origin, logical_width/height, device_pixel_ratio, image_width/height, scale_factor, mode}`. | D2, D3 |
 | FR-ACI-4 | Shinken MUST ship **version-pinned, bidirectional adapters** as the *only* model-facing surface: [Anthropic computer-use](https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/computer-use-tool) (`computer_20241022` / `20250124` / `20251124`, plus `bash` + `text_editor`), [OpenAI computer-use](https://developers.openai.com/api/docs/guides/tools-computer-use) (`computer_call` / `computer_call_output`), UI-TARS, and OSWorld `computer_13`. | D2 |
@@ -123,7 +125,7 @@ Observation is **screenshot-first with structured upgrade**. v0.0.1 must work fo
 | FR-OBS-4 | The [OmniParser](https://github.com/microsoft/OmniParser)/Set-of-Marks parser MUST run server-side **on demand** (triggered on low a11y coverage or explicit agent request), never per-frame by default; budget ~0.6 s/frame *(vendor-published, unverified)*. | D3, D11 |
 | FR-OBS-5 | Observations MUST stream **full-snapshot + typed delta** where applicable: emit screenshot observations for the baseline and `a11y_full` / `a11y_delta` for structured tracks, triggered on action/change/focus rather than a fixed clock. | D3, D5 |
 | FR-OBS-6 | The structured/pixel duality MUST be a property of the action grammar (one verb takes a ref OR a coord), never two parallel APIs. | D2, D3 |
-| FR-OBS-7 | Structured-only MUST NOT ship alone: screenshots + vision/grounding are the v0.0.1 baseline because a11y goes blind on Electron/Qt/canvas/WebGL. First-party a11y coverage is required before any structured-default scale/cost commitment. | D3 |
+| FR-OBS-7 | Structured-only MUST NOT ship alone: screenshots + vision/grounding are the v0.0.1 baseline. Measured 2026-06 (a11y spike #2/E5): Qt strong via AT-SPI (0.87); Chromium-family — browser *and* Electron — reachable via CDP (1.00 of labeled controls, 0.23 of all nodes; Electron 0.32 over forced AT-SPI); GTK weak; terminals absent; **canvas measured zero** — so the pixel fallback stays mandatory and D3 stays Provisional (hybrid per-window structured + pixel fallback, not structured-by-default). | D3 |
 | FR-OBS-8 | Each observation MUST carry `{obs_id, ts, session_id, cause(action_id\|push), display, tree_mode?, elements\|delta?, image?, marks?, CoordinateSpace}` and be `action_id`-correlated to its causing action. | D3, D5 |
 | FR-OBS-9 | The observation stream MUST BE the same append-only event stream used for live view, replay, and capability audit (one source of truth). | D3, D4, D5 |
 | FR-OBS-10 | Sensitive element values MUST be maskable at capture, before they enter the stream or replay. | D3, D6, NFR-COMP |
@@ -347,9 +349,9 @@ RPC path is not acceptable for hot binary transfer.
 
 ### Open decisions (carried forward, not papered over)
 
-- **Multi-player / non-exclusive computer-use** (a separate human cursor + agent cursor sharing one Sandbox concurrently): an **OPEN** in/out-scope decision, to be resolved in [05 Tech decisions](tech-decisions.md); **not committed for v1**.
+- **Multi-player / non-exclusive computer-use** (a separate human cursor + agent cursor sharing one Sandbox concurrently): shaped 2026-06 by **D14** for macOS — two interaction tiers: an exclusive-desktop v1 (built) and a designed **co-use tier** (per-app input + a software cursor for the human; not built — until it lands, co-use is served by the `mcp-computer` backend, D15); still **not committed for v1** on any OS.
 - **Mobile timing** within the roadmap (which Android substrate, when) — open; see [06 Roadmap](../engineering/roadmap.md).
-- **First-party perf/cost numbers** — every figure above is marked unverified; a measurement spike is a prerequisite to any density/cost commitment, including the **a11y-coverage spike** on Electron/Qt/canvas/games (the load-bearing assumption behind FR-OBS-6).
+- **First-party perf/cost numbers** — PARTIALLY RESOLVED 2026-06: vendor figures above keep their unverified tags, but a first-party benchmark corpus now exists ([docs/benchmarks](../benchmarks/README.md), 14 rerunnable suites — e.g. disk fork 0.60 s, CRIU live process+memory fork 0.40 s, warm-pool graft 0.118 s, act+observe step 13.4 ms). The **a11y-coverage spike** (the load-bearing assumption behind FR-OBS-7) is MEASURED (#2/E5) — verdict: hybrid per-window structured + pixel fallback, D3 stays Provisional (see FR-OBS-7 for the per-surface numbers); games/native-GL remain unmeasured, and cloud-scale density/cost commitments still gate on further measurement.
 
 ---
 
@@ -368,8 +370,8 @@ These KPIs gate the phased rollout (see [06 Roadmap](../engineering/roadmap.md))
 
 ### Performance (first-party measurement plan required)
 
-| KPI | Target | Tied to |
-|-----|--------|---------|
+| KPI | metric | target | tied to |
+|-----|--------|--------|---------|
 | KPI-PERF-1 | Fork-tier reset / time-to-first-action | sub-second p99 | D1, NFR-LAT-2 |
 | KPI-PERF-2 | Glass-to-glass video latency, same region | ≤120 ms p95 | D4, NFR-LAT-1 |
 | KPI-PERF-3 | Sandbox allocation from warm pool | ≥90% <500 ms | D9, NFR-SCALE-3 |
@@ -377,16 +379,16 @@ These KPIs gate the phased rollout (see [06 Roadmap](../engineering/roadmap.md))
 
 ### Efficiency / cost
 
-| KPI | Target | Tied to |
-|-----|--------|---------|
+| KPI | metric | target | tied to |
+|-----|--------|--------|---------|
 | KPI-COST-1 | Observation token reduction vs the screenshot loop | ~6× (a11y ~25k vs ~150k tokens/task) | D3 |
 | KPI-COST-2 | Streaming bandwidth reduction vs H.264 office video | ~150× on Tier-0 structured | D3, D4 |
 | KPI-COST-3 | Idle-Sandbox cost reduction via auto-suspend | a measured $/sandbox-hour decrease | D9, NFR-COST-3 |
 
 ### Eval quality
 
-| KPI | Target | Tied to |
-|-----|--------|---------|
+| KPI | metric | target | tied to |
+|-----|--------|--------|---------|
 | KPI-EVAL-1 | Verifier human-agreement | ≥94% programmatic-primary (the published OpenComputer bar) | D7 |
 | KPI-EVAL-2 | Reliability reporting | every task reports pass@k / pass^k + CIs (N≥5), never bare pass@1 | D7 |
 | KPI-EVAL-3 | Conformance suites | OSWorld-Verified bar matched; "verified by Shinken" re-runs published | D7 |
@@ -394,8 +396,8 @@ These KPIs gate the phased rollout (see [06 Roadmap](../engineering/roadmap.md))
 
 ### Safety / trust
 
-| KPI | Target | Tied to |
-|-----|--------|---------|
+| KPI | metric | target | tied to |
+|-----|--------|--------|---------|
 | KPI-SAFE-1 | Auto-grant classifier false-positive rate | ≤0.4% *(the published Claude Code auto-mode bar — vendor-published, unverified)* | D6 |
 | KPI-SAFE-2 | Permission-event completeness | 100% of grants/denials recorded as replay events | D5, D6 |
 | KPI-SAFE-3 | Credential leakage | zero plaintext secrets in the agent context or the replay | D6, NFR-SEC-3 |
@@ -405,7 +407,7 @@ These KPIs gate the phased rollout (see [06 Roadmap](../engineering/roadmap.md))
 
 ### Requirement → decision coverage map
 
-Every requirement above reconciles to at least one decision; the inverse mapping confirms all twelve decisions are covered.
+Every requirement above reconciles to at least one decision; the inverse mapping confirms all fifteen decisions are covered (D13–D15, the 2026-06 additions, reconcile through the existing FRs they deepen; D15 has no dedicated FR yet).
 
 | Decision | Covered by |
 |----------|-----------|
@@ -421,5 +423,8 @@ Every requirement above reconciles to at least one decision; the inverse mapping
 | **D10** Cross-platform | FR-SBX-1/5/6/8, FR-ACI-7, scope §4 |
 | **D11** GPU/NVIDIA | FR-STR-2/3/10, FR-OBS-2/3, FR-SBX-7, NFR-SCALE-4/5, NFR-MT-2, NFR-SEC-7 |
 | **D12** Business | FR-IFC-8, scope §4, KPI-ADO-1/4 |
+| **D13** Operation layer | deepens FR-OBS-2/5/6 (stable refs, full+delta diffs, one-grammar duality) and FR-ACI-2/9/10 (element_ref targets, wait→act→verify settle, refs-by-default); no dedicated FR yet for the diff/settle engine itself |
+| **D14** macOS engine | FR-SBX-6/8, FR-ACI-7, FR-PRM-11 (TCC/entitlement readiness), scope §4 |
+| **D15** Operation-layer backends | requirement implied by D12 positioning (provider-agnostic seam: FR-IFC-8) and the substrate routing posture (FR-SBX-1); no dedicated FR yet |
 
 External sources cited above are consolidated in [`../../notes/sources.md`](../../notes/sources.md).

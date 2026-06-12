@@ -266,6 +266,16 @@ BUILD the out-of-tree providers (`cua-docker`, `lume`, `e2b`) as TAM for the nar
 keep publishing the harness-integrated local-fork numbers while the lead is time-boxed (§2.16); and
 treat lume specifically as the candidate macOS substrate for the D10 cross-platform leg.
 
+**2026-06 amendment — landed, in-tree.** The provider direction above shipped as the
+**operation-layer backends** (D15, PRs #282–#288): `shinken.backends` drives the typed ACI over
+trycua/cua, e2b-desktop, an MCP computer server (codex-style AX — it fills the macOS-AX gap, whose
+native tier is designed-only), and a CDP Browser Runtime, with `RoutedSession` composing CU↔BU
+surfaces behind one Sandbox-shaped object. Evidence graded honestly: all four adapters are
+fixture-proven against protocol-faithful fakes; the browser backend is additionally live-proven
+against real headless Chrome (real AX tree → `element_ref` click landed); the e2b/cua/mcp live
+gates are written but unrun (each needs its external system). See
+[tech-decisions D15](tech-decisions.md) and the [status map](../engineering/status.md).
+
 ---
 
 ## 3. The competitive matrix
@@ -290,7 +300,7 @@ Dimension × Shinken target × how others do it × verdict (**MATCH** = reach pa
 
 ## 4. Per-domain technology options
 
-For each Shinken pillar, the public technology menu and the choice reconciled to D1-D12.
+For each Shinken pillar, the public technology menu and the choice reconciled to D1-D15.
 
 ### 4.1 Streaming (D4)
 
@@ -351,7 +361,7 @@ stable per-session refs (~6× token savings, ~25k vs ~150k tokens/task — vendo
 unverified) where coverage is strong. Rung 2 = Set-of-Marks/OmniParser (server-side, on-demand, for
 Electron/Qt/canvas where a11y goes blind). Rung 3 = region/zoom pixels. Rung 4 = full frame/video.
 Act on element refs/marks where available; raw x,y remains the universal fallback. CDP
-`Accessibility.getFullAXTree` is ~80-90% smaller than raw DOM (<https://github.com/microsoft/OmniParser>; <https://github.com/browserbase/stagehand>). **Open risk:** a11y coverage on Electron/Qt/canvas/games is the load-bearing unverified assumption behind the structured-cost thesis — it needs a measurement spike; that is exactly why screenshots and vision-grounding are first-class, not optional. See [`notes/ai-native-interface.md`](../../notes/ai-native-interface.md).
+`Accessibility.getFullAXTree` is ~80-90% smaller than raw DOM (<https://github.com/microsoft/OmniParser>; <https://github.com/browserbase/stagehand>). **Open risk — measured 2026-06 (E5):** the a11y-coverage spike landed — Qt strong (0.87 addressable), Chromium-family controls via CDP (1.00 of labeled controls; 0.23 of all nodes — browser *and* Electron; Electron 0.32 over forced AT-SPI), GTK weak, terminals absent, **canvas measured at zero**; tree-diff ~2 KiB vs ~77 KiB screenshot. Verdict: hybrid per-window structured + pixel fallback — D3 stays Provisional, and screenshots and vision-grounding stay first-class, not optional (games/native-GL still unmeasured). See [`notes/ai-native-interface.md`](../../notes/ai-native-interface.md).
 
 **Interface surface (D8):** one IDL → generated py/ts SDKs over the bidirectional streaming transport, with an **optional MCP facade** at two altitudes (granular tools; agent-task) for model-agnostic hosts. **Never** route the high-frequency action/observation/video loop through MCP — MCP has no bidirectional/media transport. cua proves exactly this stratification.
 
@@ -399,7 +409,13 @@ Shinken is **not** trying to out-breadth cua on day-one backend count, out-fork 
 microsecond, or out-host Browserbase. It wins the *intersection*: the only platform aiming to be
 cross-platform-desktop **and** AI-native-streaming **and** event-sourced-replay **and**
 eval-on-the-same-runtime — with first-class artifacts, per-Sandbox resource scoping, and an optional GPU
-tier nobody else manages. The three load-bearing risks to retire with first-party data (canon §7-8):
-the a11y-coverage assumption behind the structured bandwidth thesis (D3), the absence of first-party
-fork/density/latency numbers, and the macOS/Windows fast-reset infeasibility. Those, plus the
+tier nobody else manages. This survey originally named three load-bearing risks to retire with
+first-party data (canon §7-8); two are retired. **Measured 2026-06 (E5):** the a11y-coverage
+assumption behind the structured bandwidth thesis (D3) — verdict hybrid per-window structured +
+pixel fallback, so D3 stays Provisional, not structured-by-default. **Resolved 2026-06:** the
+absence of first-party fork/density/latency numbers — the fork ladder (disk fork 0.60 s, CRIU live
+process+memory fork 0.40 s, warm-pool graft 0.12 s), the 3,096-live-session single-thread client
+plane, and the 13.4 ms act+observe step (~14× vs OSWorld's guest server as shipped) are published
+first-party in [Shinken benchmarks](../benchmarks/README.md). Still open: the macOS/Windows
+fast-reset infeasibility (plus Windows guest licensing). Those open items, plus the
 isolation & capability boundaries and the economics, are carried into [05 Tech Decisions](tech-decisions.md), the [08 Isolation & capability note](threat-model.md), and [09 Economics & Build-vs-Buy](economics-and-build-vs-buy.md).

@@ -1,6 +1,6 @@
 # Shinken — System Architecture
 
-> Status: drafting · Last updated 2026-06-02
+> Status: drafting · Last updated 2026-06-13
 > Audience: architecture/design maintainers · Role: full target system specification · Source of
 > truth: component boundaries, planes, substrate model, and data flow. Current implementation status
 > lives in [`STATUS.md`](../engineering/status.md).
@@ -16,9 +16,9 @@ artifact movement, eval evidence, replay/audit data, and fleet-scale execution. 
 the **substrate matrix** (per-OS × GPU × fast-fork), the **host↔guest transport**, the **reset /
 fork-from-snapshot** primitive, and the **scaling topology**.
 
-Every architectural choice reconciles to the design decisions **D1–D12** (full ADRs in [05 Tech decisions](tech-decisions.md)). Shinken builds *on* mature open-source and publicly-available components rather than reinventing them: the OSS Kubernetes [`kubernetes-sigs/agent-sandbox`](https://agent-sandbox.sigs.k8s.io/) CRD for the sandbox control-plane shape, [HashiCorp Vault](https://developer.hashicorp.com/vault) (or any cloud KMS / SPIFFE-SPIRE) for secret brokering, and an *optional* high-fidelity pixel tier that can use a commercial remote-display product (NICE DCV) instead of the in-house WebRTC + NVENC path. NVIDIA GPUs are a **supported, optimized acceleration option** (NVENC streaming, vGPU/MIG, GPU-TEE/confidential computing), **not a dependency** — most agent and browser workloads ride a CPU-only tier.
+Every architectural choice reconciles to the design decisions **D1–D15** (full ADRs in [05 Tech decisions](tech-decisions.md)). Shinken builds *on* mature open-source and publicly-available components rather than reinventing them: the OSS Kubernetes [`kubernetes-sigs/agent-sandbox`](https://agent-sandbox.sigs.k8s.io/) CRD for the sandbox control-plane shape, [HashiCorp Vault](https://developer.hashicorp.com/vault) (or any cloud KMS / SPIFFE-SPIRE) for secret brokering, and an *optional* high-fidelity pixel tier that can use a commercial remote-display product (NICE DCV) instead of the in-house WebRTC + NVENC path. NVIDIA GPUs are a **supported, optimized acceleration option** (NVENC streaming, vGPU/MIG, GPU-TEE/confidential computing), **not a dependency** — most agent and browser workloads ride a CPU-only tier.
 
-All speed / density / cost figures are marked **(vendor-published, unverified)** unless first-party; a first-party measurement plan is a prerequisite to publishing any number as a Shinken SLO ([09 Economics & build-vs-buy](economics-and-build-vs-buy.md)).
+All third-party speed / density / cost figures are marked **(vendor-published, unverified)**; Shinken's own numbers are now **first-party-measured** — see [docs/benchmarks/README.md](../benchmarks/README.md) — and first-party measurement remains the prerequisite for publishing any number as a Shinken SLO ([09 Economics & build-vs-buy](economics-and-build-vs-buy.md)).
 
 The design borrows the clean `Image → Runtime → Transport → Interfaces → Sandbox` layering pioneered by the closest cross-platform competitor (trycua/cua) and out-engineers its three weak axes: **streaming** (it polls a screenshot per step), **permissions** (binary container-key auth, no policy engine), and **replay** (a screenshot dump plus a side VNC recorder). See [04 Landscape](landscape.md) for the full competitive read.
 
@@ -218,7 +218,7 @@ A **Sandbox** is one isolated guest computer; a **Session** is a live attach/run
 
 `shinkend` responsibilities:
 
-- **ACI executor (D2).** Receives validated typed actions (a tagged union discriminated by `verb`, ~16 verbs) and actuates them per-OS through a handler factory (X11/`xdotool`-class on Linux, UIA/SendInput on Windows, CoreGraphics on macOS). Coordinate-space normalization is done once here and recorded, never re-implemented per agent.
+- **ACI executor (D2).** Receives validated typed actions (a tagged union discriminated by `verb` — a 22-verb surface as built) and actuates them per-OS through a handler factory (X11/`xdotool`-class on Linux, UIA/SendInput on Windows, CoreGraphics on macOS). Coordinate-space normalization is done once here and recorded, never re-implemented per agent.
 - **Observation engine (D3).** Produces the layered observation stack: screenshot/focused/region
   pixels as the universal baseline, normalized cross-OS a11y/DOM trees (AT-SPI / UIA / AX / CDP)
   where available, and explicit escalation to Set-of-Marks/OmniParser, region/zoom pixels, full
@@ -254,6 +254,13 @@ Windows warm-pool swap, and Firecracker CoW fork are not interchangeable. The sc
 `_auto_runtime()`-style selection picks a backend from `(os_type, kind, needs_gpu,
 needs_fast_fork)`. The full routing matrix is §3.
 
+Pluggability also runs **sideways at the operation layer (D15)**: third-party computer-control
+systems (trycua/cua, an AX MCP server, an external CDP browser, E2B) plug in **under** the typed
+ACI as `shinken.backends` providers — a `SandboxProvider` returning a duck-typed Sandbox with
+honest capability negotiation (advertise only the verbs/targets/observation tiers actually served;
+a missing capability is a typed error, never a silent no-op), and `RoutedSession` composing CU↔BU
+surfaces behind one Sandbox-shaped object the Operator loop drives unchanged.
+
 ---
 
 ## 2. The three planes
@@ -288,9 +295,13 @@ Rung 4  continuous NVENC video                → media plane (explicit live-wat
 
 Each observation carries a **coverage signal** (fraction of visible pixels covered by a11y bounding
 boxes) so the policy knows when an app exposes little usable a11y (Electron/canvas/games) and must escalate.
-a11y coverage on those surfaces is the **load-bearing unverified assumption** behind the structured
-cost/latency thesis, not behind the first usable GUI loop, and needs a first-party measurement spike
-([08 Isolation & capability note](threat-model.md), [09 Economics](economics-and-build-vs-buy.md)).
+**Measured 2026-06 (spike #2/E5):** that coverage is no longer an assumption — Qt is strong over
+AT-SPI (0.87), Chromium-family controls resolve via CDP (1.00 of labeled controls; 0.23 of all
+nodes — browser *and* Electron; Electron over forced AT-SPI reaches 0.32), GTK is weak, terminals
+are absent, and canvas measured **zero**; a tree diff runs ~2 KiB vs a ~77 KiB screenshot. Verdict:
+**hybrid per-window structured + pixel fallback** — D3 stays Provisional, and the escalation
+ladder above is the committed posture, not a stopgap
+([first-party benchmarks §4](../benchmarks/README.md)).
 
 ---
 
@@ -428,7 +439,7 @@ Step-by-step, mapped to decisions:
 
 1. **Provision (D1, D9).** The Operator opens a session declaring `(image, OS, needs_gpu, needs_fast_fork)`. The Gateway turns it into a `SandboxClaim`; the Fleet Manager forks a guest from a warm golden snapshot (sub-millisecond-to-~1 ms fork on the Linux fork tier; vendor-published, unverified). `shinkend` boots and runs the **post-fork uniqueness hook** before accepting any action. A capability descriptor is negotiated at handshake (D2): `{schema_version, supported_verbs[], supported_targets[], coordinate_modes[], max_long_edge, escape_hatch_caps[], observation_types[]}`.
 
-2. **Observe (D3).** The default observation is a **pruned, diffed, normalized a11y/DOM tree** — one `Element{ref, role, name, value, states, bbox, source, backend_id, parent_ref, children_refs}` schema over AT-SPI/UIA/AX/CDP, with stable per-session refs. Pixels are sent only when `coverage_ratio` is low or explicitly requested, and even then a region crop is preferred over a full frame.
+2. **Observe (D3).** The baseline observation is a **screenshot with an explicit `CoordinateSpace`** (screen / focused-window / region — the universal rung-0 path). Where coverage allows, the negotiated upgrade is a **pruned, diffed, normalized a11y/DOM tree** — one `Element{ref, role, name, value, states, bbox, source, backend_id, parent_ref, children_refs}` schema over AT-SPI/UIA/AX/CDP, with stable per-session refs — selected per window via the `coverage_ratio` signal (measured 2026-06, E5: the verdict is hybrid per-window structured + pixel fallback; D3 stays Provisional, §2). When escalating pixels, a region crop is preferred over a full frame.
 
 3. **Act (D2).** The Operator emits a typed action: a tagged union discriminated by `verb`, whose `target` is `oneof{ point_px | point_norm | element_ref }` with an explicit `CoordinateSpace`. The agent acts on **element refs/marks by default**; raw `x,y` only at the pixel rung. Code-as-action (`exec_code` / `run_bash` / `edit_file`) is a **separate, off-by-default capability class** behind the `tool_runner` boundary — never the default actuation path.
 
@@ -541,7 +552,7 @@ The design principle throughout (D12): an **open, self-hostable core** — reusa
 
 ---
 
-## 9. Decision reconciliation (D1–D12)
+## 9. Decision reconciliation (D1–D15)
 
 | # | Decision | Where it lives in this architecture |
 |---|----------|-------------------------------------|
@@ -557,6 +568,9 @@ The design principle throughout (D12): an **open, self-hostable core** — reusa
 | **D10** | Cross-platform: Linux first-class v1; Windows + macOS heavier v1 tiers; Android roadmap; one control plane + one Guest Runtime contract + one ACI | §3 matrix; §1.3 three-way packaging; §4 transport |
 | **D11** | GPU is opt-in; encode never on A100/H100/H200/B200 (use Ada L4 / L40S); two pools (vGPU density + MIG/Confidential Containers trusted) | §3 matrix notes; §7 distinct GPU pools; §8 GPU table row |
 | **D12** | Open self-hostable core + optional hosted commercial layer; vendor-neutral, NVIDIA-optimized where present | §8 build-on table; throughout |
+| **D13** | Operation layer: one observe contract (stable element ids → `~/+/-` diffs, settle-before-observe), act-returns-observation, element verb family — built for Linux/AT-SPI v1 | §1.3 ACI executor + observation engine; §2 observation rungs; §5 step 2 |
+| **D14** | macOS engine substrate under TCC: CoreGraphics/CGEvent v1 built (local-only proof, exclusive-desktop tier); AXUIElement observation + the co-use tier designed | §3 matrix macOS row; §1.3 per-OS handlers + three-way packaging |
+| **D15** | Operation-layer backends: third-party computer-control systems as `SandboxProvider`s under the typed ACI; honest capability negotiation; `RoutedSession` CU↔BU composition | §1.6 sideways pluggability; §1.4 Operator contract |
 
 ---
 
@@ -564,10 +578,10 @@ The design principle throughout (D12): an **open, self-hostable core** — reusa
 
 These are not papered over (canon-aligned, also tracked in [open-questions](../../notes/open-questions.md) and the [08 Isolation & capability note](threat-model.md)):
 
-- **a11y coverage on Electron/Qt/canvas/games is the load-bearing unverified assumption** behind the structured observation cost model (§2), not behind the first usable GUI loop. Phase 0 proves the screenshot baseline first; the a11y spike decides where structured observation becomes the fast path. Until then the `coverage_ratio` signal and the SoM/OmniParser + pixel fallback rungs are the safety net.
+- **a11y coverage on Electron/Qt/canvas/games — MEASURED 2026-06 (spike #2/E5), verdict in.** What was the load-bearing unverified assumption behind the structured observation cost model (§2) is now first-party data: Qt strong (0.87), Chromium-family controls via CDP, GTK weak, terminals absent, canvas measured **zero** with a change-blind diff. Verdict: **hybrid per-window structured + pixel fallback — D3 stays Provisional, not structured-by-default.** Games/native-GL remain unmeasured (canvas is the measured proxy), so the `coverage_ratio` signal and the SoM/OmniParser + pixel fallback rungs stay the safety net.
 - **macOS / Windows fast-reset is largely infeasible today.** The matrix (§3) treats both as heavier, snapshot-light, longer-lived tiers; sub-second fork is a Linux-only property in v1.
 - **Windows-in-cloud licensing and the macOS 2-VM/host cap** shape cost and roadmap, not just engineering (§7).
-- **No first-party performance numbers yet** — every speed/density/cost figure here is vendor-published and unverified, pending the measurement plan in [09 Economics](economics-and-build-vs-buy.md).
+- **First-party performance numbers now EXIST (RESOLVED 2026-06)** — Shinken's own speed/density figures are measured across 14 rerunnable suites in [docs/benchmarks/README.md](../benchmarks/README.md): the fork ladder mints a usable replica in 0.60 s (disk) / 0.40 s (CRIU live process+memory) / 0.118 s (warm-pool graft), one event-loop thread holds 3,096 live sessions (2,320 frames/s ≈ 870 Mbps at 0.93 cores), and the act+observe step runs 13.4 ms ≈ 14× vs OSWorld's guest server as shipped. Third-party figures in this document keep their **(vendor-published, unverified)** tags; the still-unmeasured boundaries are the sub-ms CoW fork tier and dual-channel WebRTC latency.
 - **Protocol/event-schema versioning + upcasting** must be specified rigorously: `schema_version` on the bundle manifest plus a per-event `v`, with upcasters so old `.skn` recordings stay replayable (D5).
 - **Multi-player / non-exclusive computer-use** (more than one controller per Sandbox) is an explicit in/out decision the Operator takeover seam (§1.4) and the SFU shared-control model (§7) are designed to accommodate but do not yet commit to.
 

@@ -29,9 +29,13 @@ compatibility stubs that preserve old external links; the canonical copies live 
 | 07 | [Glossary](design/glossary.md) | Shared vocabulary | ✅ |
 | 08 | [Isolation & capability note](design/threat-model.md) | Runtime design note: the isolation boundary (D1) and capability scoping (D6), built vs designed | ✅ |
 | 09 | [Economics & build-vs-buy](design/economics-and-build-vs-buy.md) | Concurrency/cost model, build-vs-buy (OSS substrates vs in-house), measurement plan | ✅ |
-| 10 | [v0.0.1 implementation plan](engineering/v0.0.1-plan.md) | Feature-complete local/reference runtime: ACI, adapters, act/observe, `.skn`, capabilities, artifacts, tiny eval, a11y coverage harness, code layout | ✅ |
+| 10 | [v0.0.1 implementation plan](engineering/v0.0.1-plan.md) | Feature-complete local/reference runtime: ACI, adapters, act/observe, capabilities, artifacts, tiny eval, a11y coverage harness, code layout | ✅ |
 | 11 | [ACI specification](design/aci-spec.md) | The north-star interface: elegant API, typed actions, observation, runtime state (checkpoint/fork/resume), the supporting replay (`.skn`) audit ledger, the async harness core + adapters | ✅ |
 | 12 | [Operation layer](design/operation-layer.md) | The deep act/observe contract (D13/D14): one dual-tier observe, stable element ids + diff observations, settle-before-observe, observe-after-act, app/window scoping, the element verb family, per-OS engines, Browser Runtime outline | ✅ |
+| 13 | [Agent runtime](design/agent-runtime.md) | The narrow-waist runtime (Session/rollout/Trajectory, zero score/reward semantics) + pluggable Workload/Provider registries; eval/train/interactive as consumers | ✅ |
+| 14 | [Observation backends](design/observation-backends.md) | The per-platform structured-observation backends (AT-SPI, CDP, UIA, AX, Set-of-Marks) reducing to one ACI `Element` shape | ✅ |
+| 15 | [CLI / code execution boundary](design/code-execution.md) | Why CLI/code execution is a policy-gated capability surface (D6), not a GUI verb; the exec-semantics anchor | ✅ |
+| 16 | [Code-agent RL readiness](design/code-agent-rl.md) | Reserved seams for SWE/terminal-agent training workloads (the typed `exec` wire verb has since landed; the PTY/file seams remain design-only) | ✅ |
 
 Legend: ⏳ pending · 🚧 drafting · ✅ drafted
 

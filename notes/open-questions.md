@@ -1,8 +1,8 @@
 # Shinken — Open Questions, Risks & Spikes
 
-> **Status:** living risk register · **Last updated:** 2026-05-30
+> **Status:** living risk register · **Last updated:** 2026-06-13
 > This note is the canonical "what could kill us / what must we prove" list. It reconciles every item
-> to the authoritative decisions **D1–D12** (see [`05-tech-decisions`](../docs/design/tech-decisions.md))
+> to the authoritative decisions **D1–D15** (see [`05-tech-decisions`](../docs/design/tech-decisions.md))
 > and feeds the risk sections of the docs. Cross-links:
 > [00-vision](../docs/design/vision.md) · [01-prd](../docs/design/prd.md) · [02-architecture](../docs/design/architecture.md) ·
 > [05-tech-decisions](../docs/design/tech-decisions.md) · [06-roadmap](../docs/engineering/roadmap.md) ·
@@ -11,10 +11,14 @@
 
 The research produced a strong *qualitative* landscape and a defensible thesis — screenshot-first
 with measured structured fast paths (D3/D4), Morph-class CoW fork (D1), event-sourced replay (D5),
-a layered capability panel (D6). What is *not yet proven* is the engineering and business substance to commit. Every speed/density/cost
-figure cited in the docs is **vendor-published and unverified** unless marked first-party; the load-bearing
-thesis rests on an *unmeasured* accessibility-tree coverage assumption; and scope questions (multi-player,
-build-vs-buy among public substrates) remain open. This note prioritizes those risks **HIGH / MED / LOW**;
+a layered capability panel (D6). As written (2026-05), the engineering substance was *not yet
+proven*: every speed/density/cost figure was vendor-published and unverified, and the load-bearing
+thesis rested on an *unmeasured* accessibility-tree coverage assumption. **Update 2026-06: both
+gaps are now measured first-party** — the a11y spike ran (Q1 RESOLVED: hybrid verdict, D3 stays
+Provisional) and rerunnable first-party benchmark suites are published (Q2 RESOLVED:
+[docs/benchmarks](../docs/benchmarks/README.md)); *vendor* numbers keep their "(vendor-published,
+unverified)" tags. Scope questions (multi-player, build-vs-buy among public substrates) remain
+open. This note prioritizes those risks **HIGH / MED / LOW**;
 for each it gives the question, why it matters, and a concrete resolution — a **spike with pass/fail
 criteria** or a research/decision. Spikes are sequenced so the cheapest architecture-killing experiments run
 first.
@@ -23,8 +27,8 @@ first.
 
 | ID | Risk / question | Priority | Reconciles to | Resolution type |
 |----|-----------------|----------|---------------|-----------------|
-| Q1 | a11y coverage on Electron/Qt/canvas/games | **HIGH** | D3 | Spike (kill-or-confirm) |
-| Q2 | First-party perf / density / cost numbers | **HIGH** | D1, D4, D11 | Measurement plan + spikes |
+| Q1 | a11y coverage on Electron/Qt/canvas/games | ~~HIGH~~ **RESOLVED 2026-06** | D3 | Spike — ran (E5); hybrid verdict |
+| Q2 | First-party perf / density / cost numbers | ~~HIGH~~ **RESOLVED 2026-06** (CoW/WebRTC/NVENC residue open) | D1, D4, D11 | Measured — [docs/benchmarks](../docs/benchmarks/README.md) |
 | Q3 | Windows/macOS fast-reset feasibility | **HIGH** | D1, D10 | Spike + decision |
 | Q4 | Windows/macOS licensing economics | **HIGH** | D1, D12 | Research + legal review |
 | Q5 | Egress/capability scoping validation | **MED** | D6 | Spec + integration spike |
@@ -45,11 +49,31 @@ flowchart LR
   classDef hi fill:#fde,stroke:#c39;
 ```
 
+*(Diagram preserved as drawn 2026-05. The Q1/Q2 inputs have since closed — G1 answered
+"not enough to be the default" (hybrid, D3 Provisional) and the first-party numbers exist;
+G6, the substrate decision, still waits on Q6. See the dated resolution notes below.)*
+
 ---
 
 ## HIGH priority
 
 ### Q1 — a11y coverage on Electron / Qt / canvas / games (the load-bearing bet)
+
+> **RESOLVED 2026-06 — the spike ran (issue #2, experiment E5).** Measured first-party: Qt strong
+> via AT-SPI (0.87 addressable); Chromium-family controls via CDP — 1.00 of labeled controls, 0.23
+> of all nodes, on both the browser *and* a real Electron app (Electron over forced AT-SPI reaches
+> 0.32); GTK weak; terminals absent; **canvas measured at zero** (working drawn controls expose
+> inert AX nodes, and a real click changes pixels while the tree diff reports nothing); tree-diff
+> ~2 KiB vs ~77 KiB screenshot. **Verdict: hybrid per-window structured + pixel fallback — D3 stays
+> Provisional, not structured-by-default**; structure is an upgrade path over the pixel-primary
+> baseline (the re-plan branch of gate G1), and the per-app coverage table now replaces the vendor
+> "≈6×" figure with first-party data. The Linux/AT-SPI guest observation engine v1 is since built
+> (stable ids, diff, settle, `element_ref`, `invoke_action`/`set_value`). Evidence:
+> [`spikes/a11y-coverage/`](../spikes/a11y-coverage) · summary in
+> [docs/benchmarks](../docs/benchmarks/README.md) · built-vs-designed map in
+> [status.md](../docs/engineering/status.md). **Still open (the remaining slice):** games/native-GL
+> coverage (canvas is the measured proxy) and the Windows UIA / macOS AX tiers + the in-guest CDP
+> backend. The original question is preserved below as written.
 
 **Question.** What fraction of *real target apps* expose a usable accessibility/DOM tree, and what is
 the true bandwidth/token win of structured observation **net of the pixel fallback**? If most
@@ -104,6 +128,20 @@ changes the picture.
 - Output: a per-app coverage table that replaces the vendor "≈6×" figure with first-party data.
 
 ### Q2 — First-party performance / density / cost numbers
+
+> **RESOLVED 2026-06 (core).** Shinken now publishes its own measured numbers across 14 rerunnable
+> local suites — headline report in [docs/benchmarks](../docs/benchmarks/README.md), methodology in
+> [benchmarks.md](../docs/engineering/benchmarks.md): fork ladder — disk checkpoint 0.53 s (sandbox
+> stays live) / disk fork 0.60 s / warm-pool graft 0.118 s; CRIU memory tier — checkpoint 0.70 s,
+> live process+memory fork 0.40 s; cold boot ~0.2 s; codec lever ~1–21× content-dependent (~131×
+> stacked on content-rich frames); 128 real desktops in one process (7.3 s boot); client plane
+> 3,096 live sessions on one event-loop thread (2,320 frames/s ≈ 870 Mbps sustained at 0.93 cores);
+> fork-fleet observation dedup 18.6× at 94.6% hit rate; act+observe step 13.4 ms ≈ 14× vs OSWorld's
+> guest server as shipped. The doc rule stands for *vendor* numbers — they keep "(vendor-published,
+> unverified)" — but the headline figures are no longer vendor-sourced. **Still open (the
+> residue):** CoW-fork private-RSS density (S2 — the sub-ms fast tier is still designed-only),
+> dual-channel WebRTC glass-to-glass (S3), NVENC streams/GPU, and $/sandbox-hour unit economics.
+> The original question is preserved below as written.
 
 **Question.** What are Shinken's *own* numbers for fork/reset time, concurrent-guest density per host
 (bounded by **private RSS**, not image size), end-to-end action RTT decomposed by stage, $/sandbox-hour,
@@ -393,11 +431,18 @@ S7 schema upcasting / S9 side-effect-safe fork ─► replay correctness (D5, Q8
 S8 grader flake ────────────► eval reliability (D7, Q9)
 ```
 
-**Bottom line.** The thesis is sound on paper and consistent with D1–D12. Three HIGH risks can *invalidate or
-reshape* the architecture and must be de-risked before heavy build: **Q1** (a11y coverage — run S1 first; if
-structured fast paths do not win on real apps, D3 and the BEAT claim change), **Q2** (no first-party numbers —
-every figure stays "(vendor-published, unverified)" until S2/S3), and **Q6** (the chosen public substrate
-must provide, or let us build beneath it, the D1 fork primitive). The other HIGH items (Q3/Q4 cross-OS reset
-+ licensing) and the MED/LOW items (including Q5 egress/capability-scoping validation) are reshaping rather
-than existential. Record the Q7 decision (multi-player **out** for v1, with an `actor_id` seam) now to avoid
-a retrofit later.
+*(2026-06: S1 ran — hybrid verdict, D3 stays Provisional, Q1 resolved. The S2/S3 "first-party
+numbers" goal is met for the headline figures by the published benchmark suites (Q2 resolved);
+CoW-fork density and dual-channel WebRTC latency themselves remain the open Phase-1 boundary
+spikes, per D1/D4.)*
+
+**Bottom line (updated 2026-06).** The thesis is sound on paper and consistent with D1–D15. Of the three
+HIGH risks that could *invalidate or reshape* the architecture, two have since resolved: **Q1** ran (S1 = the
+a11y spike, E5 — structured did *not* win enough to be the default; the verdict is hybrid per-window
+structured + pixel fallback and D3 stays Provisional) and **Q2** is answered for the headline figures
+(first-party suites published — [docs/benchmarks](../docs/benchmarks/README.md) — with the CoW-density /
+WebRTC / NVENC / unit-economics residue still open). The remaining existential-class item is **Q6** (the
+chosen public substrate must provide, or let us build beneath it, the D1 fork primitive). The other HIGH
+items (Q3/Q4 cross-OS reset + licensing) and the MED/LOW items (including Q5 egress/capability-scoping
+validation) are reshaping rather than existential. The Q7 decision stands (multi-player **out** for v1, with
+an `actor_id` seam).

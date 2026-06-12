@@ -17,6 +17,8 @@ eval, substrates, streaming, and future cross-OS/GPU tiers.
 - Competitive landscape: [`landscape.md`](landscape.md)
 - ADRs / technical decisions: [`tech-decisions.md`](tech-decisions.md)
 - Operation layer (deep act/observe contract, D13/D14): [`operation-layer.md`](operation-layer.md)
+- Structured observation backends (AT-SPI/CDP/UIA/AX/SoM → one `Element` shape):
+  [`observation-backends.md`](observation-backends.md)
 - CLI / code execution boundary: [`code-execution.md`](code-execution.md)
 - Code-agent RL readiness (reserved seams, design-only): [`code-agent-rl.md`](code-agent-rl.md)
 - Isolation & capability note: [`threat-model.md`](threat-model.md)

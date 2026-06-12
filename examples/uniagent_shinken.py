@@ -12,9 +12,13 @@ Run (needs Docker + the local sandbox image, see images/linux/):
 """
 
 import asyncio
+import sys
+from pathlib import Path
 
-from shinken.integrations.swerex import ShinkenDeployment
-from shinken.providers import DockerLocalProvider
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "sdk" / "python" / "src"))
+
+from shinken.integrations.swerex import ShinkenDeployment  # noqa: E402
+from shinken.providers import DockerLocalProvider  # noqa: E402
 
 
 class BashAction:  # the swerex action shape uni-agent sends (duck-typed)

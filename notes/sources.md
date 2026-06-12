@@ -1,6 +1,6 @@
 # Sources — annotated bibliography
 
-> Working note. The external references that ground Shinken's design decisions (D1–D12) and
+> Working note. The external references that ground Shinken's design decisions (D1–D15) and
 > the five headline outcomes (stateful, branchable runtime — checkpoint/fork/resume — first;
 > then the replay ledger that supports it, the sandbox capability manager, bandwidth
 > optimization, and real-time streaming). Entries are **deduplicated** and grouped by topic;

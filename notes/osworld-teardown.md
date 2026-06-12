@@ -3,7 +3,7 @@
 > Raw, technical, file-by-file notes on the OSWorld codebase, organized by subsystem. This is the
 > evidence base behind [`docs/design/osworld-analysis.md`](../docs/design/osworld-analysis.md): where that
 > doc states a conclusion, the supporting `file:line` reference and the corresponding Shinken
-> decision (D1–D12, see [`docs/design/tech-decisions.md`](../docs/design/tech-decisions.md)) live here. The
+> decision (D1–D15, see [`docs/design/tech-decisions.md`](../docs/design/tech-decisions.md)) live here. The
 > read covers six subsystems — in-VM server, client env + controllers, providers, evaluators/tasks,
 > agents/obs-action, and end-to-end dataflow. All source paths are under `references/OSWorld/`.
 > External anchors: the OSWorld repo [github.com/xlang-ai/OSWorld](https://github.com/xlang-ai/OSWorld),

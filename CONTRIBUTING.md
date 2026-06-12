@@ -7,12 +7,16 @@ purpose.
 ## Project shape
 
 - **`docs/`** — user docs, design canon, and engineering plans (read
-  [`docs/README.md`](docs/README.md); decisions are numbered **D1–D12** in
+  [`docs/README.md`](docs/README.md); decisions are numbered **D1–D15** in
   [`docs/design/tech-decisions.md`](docs/design/tech-decisions.md)).
 - **`notes/`** — working research & deep dives.
-- Code (as it lands): `schema/` (ACI + `.skn` JSON Schemas, the source of truth), `shinkend/`
-  (Rust Guest Runtime), `sdk/python/` (SDK + Operator + adapters), `images/linux/` (Sandbox
-  image), `spikes/` (de-risking experiments), `eval/` (eval harness).
+- Code: `schema/` (the ACI JSON Schema, `aci.schema.json` — the wire source of truth),
+  `shinkend/` (Rust Guest Runtime), `sdk/python/` + `sdk/typescript/` (SDKs + Operator +
+  adapters; the eval harness ships in-SDK as `shinken.eval` / `run_eval_forked`),
+  `images/linux/` (Sandbox image), `examples/` (runnable interop examples, see
+  [`examples/README.md`](examples/README.md)), `benchmarks/` (rerunnable local suites),
+  `spikes/` (de-risking experiments).
+- Release history: [`CHANGELOG.md`](CHANGELOG.md).
 - See [`CLAUDE.md`](CLAUDE.md) for the conventions and naming an AI pair-programmer should follow.
 
 ## The one hard rule: this is a public, vendor-neutral project
