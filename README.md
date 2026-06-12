@@ -245,29 +245,58 @@ python scripts/macos_smoke.py        # non-destructive: readiness, capture, hove
 
 ## Architecture
 
-Solid = built and in CI today. Dashed = designed, not yet built.
+The narrow waist: one typed ACI, with consumers above and interchangeable execution substrates
+below. Solid = built (Linux/X11 in CI; macOS v1 local-only). Dashed = designed, not yet built.
 
 ```mermaid
-flowchart LR
-  subgraph proc["one client process"]
-    Agent["Agent / Operator<br/>Anthropic · OpenAI · Kimi · harness dialects"]
-    SDK["Shinken SDK<br/>canonical ACI: typed action ⇄ observation"]
-    Agent -->|model tool call| SDK
-    SDK -->|validated result| Agent
-  end
-  subgraph box["Sandbox (local Docker today)"]
-    SK["shinkend<br/>Guest Runtime (Rust)"] --> Desktop["real desktop<br/>Linux/X11"]
-  end
-  SDK <-->|"WebSocket · act + observe<br/>PNG · JPEG · lossless tile-delta stream"| SK
-  Provider["Provider<br/>boot · checkpoint · spawn/fork · resume<br/>(runtime state lives here)"] -.manages.-> box
-  Provider --> Eval["fork-native consumers<br/>gym reset()=fork · run_eval_forked · fleets"]
+flowchart TB
+  classDef d stroke-dasharray:5 5,stroke:#9aa,color:#99a;
 
-  SK --> OBS["structured observation v1<br/>guest AT-SPI engine: stable ids · diff · settle"]
-  OBS -.-> A11Y["further tiers<br/>in-guest CDP · UIA · AX (D3, hybrid)"]:::d
-  CP["Control Plane<br/>scheduling · capability scoping"]:::d -.-> Provider
-  Human["human reviewer"]:::d -.-> Panel["Control Panel<br/>watch / take over"]:::d
-  Panel -.-> CP
-  classDef d stroke-dasharray:5 5,stroke:#999,color:#666;
+  subgraph top["1 · agents &amp; training stacks plug in on top"]
+    direction LR
+    Agent["Agent / Operator<br/>Anthropic · OpenAI · Kimi · harness dialects"]
+    Train["training &amp; eval<br/>verl/uni-agent · NeMo Gym · ProRL · CUA-Gym · OSWorld"]
+  end
+
+  SDK["2 · Shinken SDK + canonical ACI<br/>one typed contract · 22 verbs · action ⇄ observation · capability negotiation"]
+
+  subgraph mid["3 · runtime state + scale"]
+    direction LR
+    Provider["Provider<br/>checkpoint · fork · resume<br/>disk · warm-pool · CRIU memory"]
+    Fleet["fleet / fork fan-out<br/>8K+ live sessions, one thread<br/>gym reset()=fork · run_eval_forked"]
+    Provider --> Fleet
+  end
+
+  subgraph subs["4 · execution substrates — the SAME ACI underneath"]
+    direction LR
+    subgraph own["Shinken's own engine · shinkend (Rust)"]
+      direction TB
+      Lin["Linux/X11 — built, in CI<br/>22 verbs · structured obs · fork tiers"]
+      Mac["macOS v1 — built, local"]
+      Win["Windows · Wayland"]:::d
+    end
+    subgraph bk["operation-layer backends (D15)<br/>drive a system you already run"]
+      direction TB
+      Cua["cua"]
+      Mcp["mcp-computer · AX"]
+      Bu["browser-runtime · CDP"]
+      E2b["e2b desktop"]
+    end
+  end
+
+  top --> SDK
+  SDK <--> Provider
+  SDK <-->|"WebSocket · PNG/JPEG · tile-delta"| own
+  SDK <-->|"capability negotiation"| bk
+  Provider -.manages.-> own
+
+  subgraph cp["designed — control plane (not built yet)"]
+    direction LR
+    CP["Control Plane<br/>scheduling · capability scoping"]
+    Panel["Control Panel<br/>human watch / take over"]
+  end
+  class cp,CP,Panel d
+  Provider -.-> CP
 ```
 
 **The agent decides when to look.** Observation is a tool the model calls — `observe`,
