@@ -336,7 +336,10 @@ remote-one-off / projection). Full tables, provenance, and labels:
 **1 — Runtime state: the fork ladder, every rung state-verified.** The differentiating
 primitive, measured on the Docker disk tier (a timing row only counts if the replica passed
 the `marker` verifier — the golden marker read back out of the fork; the suites also report
-the stricter `pixels`/`fs` levels per replica): **checkpoint a live sandbox in 0.53 s**
+the stricter `pixels`/`fs` levels per replica). Throughout this section **"→ usable" is the
+runtime-ready bar**: the moment the SDK can issue actions (push-readiness), which is what an
+agent waits for. (The head-to-head chart below times a stricter "painted desktop" bar for an
+apples-to-apples comparison with cua — labeled there.) **Checkpoint a live sandbox in 0.53 s**
 without disrupting it, **classic fork → usable in 0.60 s**, **warm-pool graft in 0.118 s**
 (pre-booted containers + the checkpoint's filesystem delta; p90 0.137 s), and fan-out from
 one checkpoint stays sublinear (N=16 in 2.1 s, ~0.13 s/replica, 16/16 verified). The **CRIU
