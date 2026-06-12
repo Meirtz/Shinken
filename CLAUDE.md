@@ -24,8 +24,8 @@ status.md; reconcile both when either changes.**
 
 ## ⛔ The one hard rule: this is a PUBLIC open-source project
 
-This is a **public, vendor-neutral OSS project** (despite the `~/dev/` path). Anything
-committed is world-readable.
+This is a **public, vendor-neutral OSS project** (regardless of where it sits in a local
+checkout). Anything committed is world-readable.
 
 - **NEVER** put confidential or company-internal material in tracked files (`docs/`, `notes/`,
   `README`, code). No internal platform names, no internal links, nothing marked confidential.
