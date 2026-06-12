@@ -427,11 +427,12 @@ def _mean_wire_kib(rounds: list[dict]) -> float:
 
 def plot(payload: dict) -> None:
     fleets = sorted(payload["datapoints"]["fleets"], key=lambda f: f["n"])
-    # Two stacked rows (README-width friendly: ~1400 px wide, never a 3-up strip).
-    fig, (ax1, ax2) = new_axes(1, nrows=2, width=10.0, height=3.8)
-    # Okabe-Ito (colorblind-safe): orange = dedup off, blues = dedup on,
-    # reddish-purple = the concurrent mode. Never a red/green pair.
-    c_off, c_on, c_div, c_conc = "#E69F00", "#0072B2", "#56B4E9", "#CC79A7"
+    # One panel (README-width friendly): the wire-cut bars carry the claim; the
+    # per-round hit-rate mechanics live in the JSON + report prose.
+    fig, ax1 = new_axes(1, width=10.0, height=4.4)
+    # Okabe-Ito (colorblind-safe): orange = dedup off, blues = dedup on.
+    # Never a red/green pair.
+    c_off, c_on, c_div = "#E69F00", "#0072B2", "#56B4E9"
 
     # Headline numbers, recomputed from the tracked datapoints (the same formulas
     # main() uses for the JSON summary block).
@@ -488,73 +489,6 @@ def plot(payload: dict) -> None:
     )
     ax1.legend(loc="upper left")
 
-    # Row 2: the hit-rate mechanics for the largest fleet — static ceiling
-    # (sequential, 2-of-N event), concurrent first-touch races, and the honest
-    # policy-divergence decay to 0%. N=4/8 trace the same shape (see JSON).
-    f = fleets[-1]
-    n = f["n"]
-
-    def _rate(rounds: list[dict]) -> list[float]:
-        return [r["hits"] / max(1, r["observes"]) for r in rounds]
-
-    stat, conc, pol = (
-        f["rounds_static"],
-        f["concurrent"]["rounds"],
-        f["policy"]["rounds"],
-    )
-    ax2.plot(
-        [r["round"] for r in stat],
-        _rate(stat),
-        "o-",
-        color=c_on,
-        label="static fleet, sequential",
-    )
-    ax2.plot(
-        [r["round"] for r in conc],
-        _rate(conc),
-        "s--",
-        color=c_conc,
-        label="concurrent observes (gather)",
-    )
-    ax2.plot(
-        [r["round"] for r in pol],
-        _rate(pol),
-        "^-",
-        color=c_div,
-        label="policy-diverging fleet",
-    )
-    ann = dict(fontsize=11, arrowprops=dict(arrowstyle="->", lw=1.0, color="#555555"))
-    ax2.annotate(
-        f"round 0: first-touch races —\nall {n} concurrent observes miss",
-        xy=(0.05, 0.02),
-        xytext=(0.35, 0.26),
-        **ann,
-    )
-    d_at = f.get("static_diverge_at")
-    k = f.get("static_diverged_replicas")
-    if d_at is not None:
-        hit_at = stat[d_at]["hits"] / max(1, stat[d_at]["observes"])
-        ax2.annotate(
-            f"{k} of {n} replicas type different text",
-            xy=(d_at - 0.08, hit_at),
-            xytext=(d_at - 1.9, 0.62),
-            **ann,
-        )
-    if f["policy"].get("diverge_at") is not None:
-        ax2.annotate(
-            pct("every replica acts on a distinct path:\n0% hits — full frames re-paid each round"),
-            xy=(3.0, 0.02),
-            xytext=(3.1, 0.32),
-            **ann,
-        )
-    ax2.set_ylim(-0.06, 1.10)
-    ax2.set_xlim(-0.4, max(r["round"] for r in pol) + 0.4)
-    ax2.set_xlabel("observe-all round (dedup on)")
-    ax2.set_ylabel("dedup hit rate")
-    ax2.set_title(
-        pct(f"Hit rate follows true divergence (N={n}): races miss once, static $\\sim$100%, diverged 0%")
-    )
-    ax2.legend(loc="upper right")
 
     fig.suptitle(
         pct(
