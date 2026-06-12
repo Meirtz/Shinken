@@ -66,6 +66,7 @@ from _common import (
     fs_digest,
     new_axes,
     now_ms,
+    pct,
     save_plot,
     settled_frame_hash,
     state_verify_levels,
@@ -470,7 +471,7 @@ def plot(payload: dict) -> None:
             ax1.text(
                 x,
                 max(o, policy[x]) * 1.06,
-                f"{o / s:.1f}× cut",
+                f"{o / s:.1f}$\\times$ cut",
                 ha="center",
                 fontsize=12,
                 fontweight="bold",
@@ -482,8 +483,8 @@ def plot(payload: dict) -> None:
     ax1.set_xlabel("fleet size (replicas forked from one golden checkpoint)")
     ax1.set_ylabel("wire KiB / observe-all round")
     ax1.set_title(
-        f"Static fleet pays each screen once; full divergence re-pays ≈ baseline "
-        f"({pol_vs_off:.1f}× of off)"
+        f"Static fleet pays each screen once; full divergence re-pays $\\approx$ baseline "
+        f"({pol_vs_off:.1f}$\\times$ of off)"
     )
     ax1.legend(loc="upper left")
 
@@ -541,7 +542,7 @@ def plot(payload: dict) -> None:
         )
     if f["policy"].get("diverge_at") is not None:
         ax2.annotate(
-            "every replica acts on a distinct path:\n0% hits — full frames re-paid each round",
+            pct("every replica acts on a distinct path:\n0% hits — full frames re-paid each round"),
             xy=(3.0, 0.02),
             xytext=(3.1, 0.32),
             **ann,
@@ -551,13 +552,15 @@ def plot(payload: dict) -> None:
     ax2.set_xlabel("observe-all round (dedup on)")
     ax2.set_ylabel("dedup hit rate")
     ax2.set_title(
-        f"Hit rate follows true divergence (N={n}): races miss once, static ~100%, diverged 0%"
+        pct(f"Hit rate follows true divergence (N={n}): races miss once, static $\\sim$100%, diverged 0%")
     )
     ax2.legend(loc="upper right")
 
     fig.suptitle(
-        f"Forked fleets pay for each distinct screen once: "
-        f"{cut:.1f}× wire cut at {hit:.1%} dedup hit rate",
+        pct(
+            f"Forked fleets pay for each distinct screen once: "
+            f"{cut:.1f}$\\times$ wire cut at {hit:.1%} dedup hit rate"
+        ),
         y=1.01,
         va="bottom",
     )
@@ -668,9 +671,9 @@ def main() -> int:
     plot(payload)
     s = payload["summary"]
     print(
-        f"static ceiling: {s['static_ceiling']['bytes_cut_factor']}× bytes cut, "
+        f"static ceiling: {s['static_ceiling']['bytes_cut_factor']}$\\times$ bytes cut, "
         f"hit rate {s['static_ceiling']['hit_rate']}; "
-        f"concurrent round0 {s['concurrent']['round0_hit_rate']} → steady "
+        f"concurrent round0 {s['concurrent']['round0_hit_rate']} $\\to$ steady "
         f"{s['concurrent']['steady_hit_rate']}; "
         f"policy diverged hit rate {s['policy_divergence']['diverged_hit_rate']} "
         f"(steady {s['policy_divergence']['steady_hit_rate']}); "

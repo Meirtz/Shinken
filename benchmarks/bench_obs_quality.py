@@ -816,7 +816,7 @@ _STRATUM_STYLE = {  # color + marker per stratum (no red/green pair)
 
 
 def plot(payload: dict) -> None:
-    from _common import new_axes, save_plot
+    from _common import new_axes, pct, save_plot
     from matplotlib.lines import Line2D
 
     fig, (ax1, ax2) = new_axes(2, width=5.8, height=5.1)
@@ -846,21 +846,23 @@ def plot(payload: dict) -> None:
         c["legible_frac"] for c in text_cells if c["tier"] not in _NATIVE_TIERS
     )
     ax1.set_title(
-        f"q80 at native scale stays {100 * native_min:.0f}% legible;\n"
-        f"every downscale breaks text (best cell {100 * down_max:.0f}%)"
+        pct(
+            f"q80 at native scale stays {100 * native_min:.0f}% legible;\n"
+            f"every downscale breaks text (best cell {100 * down_max:.0f}%)"
+        )
     )
     ax1.axhline(99.0, color=PALETTE["neutral"], ls=":", lw=1.2)
     ax1.text(
         0.02,
         0.915,
-        "99% legibility bar",
+        pct("99% legibility bar"),
         transform=ax1.transAxes,
         fontsize=11,
         color=PALETTE["neutral"],
     )
     ax1.set_xscale("log")
     ax1.set_xlabel("KiB per frame, log (delta tier: whole stream)")
-    ax1.set_ylabel("% elements legible (control-conditioned)")
+    ax1.set_ylabel(pct("% elements legible (control-conditioned)"))
     ax1.set_ylim(-4, 112)
     ax1.legend(
         handles=[
@@ -931,7 +933,7 @@ def plot(payload: dict) -> None:
     ax2.text(
         0.02,
         0.835,
-        "99% bar",
+        pct("99% bar"),
         transform=ax2.transAxes,
         fontsize=11,
         color=PALETTE["neutral"],
@@ -940,7 +942,7 @@ def plot(payload: dict) -> None:
     ax2.set_xticklabels(
         [_TIER_TICKS[t] for t in tiers], rotation=20, ha="right", fontsize=11
     )
-    ax2.set_ylabel("% elements legible (control-conditioned)")
+    ax2.set_ylabel(pct("% elements legible (control-conditioned)"))
     ax2.set_ylim(-4, 112)
     ax2.set_title("Legibility by font size — small text breaks first")
     ax2.legend(

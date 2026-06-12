@@ -29,6 +29,7 @@ import os
 import time
 
 from _common import boot as _boot_default
+from _common import pct
 from _common import GEOMETRY, IMAGE, new_axes, save_plot, write_result
 
 FPS_LEVELS = [5.0, 10.0, 30.0]
@@ -282,7 +283,7 @@ def plot(payload: dict) -> None:
         )
         ax.set_xticks(list(x))
         ax.set_xticklabels(labels)
-        ax.set_ylabel("guest CPU % of one core (shinkend + Xvfb)")
+        ax.set_ylabel(pct("guest CPU % of one core (shinkend + Xvfb)"))
         ax.set_title(
             f"Guest capture cost — {workload} desktop\n"
             f"(delta-JPEG q80 stream, {payload['window_s']:g}s windows)"

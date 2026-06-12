@@ -523,7 +523,7 @@ def plot(payload: dict) -> None:
         zorder=6,
     )
     ax_b.annotate(
-        f"{sus['sustained_decoded_mbps']:.0f} Mbps · "
+        f"{sus['sustained_decoded_mbps']:.0f} Mbps $\\cdot$ "
         f"{sus['sustained_frames_per_s']:,.0f} frames/s\n"
         f"sustained {sus['window_s']:.0f} s at {sus['client_cpu_cores']:.2f} cores",
         xy=(sus["n"], sus["sustained_decoded_mbps"]),

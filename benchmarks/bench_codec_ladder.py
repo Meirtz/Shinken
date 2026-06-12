@@ -249,7 +249,7 @@ def plot(payload: dict) -> None:
     ax_q.text(
         78.5,
         j80_photo * 2.2,  # the clear band between the dense-text and photo curves
-        f"{png_photo / j80_photo:.0f}× at q80",
+        f"{png_photo / j80_photo:.0f}$\\times$ at q80",
         color=_SCEN_HUES["photo"],
         ha="right",
         va="center",
@@ -300,7 +300,7 @@ def plot(payload: dict) -> None:
     ax_d.text(
         xs_px[-1],
         min(all_kib) * 1.05,
-        f"photo, PNG 1280 px → q80 512 px: {png_photo / j80_512_photo:.0f}× smaller",
+        f"photo, PNG 1280 px $\\to$ q80 512 px: {png_photo / j80_512_photo:.0f}$\\times$ smaller",
         color=_SCEN_HUES["photo"],
         ha="right",
         va="bottom",
@@ -317,9 +317,9 @@ def plot(payload: dict) -> None:
     ]
     lever = sum(levers) / len(levers)
     fig.suptitle(
-        f"JPEG q80 cuts the photo frame {png_photo / j80_photo:.0f}× vs PNG but only "
-        f"{png_dense / j80_dense:.1f}× on dense text (PNG wins the flat desktop);\n"
-        f"downscaling 1280 → 512 px is a uniform ~{lever:.1f}× lever on every scene",
+        f"JPEG q80 cuts the photo frame {png_photo / j80_photo:.0f}$\\times$ vs PNG but only "
+        f"{png_dense / j80_dense:.1f}$\\times$ on dense text (PNG wins the flat desktop);\n"
+        f"downscaling 1280 $\\to$ 512 px is a uniform $\\sim${lever:.1f}$\\times$ lever on every scene",
         y=1.10,
     )
 

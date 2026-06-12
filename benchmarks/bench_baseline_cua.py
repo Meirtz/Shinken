@@ -393,7 +393,7 @@ async def leg_cua_docker_async() -> dict:
             resumes.append(round(now_ms() - t0, 1))
         leg["suspend_ms"] = pauses
         leg["resume_ms"] = resumes
-        print(f"cua pause p50≈{sorted(pauses)[len(pauses) // 2]} ms", flush=True)
+        print(f"cua pause p50$\\approx${sorted(pauses)[len(pauses) // 2]} ms", flush=True)
     finally:
         await sb.destroy()
     if flakes:

@@ -466,24 +466,32 @@ def style() -> None:
     """Apply the one shared matplotlib style (Agg, no display). Idempotent; called
     by ``new_axes`` and importable by any plotting script outside this package.
 
-    Paper aesthetic WITHOUT a TeX dependency: serif text via matplotlib's own
-    renderer (``usetex`` made ``replot.py`` fail on any machine without a LaTeX
-    install — a contributor-facing reproducibility bug) and font sizes chosen for
-    the README embed width (820 px): GitHub scales a 2-panel figure to ~0.6x, so
-    a 13 pt base lands ~8 pt effective — the floor for legibility. Suites should
-    keep export width <= 2 panels (~1640 px) and put the TAKEAWAY in the title,
-    not the axis statement."""
+    Paper aesthetic, TeX OPTIONAL: when a LaTeX toolchain is on PATH (latex +
+    dvipng), text renders through ``usetex`` — the Computer Modern look the
+    tracked figures ship with. Without TeX, the same figures render through
+    matplotlib's own serif engine (Times New Roman/STIX), so ``replot.py`` runs
+    on any contributor machine — the hard TeX dependency was a reproducibility
+    bug. Suite text must therefore be BOTH-MODE SAFE: use ``$\\times$``-style
+    mathtext (works in both renderers) and route literal ``%`` through
+    :func:`pct`. Font sizes are chosen for the README embed width (820 px):
+    GitHub scales a 2-panel figure to ~0.6x, so a 13 pt base lands ~8 pt
+    effective — the floor for legibility. Suites should keep export width <= 2
+    panels (~1640 px) and put the TAKEAWAY in the title, not the axis
+    statement."""
+    import shutil
+
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     import seaborn as sns
 
+    use_tex = bool(shutil.which("latex") and shutil.which("dvipng"))
     sns.set_theme(context="notebook", style="whitegrid")
     plt.rcParams.update(
         {
             "figure.dpi": 140,
-            "text.usetex": False,
+            "text.usetex": use_tex,
             "font.family": "serif",
             "font.serif": ["Times New Roman", "STIXGeneral", "DejaVu Serif"],
             "mathtext.fontset": "stix",
@@ -507,6 +515,15 @@ def style() -> None:
             "axes.linewidth": 0.9,
         }
     )
+
+def pct(s: str) -> str:
+    """Make a string containing literal ``%`` safe for the active text renderer:
+    escaped for usetex (TeX comment char), untouched for mathtext. Call AFTER
+    :func:`style` (it reads the live rcParam)."""
+    import matplotlib.pyplot as plt
+
+    return s.replace("%", r"\%") if plt.rcParams.get("text.usetex") else s
+
 
 def new_axes(ncols: int = 1, *, height: float = 4.2, width: float = 6.4, nrows: int = 1):
     """Consistent matplotlib axes for every suite figure."""

@@ -259,9 +259,10 @@ with the donor still running (**0.70 s**), **fork → usable in 0.40 s** carryin
 process+memory state* — open apps, mid-task processes, in-heap program state, proven per
 replica by an in-memory marker no files-only mechanism can fake (privileged containers by
 necessity: a latency/state-fidelity tier, not an isolation posture). Cold boot → usable is
-~0.2 s after push-based readiness.
+~0.2 s after push-based readiness (S9 took it from ~7.7 s — the waterfall below).
 
 <p align="center"><img src="docs/assets/bench/fork_ladder.png" width="820"></p>
+<p align="center"><img src="docs/assets/bench/boot_waterfall.png" width="820"></p>
 
 **2 — Fork-native consumption: what the ladder buys when loops run on it.** The gym facade's
 `reset()` *is* a fork: task setup runs once into a golden checkpoint and every episode forks a
@@ -275,6 +276,7 @@ holds **3,096 live ACI sessions on one event-loop thread** — sustained **2,320
 ~870 Mbps decoded ingest at 0.93 cores** (183,216 measured observations; protocol-faithful
 synthetic peers).
 
+<p align="center"><img src="docs/assets/bench/client_scale.png" width="820"></p>
 <p align="center"><img src="docs/assets/bench/local_fanout.png" width="820"></p>
 
 **3 — Fleet observation dedup: the fork dividend.** Replicas forked from one checkpoint render
@@ -328,9 +330,7 @@ text falls to 25% at q80@1024; q50@512 reads nothing on any text stratum) — so
 stay the defaults and downscale is for layout-level tasks. A real-model pilot confirms the
 failure mode is codec-visual, not actuation (Kimi K2.6: 4/4 exact transcriptions on the
 lossless control vs 0/4 at q50@1024, lost to single-glyph JPEG misreads). Full ladders and
-the fleet egress projections: [`docs/benchmarks/`](docs/benchmarks/README.md).
-
-<p align="center"><img src="docs/assets/bench/obs_quality.png" width="820"></p>
+the fleet egress projections, and the legibility figures: [`docs/benchmarks/`](docs/benchmarks/README.md).
 
 **Functional.** Single-task OSWorld gate passed (1 task of the 369-task suite: Kimi K2.6 over
 `shinkend`, official evaluator **score 1.0**, 6 steps, 110 s — a conformance sweep has not
@@ -355,7 +355,9 @@ Shinken's wedge is the unclaimed intersection, not winning any single axis. Surv
 
 The cua and e2b cells marked *measured* are first-party, rerunnable numbers — both stacks as
 shipped, same host, same window, pinned versions
-([S12](docs/engineering/benchmarks.md), [`docs/benchmarks/`](docs/benchmarks/README.md) §7).
+([S12](docs/engineering/benchmarks.md), [`docs/benchmarks/`](docs/benchmarks/README.md) §7):
+
+<p align="center"><img src="docs/assets/bench/baseline_cua.png" width="820"></p>
 
 ## Operation-layer backends
 
