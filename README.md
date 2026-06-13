@@ -7,19 +7,20 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache-2.0"></a>
 </p>
 
-> **Checkpoint a live desktop. Fork it into a fleet of thousands. Drive 8K+ sandboxes from one
-> laptop.**
-> Shinken is the open-source runtime for **scalable computer-use environments**: real desktops
-> your agent clicks and types on, where the *running state* is something you save, fork, and
-> hand around like a file — and where scale is a property of the runtime, not your cloud bill.
+> **Train computer-use agents end-to-end on real desktops — at scale, from one machine.**
+> Shinken is the open-source runtime for **scalable, high-performance computer-use
+> environments**: point your RL/RFT loop at real desktops your agent clicks and types on — a
+> black box, no white-box hooks — and every episode `reset()` is a **fork** of a checkpointed
+> live desktop (~0.1 s), so one laptop drives **8K+** of them on a single thread. Scale is a
+> property of the runtime, not your cloud bill.
 
-**Why it exists.** Agents that use real computers are trained and evaluated by the thousand,
-and most of that compute is spent rebuilding the same state over and over: boot the desktop,
+**Why it exists.** Computer-use agents are trained and evaluated by the thousand, and most of
+that compute is wasted rebuilding the same desktop state over and over: boot the desktop,
 install the app, log in, navigate to step 7, fail, repeat. Shinken removes the repeat — reach
-a state **once**, checkpoint it **live** (the sandbox keeps running), and spawn verified
-replicas of that exact moment in **0.1–0.6 s** each. The environment plane scales from there:
-those replicas become a fleet of **scalable environments** — **8K+ live sessions on a single
-event-loop thread**, driven from one MacBook Pro.
+a state **once**, checkpoint it **live** (the sandbox keeps running), and `reset()` each
+episode by forking a verified replica in **0.1–0.6 s**. Rollout collection stops being the
+bottleneck: one MacBook Pro holds **8K+ live training environments** on a single event-loop
+thread, and the loop is closed end-to-end — GRPO learns on real Shinken sandboxes.
 
 **Who it's for.**
 
@@ -30,12 +31,13 @@ event-loop thread**, driven from one MacBook Pro.
 | an **agent product team** | one typed, versioned interface from keyless local Docker to a fleet: one process drives **128 real desktops**, one event-loop thread holds **8K+ live sessions** at 0.93 cores |
 | a stack with its own driver | the same ACI runs **over your system**: trycua/cua, codex-style MCP desktop servers, CDP browsers, and E2B desktops plug in *under* the typed interface as backends (D15) |
 
-Benchmarks, cloud browsers, VNC desktops, and model adapters all plug into it — **Shinken is
-the runtime underneath**, built around two properties agent workloads need most: **runtime
-state** (checkpoint/fork/resume) and **fleet scale** (thousands of live environments per
-process, measured below). And it is honest about maturity: what is real today is a
-**measured Linux/X11 vertical slice under live CI** — every claim below links to first-party
-data you can rerun ([`benchmarks/`](benchmarks)) or audit
+It is built for that training loop first, and the two properties that make it fast — **runtime
+state** (checkpoint/fork/resume, so every `reset()` is a fork) and **fleet scale** (thousands
+of live environments per process) — are the same ones an eval harness or an agent product
+needs, so benchmarks, cloud browsers, VNC desktops, and model adapters all plug into the same
+typed interface: **Shinken is the runtime underneath**. And it is honest about maturity: what
+is real today is a **measured Linux/X11 vertical slice under live CI** — every claim below
+links to first-party data you can rerun ([`benchmarks/`](benchmarks)) or audit
 ([`docs/benchmarks/`](docs/benchmarks/README.md)); design-only parts are marked, here and in
 the [status map](docs/engineering/status.md).
 
