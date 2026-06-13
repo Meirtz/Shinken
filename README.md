@@ -9,8 +9,8 @@
 
 > **Train computer-use agents end-to-end on real desktops — at scale, from one machine.**
 > Shinken is the open-source runtime for **scalable, high-performance computer-use
-> environments**: point your RL/RFT loop at real desktops your agent clicks and types on — a
-> black box, no white-box hooks — and every episode `reset()` is a **fork** of a checkpointed
+> environments**: point your RL/RFT loop at real desktops your agent clicks and types on a
+> black box and every episode `reset()` is a **fork** of a checkpointed
 > live desktop (~0.1 s), so one laptop drives **8K+** of them on a single thread. Scale is a
 > property of the runtime, not your cloud bill.
 
