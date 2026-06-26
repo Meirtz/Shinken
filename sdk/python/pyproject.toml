@@ -18,7 +18,7 @@ Homepage = "https://github.com/Meirtz/Shinken"
 Source = "https://github.com/Meirtz/Shinken"
 
 [project.optional-dependencies]
-dev = ["ruff>=0.6", "pytest>=8", "jsonschema>=4"]
+dev = ["ruff>=0.15.20", "pytest>=8", "jsonschema>=4"]
 
 [project.scripts]
 shinken = "shinken.cli:main"
