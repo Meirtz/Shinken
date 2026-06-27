@@ -6,6 +6,7 @@ import base64
 import contextlib
 import fnmatch
 import json
+import logging
 import os
 import queue
 import re
@@ -35,6 +36,8 @@ from .base import (
     SandboxSpec,
     UnsatisfiedSandboxSpec,
 )
+
+_log = logging.getLogger("shinken.providers.docker")
 
 
 def _free_port(host: str = "127.0.0.1") -> int:
@@ -592,10 +595,37 @@ class DockerLocalProvider(SandboxProvider):
             metadata={
                 k: v
                 for k, v in handle.metadata.items()
-                # per-container state must not propagate into descendants: most
-                # importantly fork_snapshot — inheriting it would let a grandchild's
-                # destroy() reclaim an image its parent generation still needs.
-                if k not in {"container_id", "port", "destroyed", "fork_snapshot", "pool_graft"}
+                # Provider-owned/per-container state must not become caller metadata
+                # in a legacy handle that predates ``sandbox_spec``. Most importantly,
+                # inheriting fork_snapshot would let a grandchild reclaim an image its
+                # parent generation still needs; persisting any of these as opaque
+                # metadata would also trigger the fail-closed caller-metadata marker.
+                if k
+                not in {
+                    "container_id",
+                    "image",
+                    "port",
+                    "screen_geometry",
+                    "network_mode",
+                    "guest_egress",
+                    "resources",
+                    "sandbox_spec",
+                    "destroyed",
+                    "fork_snapshot",
+                    "pool_graft",
+                    "snapshot_id",
+                    "checkpoint_id",
+                    "checkpoint_name",
+                    "event_seq",
+                    "agent_state_ref",
+                    "snapshot_record_version",
+                    "restore_path",
+                    "pool_status",
+                    "memory_restore",
+                    "criu_images_volume",
+                    "owner_pid",
+                    "rebuilt_from_labels",
+                }
             },
         )
 
@@ -644,12 +674,19 @@ class DockerLocalProvider(SandboxProvider):
         redacted_env_keys: list[str] = []
         redacted_metadata_paths: list[str] = []
         if for_label:
-            redacted_env_keys = [key for key in extra_env if _SECRET_KEY_RE.search(key)]
-            extra_env = {
-                key: value for key, value in extra_env.items() if key not in redacted_env_keys
-            }
-            redacted_metadata_paths = cls._metadata_redactions(metadata)
-            metadata = cls._label_safe_value(metadata)
+            # ``extra_env`` and ``metadata`` cross a durable trust boundary here: this
+            # record is embedded in a Docker image label and may be inspected long after
+            # the creating process exits.  A secret-name denylist is not safe enough
+            # (AUTHORIZATION, SESSION_COOKIE, DATABASE_URL, private provider fields, ...
+            # are all valid caller names).  Persist only the typed SandboxSpec fields;
+            # the creating provider keeps the exact values in ``self._snapshots`` for
+            # same-process restore, while a reconstructed provider fails closed through
+            # the unresolved markers until an explicit reinjection API exists.
+            redacted_env_keys = sorted(str(key) for key in extra_env)
+            extra_env = {}
+            if metadata:
+                redacted_metadata_paths = ["<root>"]
+                metadata = {}
         return {
             "image": spec.image,
             "os": spec.os,
@@ -1119,7 +1156,21 @@ class DockerLocalProvider(SandboxProvider):
         metadata) and reclaimed by :meth:`destroy` along with the child — fork no
         longer leaks one ``shinken-snap:*`` image per call."""
         snapshot_id = self.snapshot(handle)
-        child = self.restore(snapshot_id)
+        try:
+            child = self.restore(snapshot_id)
+        except BaseException:
+            # The intermediate snapshot belongs to this one-shot fork.  If restore
+            # fails before a child handle can own it, reclaim it here; cleanup is
+            # secondary and must never replace the restore error the caller needs.
+            try:
+                self.delete_snapshot(snapshot_id)
+            except BaseException:  # noqa: BLE001 - preserve the primary restore failure
+                _log.error(
+                    "failed to delete intermediate snapshot after fork restore failure: %s",
+                    snapshot_id,
+                    exc_info=True,
+                )
+            raise
         child.metadata["fork_snapshot"] = snapshot_id
         return child
 

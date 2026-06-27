@@ -430,6 +430,40 @@ def test_docker_fork_snapshots_then_launches_from_image(monkeypatch):
     assert child.metadata["snapshot_id"].startswith("shinken-snap:")
 
 
+def test_docker_fork_restore_failure_reclaims_intermediate_snapshot(monkeypatch):
+    provider = DockerLocalProvider()
+    deleted: list[str] = []
+    monkeypatch.setattr(provider, "snapshot", lambda _handle: "shinken-snap:intermediate")
+
+    def fail_restore(_snapshot_id):
+        raise ProviderError("synthetic restore failure")
+
+    monkeypatch.setattr(provider, "restore", fail_restore)
+    monkeypatch.setattr(provider, "delete_snapshot", deleted.append)
+
+    with pytest.raises(ProviderError, match="synthetic restore failure"):
+        provider.fork(_handle("c1"))
+    assert deleted == ["shinken-snap:intermediate"]
+
+
+def test_docker_fork_cleanup_failure_does_not_replace_restore_error(monkeypatch, caplog):
+    provider = DockerLocalProvider()
+    monkeypatch.setattr(provider, "snapshot", lambda _handle: "shinken-snap:intermediate")
+
+    def fail_restore(_snapshot_id):
+        raise ProviderError("primary restore failure")
+
+    def fail_delete(_snapshot_id):
+        raise ProviderError("secondary cleanup failure")
+
+    monkeypatch.setattr(provider, "restore", fail_restore)
+    monkeypatch.setattr(provider, "delete_snapshot", fail_delete)
+
+    with pytest.raises(ProviderError, match="primary restore failure"):
+        provider.fork(_handle("c1"))
+    assert "failed to delete intermediate snapshot" in caplog.text
+
+
 def test_docker_checkpoint_binds_offset_and_resume_restores_it(monkeypatch):
     _mock_docker(monkeypatch)
     p = DockerLocalProvider()
@@ -452,8 +486,6 @@ def test_fresh_provider_rebuilds_checkpoint_from_image_labels(monkeypatch):
             memory="768m",
             cpus=1.25,
             screen_geometry="900x700x24",
-            extra_env={"VISIBLE_SETTING": "yes"},
-            metadata={"suite": "provider-p0"},
         )
     )
     checkpoint = original.checkpoint(
@@ -471,7 +503,7 @@ def test_fresh_provider_rebuilds_checkpoint_from_image_labels(monkeypatch):
     raw_record = base64.urlsafe_b64decode(encoded).decode()
     record = json.loads(raw_record)
     assert record["name"] == "human-label"
-    assert record["spec"]["extra_env"] == {"VISIBLE_SETTING": "yes"}
+    assert record["spec"]["extra_env"] == {}
     assert record["spec"]["redacted_extra_env_keys"] == []
 
     fresh_calls: list[list[str]] = []
@@ -501,8 +533,8 @@ def test_fresh_provider_rebuilds_checkpoint_from_image_labels(monkeypatch):
     assert rebuilt is not None
     assert rebuilt.memory == "768m" and rebuilt.cpus == 1.25
     assert rebuilt.screen_geometry == "900x700x24"
-    assert rebuilt.extra_env == {"VISIBLE_SETTING": "yes"}
-    assert rebuilt.metadata["suite"] == "provider-p0"
+    assert rebuilt.extra_env == {}
+    assert rebuilt.metadata == {}
 
     restored = fresh.restore(checkpoint)
     run_cmd = next(cmd for cmd in fresh_calls if cmd[:2] == ["docker", "run"])
@@ -514,29 +546,61 @@ def test_fresh_provider_rebuilds_checkpoint_from_image_labels(monkeypatch):
     assert restored.metadata["pool_status"] == "disabled"
 
 
-def test_snapshot_scrubs_secret_env_and_fresh_restore_requires_reinjection(monkeypatch):
+def test_snapshot_persistence_strips_all_caller_env_and_metadata(monkeypatch):
     calls = _mock_docker(monkeypatch)
     original = DockerLocalProvider()
+    sentinel_values = {
+        "PUBLIC_SETTING": "sentinel-public",
+        "API_TOKEN": "sentinel-token",
+        "AUTHORIZATION": "Bearer sentinel-auth",
+        "SESSION_COOKIE": "sentinel-cookie",
+        "DATABASE_URL": "postgres://sentinel-db",
+        "PASSWD": "sentinel-passwd",
+        "SSH_PRIVATE_KEY_PEM": "sentinel-private-key",
+    }
     donor = original.create(
         SandboxSpec(
-            extra_env={"PUBLIC_SETTING": "yes", "API_TOKEN": "do-not-persist"},
-            metadata={"purpose": "secret-env-test"},
+            extra_env=sentinel_values,
+            metadata={
+                "purpose": "sentinel-purpose",
+                "headers": {
+                    "Authorization": "Bearer sentinel-meta-auth",
+                    "Cookie": "sentinel-meta-cookie",
+                },
+                "database_url": "postgres://sentinel-meta-db",
+            },
         )
     )
     checkpoint = original.checkpoint(donor)
     commit = next(cmd for cmd in calls if cmd[:2] == ["docker", "commit"])
     assert "ENV SHINKEND_TOKEN=" in commit
-    assert "ENV API_TOKEN=" in commit
+    for key in sentinel_values:
+        assert f"ENV {key}=" in commit
     encoded = next(
         arg.split("=", 1)[1]
         for arg in commit
         if arg.startswith("LABEL shinken.snapshot_record.v1=")
     )
     raw_record = base64.urlsafe_b64decode(encoded).decode()
-    assert "do-not-persist" not in raw_record
-    original.restore(checkpoint)
+    for sentinel in (
+        *sentinel_values.values(),
+        "sentinel-purpose",
+        "sentinel-meta-auth",
+        "sentinel-meta-cookie",
+        "sentinel-meta-db",
+    ):
+        assert sentinel not in raw_record
+    record = json.loads(raw_record)
+    assert record["spec"]["extra_env"] == {}
+    assert record["spec"]["redacted_extra_env_keys"] == sorted(sentinel_values)
+    assert record["spec"]["metadata"] == {}
+    assert record["spec"]["redacted_metadata_paths"] == ["<root>"]
+
+    restored = original.restore(checkpoint)
     same_process_restore = [cmd for cmd in calls if cmd[:2] == ["docker", "run"]][-1]
-    assert "API_TOKEN=do-not-persist" in same_process_restore
+    for key, value in sentinel_values.items():
+        assert f"{key}={value}" in same_process_restore
+    assert restored.metadata["purpose"] == "sentinel-purpose"
 
     fresh_calls: list[list[str]] = []
 
@@ -558,10 +622,16 @@ def test_snapshot_scrubs_secret_env_and_fresh_restore_requires_reinjection(monke
         return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
 
     monkeypatch.setattr("shinken.providers.docker._run", fresh_run)
+    fresh = DockerLocalProvider()
+    rebuilt = fresh.snapshot_spec(checkpoint)
+    assert rebuilt is not None
+    assert rebuilt.extra_env == {}
+    assert rebuilt.metadata["_shinken_unresolved_secret_env"] == sorted(sentinel_values)
+    assert rebuilt.metadata["_shinken_unresolved_metadata"] == ["<root>"]
     with pytest.raises(UnsatisfiedSandboxSpec) as raised:
-        DockerLocalProvider().restore(checkpoint)
-    assert raised.value.field == "extra_env"
-    assert raised.value.requested == ["API_TOKEN"]
+        fresh.restore(checkpoint)
+    assert raised.value.field == "metadata"
+    assert raised.value.requested == ["<root>"]
     assert not any(cmd[:2] == ["docker", "run"] for cmd in fresh_calls)
 
 
@@ -573,7 +643,8 @@ def test_redacted_or_opaque_metadata_cannot_silently_replay():
     )
     raw = json.dumps(persisted)
     assert "metadata-secret" not in raw
-    assert persisted["redacted_metadata_paths"] == ["api_key", "opaque"]
+    assert persisted["metadata"] == {}
+    assert persisted["redacted_metadata_paths"] == ["<root>"]
     reconstructed = provider._spec_from_record(persisted)
     with pytest.raises(UnsatisfiedSandboxSpec) as raised:
         provider._validate_replay_metadata(reconstructed)

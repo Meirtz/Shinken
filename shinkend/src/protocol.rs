@@ -238,58 +238,52 @@ pub fn platform() -> &'static str {
 /// enforced (clamped) on capture requests so a client can't bypass the limit (#141).
 pub const MAX_LONG_EDGE: u32 = 2576;
 
-/// Capabilities advertised in the handshake. M0 advertises the v0 verb set even
-/// though execution lands in M1, so clients can negotiate up front.
+/// Complete schema vocabulary.  Concrete handshakes advertise a backend-aware subset
+/// through [`capabilities_for_runtime`]; this superset remains the drift gate against
+/// `schema/aci.schema.json`.
+const ALL_VERBS: &[&str] = &[
+    "click",
+    "double_click",
+    "right_click",
+    "move",
+    "drag",
+    "mouse_down",
+    "mouse_up",
+    "scroll",
+    "type_text",
+    "key",
+    "screenshot",
+    "start_screencast",
+    "stop_screencast",
+    "wait",
+    "observe",
+    "invoke_action",
+    "set_value",
+    "exec",
+    "clipboard_get",
+    "clipboard_set",
+    "launch_app",
+    "activate_window",
+];
+const ALL_TARGETS: &[&str] = &["point_px", "point_norm", "element_ref"];
+const ALL_OBSERVATIONS: &[&str] = &["screenshot", "screencast", "a11y"];
+const ALL_IMAGE_FORMATS: &[&str] = &["png", "jpeg"];
+const TREE_VERBS: &[&str] = &["observe", "invoke_action", "set_value"];
+
+fn strings(values: &[&str]) -> Vec<String> {
+    values.iter().map(|value| (*value).to_string()).collect()
+}
+
+/// The complete ACI vocabulary (not a concrete backend advertisement).
+#[cfg(test)]
 pub fn capabilities() -> Capabilities {
     Capabilities {
         schema_version: SCHEMA_VERSION,
-        verbs: [
-            "click",
-            "double_click",
-            "right_click",
-            "move",
-            "drag",
-            "mouse_down",
-            "mouse_up",
-            "scroll",
-            "type_text",
-            "key",
-            "screenshot",
-            "start_screencast",
-            "stop_screencast",
-            "wait",
-            // structured-observation family (M1b): the guest a11y engine
-            "observe",
-            "invoke_action",
-            "set_value",
-            // typed in-guest exec channel (G1): argv-default, shell opt-in,
-            // buffered result or streamed exec_output/exec_exit
-            "exec",
-            // desktop task-parity verbs (G2+G3): clipboard + app launch/activate.
-            // Advertised by every shinkend; a backend without an implementation
-            // answers with a typed unsupported error at dispatch time.
-            "clipboard_get",
-            "clipboard_set",
-            "launch_app",
-            "activate_window",
-        ]
-        .iter()
-        .map(|s| s.to_string())
-        .collect(),
-        // element_ref targets resolve through the guest observation engine (M1b):
-        // pointer verbs click the live element's bbox centre via XTEST.
-        targets: ["point_px", "point_norm", "element_ref"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect(),
-        observation_types: ["screenshot", "screencast", "a11y"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect(),
+        verbs: strings(ALL_VERBS),
+        targets: strings(ALL_TARGETS),
+        observation_types: strings(ALL_OBSERVATIONS),
         max_long_edge: MAX_LONG_EDGE,
-        // Codec negotiation: advertise what encode_frame can actually produce, so a
-        // client can reject an unsupported `format` before sending it.
-        image_formats: ["png", "jpeg"].iter().map(|s| s.to_string()).collect(),
+        image_formats: strings(ALL_IMAGE_FORMATS),
         // Binary media framing: opt-in per session via hello.accept.binary_frames.
         binary_frames: true,
         // Content-negotiated screenshots: request-scoped (if_none_match), nothing to
@@ -305,6 +299,57 @@ pub fn capabilities() -> Capabilities {
     }
 }
 
+/// Build the honest capability subset for one live executor + optional tree source.
+/// Transport-owned `wait` is universal, `exec` is policy-gated, and the structured
+/// family exists only when this session can actually reach a tree source.
+pub fn capabilities_for_runtime(
+    exec: &dyn crate::executor::Executor,
+    has_tree: bool,
+    exec_enabled: bool,
+) -> Capabilities {
+    let profile = exec.capability_profile();
+    let supports_verb = |verb: &str| {
+        profile.verbs.contains(&verb)
+            || verb == "wait"
+            || (verb == "exec" && exec_enabled)
+            || (has_tree && TREE_VERBS.contains(&verb))
+    };
+    let verbs = ALL_VERBS
+        .iter()
+        .copied()
+        .filter(|verb| supports_verb(verb))
+        .collect::<Vec<_>>();
+    let targets = ALL_TARGETS
+        .iter()
+        .copied()
+        .filter(|target| profile.targets.contains(target) || (has_tree && *target == "element_ref"))
+        .collect::<Vec<_>>();
+    let observation_types = ALL_OBSERVATIONS
+        .iter()
+        .copied()
+        .filter(|kind| profile.observation_types.contains(kind) || (has_tree && *kind == "a11y"))
+        .collect::<Vec<_>>();
+    let image_formats = ALL_IMAGE_FORMATS
+        .iter()
+        .copied()
+        .filter(|format| profile.image_formats.contains(format))
+        .collect::<Vec<_>>();
+    let has_screenshot = profile.verbs.contains(&"screenshot");
+
+    Capabilities {
+        schema_version: SCHEMA_VERSION,
+        verbs: strings(&verbs),
+        targets: strings(&targets),
+        observation_types: strings(&observation_types),
+        max_long_edge: MAX_LONG_EDGE,
+        image_formats: strings(&image_formats),
+        binary_frames: true,
+        frame_dedup: has_screenshot && exec.supports_raw_capture(),
+        observe_after_act: profile.observe_after_act,
+        structured_observation: has_tree,
+    }
+}
+
 /// Build the `welcome` reply to a client `hello`.
 #[cfg(test)]
 pub fn welcome() -> Message {
@@ -314,6 +359,7 @@ pub fn welcome() -> Message {
 /// Build a policy-aware `welcome`. `exec` is a privileged server surface and is
 /// omitted unless the operator explicitly enabled it; clients must never be told a
 /// disabled action is available.
+#[cfg(test)]
 pub fn welcome_with_exec(exec_enabled: bool) -> Message {
     let mut capabilities = capabilities();
     if !exec_enabled {
@@ -327,6 +373,23 @@ pub fn welcome_with_exec(exec_enabled: bool) -> Message {
             platform: platform().to_string(),
         },
         capabilities,
+    }
+}
+
+/// Build the production welcome for the concrete executor attached to a session.
+pub fn welcome_for_runtime(
+    exec: &dyn crate::executor::Executor,
+    has_tree: bool,
+    exec_enabled: bool,
+) -> Message {
+    Message::Welcome {
+        v: 0,
+        server: ServerInfo {
+            name: "shinkend".to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            platform: platform().to_string(),
+        },
+        capabilities: capabilities_for_runtime(exec, has_tree, exec_enabled),
     }
 }
 
@@ -746,17 +809,41 @@ mod tests {
         v
     }
 
-    // Contract test (#156): the runtime's advertised capabilities must not drift from the
-    // source-of-truth schema/aci.schema.json (the Python side is gated by #89).
+    // Contract test (#156): the complete vocabulary must not drift from the
+    // source-of-truth schema. Concrete runtime advertisements are subsets (next test).
     #[test]
-    fn advertised_verbs_match_schema() {
+    fn complete_verb_vocabulary_matches_schema() {
         let mut adv = capabilities().verbs;
         adv.sort();
         assert_eq!(
             adv,
             schema_enum("Verb"),
-            "advertised verbs must equal the schema Verb enum"
+            "complete verb vocabulary must equal the schema Verb enum"
         );
+    }
+
+    #[test]
+    fn concrete_runtime_capabilities_are_schema_subsets() {
+        let exec = crate::executor::VirtualExecutor::default();
+        let caps = capabilities_for_runtime(&exec, false, false);
+        let verbs = schema_enum("Verb");
+        let targets = schema_enum("TargetKind");
+        let observations = schema_enum("ObservationType");
+        let formats = schema_enum("ImageFormat");
+
+        assert!(caps.verbs.iter().all(|value| verbs.contains(value)));
+        assert!(caps.targets.iter().all(|value| targets.contains(value)));
+        assert!(caps
+            .observation_types
+            .iter()
+            .all(|value| observations.contains(value)));
+        assert!(caps
+            .image_formats
+            .iter()
+            .all(|value| formats.contains(value)));
+        assert!(!caps.structured_observation);
+        assert!(!caps.verbs.contains(&"observe".to_string()));
+        assert!(!caps.targets.contains(&"element_ref".to_string()));
     }
 
     #[test]

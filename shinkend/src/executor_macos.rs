@@ -58,7 +58,7 @@ use core_graphics::window as cgwindow;
 
 use crate::executor::{
     encode_frame, norm_to_px_f64, parse_combo, parse_scope, ActionSpec, CapturedImage, EncodeOpts,
-    Executor, Readiness, Scope, Target,
+    Executor, ExecutorCapabilityProfile, Readiness, Scope, Target,
 };
 
 // ---- TCC permission probes ----
@@ -667,6 +667,22 @@ const EVENT_SETTLE: std::time::Duration = std::time::Duration::from_millis(8);
 /// the responsible app to relaunch for the grant to take effect).
 pub struct MacExecutor;
 
+const MACOS_VERBS: &[&str] = &[
+    "click",
+    "double_click",
+    "right_click",
+    "move",
+    "drag",
+    "mouse_down",
+    "mouse_up",
+    "scroll",
+    "type_text",
+    "key",
+    "screenshot",
+    "start_screencast",
+    "stop_screencast",
+];
+
 impl MacExecutor {
     /// Construct, requiring only that a display exists. Missing TCC grants do
     /// NOT fail construction — readiness reports them honestly and per-call
@@ -914,6 +930,16 @@ fn frontmost_window_id() -> Option<u32> {
 impl Executor for MacExecutor {
     fn backend(&self) -> &'static str {
         "macos/coregraphics"
+    }
+
+    fn capability_profile(&self) -> ExecutorCapabilityProfile {
+        ExecutorCapabilityProfile {
+            verbs: MACOS_VERBS,
+            targets: &["point_px", "point_norm"],
+            observation_types: &["screenshot", "screencast"],
+            image_formats: &["png", "jpeg"],
+            observe_after_act: true,
+        }
     }
 
     fn screen_size(&self) -> (u16, u16) {
@@ -1381,6 +1407,26 @@ mod tests {
                 "{action} → {err}"
             );
         }
+    }
+
+    #[test]
+    fn capability_profile_excludes_unimplemented_desktop_and_tree_verbs() {
+        let profile = MacExecutor.capability_profile();
+        assert!(profile.verbs.contains(&"click"));
+        assert!(profile.verbs.contains(&"screenshot"));
+        for verb in [
+            "clipboard_get",
+            "clipboard_set",
+            "launch_app",
+            "activate_window",
+            "observe",
+            "invoke_action",
+            "set_value",
+        ] {
+            assert!(!profile.verbs.contains(&verb), "unexpected {verb}");
+        }
+        assert_eq!(profile.targets, &["point_px", "point_norm"]);
+        assert_eq!(profile.observation_types, &["screenshot", "screencast"]);
     }
 
     // ---- capture conversion (TCC-free: synthesized CGImage, no screen read) ----
