@@ -150,6 +150,38 @@ equivalence belongs to the real trainer connector, not this smoke.
 
 ## Notes
 
+- **Platform scope**: the resources-engine lifecycle and Shinken CU/BU backend contracts are
+  OS-neutral. The in-tree demo bundles and deepest automated evidence currently use Linux/X11;
+  that is the present test-coverage depth, not an architectural Linux-first restriction.
+- **Session correctness**: every successful seed returns a generation token. Tool, verify, end,
+  and reseed calls must carry it; stale requests fail closed and cannot mutate a newer rollout.
+  Requests for one session are linearized, while different sessions remain concurrent.
+- **Direct-engine API tightening**: initial calls now spell `generation=None` explicitly and all
+  later calls reuse the returned token. Providers must expose callable `delete_snapshot()` so a
+  bounded cache cannot silently forget substrate resources:
+
+  ```python
+  seeded = engine.seed(session_id, task_id, generation=None)
+  generation = seeded["generation"]
+  observation = engine.tool(
+      session_id, "computer_observe", {"mode": "tree"}, generation=generation
+  )
+  reward = engine.verify(session_id, generation=generation)
+  ```
+
+- **Bounded ownership**: abandoned rollouts are reaped actively (not only when another seed
+  arrives), and cached golden snapshots use reset leases plus TTL/LRU eviction. Defaults are
+  `idle_ttl_s=900`, `max_goldens=32`, `golden_ttl_s=3600`, and `reap_interval_s=30`; the example
+  server starts maintenance from its app lifecycle and exposes matching `SHINKEN_*` environment
+  overrides. Direct long-lived engine users call `start_maintenance()` explicitly; construction
+  is thread-free so fork-based scorers remain safe. Snapshot-delete failures remain tracked and
+  are retried by maintenance/close; terminal close raises while retryable ownership remains.
+- **Process model**: one resources-server instance must use one worker because rollout ownership
+  is process-local; startup rejects `num_workers != 1`. Scale out with multiple session-routed
+  server instances. A shared external session-owner/control-plane layer is not implemented.
+- **Shutdown**: `engine.close()` is terminal. It stops maintenance, waits for admitted calls, and
+  closes every replica. `close(delete_goldens=False)` deliberately retains owned snapshots for a
+  later `close(delete_goldens=True)` cleanup call; the engine itself does not reopen.
 - **Golden vs post-fork setup**: file state belongs in the bundle's `config` steps (runs
   once into the golden checkpoint, on the disk tier). Setup that must exist as a *running
   process* (an open dialog) goes in our bundle extension `shinken_post_fork` — replayed on
@@ -160,5 +192,4 @@ equivalence belongs to the real trainer connector, not this smoke.
   `process_memory` and fail closed on the Docker filesystem tier until a trusted caller
   explicitly opts in after validating the post-fork replay, or selects a process-memory
   provider.
-- Rollouts that never reach `/verify` are reaped after an idle TTL; `shinken gc` catches
-  anything else.
+- `shinken gc` remains the substrate-level recovery net for resources left by process death.
