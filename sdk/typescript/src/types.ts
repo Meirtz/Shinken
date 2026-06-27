@@ -28,12 +28,13 @@ export type Verb =
   | "activate_window";
 
 export type PointerButton = "left" | "middle" | "right";
+export type CaptureScope = "screen" | "active_window" | `window:${string}`;
 
 /** Act-returns-observation parameters (schema `$defs.ObserveSpec`): ask the runtime to
  * follow a mutating action's ack with a fresh observation (`cause` = the call_id).
  * Requires the welcome's `capabilities.observe_after_act`. */
 export interface ObserveSpec {
-  scope?: "screen" | "active_window" | `window:${string}`;
+  scope?: CaptureScope;
   format?: "png" | "jpeg";
   quality?: number;
   max_long_edge?: number;
@@ -129,7 +130,7 @@ export interface Action {
   stream?: boolean;
   /** exec: RESERVED (PTY follow-up) — only false is accepted. */
   pty?: false;
-  scope?: "screen" | "window" | "region" | "active_window" | `window:${string}`;
+  scope?: CaptureScope;
   fps?: number;
   max_long_edge?: number;
   /** launch_app: executable name (guest PATH) or absolute path, spawned detached on
@@ -184,7 +185,7 @@ export interface ImageRef {
   ref: string;
   w: number;
   h: number;
-  scope?: "screen" | "window" | "region";
+  scope?: CaptureScope;
   /** Codec of `ref` bytes; absent = png. */
   format?: "png" | "jpeg";
 }

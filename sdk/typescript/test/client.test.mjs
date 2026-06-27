@@ -70,6 +70,46 @@ test("screencast: start, demux a frame, record scope, time out cleanly", async (
   assert.equal(await c.nextFrame(20), null); // no frame within the timeout
 });
 
+test("a timed-out frame waiter is removed and cannot swallow the next frame", async () => {
+  const { transport } = fakeTransport();
+  const c = new AciClient(transport, CAPS, "linux");
+  assert.equal(await c.nextFrame(20), null);
+
+  c.feed(JSON.stringify({ type: "observation", obs_id: "late-0", stream: "s", seq: 0 }));
+  const frame = await c.nextFrame(100);
+  assert.equal(frame?.obs_id, "late-0");
+});
+
+test("RPC and ping deadlines reject and remove stale waiters", async () => {
+  const { transport, sent } = fakeTransport();
+  const c = new AciClient(transport, CAPS, "linux", { rpcTimeoutMs: 20 });
+
+  await assert.rejects(c.click({ kind: "point_px", x: 1, y: 2 }), /RPC timed out/);
+  const expiredId = sent.at(-1).call_id;
+  c.feed(JSON.stringify({ type: "ack", call_id: expiredId, ok: true })); // ignored late reply
+
+  const live = c.typeText("still usable");
+  const liveId = sent.at(-1).call_id;
+  c.feed(JSON.stringify({ type: "ack", call_id: liveId, ok: true }));
+  await live;
+  await assert.rejects(c.ping(), /ping timed out/);
+});
+
+test("call ids are unique across clients in one process", async () => {
+  const a = fakeTransport();
+  const b = fakeTransport();
+  const ca = new AciClient(a.transport, CAPS, "linux");
+  const cb = new AciClient(b.transport, CAPS, "linux");
+  const pa = ca.typeText("a");
+  const pb = cb.typeText("b");
+  const aid = a.sent.at(-1).call_id;
+  const bid = b.sent.at(-1).call_id;
+  assert.notEqual(aid, bid);
+  ca.feed(JSON.stringify({ type: "ack", call_id: aid, ok: true }));
+  cb.feed(JSON.stringify({ type: "ack", call_id: bid, ok: true }));
+  await Promise.all([pa, pb]);
+});
+
 test("exec() resolves to the typed ExecResult and validates argv/shell exclusivity", async () => {
   const { transport, sent } = fakeTransport();
   const c = new AciClient(transport, CAPS, "linux");
@@ -151,4 +191,53 @@ test("connect() completes the hello -> welcome handshake", async () => {
   const client = await p;
   assert.equal(client.platform, "linux");
   assert.ok(client.capabilities.verbs.includes("click"));
+});
+
+test("connect() has a handshake deadline and closes the stalled socket", async () => {
+  const listeners = {};
+  let closed = 0;
+  const sock = {
+    send: () => {},
+    close: () => {
+      closed += 1;
+    },
+    addEventListener: (type, cb) => {
+      (listeners[type] ??= []).push(cb);
+    },
+  };
+  await assert.rejects(
+    connect("127.0.0.1:8765", { handshakeTimeoutMs: 20, openSocket: () => sock }),
+    /handshake timed out/,
+  );
+  assert.equal(closed, 1);
+});
+
+test("post-handshake socket close rejects RPCs and ends frame waits", async () => {
+  const listeners = {};
+  const sent = [];
+  const sock = {
+    send: (data) => sent.push(data),
+    close: () => {},
+    addEventListener: (type, cb) => {
+      (listeners[type] ??= []).push(cb);
+    },
+  };
+  const fire = (type, ev) => (listeners[type] ?? []).forEach((cb) => cb(ev));
+  const connected = connect("127.0.0.1:8765", { openSocket: () => sock });
+  fire("open");
+  fire("message", {
+    data: JSON.stringify({
+      type: "welcome",
+      v: 0,
+      server: { name: "mock", version: "0", platform: "linux" },
+      capabilities: CAPS,
+    }),
+  });
+  const client = await connected;
+  const inflight = client.typeText("pending");
+  const frame = client.nextFrame();
+  fire("close");
+  await assert.rejects(inflight, /connection closed/);
+  assert.equal(await frame, null);
+  await assert.rejects(client.ping(), /closed/);
 });
