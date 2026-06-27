@@ -35,7 +35,7 @@ use crate::protocol;
 pub const MAX_EXECS: usize = 4;
 /// Default deadline when the action carries no `timeout_ms`.
 pub const DEFAULT_TIMEOUT_MS: u64 = 60_000;
-/// Hard cap a requested `timeout_ms` is clamped to (like fps/max_long_edge).
+/// Hard cap a valid requested `timeout_ms` is clamped to.
 pub const MAX_TIMEOUT_MS: u64 = 600_000;
 /// Per-channel capture budget of the buffered form; beyond it the channel keeps
 /// draining (no pipe deadlock) but stops storing, and the truncation flag is set.
@@ -109,10 +109,13 @@ impl ExecSpec {
                 )
             }
         };
+        if spec.timeout_ms == Some(0) {
+            return Err("exec timeout_ms must be at least 1".to_string());
+        }
         let timeout_ms = spec
             .timeout_ms
             .unwrap_or(DEFAULT_TIMEOUT_MS)
-            .clamp(1, MAX_TIMEOUT_MS);
+            .min(MAX_TIMEOUT_MS);
         let env = spec
             .env
             .as_ref()
@@ -530,6 +533,10 @@ mod tests {
         let huge = action(r#"{"verb":"exec","argv":["ls"],"timeout_ms":99999999}"#);
         let s = ExecSpec::from_action("c", &huge, false).unwrap();
         assert_eq!(s.timeout, Duration::from_millis(MAX_TIMEOUT_MS));
+        let zero = action(r#"{"verb":"exec","argv":["ls"],"timeout_ms":0}"#);
+        assert!(ExecSpec::from_action("c", &zero, false)
+            .unwrap_err()
+            .contains("at least 1"));
         let none = action(r#"{"verb":"exec","argv":["ls"]}"#);
         let s = ExecSpec::from_action("c", &none, true).unwrap();
         assert_eq!(s.timeout, Duration::from_millis(DEFAULT_TIMEOUT_MS));

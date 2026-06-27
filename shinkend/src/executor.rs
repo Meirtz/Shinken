@@ -23,7 +23,7 @@ use x11rb::protocol::xtest::ConnectionExt as _;
 
 /// A spatial action target (mirrors `Target` in schema/aci.schema.json).
 #[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 // `element_ref`/`source` are part of the ACI v0 wire contract; first read in M1b.
 #[allow(dead_code)]
 pub enum Target {
@@ -81,11 +81,12 @@ pub struct ActionSpec {
     pub ms: Option<u64>,
     #[serde(default)]
     pub scope: Option<String>,
-    /// Target frame rate for `start_screencast` (frames/sec).
+    /// Target frame rate for `start_screencast` (frames/sec, 0.1–30 inclusive).
     #[serde(default)]
     pub fps: Option<f64>,
     /// Cap the captured frame's longer edge (px) — a screencast/screenshot bandwidth
-    /// lever. Larger frames are downscaled; `None` keeps full resolution.
+    /// lever. Must be positive; larger frames are downscaled and values above the
+    /// negotiated maximum are capped. `None` keeps full resolution.
     #[serde(default)]
     pub max_long_edge: Option<u32>,
     /// Wire codec for `screenshot`/`start_screencast` frames: `png` (default, lossless)

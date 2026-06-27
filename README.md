@@ -84,8 +84,9 @@ with provider.session(SandboxSpec()) as env:         # boots in ~0.2 s; auto-des
 ```
 
 Already have a runtime? Start it with a high-entropy `SHINKEND_TOKEN`, then pass the same value
-to the SDK as `SHK_TOKEN`. Browser WebSocket origins are denied by default, and in-guest `exec`
-is an explicit server opt-in (`SHINKEND_ENABLE_EXEC=1`):
+to the SDK as `SHK_TOKEN`. Browser WebSocket origins are denied by default, and arbitrary
+in-guest process spawning (`exec` and executable-path `launch_app`) is an explicit server opt-in
+(`SHINKEND_ENABLE_EXEC=1`):
 
 ```python
 import os
@@ -593,7 +594,7 @@ numbers behind every "measured" are in [`docs/benchmarks/`](docs/benchmarks/READ
 | Runtime state | 🟡 hardened, live revalidation pending | Docker disk-tier **checkpoint / spawn / resume** preserves filesystem state and restarts processes (~0.60 s historical measurement). The unsafe live warm-pool graft is disabled. **CRIU** now uses one stopped memory+filesystem consistency window with explicit fidelity requirements; privileged live rebenchmark is pending |
 | Fork-native consumption | ✅ built | `run_eval_forked` (golden → restore-N → score), checkpoint-native gym (correct `(s_t,a_t,s_{t+1})` trajectories, HF exporter, pool), tiny verifier harness, typed exit-reason, subprocess scorer isolation; the single-task functional gate above (1/369; no conformance sweep) |
 | Fleet concurrency | ✅ built + measured | async core + fleet fan-out: **128 real sandboxes** on 2 threads (128/128 in 7.3 s); client plane held **3,096 protocol-faithful synthetic ACI sessions** on one loop thread at 0.93 cores (2,320 frames/s ≈ 870 Mbps); fork-aware observation dedup (18.6× suite-wide at the static ceiling, 94.6% hit rate, divergence floor measured); `ping_jitter` fleet decorrelation |
-| ACI v0 (typed actions + observation) | ✅ built | mandatory token auth on every TCP listener; browser-Origin deny-by-default; pointer+keyboard via X11/XTEST; screenshot/observe/screencast/focused-window capture; `list_windows`; typed in-guest `exec` is default-off and explicitly enabled inside provider-managed sandboxes; desktop verbs; **22 maximum verbs**, contract-tested |
+| ACI v0 (typed actions + observation) | ✅ built | mandatory token auth on every TCP listener; browser-Origin deny-by-default; pointer+keyboard via X11/XTEST; screenshot/observe/screencast/focused-window capture; `list_windows`; arbitrary process spawning via `exec` or executable-path `launch_app` is default-off and explicitly enabled inside provider-managed sandboxes; desktop verbs; **22 maximum verbs**, contract-tested |
 | Structured observation (Linux v1) | ✅ built | guest `observe` engine in `shinkend` (AT-SPI): stable **never-rebind** element ids, `tree_text` diff rendering, settle; guest-resolved `element_ref` targets + `invoke_action`/`set_value`; live Docker smoke |
 | Observation transport | ✅ built + measured | PNG lossless default; opt-in JPEG/downscale lever **~1–21× content-dependent** (~131× stacked on content-rich frames); **legibility envelope measured (S13)**: q80@native + delta stream 100% legible, any downscale breaks small text; lossless dirty-tile delta ~11× on text; binary WS frames; XDamage idle ~0 CPU |
 | SDK + adapters | ✅ built | Python SDK (sync + async), TypeScript SDK, Anthropic/OpenAI/Kimi-VL adapters → canonical ACI (`act_model`) |

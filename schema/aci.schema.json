@@ -182,7 +182,7 @@
         "dy": { "type": "number" },
         "ms": { "type": "integer", "minimum": 0 },
         "scope": { "$ref": "#/$defs/Scope" },
-        "fps": { "type": "number", "minimum": 0.1, "maximum": 30, "description": "start_screencast target frame rate (frames/sec), matching runtime clamp bounds" },
+        "fps": { "type": "number", "minimum": 0.1, "maximum": 30, "description": "start_screencast target frame rate (frames/sec), rejected outside the runtime bounds" },
         "max_long_edge": { "type": "integer", "minimum": 1, "description": "downscale cap (px) for screencast/screenshot frames" },
         "format": { "$ref": "#/$defs/ImageFormat", "description": "wire codec for screenshot/start_screencast frames: png (default, lossless) or jpeg (bandwidth lever); omitted = png. Must be one of the welcome's advertised image_formats." },
         "quality": { "type": "integer", "minimum": 1, "maximum": 100, "description": "jpeg quality 1-100 (ignored for png); omitted = runtime default" },

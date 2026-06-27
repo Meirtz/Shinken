@@ -15,8 +15,9 @@ Linux/X11 native reference runtime and the local-only macOS capture+input engine
 
 - `shinkend` WebSocket Guest Runtime — the **22-verb maximum ACI**: pointer/keyboard (incl. `drag`,
   `mouse_down`/`mouse_up`), screenshot + real-time screencast + focused-window capture,
-  typed in-guest `exec` (argv/shell, buffered + streamed; default-off), `clipboard_get`/`clipboard_set`,
-  `launch_app`, `activate_window`, `list_windows`.
+  typed in-guest `exec` (argv/shell, buffered + streamed), `clipboard_get`/`clipboard_set`,
+  `launch_app`, `activate_window`, `list_windows`. Arbitrary process spawning through `exec`
+  or executable-path `launch_app` is default-off.
 - **Structured observation** (Linux/AT-SPI guest engine v1): `observe` with stable element
   ids + tree diffs + settle; `element_ref` targets, `invoke_action`/`set_value`.
 - Python SDK and CLI (sync + async, pipelined `step()`), TypeScript control-surface SDK,
@@ -45,8 +46,9 @@ SHINKEND_TOKEN="$SHK_TOKEN" cargo run --manifest-path shinkend/Cargo.toml
 By default `shinkend` binds `127.0.0.1:8765`, but loopback is not an authentication
 boundary: every TCP listener requires `SHINKEND_TOKEN`. Copy the same value into the other
 shell as `SHK_TOKEN`. Browser `Origin` headers are rejected unless exactly allowlisted via
-`SHINKEND_ALLOWED_ORIGINS`; in-guest process execution is enabled only with
-`SHINKEND_ENABLE_EXEC=1` (provider-managed Docker sandboxes set this explicitly).
+`SHINKEND_ALLOWED_ORIGINS`; arbitrary in-guest process spawning is enabled only with
+`SHINKEND_ENABLE_EXEC=1` (this gates both `exec` and executable-path `launch_app`;
+provider-managed Docker sandboxes set it explicitly).
 
 ## Install The Python SDK
 

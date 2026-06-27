@@ -362,7 +362,7 @@ async fn main() -> Result<()> {
         exec.backend(),
     );
     eprintln!(
-        "browser origins: {}; in-guest exec: {}",
+        "browser origins: {}; in-guest process spawning: {}",
         if origin_policy.allowed.is_empty() {
             "denied".to_string()
         } else {
@@ -1328,7 +1328,7 @@ mod tests {
 
         // Start a fast screencast; the first reply must be the ack.
         ws.send(WsMessage::Text(
-            r#"{"type":"action","call_id":"sc1","action":{"verb":"start_screencast","fps":50}}"#
+            r#"{"type":"action","call_id":"sc1","action":{"verb":"start_screencast","fps":30}}"#
                 .into(),
         ))
         .await
@@ -1607,7 +1607,7 @@ mod tests {
 
         // Screencast frames arrive as WS Binary with stream id + advancing seq.
         ws.send(WsMessage::Text(
-            r#"{"type":"action","call_id":"sc1","action":{"verb":"start_screencast","fps":50}}"#
+            r#"{"type":"action","call_id":"sc1","action":{"verb":"start_screencast","fps":30}}"#
                 .into(),
         ))
         .await
@@ -2223,7 +2223,7 @@ mod tests {
         ws.send(WsMessage::Text(HELLO.into())).await.unwrap();
         assert!(text(&mut ws).await.contains("\"type\":\"welcome\""));
         ws.send(WsMessage::Text(
-            r#"{"type":"action","call_id":"sc1","action":{"verb":"start_screencast","fps":50}}"#
+            r#"{"type":"action","call_id":"sc1","action":{"verb":"start_screencast","fps":30}}"#
                 .into(),
         ))
         .await
@@ -2242,7 +2242,7 @@ mod tests {
         ws.send(WsMessage::Text(HELLO.into())).await.unwrap();
         assert!(text(&mut ws).await.contains("\"type\":\"welcome\""));
         ws.send(WsMessage::Text(
-            r#"{"type":"action","call_id":"sc2","action":{"verb":"start_screencast","fps":50,"resume_stream":"sc1"}}"#
+            r#"{"type":"action","call_id":"sc2","action":{"verb":"start_screencast","fps":30,"resume_stream":"sc1"}}"#
                 .into(),
         ))
         .await
@@ -2270,7 +2270,7 @@ mod tests {
         ws.send(WsMessage::Text(HELLO.into())).await.unwrap();
         assert!(text(&mut ws).await.contains("\"type\":\"welcome\""));
         ws.send(WsMessage::Text(
-            r#"{"type":"action","call_id":"scF","action":{"verb":"start_screencast","fps":50,"resume_stream":"ghost"}}"#
+            r#"{"type":"action","call_id":"scF","action":{"verb":"start_screencast","fps":30,"resume_stream":"ghost"}}"#
                 .into(),
         ))
         .await

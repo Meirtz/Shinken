@@ -19,7 +19,8 @@ default.
 
 - **Today (reference):** a Docker container per Sandbox; `shinkend` binds the ACI WebSocket,
   requires a token on every TCP listener (including loopback), compares it in constant time,
-  rejects browser origins by default, and keeps in-guest `exec` default-off. This is the
+  rejects browser origins by default, and keeps arbitrary in-guest process spawning (`exec`
+  and executable-path `launch_app`) default-off. This is the
   local/reference boundary, not the production isolation tier.
 - **Designed (D1):** microVM substrates (Firecracker headless-fork tier, QEMU/crosvm desktop,
   CLH/QEMU+VFIO for GPU/Windows, Apple VZ for macOS), selected by a substrate router. The
