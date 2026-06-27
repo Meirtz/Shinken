@@ -20,27 +20,66 @@ const CLIENT_INFO: ClientInfo = { name: "shinken-ts", version: "0.0.0" };
 interface Pending {
   resolve: (msg: AciMessage) => void;
   reject: (err: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+interface PongWaiter {
+  resolve: (t: number | undefined) => void;
+  reject: (err: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+const DEFAULT_RPC_TIMEOUT_MS = 30_000;
+const DEFAULT_HANDSHAKE_TIMEOUT_MS = 10_000;
+
+function randomProcessPrefix(): string {
+  const crypto = globalThis.crypto as
+    | { randomUUID?: () => string; getRandomValues?: (values: Uint32Array) => Uint32Array }
+    | undefined;
+  if (crypto?.randomUUID !== undefined) return crypto.randomUUID().replaceAll("-", "");
+  if (crypto?.getRandomValues !== undefined) {
+    const words = crypto.getRandomValues(new Uint32Array(4));
+    return Array.from(words, (word) => word.toString(16).padStart(8, "0")).join("");
+  }
+  // Old embedders without Web Crypto still get a restart-specific namespace. This is an
+  // identifier collision guard, not a credential or security token.
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+}
+
+const PROCESS_CALL_PREFIX = randomProcessPrefix();
+let processCallSequence = 0;
+
+export interface AciClientOptions {
+  /** Deadline for one action/query/ping reply. Defaults to 30 seconds. */
+  rpcTimeoutMs?: number;
 }
 
 /** Drives the ACI v0 protocol over a {@link Transport}. Construct via {@link connect},
  *  or directly (with a known handshake result) for tests. */
 export class AciClient {
-  private seq = 0;
   private readonly pending = new Map<string, Pending>();
-  private readonly pongWaiters: Array<(t: number | undefined) => void> = [];
+  private readonly pongWaiters: PongWaiter[] = [];
   private readonly frames: Observation[] = [];
   private readonly frameWaiters: Array<(frame: Observation | null) => void> = [];
   private streamScope = "screen";
   private closed = false;
+  private readonly rpcTimeoutMs: number;
 
   constructor(
     private readonly transport: Transport,
     readonly capabilities: Capabilities,
     readonly platform: Platform,
-  ) {}
+    opts: AciClientOptions = {},
+  ) {
+    this.rpcTimeoutMs = opts.rpcTimeoutMs ?? DEFAULT_RPC_TIMEOUT_MS;
+    if (!Number.isFinite(this.rpcTimeoutMs) || this.rpcTimeoutMs <= 0) {
+      throw new Error("rpcTimeoutMs must be a positive finite number");
+    }
+  }
 
   /** Feed one inbound wire message. The transport calls this for every frame received. */
   feed(data: string): void {
+    if (this.closed) return;
     let msg: AciMessage;
     try {
       msg = JSON.parse(data) as AciMessage;
@@ -59,7 +98,10 @@ export class AciClient {
     }
     if (msg.type === "pong") {
       const waiter = this.pongWaiters.shift();
-      if (waiter) waiter(msg.t);
+      if (waiter) {
+        clearTimeout(waiter.timer);
+        waiter.resolve(msg.t);
+      }
       return;
     }
     if (msg.type === "ack" || msg.type === "result") {
@@ -71,6 +113,7 @@ export class AciClient {
     const p = this.pending.get(callId);
     if (p) {
       this.pending.delete(callId);
+      clearTimeout(p.timer);
       p.resolve(msg);
     }
   }
@@ -85,15 +128,27 @@ export class AciClient {
   }
 
   private nextId(): string {
-    this.seq += 1;
-    return `c${this.seq}`;
+    processCallSequence += 1;
+    return `${PROCESS_CALL_PREFIX}-c${processCallSequence}`;
   }
 
   private rpc(callId: string, payload: AciMessage): Promise<AciMessage> {
     if (this.closed) return Promise.reject(new Error("client is closed"));
     return new Promise<AciMessage>((resolve, reject) => {
-      this.pending.set(callId, { resolve, reject });
-      this.transport.send(JSON.stringify(payload));
+      const timer = setTimeout(() => {
+        const pending = this.pending.get(callId);
+        if (pending === undefined) return;
+        this.pending.delete(callId);
+        pending.reject(new Error(`ACI RPC timed out after ${this.rpcTimeoutMs} ms`));
+      }, this.rpcTimeoutMs);
+      this.pending.set(callId, { resolve, reject, timer });
+      try {
+        this.transport.send(JSON.stringify(payload));
+      } catch (error) {
+        this.pending.delete(callId);
+        clearTimeout(timer);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
     });
   }
 
@@ -173,9 +228,26 @@ export class AciClient {
   ping(): Promise<number> {
     if (this.closed) return Promise.reject(new Error("client is closed"));
     const t0 = Date.now();
-    return new Promise<number>((resolve) => {
-      this.pongWaiters.push(() => resolve(Date.now() - t0));
-      this.transport.send(JSON.stringify({ type: "ping", t: t0 }));
+    return new Promise<number>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        const index = this.pongWaiters.indexOf(waiter);
+        if (index >= 0) this.pongWaiters.splice(index, 1);
+        reject(new Error(`ACI ping timed out after ${this.rpcTimeoutMs} ms`));
+      }, this.rpcTimeoutMs);
+      const waiter: PongWaiter = {
+        resolve: () => resolve(Date.now() - t0),
+        reject,
+        timer,
+      };
+      this.pongWaiters.push(waiter);
+      try {
+        this.transport.send(JSON.stringify({ type: "ping", t: t0 }));
+      } catch (error) {
+        const index = this.pongWaiters.indexOf(waiter);
+        if (index >= 0) this.pongWaiters.splice(index, 1);
+        clearTimeout(timer);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
     });
   }
 
@@ -222,14 +294,20 @@ export class AciClient {
     if (this.closed) return Promise.resolve(null);
     return new Promise<Observation | null>((resolve) => {
       let settled = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
       const done = (frame: Observation | null): void => {
         if (settled) return;
         settled = true;
+        if (timer !== undefined) clearTimeout(timer);
         resolve(frame);
       };
       this.frameWaiters.push(done);
       if (timeoutMs !== undefined) {
-        setTimeout(() => done(null), timeoutMs);
+        timer = setTimeout(() => {
+          const index = this.frameWaiters.indexOf(done);
+          if (index >= 0) this.frameWaiters.splice(index, 1);
+          done(null);
+        }, timeoutMs);
       }
     });
   }
@@ -252,11 +330,28 @@ export class AciClient {
 
   close(): void {
     if (this.closed) return;
-    this.closed = true;
-    for (const p of this.pending.values()) p.reject(new Error("client closed"));
-    this.pending.clear();
-    this.clearFrames();
+    this.fail(new Error("client closed"));
     this.transport.close();
+  }
+
+  /** Called by the socket adapter when an already-handshaken transport closes/errors. */
+  transportFailed(error: Error): void {
+    if (this.closed) return;
+    this.fail(error);
+  }
+
+  private fail(error: Error): void {
+    this.closed = true;
+    for (const p of this.pending.values()) {
+      clearTimeout(p.timer);
+      p.reject(error);
+    }
+    this.pending.clear();
+    for (const waiter of this.pongWaiters.splice(0)) {
+      clearTimeout(waiter.timer);
+      waiter.reject(error);
+    }
+    this.clearFrames();
   }
 }
 
@@ -273,6 +368,10 @@ interface RuntimeSocket {
 export interface ConnectOptions {
   token?: string;
   client?: ClientInfo;
+  /** Deadline for hello -> welcome. Defaults to 10 seconds. */
+  handshakeTimeoutMs?: number;
+  /** Deadline passed to the connected client's RPCs/pings. Defaults to 30 seconds. */
+  rpcTimeoutMs?: number;
   /** Override the socket factory (defaults to the global `WebSocket`); useful for tests. */
   openSocket?: (uri: string) => RuntimeSocket;
 }
@@ -297,36 +396,84 @@ export function connect(addr: string, opts: ConnectOptions = {}): Promise<AciCli
   const sock = factory(toUri(addr));
   return new Promise<AciClient>((resolve, reject) => {
     let handshaken = false;
+    let failed = false;
+    let client: AciClient | undefined;
+    const handshakeTimeoutMs = opts.handshakeTimeoutMs ?? DEFAULT_HANDSHAKE_TIMEOUT_MS;
+    if (!Number.isFinite(handshakeTimeoutMs) || handshakeTimeoutMs <= 0) {
+      reject(new Error("handshakeTimeoutMs must be a positive finite number"));
+      sock.close();
+      return;
+    }
+    if (opts.rpcTimeoutMs !== undefined && (!Number.isFinite(opts.rpcTimeoutMs) || opts.rpcTimeoutMs <= 0)) {
+      reject(new Error("rpcTimeoutMs must be a positive finite number"));
+      sock.close();
+      return;
+    }
+    const failHandshake = (error: Error, closeSocket: boolean): void => {
+      if (handshaken || failed) return;
+      failed = true;
+      clearTimeout(handshakeTimer);
+      if (closeSocket) sock.close();
+      reject(error);
+    };
+    const handshakeTimer = setTimeout(
+      () => failHandshake(new Error(`ACI handshake timed out after ${handshakeTimeoutMs} ms`), true),
+      handshakeTimeoutMs,
+    );
     const hello: Extract<AciMessage, { type: "hello" }> = { type: "hello", v: 0, client: opts.client ?? CLIENT_INFO };
     if (opts.token !== undefined) hello.token = opts.token;
 
-    sock.addEventListener("open", () => sock.send(JSON.stringify(hello)));
-    sock.addEventListener("error", () => reject(new Error("WebSocket error during ACI handshake")));
+    sock.addEventListener("open", () => {
+      if (failed) return;
+      try {
+        sock.send(JSON.stringify(hello));
+      } catch (error) {
+        failHandshake(error instanceof Error ? error : new Error(String(error)), true);
+      }
+    });
+    sock.addEventListener("error", () => {
+      const error = new Error(handshaken ? "WebSocket error" : "WebSocket error during ACI handshake");
+      if (handshaken) {
+        client?.transportFailed(error);
+        sock.close();
+      } else failHandshake(error, true);
+    });
     sock.addEventListener("close", () => {
-      if (!handshaken) reject(new Error("connection closed before ACI handshake completed"));
+      const error = new Error(
+        handshaken ? "WebSocket connection closed" : "connection closed before ACI handshake completed",
+      );
+      if (handshaken) client?.transportFailed(error);
+      else failHandshake(error, false);
     });
     sock.addEventListener("message", (ev: { data: unknown }) => {
+      if (failed) return;
       const data = typeof ev.data === "string" ? ev.data : String(ev.data);
       if (handshaken) {
-        client.feed(data);
+        client?.feed(data);
         return;
       }
       let msg: AciMessage;
       try {
         msg = JSON.parse(data) as AciMessage;
       } catch {
-        reject(new Error("malformed handshake reply"));
+        failHandshake(new Error("malformed handshake reply"), true);
         return;
       }
       if (msg.type !== "welcome") {
-        reject(new Error(`expected 'welcome', got '${msg.type}'`));
+        failHandshake(new Error(`expected 'welcome', got '${msg.type}'`), true);
         return;
       }
+      clearTimeout(handshakeTimer);
       handshaken = true;
-      client = new AciClient({ send: (d) => sock.send(d), close: () => sock.close() }, msg.capabilities, msg.server.platform);
+      const clientOptions: AciClientOptions = {};
+      if (opts.rpcTimeoutMs !== undefined) clientOptions.rpcTimeoutMs = opts.rpcTimeoutMs;
+      client = new AciClient(
+        { send: (d) => sock.send(d), close: () => sock.close() },
+        msg.capabilities,
+        msg.server.platform,
+        clientOptions,
+      );
       resolve(client);
     });
-
-    let client: AciClient;
   });
 }
