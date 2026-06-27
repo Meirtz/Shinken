@@ -11,7 +11,7 @@ use std::process::Command;
 
 use anyhow::{bail, Context, Result};
 
-use crate::executor::{ActionSpec, Executor, Target};
+use crate::executor::{ActionSpec, Executor, ExecutorCapabilityProfile, Target};
 
 /// The fixed helper: reads the verb + parameters from `argv` and calls the matching
 /// PyAutoGUI function. There is no `eval`/`exec` — only this closed dispatch — so wire
@@ -59,6 +59,19 @@ else:
 pub struct PyAutoGuiExecutor {
     python: String,
 }
+
+const PYAUTOGUI_VERBS: &[&str] = &[
+    "click",
+    "double_click",
+    "right_click",
+    "move",
+    "drag",
+    "mouse_down",
+    "mouse_up",
+    "scroll",
+    "type_text",
+    "key",
+];
 
 impl PyAutoGuiExecutor {
     /// Resolve the interpreter and verify PyAutoGUI imports, failing clearly otherwise.
@@ -211,6 +224,16 @@ impl Executor for PyAutoGuiExecutor {
     fn backend(&self) -> &'static str {
         "pyautogui"
     }
+
+    fn capability_profile(&self) -> ExecutorCapabilityProfile {
+        ExecutorCapabilityProfile {
+            verbs: PYAUTOGUI_VERBS,
+            targets: &["point_px"],
+            observation_types: &[],
+            image_formats: &[],
+            observe_after_act: false,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -220,6 +243,20 @@ mod tests {
 
     fn spec(value: serde_json::Value) -> ActionSpec {
         serde_json::from_value(value).expect("valid ActionSpec")
+    }
+
+    #[test]
+    fn capability_profile_does_not_claim_capture_or_structured_surfaces() {
+        let exec = PyAutoGuiExecutor {
+            python: "python3".to_string(),
+        };
+        let profile = exec.capability_profile();
+        assert!(profile.verbs.contains(&"click"));
+        assert!(!profile.verbs.contains(&"screenshot"));
+        assert_eq!(profile.targets, &["point_px"]);
+        assert!(profile.observation_types.is_empty());
+        assert!(profile.image_formats.is_empty());
+        assert!(!profile.observe_after_act);
     }
 
     #[test]

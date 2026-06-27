@@ -380,12 +380,33 @@ pub struct Readiness {
     pub permissions_pending: Option<bool>,
 }
 
+/// The capability surface implemented by one concrete action/capture backend.
+///
+/// Transport-owned verbs (currently `wait` and policy-gated `exec`) and the optional
+/// structured-observation family are composed on top by the connection handshake.  A
+/// backend must list only operations it can actually serve; typed runtime errors are for
+/// transient conditions, not a substitute for capability negotiation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ExecutorCapabilityProfile {
+    pub verbs: &'static [&'static str],
+    pub targets: &'static [&'static str],
+    pub observation_types: &'static [&'static str],
+    pub image_formats: &'static [&'static str],
+    /// Whether a successful mutating action can be followed by a pixel observation.
+    pub observe_after_act: bool,
+}
+
 /// Executes typed actions against a guest. Backends are swappable per OS.
 pub trait Executor: Send + Sync {
     /// Execute one action; returns a short status string or an error.
     fn execute(&self, action: &ActionSpec) -> Result<String>;
     /// A human label for the active backend.
     fn backend(&self) -> &'static str;
+    /// The stable operation/capture surface this concrete backend implements.  The
+    /// conservative default advertises nothing; production backends opt in explicitly.
+    fn capability_profile(&self) -> ExecutorCapabilityProfile {
+        ExecutorCapabilityProfile::default()
+    }
     /// The display geometry `(width, height)` in px, for the `screen_size` query (#138).
     /// Default suits a headless/no-display backend; X11 reports the real root size.
     fn screen_size(&self) -> (u16, u16) {
@@ -2055,9 +2076,42 @@ pub(crate) fn parse_combo(combo: &str) -> (Vec<&str>, &str) {
     }
 }
 
+const X11_VERBS: &[&str] = &[
+    "click",
+    "double_click",
+    "right_click",
+    "move",
+    "drag",
+    "mouse_down",
+    "mouse_up",
+    "scroll",
+    "type_text",
+    "key",
+    "screenshot",
+    "start_screencast",
+    "stop_screencast",
+    "clipboard_get",
+    "clipboard_set",
+    "launch_app",
+    "activate_window",
+];
+const PIXEL_TARGETS: &[&str] = &["point_px", "point_norm"];
+const PIXEL_OBSERVATIONS: &[&str] = &["screenshot", "screencast"];
+const PIXEL_FORMATS: &[&str] = &["png", "jpeg"];
+
 impl Executor for X11Executor {
     fn backend(&self) -> &'static str {
         "x11/xtest"
+    }
+
+    fn capability_profile(&self) -> ExecutorCapabilityProfile {
+        ExecutorCapabilityProfile {
+            verbs: X11_VERBS,
+            targets: PIXEL_TARGETS,
+            observation_types: PIXEL_OBSERVATIONS,
+            image_formats: PIXEL_FORMATS,
+            observe_after_act: true,
+        }
     }
 
     fn screen_size(&self) -> (u16, u16) {
@@ -2373,6 +2427,16 @@ impl Executor for LazyX11Executor {
         "x11/xtest"
     }
 
+    fn capability_profile(&self) -> ExecutorCapabilityProfile {
+        ExecutorCapabilityProfile {
+            verbs: X11_VERBS,
+            targets: PIXEL_TARGETS,
+            observation_types: PIXEL_OBSERVATIONS,
+            image_formats: PIXEL_FORMATS,
+            observe_after_act: true,
+        }
+    }
+
     fn execute(&self, a: &ActionSpec) -> Result<String> {
         self.try_connect()
             .context("X11 display not available yet")?
@@ -2488,9 +2552,37 @@ pub struct VirtualExecutor {
     clipboard: Mutex<Option<String>>,
 }
 
+const VIRTUAL_VERBS: &[&str] = &[
+    "click",
+    "double_click",
+    "right_click",
+    "move",
+    "drag",
+    "mouse_down",
+    "mouse_up",
+    "scroll",
+    "type_text",
+    "key",
+    "screenshot",
+    "start_screencast",
+    "stop_screencast",
+    "clipboard_get",
+    "clipboard_set",
+];
+
 impl Executor for VirtualExecutor {
     fn backend(&self) -> &'static str {
         "virtual"
+    }
+
+    fn capability_profile(&self) -> ExecutorCapabilityProfile {
+        ExecutorCapabilityProfile {
+            verbs: VIRTUAL_VERBS,
+            targets: PIXEL_TARGETS,
+            observation_types: PIXEL_OBSERVATIONS,
+            image_formats: PIXEL_FORMATS,
+            observe_after_act: true,
+        }
     }
 
     fn execute(&self, a: &ActionSpec) -> Result<String> {
@@ -2569,6 +2661,21 @@ mod tests {
 
     fn spec(json: &str) -> ActionSpec {
         serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn built_in_profiles_are_explicit_and_backend_specific() {
+        let x11 = LazyX11Executor::default().capability_profile();
+        assert!(x11.verbs.contains(&"screenshot"));
+        assert!(x11.verbs.contains(&"launch_app"));
+        assert!(x11.targets.contains(&"point_norm"));
+        assert_eq!(x11.image_formats, &["png", "jpeg"]);
+
+        let virtual_profile = VirtualExecutor::default().capability_profile();
+        assert!(virtual_profile.verbs.contains(&"screenshot"));
+        assert!(virtual_profile.verbs.contains(&"clipboard_set"));
+        assert!(!virtual_profile.verbs.contains(&"launch_app"));
+        assert!(virtual_profile.observe_after_act);
     }
 
     #[test]

@@ -243,7 +243,11 @@ impl Session {
                     .and_then(serde_json::Value::as_bool)
                     .unwrap_or(false);
                 self.authed = true;
-                Step::reply(&protocol::welcome_with_exec(self.exec_enabled))
+                Step::reply(&protocol::welcome_for_runtime(
+                    self.exec.as_ref(),
+                    self.tree.is_some(),
+                    self.exec_enabled,
+                ))
             }
             _ => Step::close(protocol::error_result_text(
                 "?",
@@ -946,6 +950,31 @@ mod tests {
             .unwrap()
             .into_text()
             .contains("\"type\":\"welcome\""));
+    }
+
+    #[test]
+    fn welcome_is_backend_aware_and_does_not_advertise_missing_tree() {
+        let mut s = session(None); // virtual pixels, no structured tree source
+        let welcome = s.on_text(HELLO).reply.unwrap().into_text();
+        let welcome: serde_json::Value = serde_json::from_str(&welcome).unwrap();
+        let caps = &welcome["capabilities"];
+        let verbs = caps["verbs"].as_array().unwrap();
+        let has = |verb: &str| verbs.iter().any(|value| value == verb);
+
+        assert!(has("click") && has("screenshot") && has("wait") && has("exec"));
+        assert!(!has("observe") && !has("invoke_action") && !has("set_value"));
+        assert!(!has("launch_app") && !has("activate_window"));
+        assert_eq!(caps["structured_observation"], false);
+        assert_eq!(caps["frame_dedup"], true);
+        assert_eq!(caps["observe_after_act"], true);
+        assert_eq!(
+            caps["targets"],
+            serde_json::json!(["point_px", "point_norm"])
+        );
+        assert_eq!(
+            caps["observation_types"],
+            serde_json::json!(["screenshot", "screencast"])
+        );
     }
 
     #[test]
@@ -1948,6 +1977,35 @@ mod tests {
         let mut s = Session::new(None, exec.clone()).with_tree_source(src);
         s.on_text(HELLO);
         (s, exec)
+    }
+
+    #[test]
+    fn welcome_adds_structured_surface_only_when_tree_is_attached() {
+        let src = Arc::new(FakeSource::new(sample_tree()));
+        let exec = Arc::new(TargetRecorder::default());
+        let mut s = Session::new(None, exec).with_tree_source(src);
+        let welcome = s.on_text(HELLO).reply.unwrap().into_text();
+        let welcome: serde_json::Value = serde_json::from_str(&welcome).unwrap();
+        let caps = &welcome["capabilities"];
+        let verbs = caps["verbs"].as_array().unwrap();
+
+        for verb in ["observe", "invoke_action", "set_value"] {
+            assert!(verbs.iter().any(|value| value == verb), "missing {verb}");
+        }
+        assert_eq!(caps["structured_observation"], true);
+        assert!(caps["targets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v == "element_ref"));
+        assert!(caps["observation_types"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v == "a11y"));
+        // The target-recorder has no pixel-capture profile, so tree presence must not
+        // fabricate screenshot/dedup support.
+        assert_eq!(caps["frame_dedup"], false);
     }
 
     const OBSERVE: &str =
