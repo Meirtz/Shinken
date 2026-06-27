@@ -21,8 +21,31 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          # The tree scan catches the final checkout; full history is needed to catch a
+          # credential added in one PR commit and deleted in a later commit.
+          fetch-depth: 0
       - run: bash scripts/check-no-internal.sh --self-test
       - run: bash scripts/check-no-internal.sh
+      - name: Scan every commit added by this change
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          PUSH_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            range="$PR_BASE_SHA..$PR_HEAD_SHA"
+          elif [[ -n "$PUSH_BEFORE_SHA" && ! "$PUSH_BEFORE_SHA" =~ ^0+$ ]]; then
+            range="$PUSH_BEFORE_SHA..$PUSH_SHA"
+          elif git rev-parse HEAD^ >/dev/null 2>&1; then
+            range="HEAD^..HEAD"
+          else
+            range="HEAD"
+          fi
+          bash scripts/check-no-internal.sh --history "$range"
 
   schema:
     name: Schema sanity
