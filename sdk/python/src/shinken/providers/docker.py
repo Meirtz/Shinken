@@ -547,30 +547,15 @@ class DockerLocalProvider(SandboxProvider):
         )
 
     def reset(self, handle: SandboxHandle) -> SandboxHandle:
-        spec = SandboxSpec(
-            image=str(handle.metadata.get("image") or self.image),
-            screen_geometry=str(handle.metadata.get("screen_geometry") or "1280x800x24"),
-            metadata={
-                k: v for k, v in handle.metadata.items() if k not in {"container_id", "port"}
-            },
-        )
-        resources: dict[str, Any] = dict(handle.metadata.get("resources") or {})
-        spec.memory = resources.get("memory")
-        spec.cpus = resources.get("cpus")
-        spec.pids_limit = resources.get("pids_limit")
-        spec.shm_size = resources.get("shm_size")
+        spec = self._spec_from_handle(handle)
         self.destroy(handle)
         return self.create(spec)
 
     def destroy(self, handle: SandboxHandle) -> None:
+        if handle.metadata.get("destroyed"):
+            return
         try:
-            subprocess.run(
-                [self.docker_bin, "rm", "-f", handle.sandbox_id],
-                check=False,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=15,
-            )
+            _run([self.docker_bin, "rm", "-f", handle.sandbox_id], timeout=15)
         except subprocess.TimeoutExpired as exc:
             raise ProviderError(f"timed out destroying sandbox {handle.sandbox_id}") from exc
         handle.metadata["destroyed"] = True

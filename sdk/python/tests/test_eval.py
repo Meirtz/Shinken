@@ -39,7 +39,10 @@ def test_eval_setup_error_distinct_from_task_failure(mock_shinkend, tmp_path):
         raise ev.SetupError("display not ready")
 
     task = ev.Task(
-        "t", run=lambda e: None, verify=lambda env: ev.VerifierReceipt(True, []), setup=setup
+        "t",
+        run=lambda e: None,
+        verify=lambda env: ev.VerifierReceipt.from_checks([ev.check("unused", True)]),
+        setup=setup,
     )
     s = ev.run_eval(task, _factory(mock_shinkend), n=3, out_dir=str(tmp_path))
     assert s.setup_errors == 3 and s.passed == 0
@@ -117,7 +120,10 @@ def test_run_eval_forked_golden_setup_error_skips_forks(mock_shinkend, tmp_path)
         raise ev.SetupError("display not ready")
 
     task = ev.Task(
-        "t", run=lambda e: None, verify=lambda e: ev.VerifierReceipt(True, []), setup=setup
+        "t",
+        run=lambda e: None,
+        verify=lambda e: ev.VerifierReceipt.from_checks([ev.check("unused", True)]),
+        setup=setup,
     )
     prov = _ForkFakeProvider(_factory(mock_shinkend))
     s = ev.run_eval_forked(task, prov, n=2, out_dir=str(tmp_path))
@@ -130,13 +136,39 @@ def test_verifier_receipt_schema():
     jsonschema.validate(r.to_dict(), ev.RECEIPT_SCHEMA)  # valid receipt passes
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate({"passed": "yes", "checks": []}, ev.RECEIPT_SCHEMA)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({"passed": False, "checks": []}, ev.RECEIPT_SCHEMA)
+
+
+def test_verifier_receipt_rejects_empty_checks():
+    with pytest.raises(ValueError, match="at least one check"):
+        ev.VerifierReceipt.from_checks([])
+    with pytest.raises(ValueError, match="at least one check"):
+        ev.VerifierReceipt(True, [])
+
+
+@pytest.mark.parametrize(
+    "verdict",
+    [
+        {"passed": True, "checks": []},
+        {"passed": False, "checks": []},
+    ],
+)
+def test_eval_empty_verifier_checks_are_scorer_error(verdict, mock_shinkend, tmp_path):
+    task = ev.Task("empty-receipt", run=lambda _e: None, verify=lambda _e: verdict)
+    summary = ev.run_eval(task, _factory(mock_shinkend), n=1, out_dir=str(tmp_path))
+    (result,) = summary.results
+    assert result.kind == "error"
+    assert result.exit_reason == "scorer_error"
+    assert result.passed is False
+    assert result.receipt.checks
 
 
 # --- kind <-> exit_reason alignment (#56): one documented mapping, no drift -------------
 
 
 def test_run_result_exit_reason_derives_from_kind():
-    receipt = ev.VerifierReceipt(False, [])
+    receipt = ev.VerifierReceipt.from_checks([ev.check("placeholder", False)])
     # The documented projection (eval.py tasks are unbudgeted -> verdicts complete):
     expect = {
         "pass": "task_complete",
@@ -173,7 +205,10 @@ def test_eval_failure_paths_set_exit_reason(mock_shinkend, tmp_path):
         raise ev.SetupError("display not ready")
 
     task = ev.Task(
-        "t", run=lambda e: None, verify=lambda e: ev.VerifierReceipt(True, []), setup=setup
+        "t",
+        run=lambda e: None,
+        verify=lambda e: ev.VerifierReceipt.from_checks([ev.check("unused", True)]),
+        setup=setup,
     )
     s = ev.run_eval(task, _factory(mock_shinkend), n=1, out_dir=str(tmp_path))
     assert s.results[0].exit_reason == "setup_error"
@@ -181,7 +216,11 @@ def test_eval_failure_paths_set_exit_reason(mock_shinkend, tmp_path):
     def run_dead(_env):
         raise ConnectionError("socket closed")
 
-    task2 = ev.Task("t2", run=run_dead, verify=lambda e: ev.VerifierReceipt(True, []))
+    task2 = ev.Task(
+        "t2",
+        run=run_dead,
+        verify=lambda e: ev.VerifierReceipt.from_checks([ev.check("unused", True)]),
+    )
     s2 = ev.run_eval(task2, _factory(mock_shinkend), n=1, out_dir=str(tmp_path))
     assert s2.results[0].kind == "sandbox_died"
     assert s2.results[0].exit_reason == "sandbox_died"

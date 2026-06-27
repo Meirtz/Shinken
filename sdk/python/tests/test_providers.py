@@ -89,6 +89,73 @@ def test_docker_provider_builds_run_command(monkeypatch):
     assert handle.metadata["container_id"] == "container-id"
 
 
+def test_docker_reset_replays_complete_recorded_spec(monkeypatch):
+    provider = DockerLocalProvider()
+    original = SandboxSpec(
+        image="custom-image",
+        os="linux",
+        needs_gui=False,
+        needs_gpu=True,
+        fast_reset=True,
+        state_fidelity="process_memory",
+        memory="3g",
+        cpus=2.5,
+        pids_limit=77,
+        shm_size="256m",
+        screen_geometry="1440x900x24",
+        extra_env={"VISIBLE_SETTING": "yes"},
+        metadata={"suite": "full-reset-contract"},
+    )
+    handle = SandboxHandle(
+        provider="docker-local",
+        sandbox_id="old",
+        addr="127.0.0.1:1",
+        metadata={"sandbox_spec": provider._spec_to_record(original)},
+    )
+    replacement = SandboxHandle("docker-local", "new", "127.0.0.1:2")
+    destroyed: list[SandboxHandle] = []
+    created: list[SandboxSpec] = []
+    monkeypatch.setattr(provider, "destroy", lambda value: destroyed.append(value))
+
+    def capture_create(spec):
+        created.append(spec)
+        return replacement
+
+    monkeypatch.setattr(provider, "create", capture_create)
+    assert provider.reset(handle) is replacement
+    assert destroyed == [handle]
+    assert created == [original]
+
+
+def test_docker_destroy_failure_is_reported_and_not_marked_destroyed(monkeypatch):
+    handle = SandboxHandle("docker-local", "still-running", "127.0.0.1:1")
+
+    def fail_rm(cmd, **kwargs):
+        assert cmd == ["docker", "rm", "-f", "still-running"]
+        assert kwargs["check"] is True
+        raise subprocess.CalledProcessError(1, cmd, stderr="docker daemon unavailable")
+
+    monkeypatch.setattr(subprocess, "run", fail_rm)
+    with pytest.raises(ProviderError, match="docker daemon unavailable"):
+        DockerLocalProvider().destroy(handle)
+    assert "destroyed" not in handle.metadata
+
+
+def test_docker_destroy_is_idempotent_after_success(monkeypatch):
+    calls: list[list[str]] = []
+
+    def ok_rm(cmd, **_kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", ok_rm)
+    handle = SandboxHandle("docker-local", "one-shot", "127.0.0.1:1")
+    provider = DockerLocalProvider()
+    provider.destroy(handle)
+    provider.destroy(handle)
+    assert calls == [["docker", "rm", "-f", "one-shot"]]
+
+
 def _docker_create(monkeypatch, **kwargs):
     commands: list[list[str]] = []
 
@@ -203,18 +270,11 @@ def test_docker_provider_cleans_up_if_readiness_fails(monkeypatch):
         raise RuntimeError("not ready")
 
     monkeypatch.setattr(DockerLocalProvider, "_wait_ready", fail_wait)
-    removed: list[str] = []
-
-    def fake_subprocess_run(cmd, **_kwargs):
-        removed.extend(cmd)
-        return subprocess.CompletedProcess(cmd, 0)
-
-    monkeypatch.setattr(subprocess, "run", fake_subprocess_run)
 
     provider = DockerLocalProvider(image="shinken/test", name_prefix="test-sandbox")
     with pytest.raises(RuntimeError, match="not ready"):
         provider.create()
-    assert removed[:3] == ["docker", "rm", "-f"]
+    assert any(cmd[:3] == ["docker", "rm", "-f"] for cmd in commands)
 
 
 def test_docker_provider_destroy_all_uses_labels(monkeypatch):

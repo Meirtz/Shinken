@@ -181,6 +181,7 @@ def test_snapshot_dumps_stopped_commits_then_resumes_donor(monkeypatch):
     commit_i = next(i for i, c in enumerate(calls) if c[:2] == ["docker", "commit"])
     resume_i = next(i for i, c in enumerate(calls) if "kill -s CONT -- -1" in " ".join(c))
     assert dump_i < commit_i < resume_i
+    assert "/proc/$tree_pid/status" in calls[resume_i][-1]
     script = calls[dump_i][-1]
     assert "criu dump" in script
     assert "--leave-stopped" in script
@@ -243,6 +244,111 @@ def test_criu_resumes_donor_when_dump_fails(monkeypatch):
     resume_i = next(i for i, c in enumerate(calls) if "kill -s CONT -- -1" in " ".join(c))
     cleanup_i = next(i for i, c in enumerate(calls) if c[:3] == ["docker", "run", "--rm"])
     assert dump_i < resume_i < cleanup_i
+
+
+def test_criu_retries_and_verifies_donor_resume(monkeypatch):
+    calls: list[list[str]] = []
+    resume_attempts = 0
+
+    def fake_run(cmd, timeout=30.0):
+        nonlocal resume_attempts
+        calls.append(cmd)
+        joined = " ".join(cmd)
+        if "criu dump" in joined:
+            return subprocess.CompletedProcess(cmd, 0, stdout="431\n", stderr="")
+        if cmd[:2] == ["docker", "commit"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="sha256:retry-proof\n", stderr="")
+        if "kill -s CONT -- -1" in joined:
+            resume_attempts += 1
+            if resume_attempts == 1:
+                raise ProviderError("transient resume failure")
+            assert "/proc/$tree_pid/status" in cmd[-1]
+        return subprocess.CompletedProcess(cmd, 0, stdout="cid\n", stderr="")
+
+    monkeypatch.setattr("shinken.providers.criu._run", fake_run)
+    provider = CriuDockerProvider(images_volume="v")
+    snapshot = provider.snapshot(_handle())
+    assert snapshot in provider._snapshots
+    assert resume_attempts == provider._DONOR_RESUME_ATTEMPTS
+
+
+def test_criu_resume_failure_does_not_mask_primary_snapshot_error(monkeypatch):
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, timeout=30.0):
+        calls.append(cmd)
+        joined = " ".join(cmd)
+        if "criu dump" in joined:
+            return subprocess.CompletedProcess(cmd, 0, stdout="431\n", stderr="")
+        if cmd[:2] == ["docker", "commit"]:
+            raise ProviderError("primary commit failure")
+        if "kill -s CONT -- -1" in joined:
+            raise ProviderError("resume command failure")
+        return subprocess.CompletedProcess(cmd, 0, stdout="cid\n", stderr="")
+
+    monkeypatch.setattr("shinken.providers.criu._run", fake_run)
+    provider = CriuDockerProvider(images_volume="v")
+    with pytest.raises(ProviderError, match="primary commit failure") as raised:
+        provider.snapshot(_handle())
+    assert isinstance(raised.value.__cause__, ProviderError)
+    assert "failed to resume and verify CRIU donor" in str(raised.value.__cause__)
+    resume_indices = [i for i, c in enumerate(calls) if "kill -s CONT -- -1" in " ".join(c)]
+    assert len(resume_indices) == provider._DONOR_RESUME_ATTEMPTS
+    cleanup_i = next(i for i, c in enumerate(calls) if c[:3] == ["docker", "run", "--rm"])
+    assert cleanup_i > max(resume_indices)
+
+
+def test_criu_resume_failure_removes_committed_but_unpublished_snapshot(monkeypatch):
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, timeout=30.0):
+        calls.append(cmd)
+        joined = " ".join(cmd)
+        if "criu dump" in joined:
+            return subprocess.CompletedProcess(cmd, 0, stdout="431\n", stderr="")
+        if cmd[:2] == ["docker", "commit"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="sha256:unpublished\n", stderr="")
+        if "kill -s CONT -- -1" in joined:
+            raise ProviderError("resume command failure")
+        return subprocess.CompletedProcess(cmd, 0, stdout="cid\n", stderr="")
+
+    monkeypatch.setattr("shinken.providers.criu._run", fake_run)
+    provider = CriuDockerProvider(images_volume="v")
+    with pytest.raises(ProviderError, match="failed to resume and verify CRIU donor"):
+        provider.snapshot(_handle())
+
+    commit = next(c for c in calls if c[:2] == ["docker", "commit"])
+    image_tag = commit[-1]
+    rmi_i = next(i for i, c in enumerate(calls) if c == ["docker", "rmi", "-f", image_tag])
+    dump_cleanup_i = next(i for i, c in enumerate(calls) if c[:3] == ["docker", "run", "--rm"])
+    resume_indices = [i for i, c in enumerate(calls) if "kill -s CONT -- -1" in " ".join(c)]
+    assert max(resume_indices) < rmi_i < dump_cleanup_i
+    assert provider._snapshots == {}
+    assert provider._mem == {}
+
+
+def test_criu_cleanup_failures_do_not_mask_resume_failure(monkeypatch, caplog):
+    def fake_run(cmd, timeout=30.0):
+        joined = " ".join(cmd)
+        if "criu dump" in joined:
+            return subprocess.CompletedProcess(cmd, 0, stdout="431\n", stderr="")
+        if cmd[:2] == ["docker", "commit"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="sha256:unpublished\n", stderr="")
+        if "kill -s CONT -- -1" in joined:
+            raise ProviderError("resume command failure")
+        if cmd[:2] == ["docker", "rmi"]:
+            raise ProviderError("image cleanup failure")
+        if cmd[:3] == ["docker", "run", "--rm"]:
+            raise ProviderError("dump cleanup failure")
+        return subprocess.CompletedProcess(cmd, 0, stdout="cid\n", stderr="")
+
+    monkeypatch.setattr("shinken.providers.criu._run", fake_run)
+    provider = CriuDockerProvider(images_volume="v")
+    with caplog.at_level("ERROR"):
+        with pytest.raises(ProviderError, match="failed to resume and verify CRIU donor"):
+            provider.snapshot(_handle())
+    assert "failed to remove unpublished CRIU image" in caplog.text
+    assert "failed to remove incomplete CRIU dump" in caplog.text
 
 
 # --- restore: idle boot + parked PIDs + criu restore ------------------------------------

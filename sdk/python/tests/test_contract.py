@@ -647,6 +647,8 @@ def test_verifier_receipt_contract():
     jsonschema.validate(r.to_dict(), RECEIPT_SCHEMA)
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate({"passed": "no", "checks": []}, RECEIPT_SCHEMA)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({"passed": False, "checks": []}, RECEIPT_SCHEMA)
 
 
 # --- packaged schemas == repo source-of-truth (no wheel/repo drift) ---

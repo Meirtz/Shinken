@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import math
 import os
 import posixpath
 import re
@@ -50,6 +51,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from shinken._lifecycle import connect_owned_handle
 from shinken.errors import ShinkenError
 from shinken.providers.base import SandboxSpec
 
@@ -84,7 +86,14 @@ def parse_reward(output: str) -> float | None:
     ``REWARD: X.X`` line. Returns ``None`` when no such line exists (a broken reward run is
     typed, never silently scored 0.0)."""
     matches = _REWARD_RE.findall(output or "")
-    return float(matches[-1]) if matches else None
+    if not matches:
+        return None
+    reward = float(matches[-1])
+    if not math.isfinite(reward):
+        raise CuaGymError(f"reward must be finite, got {reward!r}")
+    if not 0.0 <= reward <= 1.0:
+        raise CuaGymError(f"reward must be in [0.0, 1.0], got {reward!r}")
+    return reward
 
 
 # --------------------------------------------------------------------------- task source
@@ -333,8 +342,10 @@ class ShinkenCuaGymEnv:
         # CUA-Gym setup is GUI state preparation, not merely file installation. Fail
         # closed on Docker's filesystem tier instead of silently checkpointing files
         # while losing the application/window/process state the agent is meant to see.
-        # A caller may explicitly pass filesystem fidelity for a task whose launch/focus
-        # is replayed after every restore.
+        # Only the trusted caller may lower this requirement after auditing that every
+        # required launch/focus step is replayed after restore. Bundle content is an
+        # untrusted workload, so a self-declared fidelity field must never authorize a
+        # weaker state contract.
         self.spec = spec if spec is not None else SandboxSpec(state_fidelity="process_memory")
         self.exec_factory = exec_factory
         self.guest_python = guest_python
@@ -353,10 +364,16 @@ class ShinkenCuaGymEnv:
         if self.golden_checkpoint is None:
             self.golden_checkpoint = self._build_golden()
         self._teardown_replica()
-        self._handle = self.provider.resume(self.golden_checkpoint)
-        self._sess = self.provider.connect(self._handle)
-        self._exec = self._exec_channel(self._sess, self._handle)
-        return {"instruction": self.task.instruction, "screenshot": self.screenshot()}
+        handle = self.provider.resume(self.golden_checkpoint)
+        sess = connect_owned_handle(self.provider, handle)
+        self._handle = handle
+        self._sess = sess
+        try:
+            self._exec = self._exec_channel(sess, handle)
+            return {"instruction": self.task.instruction, "screenshot": self.screenshot()}
+        except BaseException:
+            self._teardown_replica()
+            raise
 
     def _exec_channel(self, sess: Any, handle: Any) -> GuestExec:
         """The guest exec channel for one connected replica: PREFER the typed in-band
@@ -474,14 +491,14 @@ class ShinkenCuaGymEnv:
         ``REWARD: X.X`` line (their contract). Raises :class:`CuaGymError` when the script
         fails or emits no reward line — a broken scorer is typed, never a fake 0.0."""
         result = self.run_python(self.task.reward_script)
+        rc = result.get("returncode")
+        if rc != 0:
+            raise CuaGymError(
+                f"reward.py failed (rc={rc}): "
+                f"{str(result.get('error') or result.get('output'))[:300]}"
+            )
         reward = parse_reward(str(result.get("output", "")))
         if reward is None:
-            rc = result.get("returncode")
-            if rc == 0:
-                # Released-bundle convention: reward scripts may early-exit cleanly with a
-                # diagnostic (e.g. "result file missing") and no REWARD line — that is a
-                # scored 0.0, not a broken scorer.
-                return 0.0
             raise CuaGymError(
                 f"reward.py failed with no 'REWARD: X.X' line (rc={rc}): "
                 f"{str(result.get('error') or result.get('output'))[:300]}"

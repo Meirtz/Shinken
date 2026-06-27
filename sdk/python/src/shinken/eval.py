@@ -96,6 +96,7 @@ RECEIPT_SCHEMA: dict = {
         "passed": {"type": "boolean"},
         "checks": {
             "type": "array",
+            "minItems": 1,
             "items": {
                 "type": "object",
                 "required": ["name", "ok"],
@@ -115,10 +116,16 @@ class VerifierReceipt:
     """The verdict for one run: an overall pass plus the individual checks + evidence."""
 
     passed: bool
-    checks: list[dict] = field(default_factory=list)
+    checks: list[dict]
+
+    def __post_init__(self) -> None:
+        if not self.checks:
+            raise ValueError("a verifier receipt must contain at least one check")
 
     @classmethod
     def from_checks(cls, checks: list[dict]) -> VerifierReceipt:
+        if not checks:
+            raise ValueError("a verifier receipt must contain at least one check")
         return cls(passed=all(c["ok"] for c in checks), checks=checks)
 
     def to_dict(self) -> dict:
@@ -136,6 +143,8 @@ def _coerce_receipt(verdict: Any) -> VerifierReceipt:
     :class:`~shinken.errors.ScorerError` (``kind="garbage"``) → the run records
     ``exit_reason="scorer_error"``, never a fake verdict."""
     if isinstance(verdict, VerifierReceipt):
+        if not verdict.checks:
+            raise ScorerError("verifier returned a receipt with no checks", kind="garbage")
         return verdict
     passed = getattr(verdict, "passed", None)
     checks = getattr(verdict, "checks", None)
@@ -143,11 +152,25 @@ def _coerce_receipt(verdict: Any) -> VerifierReceipt:
         passed = verdict.get("passed")
         checks = verdict.get("checks")
     if isinstance(passed, bool):
-        return VerifierReceipt(passed, list(checks or []))
+        if not isinstance(checks, list | tuple) or not checks:
+            raise ScorerError("verifier returned a receipt with no checks", kind="garbage")
+        return VerifierReceipt(passed, list(checks))
     raise ScorerError(
         f"verifier returned {type(verdict).__name__!r}; expected a VerifierReceipt "
         "(or a receipt-shaped object/dict with a boolean `passed`)",
         kind="garbage",
+    )
+
+
+def _no_verdict_receipt() -> VerifierReceipt:
+    """Schema-valid placeholder for a run that never produced a verifier verdict.
+
+    ``RunResult.kind`` remains the authority that distinguishes this harness/infra
+    outcome from a scored task failure; the receipt merely avoids emitting an invalid
+    empty ``checks`` array on those paths.
+    """
+    return VerifierReceipt.from_checks(
+        [check("verifier produced a verdict", False, {"reason": "no verifier verdict"})]
     )
 
 
@@ -274,7 +297,7 @@ def run_eval(
         err: str | None = None
         passed = False
         steps = 0
-        receipt = VerifierReceipt(False, [])
+        receipt = _no_verdict_receipt()
         kind = "pass"
         reason: str | None = None  # None -> derived from kind (verdicts are task_complete)
         t0 = time.perf_counter()
@@ -376,7 +399,7 @@ def _score_replica(i: int, env: Any, task: Task) -> RunResult:
     err: str | None = None
     passed = False
     steps = 0
-    receipt = VerifierReceipt(False, [])
+    receipt = _no_verdict_receipt()
     kind = "pass"
     reason: str | None = None  # None -> derived from kind (verdicts are task_complete)
     t0 = time.perf_counter()
@@ -435,9 +458,7 @@ def run_eval_forked(
             kind = _classify_run_failure(exc)
             reason = _failure_exit_reason(exc, kind)
             res = [
-                RunResult(
-                    i, False, 0, 0.0, VerifierReceipt(False, []), f"{kind}: {exc}", kind, reason
-                )
+                RunResult(i, False, 0, 0.0, _no_verdict_receipt(), f"{kind}: {exc}", kind, reason)
                 for i in range(n)
             ]
             return _summarize(task.name, n, res)
@@ -465,7 +486,7 @@ def run_eval_forked(
                 reason = _failure_exit_reason(exc, kind)
                 results.append(
                     RunResult(
-                        i, False, 0, 0.0, VerifierReceipt(False, []), f"{kind}: {exc}", kind, reason
+                        i, False, 0, 0.0, _no_verdict_receipt(), f"{kind}: {exc}", kind, reason
                     )
                 )
             finally:
