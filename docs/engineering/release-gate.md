@@ -52,8 +52,8 @@ Core semantics that must be demonstrable (most are covered by the jobs above):
 - [ ] **ACI v0**: handshake + honest capability negotiation; typed actions; unknown verbs/fields rejected.
 - [ ] **Act + observe (Linux/X11)**: pointer/keyboard; screenshot; real-time screencast (idle-suppression + downscale); focused-window/`window:<id>` capture.
 - [ ] **Runtime state**: Docker disk-tier checkpoint/fork/resume is exposed and documented; unsupported providers report unsupported operations honestly.
-- [ ] **Runtime boundary**: every TCP listener requires token authentication; browser `Origin` is deny-by-default with an exact allowlist; privileged in-guest `exec` is default-off and omitted from advertised capabilities unless explicitly enabled.
-- [ ] **Policy seam**: local Action-Gateway capability checks deny ungranted actions before dispatch when enabled. This broader SDK capability gateway remains a **client-side reference shim** (#84/#161); server-side auth/origin/exec gates are enforced, while full per-action Cedar policy (D6) remains post-v0.0.1.
+- [ ] **Runtime boundary**: every TCP listener requires token authentication; browser `Origin` is deny-by-default with an exact allowlist; arbitrary in-guest process spawning (`exec` and executable-path `launch_app`) is default-off and omitted from advertised capabilities unless explicitly enabled.
+- [ ] **Policy seam**: local Action-Gateway capability checks deny ungranted actions before dispatch when enabled. This broader SDK capability gateway remains a **client-side reference shim** (#84/#161); server-side auth/origin/process-spawn gates are enforced, while full per-action Cedar policy (D6) remains post-v0.0.1.
 - [ ] **Eval**: tiny harness with verifier receipts + N-run summary; OSWorld-compatible interface + first-party smoke.
 - [ ] **Adapters/agents**: at least one provider-neutral smoke-agent path (skips cleanly without credentials).
 - [ ] **Docs honest**: README/roadmap reconciled with `status.md`; designed-only features not claimed as built.

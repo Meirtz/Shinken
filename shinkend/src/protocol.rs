@@ -25,6 +25,7 @@ pub struct ServerInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Capabilities {
     pub schema_version: u8,
     pub verbs: Vec<String>,
@@ -105,7 +106,7 @@ pub struct TileRef {
 
 /// One ACI message. `#[serde(tag = "type")]` gives the `{"type": "..."}` discriminator.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Message {
     Hello {
         v: u8,
@@ -300,8 +301,8 @@ pub fn capabilities() -> Capabilities {
 }
 
 /// Build the honest capability subset for one live executor + optional tree source.
-/// Transport-owned `wait` is universal, `exec` is policy-gated, and the structured
-/// family exists only when this session can actually reach a tree source.
+/// Transport-owned `wait` is universal, process-spawning verbs are policy-gated, and
+/// the structured family exists only when this session can actually reach a tree source.
 pub fn capabilities_for_runtime(
     exec: &dyn crate::executor::Executor,
     has_tree: bool,
@@ -309,7 +310,7 @@ pub fn capabilities_for_runtime(
 ) -> Capabilities {
     let profile = exec.capability_profile();
     let supports_verb = |verb: &str| {
-        profile.verbs.contains(&verb)
+        (profile.verbs.contains(&verb) && (verb != "launch_app" || exec_enabled))
             || verb == "wait"
             || (verb == "exec" && exec_enabled)
             || (has_tree && TREE_VERBS.contains(&verb))
@@ -356,14 +357,16 @@ pub fn welcome() -> Message {
     welcome_with_exec(true)
 }
 
-/// Build a policy-aware `welcome`. `exec` is a privileged server surface and is
-/// omitted unless the operator explicitly enabled it; clients must never be told a
-/// disabled action is available.
+/// Build a policy-aware `welcome`. Arbitrary process-spawning surfaces are omitted
+/// unless the operator explicitly enabled them; clients must never be told a disabled
+/// action is available.
 #[cfg(test)]
 pub fn welcome_with_exec(exec_enabled: bool) -> Message {
     let mut capabilities = capabilities();
     if !exec_enabled {
-        capabilities.verbs.retain(|verb| verb != "exec");
+        capabilities
+            .verbs
+            .retain(|verb| verb != "exec" && verb != "launch_app");
     }
     Message::Welcome {
         v: 0,
@@ -1418,10 +1421,11 @@ mod tests {
     }
 
     #[test]
-    fn policy_aware_welcome_omits_disabled_exec() {
+    fn policy_aware_welcome_omits_disabled_process_spawning() {
         match welcome_with_exec(false) {
             Message::Welcome { capabilities, .. } => {
                 assert!(!capabilities.verbs.iter().any(|verb| verb == "exec"));
+                assert!(!capabilities.verbs.iter().any(|verb| verb == "launch_app"));
                 assert!(capabilities.verbs.iter().any(|verb| verb == "click"));
             }
             other => panic!("expected welcome, got {other:?}"),

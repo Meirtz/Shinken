@@ -147,7 +147,7 @@ impl Step {
 pub struct Session {
     authed: bool,
     token: Option<String>,
-    /// Privileged in-guest process execution is fail-closed in the production server.
+    /// Privileged in-guest process spawning is fail-closed in the production server.
     /// Unit tests and embedders retain the historical enabled default; `main` applies
     /// the operator's explicit `SHINKEND_ENABLE_EXEC` policy through the builder.
     exec_enabled: bool,
@@ -378,7 +378,7 @@ fn observation_reply(
 }
 
 /// Validate an `observe` spec's capture parameters (same rules as `screenshot`:
-/// well-formed scope, schema codec, 1–100 quality, clamped long edge) into the
+/// well-formed scope, schema codec, 1–100 quality, positive/capped long edge) into the
 /// `(scope, EncodeOpts)` a capture takes. `Err` is the nack message — validation runs
 /// BEFORE the action executes, so a malformed observe never half-applies an action.
 fn resolve_observe(obs: &crate::executor::ObserveSpec) -> Result<(String, EncodeOpts), String> {
@@ -392,6 +392,9 @@ fn resolve_observe(obs: &crate::executor::ObserveSpec) -> Result<(String, Encode
         Some(q) if (1..=100).contains(&q) => q,
         Some(q) => return Err(format!("observe quality out of range 1-100: {q}")),
     };
+    if obs.max_long_edge == Some(0) {
+        return Err("observe max_long_edge must be at least 1".to_string());
+    }
     Ok((
         scope,
         EncodeOpts {
@@ -428,6 +431,22 @@ impl Session {
             Ok(s) => s,
             Err(e) => return nack(format!("bad action: {e}")),
         };
+        // Enforce numeric schema bounds before verb dispatch. Silently clamping a
+        // schema-invalid request makes the published contract disagree with the live
+        // parser and hides client/version drift.
+        if let Some(fps) = spec.fps {
+            if !(FPS_MIN..=FPS_MAX).contains(&fps) {
+                return nack(format!("fps out of range {FPS_MIN}-{FPS_MAX}: {fps}"));
+            }
+        }
+        if spec.max_long_edge == Some(0) {
+            return nack("max_long_edge must be at least 1".to_string());
+        }
+        if let Some(quality) = spec.quality {
+            if !(1..=100).contains(&quality) {
+                return nack(format!("quality out of range 1-100: {quality}"));
+            }
+        }
         let scope = spec.scope.clone().unwrap_or_else(|| "screen".to_string());
         // Reject a provided-but-malformed capture scope instead of silently capturing the
         // full screen — a privacy/contract issue (#139). (An absent scope defaults to "screen".)
@@ -447,11 +466,7 @@ impl Session {
                 Ok(f) => f,
                 Err(e) => return nack(e.to_string()),
             };
-            let quality = match spec.quality {
-                None => DEFAULT_JPEG_QUALITY,
-                Some(q) if (1..=100).contains(&q) => q,
-                Some(q) => return nack(format!("quality out of range 1-100: {q}")),
-            };
+            let quality = spec.quality.unwrap_or(DEFAULT_JPEG_QUALITY);
             (format, quality)
         } else {
             (ImageFormat::Png, DEFAULT_JPEG_QUALITY) // unused by non-capture verbs
@@ -521,7 +536,7 @@ impl Session {
                 Err(e) => nack(e),
             },
             "start_screencast" => {
-                let fps = spec.fps.unwrap_or(FPS_DEFAULT).clamp(FPS_MIN, FPS_MAX);
+                let fps = spec.fps.unwrap_or(FPS_DEFAULT);
                 let delta = spec.delta.unwrap_or(false);
                 // A delta stream needs raw (pre-encode) capture to diff tiles; nack a
                 // backend that can't do it rather than ack and then die frameless.
@@ -595,6 +610,12 @@ impl Session {
                     followup,
                     ..Step::default()
                 }
+            }
+            // `launch_app` accepts an arbitrary executable path plus argv, so it is
+            // process execution even though its expected result is a desktop window.
+            // Gate it with `exec`; otherwise `/bin/sh -c ...` bypasses default-off.
+            "launch_app" if !self.exec_enabled => {
+                nack("launch_app is disabled by server policy".to_string())
             }
             _ => {
                 // Physical-event preference: an element_ref target on a pointer verb
@@ -1521,16 +1542,46 @@ mod tests {
     }
 
     #[test]
-    fn screencast_fps_is_clamped() {
+    fn schema_invalid_numeric_capture_bounds_are_nacked() {
+        let mut s = session(None);
+        s.on_text(HELLO);
+        for action in [
+            r#"{"verb":"start_screencast","fps":9000}"#,
+            r#"{"verb":"start_screencast","fps":0}"#,
+            r#"{"verb":"screenshot","max_long_edge":0}"#,
+            r#"{"verb":"click","target":{"kind":"point_px","x":1,"y":2},"quality":0}"#,
+        ] {
+            let step = s.on_text(&format!(
+                r#"{{"type":"action","call_id":"sc1","action":{action}}}"#
+            ));
+            assert_eq!(step.stream, StreamCtl::None);
+            let reply = step.reply.unwrap().into_text();
+            assert!(reply.contains("\"ok\":false"), "{action} -> {reply}");
+        }
+    }
+
+    #[test]
+    fn schema_unknown_fields_are_rejected_before_dispatch() {
+        for message in [
+            r#"{"type":"hello","v":0,"client":{"name":"t","version":"0"},"bogus":true}"#,
+            r#"{"type":"query","call_id":"q1","q":"platform","bogus":true}"#,
+        ] {
+            let mut s = session(None);
+            if message.contains("\"type\":\"query\"") {
+                s.on_text(HELLO);
+            }
+            let step = s.on_text(message);
+            assert!(step.close, "unknown message field must close: {message}");
+            assert!(step.reply.unwrap().into_text().contains("unknown field"));
+        }
+
         let mut s = session(None);
         s.on_text(HELLO);
         let step = s.on_text(
-            r#"{"type":"action","call_id":"sc1","action":{"verb":"start_screencast","fps":9000}}"#,
+            r#"{"type":"action","call_id":"a1","action":{"verb":"click","target":{"kind":"point_px","x":1,"y":2,"bogus":true}}}"#,
         );
-        match step.stream {
-            StreamCtl::Start(spec) => assert_eq!(spec.fps, 30.0),
-            other => panic!("expected Start, got {other:?}"),
-        }
+        let reply = step.reply.unwrap().into_text();
+        assert!(reply.contains("\"ok\":false") && reply.contains("unknown field"));
     }
 
     #[test]
@@ -1714,6 +1765,10 @@ mod tests {
                 "observe quality out of range",
             ),
             (
+                r#"{"verb":"click","target":{"kind":"point_px","x":1,"y":2},"observe":{"max_long_edge":0}}"#,
+                "observe max_long_edge must be at least 1",
+            ),
+            (
                 r#"{"verb":"click","target":{"kind":"point_px","x":1,"y":2},"observe":{"scope":"bogus"}}"#,
                 "invalid observe scope",
             ),
@@ -1826,12 +1881,13 @@ mod tests {
     }
 
     #[test]
-    fn exec_disabled_by_server_policy_is_not_advertised_or_dispatched() {
+    fn process_spawning_disabled_by_server_policy_is_not_advertised_or_dispatched() {
         let mut s = session(None).with_exec_enabled(false);
         let welcome = s.on_text(HELLO).reply.unwrap().into_text();
         let welcome: serde_json::Value = serde_json::from_str(&welcome).unwrap();
         let verbs = welcome["capabilities"]["verbs"].as_array().unwrap();
         assert!(!verbs.iter().any(|verb| verb == "exec"));
+        assert!(!verbs.iter().any(|verb| verb == "launch_app"));
 
         let step = s.on_text(
             r#"{"type":"action","call_id":"x1","action":{"verb":"exec","argv":["true"]}}"#,
@@ -1843,6 +1899,13 @@ mod tests {
         let reply = step.reply.unwrap().into_text();
         assert!(reply.contains("\"ok\":false"));
         assert!(reply.contains("disabled by server policy"));
+
+        let step = s.on_text(
+            r#"{"type":"action","call_id":"x2","action":{"verb":"launch_app","app":"/bin/sh","args":["-c","touch /tmp/bypass"]}}"#,
+        );
+        let reply = step.reply.unwrap().into_text();
+        assert!(reply.contains("\"ok\":false"));
+        assert!(reply.contains("launch_app is disabled by server policy"));
     }
 
     #[test]
