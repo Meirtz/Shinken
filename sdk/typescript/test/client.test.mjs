@@ -193,6 +193,75 @@ test("connect() completes the hello -> welcome handshake", async () => {
   assert.ok(client.capabilities.verbs.includes("click"));
 });
 
+test("connect() rejects incompatible ACI and schema versions before committing", async () => {
+  for (const [field, value, expected] of [
+    ["v", 1, /unsupported ACI version/],
+    ["schema_version", 1, /unsupported ACI schema_version/],
+  ]) {
+    const listeners = {};
+    let closed = 0;
+    const sock = {
+      send: () => {},
+      close: () => {
+        closed += 1;
+      },
+      addEventListener: (type, cb) => {
+        (listeners[type] ??= []).push(cb);
+      },
+    };
+    const fire = (type, ev) => (listeners[type] ?? []).forEach((cb) => cb(ev));
+    const p = connect("127.0.0.1:8765", { openSocket: () => sock });
+    fire("open");
+    fire("message", {
+      data: JSON.stringify({
+        type: "welcome",
+        v: field === "v" ? value : 0,
+        server: { name: "mock", version: "0", platform: "linux" },
+        capabilities: { ...CAPS, schema_version: field === "schema_version" ? value : 0 },
+      }),
+    });
+    await assert.rejects(p, expected);
+    assert.equal(closed, 1);
+  }
+});
+
+test("connect() rejects a partial welcome instead of hanging after clearing its deadline", async () => {
+  const listeners = {};
+  let closed = 0;
+  const sock = {
+    send: () => {},
+    close: () => {
+      closed += 1;
+    },
+    addEventListener: (type, cb) => {
+      (listeners[type] ??= []).push(cb);
+    },
+  };
+  const fire = (type, ev) => (listeners[type] ?? []).forEach((cb) => cb(ev));
+  const connected = connect("127.0.0.1:8765", {
+    handshakeTimeoutMs: 1_000,
+    openSocket: () => sock,
+  });
+  fire("open");
+  fire("message", {
+    data: JSON.stringify({
+      type: "welcome",
+      v: 0,
+      // Missing the required server object used to throw after clearTimeout() and
+      // handshaken=true, leaving the connect Promise permanently pending.
+      capabilities: CAPS,
+    }),
+  });
+  const bounded = Promise.race([
+    connected,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("connect remained pending after invalid welcome")), 100),
+    ),
+  ]);
+  await assert.rejects(bounded, /invalid welcome: server must be an object/);
+  assert.equal(closed, 1);
+});
+
 test("connect() has a handshake deadline and closes the stalled socket", async () => {
   const listeners = {};
   let closed = 0;

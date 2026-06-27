@@ -389,6 +389,86 @@ function defaultSocketFactory(uri: string): RuntimeSocket {
   return new ctor(uri);
 }
 
+type WelcomeMessage = Extract<AciMessage, { type: "welcome" }>;
+
+function objectField(value: unknown, label: string): Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`invalid welcome: ${label} must be an object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function stringField(record: Record<string, unknown>, key: string, label: string): string {
+  const value = record[key];
+  if (typeof value !== "string") {
+    throw new Error(`invalid welcome: ${label}.${key} must be a string`);
+  }
+  return value;
+}
+
+function stringArrayField(record: Record<string, unknown>, key: string, label: string): string[] {
+  const value = record[key];
+  if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) {
+    throw new Error(`invalid welcome: ${label}.${key} must be an array of strings`);
+  }
+  return value;
+}
+
+/** Validate the untrusted handshake reply before committing any connection state.
+ * TypeScript types disappear at runtime, so a cast alone cannot enforce the ACI version
+ * or prevent a partial welcome from throwing after the handshake timer was cleared. */
+function parseWelcome(value: unknown): WelcomeMessage {
+  const message = objectField(value, "message");
+  if (message.type !== "welcome") {
+    throw new Error(`expected 'welcome', got '${String(message.type)}'`);
+  }
+  if (message.v !== 0) {
+    throw new Error(`unsupported ACI version in welcome: ${String(message.v)}`);
+  }
+
+  const server = objectField(message.server, "server");
+  stringField(server, "name", "server");
+  stringField(server, "version", "server");
+  const platform = stringField(server, "platform", "server");
+  if (platform !== "linux" && platform !== "windows" && platform !== "macos") {
+    throw new Error(`invalid welcome: unsupported server.platform ${JSON.stringify(platform)}`);
+  }
+
+  const capabilities = objectField(message.capabilities, "capabilities");
+  if (capabilities.schema_version !== 0) {
+    throw new Error(
+      `unsupported ACI schema_version in welcome: ${String(capabilities.schema_version)}`,
+    );
+  }
+  stringArrayField(capabilities, "verbs", "capabilities");
+  stringArrayField(capabilities, "targets", "capabilities");
+  stringArrayField(capabilities, "observation_types", "capabilities");
+
+  const maxLongEdge = capabilities.max_long_edge;
+  if (
+    maxLongEdge !== undefined &&
+    (!Number.isInteger(maxLongEdge) || (maxLongEdge as number) <= 0)
+  ) {
+    throw new Error("invalid welcome: capabilities.max_long_edge must be a positive integer");
+  }
+  if (capabilities.image_formats !== undefined) {
+    stringArrayField(capabilities, "image_formats", "capabilities");
+  }
+  for (const key of [
+    "binary_frames",
+    "frame_dedup",
+    "observe_after_act",
+    "structured_observation",
+  ]) {
+    const field = capabilities[key];
+    if (field !== undefined && typeof field !== "boolean") {
+      throw new Error(`invalid welcome: capabilities.${key} must be a boolean`);
+    }
+  }
+
+  return value as WelcomeMessage;
+}
+
 /** Open an ACI session: connect, complete the `hello` → `welcome` handshake, and
  *  resolve to a ready {@link AciClient}. */
 export function connect(addr: string, opts: ConnectOptions = {}): Promise<AciClient> {
@@ -452,28 +532,32 @@ export function connect(addr: string, opts: ConnectOptions = {}): Promise<AciCli
         client?.feed(data);
         return;
       }
-      let msg: AciMessage;
+      let parsed: unknown;
       try {
-        msg = JSON.parse(data) as AciMessage;
+        parsed = JSON.parse(data) as unknown;
       } catch {
         failHandshake(new Error("malformed handshake reply"), true);
         return;
       }
-      if (msg.type !== "welcome") {
-        failHandshake(new Error(`expected 'welcome', got '${msg.type}'`), true);
-        return;
+      try {
+        const msg = parseWelcome(parsed);
+        const clientOptions: AciClientOptions = {};
+        if (opts.rpcTimeoutMs !== undefined) clientOptions.rpcTimeoutMs = opts.rpcTimeoutMs;
+        const connected = new AciClient(
+          { send: (d) => sock.send(d), close: () => sock.close() },
+          msg.capabilities,
+          msg.server.platform,
+          clientOptions,
+        );
+        // Commit only after validation and construction both succeeded. Otherwise a
+        // partial welcome could clear the deadline and leave connect() pending forever.
+        client = connected;
+        handshaken = true;
+        clearTimeout(handshakeTimer);
+        resolve(connected);
+      } catch (error) {
+        failHandshake(error instanceof Error ? error : new Error(String(error)), true);
       }
-      clearTimeout(handshakeTimer);
-      handshaken = true;
-      const clientOptions: AciClientOptions = {};
-      if (opts.rpcTimeoutMs !== undefined) clientOptions.rpcTimeoutMs = opts.rpcTimeoutMs;
-      client = new AciClient(
-        { send: (d) => sock.send(d), close: () => sock.close() },
-        msg.capabilities,
-        msg.server.platform,
-        clientOptions,
-      );
-      resolve(client);
     });
   });
 }
