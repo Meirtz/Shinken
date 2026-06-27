@@ -5,8 +5,8 @@ wrappers all ship one), and in every one of them ``reset()`` re-provisions the s
 cua-bench's own ``Environment.reset()`` closes the session and creates a brand-new VM per
 episode (see ``notes/cua-teardown.md`` §4/§7). This module ships the same API shape with
 the runtime-state semantics underneath (D5): **reset() restores from the task checkpoint**.
-Fidelity is provider-specific: the Docker disk/warm tiers preserve filesystem state and
-restart or retain separate processes, while an explicitly requested memory tier preserves
+Fidelity is provider-specific: the Docker disk tier preserves filesystem state and
+restarts processes, while an explicitly requested memory tier preserves
 process/GUI state. Tasks must replay launch/focus after a disk restore instead of assuming a
 byte-identical live desktop. Measured restore latencies are in
 ``docs/engineering/benchmarks.md`` §1.
@@ -44,12 +44,15 @@ from __future__ import annotations
 
 import contextlib
 import json
+import math
 import random
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 
+from ._lifecycle import connect_owned_handle
 from .client import FrameCache, SharedLoop
 from .dialect import parse_actions
 from .errors import SandboxDied, ShinkenError, is_connection_loss
@@ -103,7 +106,10 @@ def _reward_from(verdict: Any) -> float:
     if isinstance(verdict, bool):  # bool before int: True is an int subclass
         return 1.0 if verdict else 0.0
     if isinstance(verdict, int | float):
-        return float(verdict)
+        reward = float(verdict)
+        if not math.isfinite(reward):
+            raise GymError(f"verifier returned a non-finite reward: {reward!r}")
+        return reward
     passed = getattr(verdict, "passed", None)
     if passed is None and isinstance(verdict, dict):
         passed = verdict.get("passed")
@@ -128,10 +134,14 @@ class Episode:
     reward: float | None
     reset_ms: float
     info: dict = field(default_factory=dict)
+    # Stable join key across envs, pools, workers, process restarts, and merged datasets.
+    # ``index`` remains the env-local ordinal for backward compatibility.
+    episode_id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
     def to_dict(self) -> dict:
         return {
             "index": self.index,
+            "episode_id": self.episode_id,
             "task": self.task,
             "instruction": self.instruction,
             "trajectory": self.trajectory.to_dict(),
@@ -212,6 +222,7 @@ class ShinkenGymEnv:
         # the post-action observation as next_observation (s_{t+1}).
         self._current_observation: dict | None = None
         self._episode_open = False
+        self._episode_id: str | None = None
         self._reset_ms = 0.0
         self._done = False
 
@@ -248,19 +259,27 @@ class ShinkenGymEnv:
         self._finalize_episode(terminal="stopped")  # an un-done episode is "stopped"
         self._teardown_replica()
         t0 = time.perf_counter()
-        self._handle = self.provider.resume(self.golden_checkpoint)
-        self._sess = self.provider.connect(self._handle, **self.connect_kwargs)
+        handle = self.provider.resume(self.golden_checkpoint)
+        sess = connect_owned_handle(self.provider, handle, **self.connect_kwargs)
+        self._handle = handle
+        self._sess = sess
         self._reset_ms = (time.perf_counter() - t0) * 1000.0
         self._steps = []
-        self._episode_open = True
         self._done = False
-        obs = self._observe()
+        try:
+            obs = self._observe()
+        except BaseException:
+            self._teardown_replica()
+            raise
         self._current_observation = obs
+        self._episode_id = uuid.uuid4().hex
+        self._episode_open = True
         info = {
             "task": getattr(self.task, "name", ""),
             "instruction": getattr(self.task, "instruction", "") or "",
             "reset_ms": self._reset_ms,
             "episode": len(self.episodes),
+            "episode_id": self._episode_id,
             "golden_checkpoint": self.golden_checkpoint,
         }
         return obs, info
@@ -288,9 +307,19 @@ class ShinkenGymEnv:
         agent_observation = self._current_observation
         raw_text = action if isinstance(action, str) else None
         actions = self._coerce_actions(action)
-        dispatch = [a for a in actions if a.get("verb") not in _CONTROL_VERBS]
-        done = len(dispatch) < len(actions)  # a control action ends the episode
-        terminal = "done" if done else None
+        control_index = next(
+            (i for i, candidate in enumerate(actions) if candidate.get("verb") in _CONTROL_VERBS),
+            None,
+        )
+        control = dict(actions[control_index]) if control_index is not None else None
+        control_verb = control.get("verb") if control is not None else None
+        if control_index is not None and control_index + 1 < len(actions):
+            raise GymError("actions after a terminal control are not allowed")
+        dispatch = actions if control_index is None else actions[:control_index]
+        done = control is not None
+        terminal = (
+            "done" if control_verb == "done" else ("stopped" if control_verb == "stop" else None)
+        )
         info: dict = {}
         try:
             obs, results = self._dispatch_and_observe(sess, dispatch)
@@ -325,6 +354,7 @@ class ShinkenGymEnv:
                 actions=dispatch,
                 info=step_info,
                 next_observation=obs,
+                control=control,
             )
         )
         if not done and self.max_steps is not None and len(self._steps) >= self.max_steps:
@@ -344,6 +374,7 @@ class ShinkenGymEnv:
             info["terminal"] = terminal
         info["step"] = step_index
         info["episode"] = episode_index
+        info["episode_id"] = self._episode_id
         return obs, reward, done, info
 
     def evaluate(self) -> float:
@@ -466,6 +497,7 @@ class ShinkenGymEnv:
             "instruction": getattr(self.task, "instruction", "") or "",
             "golden_checkpoint": self.golden_checkpoint,
             "reset_ms": round(self._reset_ms, 3),
+            "episode_id": self._episode_id,
             # Old Gym artifacts omitted this marker and stored post-action frames in
             # Step.observation. Consumers can now reject/explicitly migrate those
             # ambiguous legacy records instead of silently training on (s_{t+1}, a_t).
@@ -483,6 +515,7 @@ class ShinkenGymEnv:
                 reward=reward,
                 reset_ms=self._reset_ms,
                 info={"receipt": _receipt_dict(self.last_receipt)} if reward is not None else {},
+                episode_id=self._episode_id or uuid.uuid4().hex,
             )
         )
         self._steps = []
@@ -610,12 +643,14 @@ class ShinkenGymPool:
 #: ``sandbox_died`` rollouts without poisoning the reward signal).
 EXPORT_COLUMNS = (
     "episode",
+    "episode_id",
     "step",
     "task",
     "instruction",
     "image",
     "tree_text",
     "actions_json",
+    "control_json",
     "raw_text",
     "note",
     "reward",
@@ -638,12 +673,16 @@ def episodes_to_records(episodes: list[Episode]) -> dict[str, list]:
             # producing Step.actions: the exported training pair is (s_t, a_t).
             obs = step.observation or {}
             records["episode"].append(ep.index)
+            records["episode_id"].append(ep.episode_id)
             records["step"].append(step.index)
             records["task"].append(ep.task)
             records["instruction"].append(ep.instruction)
             records["image"].append(obs.get("png") or obs.get("bytes"))
             records["tree_text"].append(obs.get("tree_text"))
             records["actions_json"].append(json.dumps(step.actions))
+            records["control_json"].append(
+                json.dumps(step.control) if step.control is not None else None
+            )
             records["raw_text"].append(step.info.get("raw_text"))
             records["note"].append(step.note)
             records["reward"].append(ep.reward)
@@ -719,7 +758,8 @@ class MultiTurnDataloader:
 
     def __next__(self) -> dict:
         """The next observation batch (dict-of-lists): ``env_id``, ``observation`` (full
-        dicts), ``image`` (PNG/JPEG bytes or None), ``instruction``, ``step``, ``task``.
+        dicts), ``image`` (PNG/JPEG bytes or None), ``instruction``, ``episode_id``,
+        ``step``, ``task``.
         Raises ``StopIteration`` once ``total_episodes`` have completed."""
         if self.total_episodes is not None and self._completed >= self.total_episodes:
             raise StopIteration
@@ -737,6 +777,7 @@ class MultiTurnDataloader:
             raise StopIteration  # budget exhausted mid-flight
         batch: dict[str, list] = {
             "env_id": [],
+            "episode_id": [],
             "observation": [],
             "image": [],
             "instruction": [],
@@ -747,6 +788,7 @@ class MultiTurnDataloader:
             obs = self._pending.pop(i)
             env = self.pool.envs[i]
             batch["env_id"].append(i)
+            batch["episode_id"].append(env._episode_id)
             batch["observation"].append(obs)
             batch["image"].append(obs.get("png") or obs.get("bytes"))
             batch["instruction"].append(getattr(env.task, "instruction", "") or "")
@@ -766,28 +808,47 @@ class MultiTurnDataloader:
         responses = batch_return["responses"]
         if env_ids is None or len(env_ids) != len(responses):
             raise GymError("batch_return needs aligned env_id (or worker_id) and responses")
-        return [self.step(i, r) for i, r in zip(env_ids, responses, strict=False)]
+        return [self.step(i, r) for i, r in zip(env_ids, responses, strict=True)]
 
     def step(self, env_id: int, response: Any) -> dict:
         """Apply one response to one env; on episode end count it (and auto-reset =
         re-fork) — see :meth:`async_step` for the batch form."""
         env = self.pool.envs[env_id]
+        episode_id = env._episode_id
         try:
             obs, reward, done, info = env.step(response)
         except SandboxDied as exc:
             # Infra death is typed and retry-eligible: the episode was recorded with
             # exit_reason="sandbox_died"; a fresh fork continues collection.
             self._episode_finished(env_id)
-            return {"env_id": env_id, "reward": None, "done": True, "info": {"error": str(exc)}}
+            return {
+                "env_id": env_id,
+                "episode_id": episode_id,
+                "reward": None,
+                "done": True,
+                "info": {"error": str(exc)},
+            }
         except ValueError as exc:  # DialectError is a ValueError: unparseable model output
             env.abort(f"agent_error: {exc}")
             self._episode_finished(env_id)
-            return {"env_id": env_id, "reward": None, "done": True, "info": {"error": str(exc)}}
+            return {
+                "env_id": env_id,
+                "episode_id": episode_id,
+                "reward": None,
+                "done": True,
+                "info": {"error": str(exc)},
+            }
         if done:
             self._episode_finished(env_id)
         else:
             self._pending[env_id] = obs
-        return {"env_id": env_id, "reward": reward, "done": done, "info": info}
+        return {
+            "env_id": env_id,
+            "episode_id": episode_id,
+            "reward": reward,
+            "done": done,
+            "info": info,
+        }
 
     def sample_episodes(self, batch_size: int | None = None) -> list[Episode]:
         """A random batch of finished episodes (their ``sample_from_buffer`` analog —

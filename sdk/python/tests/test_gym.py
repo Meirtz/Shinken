@@ -175,6 +175,25 @@ def test_step_before_reset_is_typed(mock_shinkend):
         env.step({"verb": "click", "target": {"kind": "point_px", "x": 1, "y": 1}})
 
 
+def test_reset_destroys_resumed_handle_when_connect_fails(mock_shinkend):
+    class _FailReplicaConnect(_ForkProvider):
+        def connect(self, handle, **kwargs):
+            if str(handle).startswith("replica-"):
+                raise RuntimeError("replica handshake failed")
+            return super().connect(handle, **kwargs)
+
+    provider = _FailReplicaConnect(mock_shinkend)
+    env = g.make(_typed_hi_task(), provider)
+    try:
+        with pytest.raises(RuntimeError, match="replica handshake failed"):
+            env.reset()
+        assert provider.destroyed.count("replica-1") == 1
+        assert env._handle is None and env._sess is None
+    finally:
+        env.dispose()
+    assert provider.destroyed.count("replica-1") == 1
+
+
 def test_session_property_exposes_the_live_replica(mock_shinkend):
     """`env.session` is the public handle a harness uses for out-of-band probes
     (readiness waits, auxiliary captures) against the current fork."""
@@ -293,10 +312,39 @@ def test_done_control_action_scores_and_emits_typed_trajectory(mock_shinkend):
         assert isinstance(ep.trajectory, Trajectory)
         assert ep.trajectory.exit_reason == "task_complete" and ep.trajectory.terminal == "done"
         assert len(ep.trajectory.steps) == 2 and ep.reward == 1.0
+        assert ep.trajectory.steps[-1].control == {"verb": "done"}
+        assert ep.trajectory.to_dict()["steps"][-1]["control"] == {"verb": "done"}
         assert ep.trajectory.steps[0].info["raw_text"].startswith("<actions>")
         assert ep.trajectory.metadata["golden_checkpoint"] == "golden-1"
         with pytest.raises(g.GymError, match="done"):
             env.step("<done/>")  # episode over — reset() forks the next one
+
+
+def test_terminal_control_payload_is_lossless_and_trailing_actions_have_no_side_effect(
+    mock_shinkend,
+):
+    with g.make(_typed_hi_task(), _ForkProvider(mock_shinkend)) as env:
+        env.reset()
+        with pytest.raises(g.GymError, match="after a terminal control"):
+            env.step(
+                [
+                    {"verb": "done", "answer": "42"},
+                    {"verb": "type_text", "text": "must-not-run"},
+                ]
+            )
+        assert env.session.query("state")["typed"] == ""
+
+        raw = (
+            '<tool_call>{"name":"answer","arguments":{"status":"failed","answer":"42"}}</tool_call>'
+        )
+        _, _, done, _ = env.step(raw)
+        assert done
+        control = {"verb": "done", "status": "fail", "answer": "42"}
+        step = env.episodes[-1].trajectory.steps[-1]
+        assert step.actions == [] and step.control == control
+        assert step.to_dict()["control"] == control
+        records = g.episodes_to_records(env.episodes)
+        assert json.loads(records["control_json"][-1]) == control
 
 
 def test_verifier_reads_observed_state_not_inputs(mock_shinkend):
@@ -332,10 +380,15 @@ def test_evaluate_reward_shapes(mock_shinkend):
         assert env.last_receipt.passed
     # float passthrough + typed rejection of nonsense
     assert g._reward_from(0.25) == 0.25
+    assert g._reward_from(-2.0) == -2.0
     assert g._reward_from(False) == 0.0
     assert g._reward_from({"passed": True}) == 1.0
     with pytest.raises(g.GymError, match="verifier returned"):
         g._reward_from("not a reward")
+    with pytest.raises(g.GymError, match="non-finite"):
+        g._reward_from(float("nan"))
+    with pytest.raises(g.GymError, match="non-finite"):
+        g._reward_from(float("inf"))
 
 
 def test_evaluate_without_verifier_is_typed(mock_shinkend):
@@ -395,6 +448,8 @@ def test_pool_one_golden_parallel_reset_and_shared_loop(mock_shinkend):
         assert setups == [1] and prov.calls["checkpoint"] == 1
         assert prov.calls["resume"] == 3 and len(results) == 3
         assert all(info["reset_ms"] > 0 for _obs, info in results)
+        episode_ids = [info["episode_id"] for _obs, info in results]
+        assert len(set(episode_ids)) == 3
         # all sessions multiplex one SharedLoop + one FrameCache
         loops = {id(env.connect_kwargs["loop"]) for env in pool.envs}
         caches = {id(env.connect_kwargs["frame_cache"]) for env in pool.envs}
@@ -439,6 +494,10 @@ def test_exporter_dict_of_lists_shape_and_columns(mock_shinkend):
     assert records["reward"] == [1.0, 1.0, 1.0, 1.0]  # episode reward broadcast to rows
     assert set(records["exit_reason"]) == {"task_complete"}  # the typed taxonomy column
     assert records["episode"] == [0, 0, 1, 1] and records["step"] == [0, 1, 0, 1]
+    assert records["episode_id"][0] == records["episode_id"][1]
+    assert records["episode_id"][2] == records["episode_id"][3]
+    assert records["episode_id"][0] != records["episode_id"][2]
+    assert records["control_json"] == [None, '{"verb": "done"}', None, '{"verb": "done"}']
     assert all(ms >= 0 for ms in records["reset_ms"])
 
 
@@ -469,14 +528,23 @@ def test_dataloader_batches_step_routing_and_autoreset_fork(mock_shinkend):
     batches = 0
     for batch in loader:
         batches += 1
-        assert set(batch) == {"env_id", "observation", "image", "instruction", "step", "task"}
+        assert set(batch) == {
+            "env_id",
+            "episode_id",
+            "observation",
+            "image",
+            "instruction",
+            "step",
+            "task",
+        }
         assert all(img[:8] == b"\x89PNG\r\n\x1a\n" for img in batch["image"])
         responses = [
             "<done/>" if step > 0 else '<actions><type_text text="hi"/></actions>'
             for step in batch["step"]
         ]
         rows = loader.async_step({"env_id": batch["env_id"], "responses": responses})
-        for row, step in zip(rows, batch["step"], strict=False):
+        for row, step, episode_id in zip(rows, batch["step"], batch["episode_id"], strict=True):
+            assert row["episode_id"] == episode_id
             assert row["done"] == (step > 0)
             if row["done"]:
                 assert row["reward"] == 1.0

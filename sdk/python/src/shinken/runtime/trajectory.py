@@ -75,6 +75,10 @@ class Step:
     # Kept last to preserve the historical positional constructor layout. Legacy
     # producers that only retain the policy input leave this as None.
     next_observation: dict | None = None  # post-action observation (s_{t+1}), when captured
+    # Consumer-level terminal control emitted by the policy (for example ``done`` plus
+    # an optional answer/status payload). It is not an ACI wire action, but dropping or
+    # flattening it would make the training record lossy.
+    control: dict | None = None
 
     def to_dict(self) -> dict:
         out = {
@@ -92,6 +96,8 @@ class Step:
         # capture a post-action observation. Gym transitions include the field.
         if self.next_observation is not None:
             out["next_observation"] = self.next_observation
+        if self.control is not None:
+            out["control"] = self.control
         return out
 
 

@@ -32,6 +32,7 @@ from websockets.exceptions import ConnectionClosed as _WsConnectionClosed
 from websockets.exceptions import InvalidHandshake as _WsInvalidHandshake
 from websockets.exceptions import InvalidURI as _WsInvalidURI
 
+from ._lifecycle import connect_owned_handle
 from .artifacts import LocalArtifactStore
 from .errors import (
     ConnectError,
@@ -3070,7 +3071,7 @@ class Sandbox:
                 "spawn() needs a provider-managed session; open it via a provider's "
                 "connect()/session()"
             )
-        return provider.connect(self.fork(), **connect_kwargs)
+        return connect_owned_handle(provider, self.fork(), **connect_kwargs)
 
     def resume(self, handle_or_checkpoint: Any) -> Any:
         """**Deprecated alias of the provider's** ``restore`` **verb** — kept for
@@ -3289,7 +3290,8 @@ class Checkpoint(str):
         checkpoint or any live session. Extra keyword arguments pass through to the
         provider's ``connect()``."""
         provider = self._require_provider()
-        return provider.connect(provider.restore(str(self)), **connect_kwargs)
+        handle = provider.restore(str(self))
+        return connect_owned_handle(provider, handle, **connect_kwargs)
 
     def spawn_many(self, n: int, **connect_kwargs: Any) -> SandboxFleet:
         """Materialize ``n`` replicas from this checkpoint **concurrently** and return
@@ -3307,7 +3309,8 @@ class Checkpoint(str):
             connect_kwargs = {**connect_kwargs, "loop": loop}
 
         def _one(_i: int) -> Sandbox:
-            return provider.connect(provider.restore(str(self)), **connect_kwargs)
+            handle = provider.restore(str(self))
+            return connect_owned_handle(provider, handle, **connect_kwargs)
 
         envs: list[Sandbox] = []
         errors: list[BaseException] = []

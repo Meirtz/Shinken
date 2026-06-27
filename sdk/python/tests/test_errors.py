@@ -41,19 +41,23 @@ def test_run_result_infra_failure_property():
 
 
 def _empty():
-    from shinken.eval import VerifierReceipt
+    from shinken.eval import VerifierReceipt, check
 
-    return VerifierReceipt(False, [])
+    return VerifierReceipt.from_checks([check("placeholder", False)])
 
 
 def test_run_eval_classifies_connection_drop_as_sandbox_died(tmp_path):
     # a connect_factory that fails with a dropped connection is infra death, not a task fail
-    from shinken.eval import Task, VerifierReceipt, run_eval
+    from shinken.eval import Task, VerifierReceipt, check, run_eval
 
     def boom():
         raise ConnectionError("connection lost mid-screencast")
 
-    task = Task(name="t", run=lambda e: None, verify=lambda e: VerifierReceipt(True, []))
+    task = Task(
+        name="t",
+        run=lambda e: None,
+        verify=lambda e: VerifierReceipt.from_checks([check("unused", True)]),
+    )
     s = run_eval(task, boom, n=2, out_dir=str(tmp_path))
     assert s.passed == 0
     assert s.kinds.get("sandbox_died") == 2

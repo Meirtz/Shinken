@@ -1,19 +1,19 @@
-"""A fully-local GRPO loop: a small MLX policy learns a computer-use task on real Shinken
-sandboxes. No CUDA, no NeMo RL — the *learning* half of the loop closes on Apple Silicon.
+"""A local group-relative optimizer-step smoke on real Shinken sandboxes.
 
 NeMo Gym + NeMo RL is the production training path (online GRPO on a GPU node; see the
-README §4 handoff). This script is the laptop-scale proof that the same loop closes around
-Shinken's environment: the fork-native env produces reward, group-relative advantage turns
-it into a gradient, and a LoRA update moves the policy — measurably, in one process.
+README §4 handoff). This laptop script proves only that environment rewards can produce a
+group-relative policy-gradient and an Adam update to LoRA parameters in one process. It is
+not a NeMo RL or GRPO implementation: there are no old-policy logprobs, importance ratios,
+clipping, KL term, or distributed weight synchronization, and it makes no convergence claim.
 
     env    = ShinkenComputerEngine          (seed = fork the task's golden checkpoint,
                                               verify = the CUA-Gym reward.py contract)
     policy = MLX <model> + LoRA adapters     (the only trainable parameters)
-    update = GRPO core: per-task groups, group-relative advantage A_i=(r_i-mean)/std,
-             reward-weighted policy-gradient on the assistant action tokens, Adam on LoRA.
+    update = smoke: per-task group-relative advantage A_i=(r_i-mean)/std,
+             reward-weighted policy-gradient on assistant action tokens, Adam on LoRA.
 
-Measured (2026-06-12, M4 Pro, Qwen2.5-1.5B-Instruct-4bit, group 8, task `hello-file`):
-**mean reward 0.25 → 0.875 over 5 iterations in 62 s**, all local.
+A recorded 2026-06-12 run executed five update steps when reward variance was present. The
+sampled reward sequence is smoke evidence, not a controlled learning-quality evaluation.
 
 The agent speaks a one-line text protocol (small models emit it far more reliably than
 OpenAI function-call JSON):  `ACTION: <verb> <arg>`  with verb in
@@ -46,14 +46,13 @@ except ImportError:  # pragma: no cover - optional, Apple-Silicon-only dependenc
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "sdk" / "python" / "src"))
-from shinken import DockerLocalProvider  # noqa: E402
+from shinken import DockerLocalProvider, SandboxSpec  # noqa: E402
 from shinken.integrations.cua_gym import CuaGymTaskSource  # noqa: E402
 from shinken.integrations.nemo_gym import ShinkenComputerEngine  # noqa: E402
 
 MODEL = os.environ.get("GRPO_MODEL", "mlx-community/Qwen2.5-1.5B-Instruct-4bit")
-TASK_ROOT = Path(
-    os.environ.get("CUA_GYM_TASKS", REPO / "examples" / "nemo_gym" / "tasks")
-)
+DEFAULT_TASK_ROOT = REPO / "examples" / "nemo_gym" / "tasks"
+TASK_ROOT = Path(os.environ.get("CUA_GYM_TASKS", DEFAULT_TASK_ROOT))
 TASK_ID = os.environ.get("GRPO_TASK", "hello-file")
 IMAGE = os.environ.get("SHINKEN_IMAGE", "shinken/sandbox-cua:latest")
 GROUP = int(os.environ.get("GRPO_GROUP", "8"))  # rollouts per GRPO group (the baseline)
@@ -124,9 +123,12 @@ def rollout(model, tok, engine, task_id, sampler):
             obs = apply_action(engine, sid, verb, arg)
             messages.append({"role": "user", "content": (obs or "(no output)")[:600]})
         reward = engine.verify(sid)
-    except Exception:  # noqa: BLE001 — a dead episode scores 0, never kills the loop
+    except Exception:
+        # Infrastructure/configuration failure is not a policy verdict. Turning it into
+        # reward 0 would train on a fabricated negative and hide deterministic provider
+        # mismatches (for example, requesting process-memory state from the disk tier).
         engine.end(sid)
-        reward = 0.0
+        raise
     return reward, turns
 
 
@@ -136,7 +138,7 @@ def seq_logprob(model, ctx_ids, act_ids):
     return (-ce[len(ctx_ids) - 1 :]).sum()  # summed logprob of the action tokens
 
 
-def grpo_loss(model, batch):
+def group_relative_pg_loss(model, batch):
     """batch: (ctx_ids, act_ids, advantage) — reward-weighted PG, token-normalized."""
     total = mx.array(0.0)
     ntok = 0
@@ -153,12 +155,19 @@ def main() -> int:
     linear_to_lora_layers(model, 8, {"rank": 8, "scale": 20.0, "dropout": 0.0})
     sampler = make_sampler(temp=TEMP)
     opt = optim.Adam(learning_rate=LR)
-    loss_and_grad = nn.value_and_grad(model, grpo_loss)
+    loss_and_grad = nn.value_and_grad(model, group_relative_pg_loss)
 
     src = CuaGymTaskSource(TASK_ROOT)
+    fidelity = os.environ.get("SHINKEN_STATE_FIDELITY")
+    if fidelity is None and TASK_ROOT.resolve() == DEFAULT_TASK_ROOT.resolve():
+        fidelity = "filesystem"
+    if fidelity not in (None, "filesystem", "process_memory"):
+        raise ValueError("SHINKEN_STATE_FIDELITY must be filesystem or process_memory")
+    spec = SandboxSpec(state_fidelity=fidelity) if fidelity is not None else None
     engine = ShinkenComputerEngine(
         DockerLocalProvider(image=IMAGE, name_prefix="shinken-grpo"),
         {TASK_ID: src.get(TASK_ID)},
+        spec=spec,
     )
 
     history = []
@@ -175,11 +184,9 @@ def main() -> int:
             advs = [(r - mean) / (std + 1e-4) for r in rewards]
 
             batch = [
-                (c, a, adv) for turns, adv in zip(all_turns, advs) for (c, a) in turns
+                (c, a, adv) for turns, adv in zip(all_turns, advs, strict=True) for (c, a) in turns
             ]
-            updated = std > 1e-4 and bool(
-                batch
-            )  # no spread → no gradient signal this group
+            updated = std > 1e-4 and bool(batch)  # no spread → no gradient signal this group
             if updated:
                 _loss, grads = loss_and_grad(model, batch)
                 opt.update(model, grads)

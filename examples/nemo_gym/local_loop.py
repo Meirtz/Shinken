@@ -20,7 +20,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parents[1] / "sdk" / "python" / "src"))
 
-from shinken import DockerLocalProvider  # noqa: E402
+from shinken import DockerLocalProvider, SandboxSpec  # noqa: E402
 from shinken.integrations.cua_gym import CuaGymTaskSource  # noqa: E402
 from shinken.integrations.nemo_gym import ShinkenComputerEngine, rollout_rows  # noqa: E402
 
@@ -54,7 +54,7 @@ def main() -> int:
     print(f"dataset rows: {len(rows)} (ng_collect_rollouts-ready)")
 
     provider = DockerLocalProvider(name_prefix="shinken-nemogym")
-    engine = ShinkenComputerEngine(provider, tasks)
+    engine = ShinkenComputerEngine(provider, tasks, spec=SandboxSpec(state_fidelity="filesystem"))
     solvers = {"hello-file": scripted_hello, "zenity-entry": scripted_zenity}
     try:
         for task in tasks:

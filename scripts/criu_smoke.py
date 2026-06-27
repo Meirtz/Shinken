@@ -1,14 +1,15 @@
 """CRIU memory-tier live smoke: dump → restore → the PROCESS-MEMORY marker survives.
 
-Proves the one thing the files-only tiers (``docker commit``, warm-pool graft) cannot:
+Proves the one thing the files-only Docker commit tier cannot:
 a restored replica carries LIVE process+memory state. The flow, end to end on a real
 Docker daemon (privileged containers — see ``images/linux/Dockerfile.criu``):
 
 1. boot a donor (``CriuDockerProvider.create``), plant a golden FILE marker and the
    in-memory marker (a running python child of ``shinkend``, counter in its heap only);
-2. ``checkpoint()`` = ``criu dump --leave-running`` + ``docker commit``;
-3. donor-still-live check: the donor answers a screenshot AND its marker keeps
-   beating after the dump (``--leave-running`` is a true checkpoint, not a kill);
+2. ``checkpoint()`` = ``criu dump --leave-stopped`` + ``docker commit`` in one stopped
+   consistency window, followed by donor resume;
+3. donor-resumed check: the donor answers a screenshot AND its marker keeps beating after
+   the checkpoint;
 4. ``restore()`` a replica, reconnect (donor token), and verify BOTH markers: the
    golden file (files tier) and the memory marker — same pid, same nonce, counter
    ≥ the value read just before the dump (process-memory continuity);
@@ -63,8 +64,8 @@ def main() -> int:
         finally:
             env.close()  # --tcp-close may reset the donor session at dump; reconnect below
 
-        # donor-still-live: --leave-running means the donor keeps serving AND its
-        # in-memory marker keeps beating past the dump point.
+        # The provider resumes the --leave-stopped donor after the atomic rootfs commit;
+        # it must serve again and its in-memory marker must keep beating.
         env = provider.connect(donor)
         try:
             shot = env.screenshot()

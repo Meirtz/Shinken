@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any, Protocol, runtime_checkable
 
 from shinken import providers
+from shinken._lifecycle import connect_owned_handle
 
 from . import workloads
 from .loop import rollout
@@ -55,7 +56,7 @@ class Runtime:
         """Create + connect a sandbox via the resolved provider; returns a live Session."""
         provider = self.provider
         handle = provider.create(spec)
-        return provider.connect(handle)
+        return connect_owned_handle(provider, handle)
 
     def rollout(self, session: Any, agent: Any, **kwargs: Any) -> Trajectory:
         """Convenience: run a semantic-free rollout (see :func:`shinken.runtime.loop.rollout`)."""

@@ -38,6 +38,7 @@ capability descriptor says so out loud (``requires_privileged=True``,
 
 from __future__ import annotations
 
+import logging
 import re
 import time
 import uuid
@@ -46,6 +47,8 @@ from typing import Any
 
 from .base import ProviderCapabilities, ProviderError, SandboxHandle, SandboxSpec
 from .docker import DockerLocalProvider, _run
+
+_log = logging.getLogger("shinken.providers.criu")
 
 
 class CriuDockerProvider(DockerLocalProvider):
@@ -220,76 +223,131 @@ class CriuDockerProvider(DockerLocalProvider):
         )
         commit_completed = False
         try:
+            out = _run(
+                [self.docker_bin, "exec", "-u", "0", cid, "bash", "-c", script],
+                timeout=self.startup_timeout,
+            )
             try:
-                out = _run(
-                    [self.docker_bin, "exec", "-u", "0", cid, "bash", "-c", script],
-                    timeout=self.startup_timeout,
+                last_pid = int(out.stdout.strip().splitlines()[-1])
+            except (IndexError, ValueError):
+                last_pid = 0
+            tier_metadata = {
+                "images_dir": images_dir,
+                "park": max(last_pid + 128, self.pid_floor),
+                "images_volume": images_volume,
+            }
+            record = self._snapshot_record(
+                snapshot_id=tag,
+                spec=spec,
+                name=name,
+                checkpoint_id=checkpoint_id,
+                event_seq=event_seq,
+                agent_state_ref=agent_state_ref,
+                tier_metadata=tier_metadata,
+            )
+            committed = _run(
+                [
+                    self.docker_bin,
+                    "commit",
+                    *self._snapshot_commit_changes(record),
+                    cid,
+                    tag,
+                ],
+                timeout=self.startup_timeout,
+            )
+            commit_completed = True
+            image_ref = committed.stdout.strip().splitlines()[-1]
+            if not image_ref.startswith("sha256:"):
+                raise ProviderError(
+                    f"docker commit did not return an immutable sha256 image id: {image_ref!r}"
                 )
-                try:
-                    last_pid = int(out.stdout.strip().splitlines()[-1])
-                except (IndexError, ValueError):
-                    last_pid = 0
-                tier_metadata = {
-                    "images_dir": images_dir,
-                    "park": max(last_pid + 128, self.pid_floor),
-                    "images_volume": images_volume,
-                }
-                record = self._snapshot_record(
-                    snapshot_id=tag,
-                    spec=spec,
-                    name=name,
-                    checkpoint_id=checkpoint_id,
-                    event_seq=event_seq,
-                    agent_state_ref=agent_state_ref,
-                    tier_metadata=tier_metadata,
-                )
-                committed = _run(
-                    [
-                        self.docker_bin,
-                        "commit",
-                        *self._snapshot_commit_changes(record),
-                        cid,
-                        tag,
-                    ],
-                    timeout=self.startup_timeout,
-                )
-                commit_completed = True
-                image_ref = committed.stdout.strip().splitlines()[-1]
-                if not image_ref.startswith("sha256:"):
-                    raise ProviderError(
-                        f"docker commit did not return an immutable sha256 image id: {image_ref!r}"
-                    )
-            finally:
-                # A failed dump/commit can still leave part or all of the tree stopped.
+        except BaseException as primary_error:
+            # A failed dump/commit can still leave part or all of the tree stopped.  Resume
+            # is secondary cleanup: report it as the cause, never as a replacement for the
+            # primary snapshot error the caller needs to diagnose.
+            try:
                 self._resume_donor(cid)
-        except BaseException:
-            if not commit_completed:
-                self._remove_images_dir(images_volume, images_dir)
+            except BaseException as resume_error:
+                self._cleanup_unpublished_snapshot(
+                    images_volume,
+                    images_dir,
+                    image_tag=tag if commit_completed else None,
+                )
+                raise primary_error from resume_error
+            self._cleanup_unpublished_snapshot(
+                images_volume,
+                images_dir,
+                image_tag=tag if commit_completed else None,
+            )
             raise
+        else:
+            # A successful commit is not a successful snapshot until the donor has been
+            # resumed and its supervised tree root is observed outside a stopped state.
+            try:
+                self._resume_donor(cid)
+            except BaseException:
+                self._cleanup_unpublished_snapshot(images_volume, images_dir, image_tag=tag)
+                raise
+        if not commit_completed:  # pragma: no cover - the branches above are exhaustive
+            raise AssertionError("snapshot commit did not complete")
         self._remember_snapshot_record(record, image_ref=image_ref)
         self._snapshots[tag] = spec
         return tag
+
+    def _cleanup_unpublished_snapshot(
+        self, images_volume: str, images_dir: str, *, image_tag: str | None
+    ) -> None:
+        """Best-effort cleanup for a snapshot that will not be returned to its caller."""
+        if image_tag is not None:
+            try:
+                _run(
+                    [self.docker_bin, "rmi", "-f", image_tag],
+                    timeout=self.startup_timeout,
+                )
+            except Exception:  # noqa: BLE001 - preserve the snapshot/resume failure
+                _log.error("failed to remove unpublished CRIU image %s", image_tag, exc_info=True)
+        try:
+            self._remove_images_dir(images_volume, images_dir)
+        except Exception:  # noqa: BLE001 - cleanup must not mask snapshot/resume failure
+            _log.error("failed to remove incomplete CRIU dump %s", images_dir, exc_info=True)
 
     def snapshot(self, handle: SandboxHandle, name: str | None = None) -> str:
         """Create a UUID-addressed process snapshot; ``name`` is metadata only."""
         return self._take_snapshot(handle, name=name)
 
+    _DONOR_RESUME_ATTEMPTS = 2
+
     def _resume_donor(self, cid: str) -> None:
         # CRIU --leave-stopped stops every task in the tree. CONT to pid -1 resumes all
-        # permissible stopped tasks except this docker-exec helper and PID 1.
-        _run(
-            [
-                self.docker_bin,
-                "exec",
-                "-u",
-                "0",
-                cid,
-                "bash",
-                "-c",
-                "kill -s CONT -- -1",
-            ],
-            timeout=self.startup_timeout,
+        # permissible stopped tasks except this docker-exec helper and PID 1. Verify the
+        # supervised tree root left T/t state; retry once as a bounded fallback for a
+        # transient docker-exec failure or a signal that did not take effect promptly.
+        script = (
+            f'tree_pid="$(cat {self._TREE_PIDFILE})"\n'
+            "kill -s CONT -- -1\n"
+            "for _ in 1 2 3 4 5; do\n"
+            '  state="$(awk \'/^State:/ {print $2}\' "/proc/$tree_pid/status" '
+            '2>/dev/null || true)"\n'
+            '  case "$state" in R|S|D|I) exit 0 ;; *) sleep 0.05 ;; esac\n'
+            "done\n"
+            'echo "CRIU donor tree root $tree_pid is stopped or missing" >&2\n'
+            "exit 10\n"
         )
+        last_error: Exception | None = None
+        for _attempt in range(self._DONOR_RESUME_ATTEMPTS):
+            try:
+                _run(
+                    [self.docker_bin, "exec", "-u", "0", cid, "bash", "-c", script],
+                    timeout=self.startup_timeout,
+                )
+                return
+            except Exception as exc:  # noqa: BLE001 - retry cleanup, preserve cause
+                last_error = exc
+        assert last_error is not None
+        raise ProviderError(
+            f"failed to resume and verify CRIU donor {cid!r} after "
+            f"{self._DONOR_RESUME_ATTEMPTS} attempts: {last_error}"
+        ) from last_error
 
     def _hydrate_tier_metadata(self, record: dict[str, Any]) -> None:
         tier = record.get("tier_metadata")

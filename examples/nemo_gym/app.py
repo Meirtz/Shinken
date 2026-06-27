@@ -8,6 +8,7 @@ see ``examples/nemo_gym/README.md``.
 Environment knobs (read here, not from YAML — NeMo Gym validates its own config keys):
 - ``CUA_GYM_TASKS``     task-bundle root (default: the two demo bundles shipped in-repo)
 - ``SHINKEN_IMAGE``     sandbox image (default: the provider's default, shinken/sandbox-linux)
+- ``SHINKEN_STATE_FIDELITY`` trusted caller opt-in: ``filesystem`` or ``process_memory``
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from shinken import DockerLocalProvider
+from shinken import DockerLocalProvider, SandboxSpec
 from shinken.integrations.cua_gym import CuaGymTaskSource
 from shinken.integrations.nemo_gym import ShinkenComputerEngine, build_resources_server_cls
 
@@ -28,7 +29,13 @@ def engine_factory(_config: object) -> ShinkenComputerEngine:
     if os.environ.get("SHINKEN_IMAGE"):
         kwargs["image"] = os.environ["SHINKEN_IMAGE"]
     provider = DockerLocalProvider(**kwargs)
-    return ShinkenComputerEngine(provider, CuaGymTaskSource(root))
+    fidelity = os.environ.get("SHINKEN_STATE_FIDELITY")
+    if fidelity is None and Path(root).resolve() == DEMO_TASKS.resolve():
+        fidelity = "filesystem"
+    if fidelity not in (None, "filesystem", "process_memory"):
+        raise ValueError("SHINKEN_STATE_FIDELITY must be filesystem or process_memory")
+    spec = SandboxSpec(state_fidelity=fidelity) if fidelity is not None else None
+    return ShinkenComputerEngine(provider, CuaGymTaskSource(root), spec=spec)
 
 
 ShinkenComputerResourcesServer = build_resources_server_cls(engine_factory)

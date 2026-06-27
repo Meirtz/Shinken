@@ -206,6 +206,17 @@ def test_parse_reward_contract():
     assert cg.parse_reward("REWARD: not-a-number") is None
 
 
+@pytest.mark.parametrize("reward", ["1e999", "-0.1", "1.1"])
+def test_parse_reward_rejects_non_finite_or_out_of_range_values(reward):
+    with pytest.raises(cg.CuaGymError, match="reward must be"):
+        cg.parse_reward(f"REWARD: {reward}")
+
+
+@pytest.mark.parametrize("reward", ["0.0", "1.0"])
+def test_parse_reward_accepts_closed_unit_interval_boundaries(reward):
+    assert cg.parse_reward(f"REWARD: {reward}") == float(reward)
+
+
 # ----------------------------------------------------------------- env surface + fork reset
 
 
@@ -236,6 +247,48 @@ def test_reset_builds_golden_once_then_forks(bundle_root, mock_shinkend):
         assert "replica-1" in prov.destroyed  # the stale replica was torn down
         assert len(fake.calls) == n_setup_calls  # setup did not rerun
     assert prov.calls["delete_snapshot"] == 1  # dispose() reclaimed the golden snapshot
+
+
+def test_reset_destroys_resumed_handle_when_connect_fails(bundle_root, mock_shinkend):
+    class _FailReplicaConnect(_FakeForkProvider):
+        def connect(self, handle):
+            if str(handle).startswith("replica-"):
+                raise RuntimeError("replica handshake failed")
+            return super().connect(handle)
+
+    provider = _FailReplicaConnect(mock_shinkend)
+    fake = _FakeExec()
+    env = _env(cg.CuaGymTaskSource(bundle_root).get("task_a"), provider, fake)
+    try:
+        with pytest.raises(RuntimeError, match="replica handshake failed"):
+            env.reset()
+        assert provider.destroyed.count("replica-1") == 1
+        assert env._handle is None and env._sess is None
+    finally:
+        env.dispose()
+    assert provider.destroyed.count("replica-1") == 1
+
+
+def test_filesystem_fidelity_requires_trusted_caller_spec(bundle_root, mock_shinkend):
+    task = cg.CuaGymTaskSource(bundle_root).get("task_a")
+    provider = _FakeForkProvider(mock_shinkend)
+
+    default_env = cg.ShinkenCuaGymEnv(task, provider, exec_factory=lambda _p, _h: _FakeExec())
+    assert default_env.spec.state_fidelity == "process_memory"
+
+    # Bundle content is untrusted and cannot lower its own restore-fidelity contract.
+    task.config["shinken_state_fidelity"] = "filesystem"
+    untrusted_env = cg.ShinkenCuaGymEnv(task, provider, exec_factory=lambda _p, _h: _FakeExec())
+    assert untrusted_env.spec.state_fidelity == "process_memory"
+
+    trusted_spec = shinken.SandboxSpec(state_fidelity="filesystem")
+    filesystem_env = cg.ShinkenCuaGymEnv(
+        task,
+        provider,
+        spec=trusted_spec,
+        exec_factory=lambda _p, _h: _FakeExec(),
+    )
+    assert filesystem_env.spec is trusted_spec
 
 
 def test_setup_download_resolves_from_bundle_never_network(bundle_root, mock_shinkend, tmp_path):
@@ -295,7 +348,25 @@ def test_evaluate_without_reward_marker_is_typed_not_zero(bundle_root, mock_shin
     task = cg.CuaGymTaskSource(bundle_root).get("task_a")
     with _env(task, _FakeForkProvider(mock_shinkend), fake) as env:
         env.reset()
-        with pytest.raises(cg.CuaGymError, match="no 'REWARD: X.X' line"):
+        with pytest.raises(cg.CuaGymError, match=r"reward.py failed \(rc=1\)"):
+            env.evaluate()
+
+
+def test_evaluate_rejects_marker_from_nonzero_process(bundle_root, mock_shinkend):
+    fake = _FakeExec(responses={"shinken_cua_": (2, "REWARD: 1.0", "late scorer crash")})
+    task = cg.CuaGymTaskSource(bundle_root).get("task_a")
+    with _env(task, _FakeForkProvider(mock_shinkend), fake) as env:
+        env.reset()
+        with pytest.raises(cg.CuaGymError, match=r"reward.py failed \(rc=2\)"):
+            env.evaluate()
+
+
+def test_evaluate_clean_exit_without_reward_marker_is_typed_not_zero(bundle_root, mock_shinkend):
+    fake = _FakeExec(responses={"shinken_cua_": (0, "result file missing", "")})
+    task = cg.CuaGymTaskSource(bundle_root).get("task_a")
+    with _env(task, _FakeForkProvider(mock_shinkend), fake) as env:
+        env.reset()
+        with pytest.raises(cg.CuaGymError, match=r"no 'REWARD: X.X' line \(rc=0\)"):
             env.evaluate()
 
 
@@ -419,7 +490,9 @@ def test_live_fork_reset_and_reward(tmp_path):
     task = cg.CuaGymTaskSource(tmp_path).get("live_task")
     # generous startup timeout: the live smoke shares the daemon with whatever else runs
     provider = DockerLocalProvider(image="shinken/sandbox-linux", startup_timeout=120.0)
-    with cg.ShinkenCuaGymEnv(task, provider) as env:
+    with cg.ShinkenCuaGymEnv(
+        task, provider, spec=shinken.SandboxSpec(state_fidelity="filesystem")
+    ) as env:
         try:
             obs = env.reset()
         except ProviderError:

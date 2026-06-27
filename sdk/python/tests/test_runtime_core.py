@@ -154,6 +154,30 @@ def test_runtime_opens_session_and_rolls_out(mock_shinkend):
     assert traj.terminal == "done" and traj.num_actions == 2
 
 
+def test_runtime_open_destroys_created_handle_when_connect_fails(monkeypatch):
+    class FailingProvider:
+        def __init__(self):
+            self.handle = object()
+            self.destroyed: list[object] = []
+
+        def create(self, spec=None):
+            assert spec == {"suite": "runtime"}
+            return self.handle
+
+        def connect(self, handle):
+            assert handle is self.handle
+            raise RuntimeError("runtime handshake failed")
+
+        def destroy(self, handle):
+            self.destroyed.append(handle)
+
+    provider = FailingProvider()
+    monkeypatch.setattr(runtime.providers, "get", lambda *_args, **_kwargs: provider)
+    with pytest.raises(RuntimeError, match="runtime handshake failed"):
+        Runtime("failing").open({"suite": "runtime"})
+    assert provider.destroyed == [provider.handle]
+
+
 # --- Workload registry (mirrors the provider registry; semantic-free) ---
 
 

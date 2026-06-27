@@ -271,6 +271,63 @@ def test_provider_session_destroys_when_connect_fails():
     assert provider.destroyed == ["base-1"]  # the created substrate was reclaimed
 
 
+def test_provider_session_surfaces_close_failure_and_still_destroys():
+    provider = _FakeForkProvider("unused")
+
+    class FailingClose:
+        def close(self):
+            raise RuntimeError("session close failed")
+
+    provider.connect = lambda _handle, **_kwargs: FailingClose()
+    with pytest.raises(RuntimeError, match="session close failed"):
+        with provider.session():
+            pass
+    assert provider.destroyed == ["base-1"]
+
+
+def test_provider_session_surfaces_destroy_failure_after_normal_body():
+    provider = _FakeForkProvider("unused")
+    attempted: list[str] = []
+
+    class Closed:
+        def close(self):
+            return None
+
+    def fail_destroy(handle):
+        attempted.append(handle.sandbox_id)
+        raise RuntimeError("session destroy failed")
+
+    provider.connect = lambda _handle, **_kwargs: Closed()
+    provider.destroy = fail_destroy
+    with pytest.raises(RuntimeError, match="session destroy failed"):
+        with provider.session():
+            pass
+    assert attempted == ["base-1"]
+
+
+def test_provider_session_preserves_body_error_when_all_teardown_fails(caplog):
+    provider = _FakeForkProvider("unused")
+    attempted: list[str] = []
+
+    class FailingClose:
+        def close(self):
+            raise RuntimeError("secondary close failure")
+
+    def fail_destroy(handle):
+        attempted.append(handle.sandbox_id)
+        raise RuntimeError("secondary destroy failure")
+
+    provider.connect = lambda _handle, **_kwargs: FailingClose()
+    provider.destroy = fail_destroy
+    with caplog.at_level("ERROR"):
+        with pytest.raises(ValueError, match="primary body failure"):
+            with provider.session():
+                raise ValueError("primary body failure")
+    assert attempted == ["base-1"]
+    assert "session close failed while handling body error" in caplog.text
+    assert "session destroy failed while handling body error" in caplog.text
+
+
 # ----------------------------------------- 4. owner-aware cleanup_orphans / list / repr
 
 
@@ -387,6 +444,31 @@ def test_sandbox_handle_repr_redacts_token():
     assert "c0a0deadbeefcafe" not in repr(h)
     assert "token='c0a0…'" in repr(h)
     assert "token=None" in repr(SandboxHandle(provider="p", sandbox_id="s", addr="a"))
+
+
+def test_sandbox_handle_repr_recursively_redacts_metadata_credentials():
+    metadata: dict = {
+        "safe": "visible",
+        "api_token": "top-secret-token",
+        "nested": [
+            {"AWS_SECRET_ACCESS_KEY": "cloud-secret"},
+            {"headers": {"Authorization": "Bearer bearer-secret"}},
+            "PASSWORD=env-secret",
+            "-----BEGIN " + "PRIVATE KEY-----\nprivate-material\n-----END PRIVATE KEY-----",
+        ],
+    }
+    metadata["cycle"] = metadata
+    blob = repr(SandboxHandle(provider="p", sandbox_id="s", addr="a", metadata=metadata))
+    for secret in (
+        "top-secret-token",
+        "cloud-secret",
+        "bearer-secret",
+        "env-secret",
+        "private-material",
+    ):
+        assert secret not in blob
+    assert "visible" in blob
+    assert "<recursive>" in blob
 
 
 # ------------------------------------------------- 5. snapshot labels + gc + fork GC
@@ -560,6 +642,38 @@ def test_checkpoint_requires_provider_is_typed(mock_shinkend):
         orphan.delete()
 
 
+def test_checkpoint_spawn_destroys_restored_handle_when_connect_fails():
+    provider = _FakeForkProvider("unused")
+
+    def fail_connect(_handle, **_kwargs):
+        raise RuntimeError("handshake failed")
+
+    provider.connect = fail_connect
+    checkpoint = shinken.Checkpoint("ckpt-xyz", provider=provider)
+    with pytest.raises(RuntimeError, match="handshake failed"):
+        checkpoint.spawn()
+    assert provider.destroyed == ["restore-1"]
+
+
+def test_checkpoint_spawn_preserves_connect_error_when_destroy_also_fails():
+    provider = _FakeForkProvider("unused")
+    attempted: list[str] = []
+
+    def fail_connect(_handle, **_kwargs):
+        raise ValueError("primary connect failure")
+
+    def fail_destroy(handle):
+        attempted.append(handle.sandbox_id)
+        raise RuntimeError("secondary destroy failure")
+
+    provider.connect = fail_connect
+    provider.destroy = fail_destroy
+    checkpoint = shinken.Checkpoint("ckpt-xyz", provider=provider)
+    with pytest.raises(ValueError, match="primary connect failure"):
+        checkpoint.spawn()
+    assert attempted == ["restore-1"]
+
+
 def test_spawn_many_returns_fleet_and_destroys_all_on_exit(mock_shinkend):
     provider = _FakeForkProvider(mock_shinkend)
     with provider.session() as env:
@@ -574,6 +688,24 @@ def test_spawn_many_returns_fleet_and_destroys_all_on_exit(mock_shinkend):
         for member in fleet.envs:
             with pytest.raises(shinken.SessionClosed):
                 _watchdog(member.ping)
+
+
+def test_spawn_many_destroys_failed_and_connected_replicas_on_partial_connect_failure(
+    mock_shinkend,
+):
+    provider = _FakeForkProvider(mock_shinkend)
+    real_connect = provider.connect
+
+    def connect_with_one_failure(handle, **kwargs):
+        if handle.sandbox_id == "restore-2":
+            raise RuntimeError("replica handshake failed")
+        return real_connect(handle, **kwargs)
+
+    provider.connect = connect_with_one_failure
+    checkpoint = shinken.Checkpoint("ckpt-xyz", provider=provider)
+    with pytest.raises(RuntimeError, match="replica handshake failed"):
+        checkpoint.spawn_many(3)
+    assert set(provider.destroyed) == {"restore-1", "restore-2", "restore-3"}
 
 
 def test_fleet_map_is_concurrent_not_serial(mock_shinkend):
@@ -610,6 +742,26 @@ def test_sandbox_spawn_returns_connected_sibling(mock_shinkend):
             assert sib.ping() >= 0
         finally:
             sib.destroy()
+
+
+def test_sandbox_spawn_destroys_fork_when_connect_fails(mock_shinkend):
+    provider = _FakeForkProvider(mock_shinkend)
+    base = provider.create()
+    env = provider.connect(base)
+    real_connect = provider.connect
+
+    def fail_fork_connect(handle, **kwargs):
+        if handle.sandbox_id.startswith("fork-of-"):
+            raise RuntimeError("fork handshake failed")
+        return real_connect(handle, **kwargs)
+
+    provider.connect = fail_fork_connect
+    try:
+        with pytest.raises(RuntimeError, match="fork handshake failed"):
+            env.spawn()
+        assert f"fork-of-{base.sandbox_id}" in provider.destroyed
+    finally:
+        env.destroy()
 
 
 def test_spawn_without_provider_is_typed(mock_shinkend):

@@ -12,6 +12,10 @@ Run (Docker + the local image required):
     make sandbox-image                      # once: build shinken/sandbox-linux
     PYTHONPATH=sdk/python/src python examples/cua_gym_shinken.py [path/to/output/final]
 
+External bundles default to process-memory fidelity. After auditing that all live process
+state is recreated post-fork, opt in to Docker's disk tier with
+``SHINKEN_STATE_FIDELITY=filesystem``.
+
 With no argument a self-contained demo bundle is generated in a temp dir, so the script is
 runnable with zero external assets; point it at a real CUA-Gym ``output/final/`` directory
 (or set ``$CUA_GYM_TASKS``) to drive real bundles.
@@ -20,6 +24,7 @@ runnable with zero external assets; point it at a real CUA-Gym ``output/final/``
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 import textwrap
@@ -27,7 +32,7 @@ import time
 from pathlib import Path
 
 from shinken.integrations.cua_gym import CuaGymTaskSource, ShinkenCuaGymEnv
-from shinken.providers.base import ProviderError
+from shinken.providers.base import ProviderError, SandboxSpec
 from shinken.providers.docker import DockerLocalProvider
 
 
@@ -83,7 +88,8 @@ def make_demo_bundle_root() -> Path:
 
 
 def main() -> int:
-    root = Path(sys.argv[1]) if len(sys.argv) > 1 else make_demo_bundle_root()
+    using_builtin_demo = len(sys.argv) == 1
+    root = Path(sys.argv[1]) if not using_builtin_demo else make_demo_bundle_root()
     source = CuaGymTaskSource(root)
     print(f"task source: {len(source)} bundle(s) from {source.root}")
     for path, why in source.skipped:
@@ -92,7 +98,15 @@ def main() -> int:
     print(f"task: {task.task_id!r} — {task.instruction!r}")
 
     provider = DockerLocalProvider(image="shinken/sandbox-linux", startup_timeout=120.0)
-    with ShinkenCuaGymEnv(task, provider) as env:
+    # This in-tree demo is audited as filesystem-only. Imported bundles retain the
+    # adapter's process-memory default unless their trusted caller explicitly opts in.
+    fidelity = os.environ.get("SHINKEN_STATE_FIDELITY")
+    if fidelity is None and using_builtin_demo:
+        fidelity = "filesystem"
+    if fidelity not in (None, "filesystem", "process_memory"):
+        raise ValueError("SHINKEN_STATE_FIDELITY must be filesystem or process_memory")
+    spec = SandboxSpec(state_fidelity=fidelity) if fidelity is not None else None
+    with ShinkenCuaGymEnv(task, provider, spec=spec) as env:
         # First reset pays the one-time golden build (create + setup + checkpoint) AND a fork.
         t0 = time.perf_counter()
         obs = reset_with_retry(env)

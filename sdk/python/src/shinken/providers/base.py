@@ -21,11 +21,16 @@ returns an address and token for a running ``shinkend``.
 from __future__ import annotations
 
 import contextlib
+import logging
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from shinken._lifecycle import connect_owned_handle
 from shinken.client import Sandbox, connect
+
+_log = logging.getLogger("shinken.providers.base")
 
 # Structured routing semantics for providers (#206 / D1/D5). Enums keep the descriptor
 # honest and machine-routable for future Firecracker/QEMU/gVisor/Kata tiers.
@@ -37,6 +42,71 @@ DisplayKind = Literal["none", "x11", "wayland", "browser", "provider_managed"]
 # tree (CRIU), or an opaque provider-managed snapshot.
 SnapshotKind = Literal["none", "disk", "memory", "process", "provider_managed"]
 StateFidelity = Literal["filesystem", "process_memory"]
+
+_SENSITIVE_METADATA_KEY_RE = re.compile(
+    r"(?:token|secret|password|passwd|pwd|key|credential|authorization|auth|cookie)$",
+    re.IGNORECASE,
+)
+_SECRET_ASSIGNMENT_RE = re.compile(
+    r"(?P<key>[A-Za-z0-9_.-]*(?:token|secret|password|passwd|pwd|key|credential|auth|cookie))"
+    r"(?P<sep>\s*=\s*)(?P<value>[^\s,;&]+)",
+    re.IGNORECASE,
+)
+_AUTH_VALUE_RE = re.compile(r"\b(?P<scheme>bearer|basic)\s+[^\s,;]+", re.IGNORECASE)
+
+
+def _redact_metadata_for_repr(value: Any, active: set[int] | None = None) -> Any:
+    """Build a recursively redacted, repr-safe view of provider metadata.
+
+    Metadata is caller/provider supplied and may contain nested credential maps, env-style
+    assignments, auth headers, opaque objects, or cycles.  ``SandboxHandle.__repr__`` must
+    never delegate to an arbitrary object's repr or recurse forever while trying to log it.
+    """
+    if isinstance(value, str):
+        if "-----BEGIN" in value and "PRIVATE KEY-----" in value:
+            return "<redacted-private-key>"
+        value = _SECRET_ASSIGNMENT_RE.sub(r"\g<key>\g<sep>***", value)
+        return _AUTH_VALUE_RE.sub(r"\g<scheme> ***", value)
+    if value is None or isinstance(value, int | float | bool):
+        return value
+    if isinstance(value, bytes):
+        return f"<bytes:{len(value)}>"
+
+    active = set() if active is None else active
+    identity = id(value)
+    if identity in active:
+        return "<recursive>"
+    active.add(identity)
+    try:
+        if isinstance(value, dict):
+            safe: dict[Any, Any] = {}
+            for key, item in value.items():
+                if isinstance(key, str):
+                    safe_key: Any = _redact_metadata_for_repr(key, active)
+                    key_name = key
+                elif key is None or isinstance(key, int | float | bool):
+                    safe_key = key
+                    key_name = str(key)
+                else:
+                    safe_key = f"<opaque-key:{type(key).__name__}>"
+                    key_name = type(key).__name__
+                safe[safe_key] = (
+                    "<redacted>"
+                    if _SENSITIVE_METADATA_KEY_RE.search(key_name)
+                    else _redact_metadata_for_repr(item, active)
+                )
+            return safe
+        if isinstance(value, list):
+            return [_redact_metadata_for_repr(item, active) for item in value]
+        if isinstance(value, tuple):
+            return tuple(_redact_metadata_for_repr(item, active) for item in value)
+        if isinstance(value, set):
+            return {_redact_metadata_for_repr(item, active) for item in value}
+        if isinstance(value, frozenset):
+            return frozenset(_redact_metadata_for_repr(item, active) for item in value)
+        return f"<opaque:{type(value).__name__}>"
+    finally:
+        active.remove(identity)
 
 
 class ProviderError(RuntimeError):
@@ -121,8 +191,8 @@ class SandboxSpec:
 class SandboxHandle:
     """A running or externally managed sandbox endpoint.
 
-    ``repr()`` REDACTS the bearer token (first four characters + ``…``), so handles
-    can be logged/printed without leaking the session credential."""
+    ``repr()`` REDACTS the bearer token (first four characters + ``…``) and recursively
+    sanitizes metadata, so handles can be logged/printed without leaking credentials."""
 
     provider: str
     sandbox_id: str
@@ -133,10 +203,11 @@ class SandboxHandle:
 
     def __repr__(self) -> str:
         token = f"{self.token[:4]}…" if self.token else self.token
+        metadata = _redact_metadata_for_repr(self.metadata)
         return (
             f"SandboxHandle(provider={self.provider!r}, sandbox_id={self.sandbox_id!r}, "
             f"addr={self.addr!r}, token={token!r}, created_at={self.created_at!r}, "
-            f"metadata={self.metadata!r})"
+            f"metadata={metadata!r})"
         )
 
 
@@ -197,21 +268,55 @@ class SandboxProvider:
                 env.click(x=100, y=200)
 
         ``spec`` and ``connect_kwargs`` are forwarded to :meth:`create` /
-        :meth:`connect`. Inherited by every provider from this base class."""
+        :meth:`connect`. Teardown failures propagate after a successful body; if the
+        body already raised, teardown is still attempted and logged without replacing
+        that primary error. Inherited by every provider from this base class."""
         handle = self.create(spec)
-        try:
-            env = self.connect(handle, **connect_kwargs)
-        except BaseException:
-            with contextlib.suppress(Exception):
-                self.destroy(handle)
-            raise
+        env = connect_owned_handle(self, handle, **connect_kwargs)
+        body_failed = False
         try:
             yield env
+        except BaseException:
+            body_failed = True
+            raise
         finally:
-            with contextlib.suppress(Exception):
+            close_error: BaseException | None = None
+            destroy_error: BaseException | None = None
+            try:
                 env.close()
-            with contextlib.suppress(Exception):
+            except BaseException as exc:  # noqa: BLE001 - still attempt substrate teardown
+                close_error = exc
+            try:
                 self.destroy(handle)
+            except BaseException as exc:  # noqa: BLE001 - preserve body/close failure
+                destroy_error = exc
+
+            if body_failed:
+                if close_error is not None:
+                    _log.error(
+                        "session close failed while handling body error",
+                        exc_info=(
+                            type(close_error),
+                            close_error,
+                            close_error.__traceback__,
+                        ),
+                    )
+                if destroy_error is not None:
+                    _log.error(
+                        "session destroy failed while handling body error: %r",
+                        handle,
+                        exc_info=(
+                            type(destroy_error),
+                            destroy_error,
+                            destroy_error.__traceback__,
+                        ),
+                    )
+            elif close_error is not None:
+                if destroy_error is not None:
+                    raise close_error from destroy_error
+                raise close_error
+            elif destroy_error is not None:
+                raise destroy_error
 
     def health(self, handle: SandboxHandle) -> SandboxHealth:
         try:
