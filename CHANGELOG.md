@@ -16,15 +16,16 @@ entries are coarse-grained on purpose — the authoritative built-vs-designed ma
 - **Guest structured-observation engine v1 (Linux/AT-SPI)**: `observe` with stable element ids,
   tree-text diff, settle; guest-side `element_ref` actions + `invoke_action`/`set_value`.
 - **Runtime-state tiers beyond the disk tier**: the **CRIU memory tier** (`CriuDockerProvider`,
-  privileged-only — restore/fork is a live process+memory replica), the warm-pool fork graft,
-  and push-based boot readiness (`provider.create()` ~0.2 s).
+  privileged-only — atomic stopped-window checkpoint, with post-hardening live revalidation
+  pending), plus push-based boot readiness (`provider.create()` ~0.2 s). The historical live
+  warm-pool graft is disabled because restore equivalence was not proven.
 - **Agent-runtime narrow waist** (`shinken.runtime`) + Workload/Provider registries, the
   pluggable `shinkend` injector, OSWorld as a Workload (single-task official-evaluator score
   1.0 — a functional gate, not a conformance sweep), and `eval.run_eval_forked`
   (golden → fork-N → score).
 - **Fork-native gym adapter** (`shinken.gym`: `reset()` = fork) and trainer interop adapters —
   swerex/uni-agent, CUA-Gym, Agentix, ProRL-Agent-Server — plus the NeMo Gym resources server
-  example with a local MLX GRPO loop (`examples/nemo_gym/`).
+  example with a local group-relative optimizer-step smoke (`examples/nemo_gym/`).
 - **Operation-layer backends (D15, `shinken.backends`)**: `cua`, `mcp-computer`,
   `browser-runtime`, `e2b` adapters under the typed ACI with honest capability negotiation, and
   `RoutedSession` CU↔BU composition; fixture-tested + env-gated live smokes (the browser backend

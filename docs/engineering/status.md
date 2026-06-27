@@ -1,6 +1,6 @@
 # Shinken — Implementation Status (reality check)
 
-> Date: 2026-06-11 · Scope: what is **actually built and proven** vs **designed-only** vs
+> Date: 2026-06-27 · Scope: what is **actually built and proven** vs **designed-only** vs
 > **unvalidated**. The design corpus (vision/PRD/architecture/ADRs/roadmap) intentionally describes
 > the full CUA infrastructure stack; the *implementation* is the first well-tested local slice of
 > that stack. This page is the honest map between target scope and current code. When in doubt, this
@@ -9,17 +9,17 @@
 > Audience: users and implementers · Role: implementation reality check. This is the source of truth
 > for what exists today.
 
-The one-line summary: **a proven Linux/X11 pixel-observation + real-time-streaming slice exists
-and is covered by live CI, and the guest-side structured-observation engine v1 (AT-SPI: stable
-element ids, tree-text diff, settle, element_ref actions) now ships for Linux; v0.0.1 must still
-add the rest of the core semantics — adapters, capability/resource-scoping plumbing, artifacts,
-runtime-state surfacing, and tiny eval — before Shinken is feature-complete at local/reference
-scale.**
+The one-line summary: **Shinken currently ships a Linux/X11-first local environment/runtime
+data plane: typed ACI, pixel + AT-SPI observation, Docker filesystem state, a privileged CRIU
+process-memory implementation pending live revalidation, fork-native gym/eval, and protocol
+adapters. It does not yet ship a distributed fleet control plane, durable trajectory/artifact
+service, token-exact policy/trainer integration, CoW/microVM fast tier, or native
+Windows/Wayland/full-macOS runtime.**
 
 ## ✅ Implemented & proven (Linux / X11)
 
-Each row is exercised by unit tests **and** a live end-to-end smoke (Xvfb in CI and/or the Docker
-sandbox image), not just by design.
+The Proof column states the actual evidence level. Most rows have unit and live coverage;
+exceptions such as the post-hardening CRIU path are called out explicitly.
 
 | Capability | State | Proof |
 |---|---|---|

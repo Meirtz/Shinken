@@ -46,7 +46,6 @@ need production-scale performance, multi-tenant control plane, fork density, or 
 - Production Control Plane.
 - Warm pools.
 - CoW fork density.
-- Runtime checkpoint/restore/fork.
 - WebRTC/SFU/NVENC production media path.
 - Full Cedar + ocap + OS enforcement.
 - Windows/macOS guests.

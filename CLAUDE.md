@@ -82,16 +82,16 @@ String-form **XML tool calls** parse as first-class action input (`shinken.diale
 `format="auto"|"xml"|"dialect"`). **Docker disk-tier
 checkpoint/fork/resume** (`docker commit`, #209) behind the provider interface, the **CRIU
 memory tier** (S4c, opt-in `CriuDockerProvider`, `snapshot_kind="process"`, privileged-only:
-`criu dump --leave-running` + commit, restore = live process+memory replica in ~0.4 s,
-in-heap-marker-verified — a latency/state-fidelity tier, not an isolation posture), plus
+`criu dump --leave-stopped` + commit in one consistency window + donor resume; restore is a
+live process+memory replica. The hardened path is unit-tested and awaits a privileged live
+rerun before latency is republished — a state-fidelity tier, not an isolation posture), plus
 `eval.run_eval_forked` (golden→fork-N→score, #231) and the **fork-native gym adapter**
 (`shinken.gym`: trainer-facing `make/reset/step/evaluate` with reset()=fork, pool parallel
 reset, HF-datasets exporter, MultiTurnDataloader-shaped iterator), are built; a **local
 capability-gateway shim** (`sdk/python/src/shinken/gateway.py` + tests) is built. **Push-based boot readiness (S9)** is
-built: the guest-side `ready` query + lazy/self-healing X11 connect in `shinkend` + a 15 ms
-single-connection SDK readiness loop took `provider.create()` from ~7.7 s to ~0.19 s p50, and the
-opt-in **warm-pool fork graft** (pre-booted containers + `docker diff` delta) serves
-restore/fork without the boot (files-only, same tier as `docker commit`) — see
+single-connection SDK readiness loop took `provider.create()` from ~7.7 s to ~0.19 s p50.
+The historical live **warm-pool fork graft** is disabled because pool-hit/pool-miss
+equivalence was not proven — see
 [docs/engineering/benchmarks.md](docs/engineering/benchmarks.md) §1/§9. The Python SDK
 (sync facade + reader/demux, plus a pipelined `step()` — k actions + a fused observation in
 ~1 RTT, S11-measured) ships too. The **operation-layer backend contract (D15,
