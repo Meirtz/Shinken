@@ -11,24 +11,43 @@ from shinken.providers.base import UnsupportedProviderOperation
 
 
 class FakeCaps:
-    def __init__(self, verbs, structured=False):
+    def __init__(self, verbs, *, targets, observation_types, structured=False):
         self.verbs = verbs
+        self.targets = targets
+        self.observation_types = observation_types
         self.structured_observation = structured
 
 
 class FakeSurface:
     """Minimal duck-typed backend: records calls, advertises a verb set."""
 
-    def __init__(self, name, verbs, *, platform="x"):
+    def __init__(
+        self,
+        name,
+        verbs,
+        *,
+        platform="x",
+        targets=("point_px",),
+        observation_types=("screenshot",),
+        structured=False,
+    ):
         self.name = name
         self._verbs = verbs
         self._platform = platform
+        self._targets = targets
+        self._observation_types = observation_types
+        self._structured = structured
         self.calls: list[tuple] = []
         self.closed = False
 
     @property
     def capabilities(self):
-        return FakeCaps(self._verbs, structured="observe" in self._verbs)
+        return FakeCaps(
+            self._verbs,
+            targets=self._targets,
+            observation_types=self._observation_types,
+            structured=self._structured,
+        )
 
     @property
     def platform(self):
@@ -82,7 +101,12 @@ def _cu():
 
 def _bu():
     return FakeSurface(
-        "bu", ["observe", "screenshot", "click", "navigate", "eval"], platform="browser"
+        "bu",
+        ["observe", "screenshot", "click", "navigate", "eval"],
+        platform="browser",
+        targets=("point_px", "element_ref"),
+        observation_types=("screenshot", "tree"),
+        structured=True,
     )
 
 
@@ -116,6 +140,20 @@ def test_dispatch_unadvertised_verb_raises():
     s = _cu()  # cu has no 'navigate'
     with pytest.raises(UnsupportedProviderOperation, match="navigate"):
         dispatch_action(s, {"verb": "navigate", "url": "https://x"})
+
+
+def test_dispatch_move_never_falls_back_to_click():
+    s = _cu()  # click is supported; move is not
+    with pytest.raises(UnsupportedProviderOperation, match="move"):
+        dispatch_action(s, {"verb": "move", "target": {"kind": "point_px", "x": 3, "y": 4}})
+    assert not s.calls
+
+
+def test_dispatch_advertised_move_without_method_fails_typed():
+    s = FakeSurface("broken", ["move"])
+    with pytest.raises(UnsupportedProviderOperation, match="does not implement.*move"):
+        dispatch_action(s, {"verb": "move", "target": {"kind": "point_px", "x": 3, "y": 4}})
+    assert not s.calls
 
 
 # ---------------------------------------------------------------- route_for_target
@@ -181,8 +219,25 @@ def test_capabilities_union_and_per_source():
     ws = RoutedSession({"cu": _cu(), "bu": _bu()})
     cap = ws.capabilities
     assert "navigate" in cap.verbs and "scroll" in cap.verbs  # union
+    assert cap.targets == ["element_ref", "point_px"]
+    assert cap.observation_types == ["screenshot", "tree"]
+    assert cap.structured_observation is True
     assert set(cap.per_source) == {"cu", "bu"}
     assert "navigate" not in cap.per_source["cu"]  # honest per-surface breakdown
+
+
+def test_capabilities_do_not_invent_element_refs_or_trees():
+    pixel = FakeSurface(
+        "pixel",
+        ["observe", "screenshot", "click"],
+        targets=("point_px",),
+        observation_types=("screenshot",),
+        structured=False,
+    )
+    cap = RoutedSession({"pixel": pixel}).capabilities
+    assert cap.targets == ["point_px"]
+    assert cap.observation_types == ["screenshot"]
+    assert cap.structured_observation is False
 
 
 def test_unknown_surface_and_empty_raise():
