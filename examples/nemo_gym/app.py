@@ -22,7 +22,10 @@ from pathlib import Path
 
 from shinken import DockerLocalProvider, SandboxSpec
 from shinken.integrations.cua_gym import CuaGymTaskSource
-from shinken.integrations.nemo_gym import ShinkenComputerEngine, build_resources_server_cls
+from shinken.integrations.nemo_gym import (
+    ShinkenComputerEngine,
+    build_resources_server_cls,
+)
 
 DEMO_TASKS = Path(__file__).resolve().parent / "tasks"
 
@@ -50,7 +53,9 @@ def engine_factory(_config: object) -> ShinkenComputerEngine:
             lifecycle[argument] = float(os.environ[env_name])
     if "SHINKEN_MAX_GOLDENS" in os.environ:
         lifecycle["max_goldens"] = int(os.environ["SHINKEN_MAX_GOLDENS"])
-    return ShinkenComputerEngine(provider, CuaGymTaskSource(root), spec=spec, **lifecycle)
+    return ShinkenComputerEngine(
+        provider, CuaGymTaskSource(root), spec=spec, **lifecycle
+    )
 
 
 ShinkenComputerResourcesServer = build_resources_server_cls(engine_factory)

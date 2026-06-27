@@ -88,7 +88,9 @@ def apply_action(engine, sid: str, generation: int, verb: str, arg: str) -> str:
         "type": ("computer_type_text", {"text": arg}),
         "key": ("computer_key", {"keys": arg}),
     }.get(verb)
-    return engine.tool(sid, *tool, generation=generation) if tool else ""  # done → no-op
+    return (
+        engine.tool(sid, *tool, generation=generation) if tool else ""
+    )  # done → no-op
 
 
 def rollout(model, tok, engine, task_id, sampler):
@@ -185,9 +187,13 @@ def main() -> int:
             advs = [(r - mean) / (std + 1e-4) for r in rewards]
 
             batch = [
-                (c, a, adv) for turns, adv in zip(all_turns, advs, strict=True) for (c, a) in turns
+                (c, a, adv)
+                for turns, adv in zip(all_turns, advs, strict=True)
+                for (c, a) in turns
             ]
-            updated = std > 1e-4 and bool(batch)  # no spread → no gradient signal this group
+            updated = std > 1e-4 and bool(
+                batch
+            )  # no spread → no gradient signal this group
             if updated:
                 _loss, grads = loss_and_grad(model, batch)
                 opt.update(model, grads)

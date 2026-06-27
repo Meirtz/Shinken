@@ -42,8 +42,16 @@ def scripted_zenity(engine: ShinkenComputerEngine, sid: str, generation: int) ->
     assert "Vendor" in tree, f"dialog not in tree:\n{tree}"
     entry = re.search(r"^\s*(e\d+) (?:text|entry) ", tree, re.M)
     assert entry, f"no entry element in tree:\n{tree}"
-    print(engine.tool(sid, "computer_click", {"target": entry.group(1)}, generation=generation))
-    print(engine.tool(sid, "computer_type_text", {"text": "ACME GmbH"}, generation=generation))
+    print(
+        engine.tool(
+            sid, "computer_click", {"target": entry.group(1)}, generation=generation
+        )
+    )
+    print(
+        engine.tool(
+            sid, "computer_type_text", {"text": "ACME GmbH"}, generation=generation
+        )
+    )
     diff = engine.tool(sid, "computer_observe", {"mode": "diff"}, generation=generation)
     assert "ACME GmbH" in diff, f"typed value missing from diff:\n{diff}"
     print(f"diff confirms typed value:\n{diff}")
@@ -59,13 +67,17 @@ def main() -> int:
     print(f"dataset rows: {len(rows)} (ng_collect_rollouts-ready)")
 
     provider = DockerLocalProvider(name_prefix="shinken-nemogym")
-    engine = ShinkenComputerEngine(provider, tasks, spec=SandboxSpec(state_fidelity="filesystem"))
+    engine = ShinkenComputerEngine(
+        provider, tasks, spec=SandboxSpec(state_fidelity="filesystem")
+    )
     solvers = {"hello-file": scripted_hello, "zenity-entry": scripted_zenity}
     try:
         for task in tasks:
             sid = f"local-{task.task_id}"
             seeded = engine.seed(sid, task.task_id, generation=None)
-            print(f"\n=== {task.task_id}: seeded (reset {seeded['reset_ms']:.0f} ms) ===")
+            print(
+                f"\n=== {task.task_id}: seeded (reset {seeded['reset_ms']:.0f} ms) ==="
+            )
             solvers[task.task_id](engine, sid, seeded["generation"])
             reward = engine.verify(sid, generation=seeded["generation"])
             print(f"=== {task.task_id}: REWARD {reward} ===")
