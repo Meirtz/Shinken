@@ -101,13 +101,16 @@ class AnthropicComputerUseAdapter:
         if not data:
             raise AdapterError("screenshot", "observation has no image bytes")
         size = image_size(observation)
+        metadata = {
+            "coordinate_space": "point_px",
+            "image_size": {"w": size["w"], "h": size["h"]},
+            "scope": size["scope"],
+        }
+        if size["display"] is not None:
+            metadata["display"] = size["display"]
         return {
             "content": [screenshot_image_block(data, observation.get("format"))],
-            "metadata": {
-                "coordinate_space": "point_px",
-                "image_size": {"w": size["w"], "h": size["h"]},
-                "scope": size["scope"],
-            },
+            "metadata": metadata,
         }
 
     def run_metadata(self) -> dict:

@@ -28,7 +28,7 @@
         "v": { "const": 0 },
         "client": { "type": "object", "required": ["name", "version"], "properties": { "name": { "type": "string" }, "version": { "type": "string" } } },
         "accept": { "type": "object", "properties": { "observation_types": { "type": "array", "items": { "$ref": "#/$defs/ObservationType" } }, "binary_frames": { "type": "boolean", "description": "opt in to binary media framing: when true AND the runtime advertises capabilities.binary_frames, every image-bearing observation arrives as one binary WebSocket message (u32 LE header_len | JSON header per $defs.BinaryFrameHeader | raw codec payload) instead of base64-in-JSON text. Omitted/false keeps text frames." } } },
-        "token": { "type": "string", "description": "dev bearer token; required by a token-configured runtime (a non-loopback bind refuses to start without one). The runtime compares it in constant time (#135)." }
+        "token": { "type": "string", "description": "bearer token required by every TCP runtime; the runtime compares it in constant time (#135)." }
       }
     },
     "Welcome": {
@@ -101,7 +101,7 @@
         "tiles": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/Tile" }, "description": "dirty-tile delta frame (start_screencast delta=true): only the tiles that changed since the previous delivered frame, INSTEAD of `image`. Tile coordinates are in the delivered (post-downscale) resolution of the stream's last full keyframe; the consumer composites them onto that keyframe. Each tile's `ref` is encoded in the stream's format/quality." },
         "frame_hash": { "type": "string", "description": "content hash of the captured frame's RAW pixels (post-scope/downscale, pre-encode — codec-independent: xxh3-128 lowercase hex over RGB with dims as seed; 32 chars since the 64-bit fnv1a era, but OPAQUE to clients — echo it back verbatim, never parse it; a hash minted by an older runtime simply never matches and yields a full frame). Set on one-shot screenshot observations from a frame_dedup runtime; the value a client echoes back as the screenshot action's if_none_match." },
         "not_modified": { "const": true, "description": "content-negotiated screenshot (if_none_match): the freshly captured frame's hash equals the request's if_none_match, so the payload is omitted — the client already holds these exact pixels, keyed by frame_hash. Always carries frame_hash + cause and never image/tiles. Sent as a JSON text frame even on a binary-negotiated session (there is no payload to carry)." },
-        "pointer": { "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2, "description": "live pointer position in capture pixels [x, y] — observation METADATA, never composited into the frame (captures are cursor-free by design; frame_hash dedup and idle suppression depend on that). Set on one-shot screenshot and not_modified replies when the backend can report it (the pointer rides a not_modified answer because the metadata is fresh even when the pixels are not); omitted on screencast stream frames and on backends that cannot say." }
+        "pointer": { "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2, "description": "live pointer position in global point_px action coordinates [x, y] — observation METADATA, never composited into the frame (captures are cursor-free by design; frame_hash dedup and idle suppression depend on that). Set on one-shot screenshot and not_modified replies when the backend can report it; omitted on screencast stream frames and on backends that cannot say." }
       },
       "allOf": [
         { "if": { "required": ["stream"] }, "then": { "required": ["stream", "seq"], "anyOf": [ { "required": ["image"] }, { "required": ["tiles"] } ] } },
@@ -131,6 +131,7 @@
         "cause": { "type": "string", "description": "action call_id; set on one-shot screenshots, omitted on stream frames" },
         "stream": { "type": "string" },
         "seq": { "type": "integer", "minimum": 0 },
+        "display": { "$ref": "#/$defs/CoordinateSpace" },
         "image": {
           "type": "object", "additionalProperties": false,
           "required": ["off", "len", "w", "h"],
@@ -144,7 +145,8 @@
           }
         },
         "tiles": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/BinaryTile" } },
-        "frame_hash": { "type": "string", "description": "content hash of the frame's RAW pixels (see ObservationMsg.frame_hash) — set on one-shot screenshot headers from a frame_dedup runtime" }
+        "frame_hash": { "type": "string", "description": "content hash of the frame's RAW pixels (see ObservationMsg.frame_hash) — set on one-shot screenshot headers from a frame_dedup runtime" },
+        "pointer": { "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2, "description": "live global pointer position in action pixels [x, y]" }
       },
       "allOf": [
         { "if": { "required": ["stream"] }, "then": { "required": ["stream", "seq"], "anyOf": [ { "required": ["image"] }, { "required": ["tiles"] } ] } },
@@ -326,12 +328,32 @@
     "ImageFormat": { "enum": ["png", "jpeg"], "description": "wire image codec: png (lossless default) or jpeg (lossy bandwidth lever)" },
     "CoordinateSpace": {
       "type": "object", "additionalProperties": false,
+      "required": ["origin", "w", "h", "dpr", "source_rect", "delivered"],
+      "properties": {
+        "origin": { "const": "top-left", "description": "origin convention shared by global, source, and delivered spaces" },
+        "w": { "type": "integer", "minimum": 1, "description": "width of the full global point_px action space" },
+        "h": { "type": "integer", "minimum": 1, "description": "height of the full global point_px action space" },
+        "dpr": { "type": "number", "exclusiveMinimum": 0, "description": "device pixels per logical UI point; source_rect and actions remain expressed in capture/action pixels" },
+        "source_rect": { "$ref": "#/$defs/CoordinateRect", "description": "captured pre-downscale rectangle in global point_px coordinates" },
+        "delivered": { "$ref": "#/$defs/CoordinateSize", "description": "post-downscale image dimensions actually delivered to the client/model" }
+      }
+    },
+    "CoordinateRect": {
+      "type": "object", "additionalProperties": false,
+      "required": ["x", "y", "w", "h"],
+      "properties": {
+        "x": { "type": "integer", "description": "left edge in global point_px coordinates; may be negative for an off-screen window" },
+        "y": { "type": "integer", "description": "top edge in global point_px coordinates; may be negative for an off-screen window" },
+        "w": { "type": "integer", "minimum": 1 },
+        "h": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "CoordinateSize": {
+      "type": "object", "additionalProperties": false,
       "required": ["w", "h"],
       "properties": {
-        "origin": { "const": "top-left" },
-        "w": { "type": "integer" },
-        "h": { "type": "integer" },
-        "dpr": { "type": "number", "default": 1 }
+        "w": { "type": "integer", "minimum": 1 },
+        "h": { "type": "integer", "minimum": 1 }
       }
     },
     "ObservationType": { "enum": ["a11y", "screenshot", "screencast", "video", "som"] },

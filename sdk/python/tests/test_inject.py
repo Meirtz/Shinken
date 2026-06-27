@@ -90,17 +90,16 @@ def test_osworld_exec_injection(fake_binary, monkeypatch):
     assert res.addr == "sbx:8765"
 
 
-def test_loopback_bind_when_no_token(fake_binary, captured_run):
-    res = inject_shinkend(
-        InjectionTarget(container="c"),
-        fake_binary,
-        method="docker",
-        require_token=False,
-        readiness_timeout=0,
-    )
-    assert res.token is None
-    start = next(" ".join(c) for c in captured_run if "SHINKEND_ADDR" in " ".join(c))
-    assert "127.0.0.1:" in start and "SHINKEND_TOKEN" not in start
+def test_tokenless_injection_is_rejected_even_for_loopback(fake_binary, captured_run):
+    with pytest.raises(InjectionError, match="tokenless"):
+        inject_shinkend(
+            InjectionTarget(container="c"),
+            fake_binary,
+            method="docker",
+            require_token=False,
+            readiness_timeout=0,
+        )
+    assert captured_run == []
 
 
 def test_run_wraps_subprocess_failure_as_injection_error():

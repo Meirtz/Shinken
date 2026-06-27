@@ -24,6 +24,8 @@ from .base import (
     SandboxHealth,
     SandboxProvider,
     SandboxSpec,
+    StateFidelity,
+    UnsatisfiedSandboxSpec,
     UnsupportedProviderOperation,
 )
 from .criu import CriuDockerProvider
@@ -84,6 +86,8 @@ __all__ = [
     "SandboxHealth",
     "SandboxProvider",
     "SandboxSpec",
+    "StateFidelity",
+    "UnsatisfiedSandboxSpec",
     "UnsupportedProviderOperation",
     "available",
     "get",

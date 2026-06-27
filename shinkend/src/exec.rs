@@ -144,6 +144,28 @@ pub struct ExecOutcome {
     pub duration_ms: f64,
 }
 
+/// The direct child's reaped status plus the terminal decision made at the deadline.
+///
+/// A process can exit naturally in the narrow window after the deadline fires but
+/// before SIGKILL reaches its process group. Once the timeout branch has won, exposing
+/// that later `0` as a successful exit is contradictory (`timed_out=true, exit_code=0`)
+/// and lets callers mistake an over-deadline run for success. Keep the raw status for
+/// the actual signal, but suppress exit codes for every timed-out terminal outcome.
+struct WaitOutcome {
+    status: std::process::ExitStatus,
+    timed_out: bool,
+}
+
+impl WaitOutcome {
+    fn exit_code(&self) -> Option<i32> {
+        (!self.timed_out).then(|| self.status.code()).flatten()
+    }
+
+    fn signal(&self) -> Option<i32> {
+        status_signal(&self.status)
+    }
+}
+
 fn build_command(spec: &ExecSpec) -> Command {
     let mut cmd = match &spec.command {
         ExecCommand::Argv(argv) => {
@@ -180,16 +202,20 @@ fn build_command(spec: &ExecSpec) -> Command {
 }
 
 /// SIGKILL the child's whole process group (it IS the group leader: spawned with
-/// `process_group(0)`). Falls back to killing the immediate child where group kill
-/// is unavailable or the pid is already gone.
-fn kill_tree(child: &mut Child) {
+/// `process_group(0)`). `process_group` is captured immediately after spawn: by the
+/// time a timeout/client disconnect is observed the direct child may already have
+/// been reaped while a background descendant still owns the group's pipes. Falls
+/// back to killing the immediate child where group kill is unavailable or gone.
+fn kill_tree(child: &mut Child, process_group: Option<u32>) {
     #[cfg(unix)]
-    if let Some(pid) = child.id() {
+    if let Some(pgid) = process_group {
         // Safety: plain libc call; an ESRCH/EPERM error is handled by the fallback.
         unsafe {
-            libc::killpg(pid as libc::pid_t, libc::SIGKILL);
+            libc::killpg(pgid as libc::pid_t, libc::SIGKILL);
         }
     }
+    #[cfg(not(unix))]
+    let _ = process_group;
     let _ = child.start_kill();
 }
 
@@ -216,20 +242,40 @@ fn feed_stdin(child: &mut Child, text: Option<String>) {
 }
 
 /// Await the child within `timeout`; on expiry kill the process group and reap.
-/// Returns the exit status and whether the deadline fired.
+///
+/// The timeout branch gets one final non-blocking reap before it commits: if the
+/// status is already observable, natural completion won the race. Otherwise timeout
+/// wins, the whole originally-captured process group is killed, and a later natural
+/// direct-child status never gets exposed as a successful exit code.
 async fn wait_with_deadline(
     child: &mut Child,
     timeout: Duration,
-) -> Result<(std::process::ExitStatus, bool), String> {
+    process_group: Option<u32>,
+) -> Result<WaitOutcome, String> {
     match tokio::time::timeout(timeout, child.wait()).await {
-        Ok(res) => Ok((res.map_err(|e| format!("exec_wait_failed: {e}"))?, false)),
+        Ok(res) => Ok(WaitOutcome {
+            status: res.map_err(|e| format!("exec_wait_failed: {e}"))?,
+            timed_out: false,
+        }),
         Err(_) => {
-            kill_tree(child);
+            if let Some(status) = child
+                .try_wait()
+                .map_err(|e| format!("exec_wait_failed: {e}"))?
+            {
+                return Ok(WaitOutcome {
+                    status,
+                    timed_out: false,
+                });
+            }
+            kill_tree(child, process_group);
             let status = child
                 .wait()
                 .await
                 .map_err(|e| format!("exec_wait_failed: {e}"))?;
-            Ok((status, true))
+            Ok(WaitOutcome {
+                status,
+                timed_out: true,
+            })
         }
     }
 }
@@ -265,14 +311,14 @@ async fn read_capped(pipe: Option<impl AsyncRead + Unpin>, cap: usize) -> (Vec<u
 /// Join a capture task within the pipe-drain grace; an overrun (a daemonized
 /// grandchild holding the pipe open) abandons the read and reports truncation —
 /// honest loss, never a wedged connection.
-async fn drain_capture(task: tokio::task::JoinHandle<(Vec<u8>, bool)>) -> (Vec<u8>, bool) {
+async fn drain_capture(task: tokio::task::JoinHandle<(Vec<u8>, bool)>) -> (Vec<u8>, bool, bool) {
     let mut task = task;
     match tokio::time::timeout(PIPE_DRAIN_GRACE, &mut task).await {
-        Ok(Ok(v)) => v,
-        Ok(Err(_)) => (Vec::new(), true),
+        Ok(Ok((bytes, truncated))) => (bytes, truncated, false),
+        Ok(Err(_)) => (Vec::new(), true, false),
         Err(_) => {
             task.abort();
-            (Vec::new(), true)
+            (Vec::new(), true, true)
         }
     }
 }
@@ -284,16 +330,24 @@ pub async fn run_buffered(spec: ExecSpec) -> Result<ExecOutcome, String> {
     let mut child = build_command(&spec)
         .spawn()
         .map_err(|e| format!("exec_spawn_failed: {e}"))?;
+    let process_group = child.id();
     feed_stdin(&mut child, spec.stdin.clone());
     let out_task = tokio::spawn(read_capped(child.stdout.take(), BUFFERED_CAP));
     let err_task = tokio::spawn(read_capped(child.stderr.take(), BUFFERED_CAP));
-    let (status, timed_out) = wait_with_deadline(&mut child, spec.timeout).await?;
-    let (stdout, stdout_truncated) = drain_capture(out_task).await;
-    let (stderr, stderr_truncated) = drain_capture(err_task).await;
+    let waited = wait_with_deadline(&mut child, spec.timeout, process_group).await?;
+    let (out_capture, err_capture) = tokio::join!(drain_capture(out_task), drain_capture(err_task));
+    let (stdout, stdout_truncated, stdout_stalled) = out_capture;
+    let (stderr, stderr_truncated, stderr_stalled) = err_capture;
+    if stdout_stalled || stderr_stalled {
+        // The direct child can exit after launching a descendant that still owns its
+        // stdout/stderr. Never leave that process behind merely because the leader was
+        // already reaped; the captured PGID still identifies the original exec tree.
+        kill_tree(&mut child, process_group);
+    }
     Ok(ExecOutcome {
-        exit_code: status.code(),
-        signal: status_signal(&status),
-        timed_out,
+        exit_code: waited.exit_code(),
+        signal: waited.signal(),
+        timed_out: waited.timed_out,
         stdout,
         stderr,
         stdout_truncated,
@@ -343,6 +397,7 @@ pub async fn run_streamed(spec: ExecSpec, out: mpsc::Sender<WsMessage>) {
             return;
         }
     };
+    let process_group = child.id();
     feed_stdin(&mut child, spec.stdin.clone());
     let (tx, mut rx) = mpsc::channel::<(&'static str, Vec<u8>)>(8);
     let out_pump = tokio::spawn(pump(child.stdout.take(), "stdout", tx.clone()));
@@ -391,29 +446,31 @@ pub async fn run_streamed(spec: ExecSpec, out: mpsc::Sender<WsMessage>) {
         }
         (truncated, client_gone)
     });
-    let waited = wait_with_deadline(&mut child, spec.timeout).await;
+    let waited = wait_with_deadline(&mut child, spec.timeout, process_group).await;
     let mut forwarder = forwarder;
-    let (truncated, client_gone) =
+    let (truncated, client_gone, drain_stalled) =
         match tokio::time::timeout(PIPE_DRAIN_GRACE, &mut forwarder).await {
-            Ok(Ok(t)) => t,
-            Ok(Err(_)) => (true, false),
+            Ok(Ok((truncated, client_gone))) => (truncated, client_gone, false),
+            Ok(Err(_)) => (true, false, false),
             Err(_) => {
                 forwarder.abort();
-                (true, false)
+                (true, false, true)
             }
         };
-    if client_gone {
-        kill_tree(&mut child);
+    if client_gone || drain_stalled {
+        kill_tree(&mut child, process_group);
         let _ = child.wait().await;
+    }
+    if client_gone {
         return;
     }
     let duration_ms = started.elapsed().as_secs_f64() * 1000.0;
     let exit = match waited {
-        Ok((status, timed_out)) => protocol::exec_exit_text(
+        Ok(waited) => protocol::exec_exit_text(
             &call_id,
-            status.code(),
-            status_signal(&status),
-            timed_out,
+            waited.exit_code(),
+            waited.signal(),
+            waited.timed_out,
             duration_ms,
             truncated,
         ),
@@ -535,19 +592,89 @@ mod tests {
 
     #[tokio::test]
     async fn timeout_kills_the_process_group_and_reports_honestly() {
-        let mut s = spec(ExecCommand::Shell("sleep 30 & wait".into()));
+        // The nested shell stops itself after it is spawned; the parent waits for it.
+        // This is a deterministic blocked process tree, not a sleep-duration race.
+        let mut s = spec(ExecCommand::Shell(
+            "sh -c 'kill -STOP $$' & printf 'started\\n'; wait".into(),
+        ));
         s.timeout = Duration::from_millis(200);
         let t0 = Instant::now();
         let out = run_buffered(s).await.unwrap();
         assert!(out.timed_out, "deadline must be reported");
         assert_eq!(out.exit_code, None, "killed by signal → no exit code");
-        assert_eq!(out.signal, Some(libc::SIGKILL));
-        // group kill: the backgrounded sleep held the pipe; without killpg the
-        // pipe drain (and this test) would hang for the full 30 s
+        // The direct shell can finish between the deadline's final try_wait and
+        // killpg while a stopped descendant still owns the group. In that race the
+        // truthful direct-child signal is None; timed_out + no exit code remains the
+        // stable terminal contract.
+        if let Some(signal) = out.signal {
+            assert_eq!(signal, libc::SIGKILL);
+        }
+        assert_eq!(
+            out.stdout, b"started\n",
+            "the descendant existed before timeout"
+        );
+        // Group kill: the stopped descendant holds the pipe; killing only the
+        // direct shell would leave that pipe open past the drain deadline.
         assert!(
             t0.elapsed() < Duration::from_secs(5),
             "group kill must release the pipes promptly"
         );
+    }
+
+    #[test]
+    fn timed_out_terminal_never_exposes_a_late_success_code() {
+        let status = std::process::Command::new("true").status().unwrap();
+        assert_eq!(status.code(), Some(0));
+        let waited = WaitOutcome {
+            status,
+            timed_out: true,
+        };
+        assert_eq!(waited.exit_code(), None);
+        assert_eq!(waited.signal(), None);
+    }
+
+    #[tokio::test]
+    async fn reaped_leader_does_not_leave_a_pipe_holding_descendant() {
+        let marker = format!(
+            "/tmp/shinken-exec-descendant-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let command = format!("sh -c 'kill -STOP $$' & echo $! > {marker}; exit 0");
+        let t0 = Instant::now();
+        let out = run_buffered(spec(ExecCommand::Shell(command)))
+            .await
+            .unwrap();
+        assert_eq!(out.exit_code, Some(0));
+        assert!(!out.timed_out, "the direct shell completed naturally");
+        assert!(out.stdout_truncated && out.stderr_truncated);
+        assert!(t0.elapsed() < Duration::from_secs(3));
+
+        let pid: libc::pid_t = std::fs::read_to_string(&marker)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let gone_by = Instant::now() + Duration::from_secs(2);
+        loop {
+            // Signal 0 checks existence without changing process state.
+            let alive = unsafe { libc::kill(pid, 0) } == 0;
+            if !alive {
+                break;
+            }
+            if Instant::now() >= gone_by {
+                // Keep a failing test from leaking its deliberately stopped child.
+                unsafe {
+                    libc::kill(pid, libc::SIGKILL);
+                }
+                panic!("pipe-holding descendant {pid} survived exec cleanup");
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let _ = std::fs::remove_file(marker);
     }
 
     #[tokio::test]
@@ -606,6 +733,21 @@ mod tests {
         base64::engine::general_purpose::STANDARD.decode(s).unwrap()
     }
 
+    /// Reassemble one logical stdout/stderr stream without assuming how OS pipe reads
+    /// happened to split it into WebSocket events.
+    fn channel_bytes(outputs: &[serde_json::Value], channel: &str) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        for event in outputs.iter().filter(|event| event["channel"] == channel) {
+            let encoded = event
+                .get("data_b64")
+                .or_else(|| event.get("payload_b64"))
+                .and_then(serde_json::Value::as_str)
+                .expect("exec_output needs a text or binary payload");
+            bytes.extend(base64_decode(encoded));
+        }
+        bytes
+    }
+
     #[tokio::test]
     async fn streamed_exec_orders_chunks_and_terminates_with_exit() {
         let (out, rx) = mpsc::channel(64);
@@ -621,18 +763,10 @@ mod tests {
             assert_eq!(ev["cause"], "x1");
         }
         // reassembled stdout carries everything, in order
-        let stdout: Vec<u8> = outputs
-            .iter()
-            .filter(|ev| ev["channel"] == "stdout")
-            .flat_map(|ev| base64_decode(ev["data_b64"].as_str().unwrap()))
-            .collect();
+        let stdout = channel_bytes(&outputs, "stdout");
         assert_eq!(stdout.len(), 101);
         assert!(stdout.starts_with(b"aaaa") && stdout.ends_with(b"b"));
-        let stderr: Vec<u8> = outputs
-            .iter()
-            .filter(|ev| ev["channel"] == "stderr")
-            .flat_map(|ev| base64_decode(ev["data_b64"].as_str().unwrap()))
-            .collect();
+        let stderr = channel_bytes(&outputs, "stderr");
         assert_eq!(stderr, b"err\n");
         assert_eq!(exit["exit_code"], 7);
         assert_eq!(exit["timed_out"], false);
@@ -649,17 +783,9 @@ mod tests {
         s.binary = true;
         run_streamed(s, out).await;
         let (outputs, exit) = collect_stream(rx).await;
-        assert_eq!(outputs.len(), 1);
-        // collect_stream stashes the binary payload under payload_b64
-        assert_eq!(
-            base64_decode(outputs[0]["payload_b64"].as_str().unwrap()),
-            b"raw\n"
-        );
-        assert_eq!(outputs[0]["channel"], "stdout");
-        assert!(
-            outputs[0].get("data_b64").is_none(),
-            "binary frames carry no base64"
-        );
+        assert_eq!(channel_bytes(&outputs, "stdout"), b"raw\n");
+        assert!(outputs.iter().all(|event| event["channel"] == "stdout"));
+        assert!(outputs.iter().all(|event| event.get("data_b64").is_none()));
         assert_eq!(exit["exit_code"], 0);
     }
 
@@ -681,15 +807,20 @@ mod tests {
     #[tokio::test]
     async fn streamed_timeout_group_kills_and_reports() {
         let (out, rx) = mpsc::channel(64);
-        let mut s = spec(ExecCommand::Shell("echo started; sleep 30 & wait".into()));
+        let mut s = spec(ExecCommand::Shell(
+            "sh -c 'kill -STOP $$' & printf 'started\\n'; wait".into(),
+        ));
         s.stream = true;
         s.timeout = Duration::from_millis(200);
         let t0 = Instant::now();
         run_streamed(s, out).await;
         let (outputs, exit) = collect_stream(rx).await;
-        assert_eq!(outputs.len(), 1, "pre-kill output is delivered");
+        assert_eq!(channel_bytes(&outputs, "stdout"), b"started\n");
         assert_eq!(exit["timed_out"], true);
         assert!(exit["exit_code"].is_null());
+        if !exit["signal"].is_null() {
+            assert_eq!(exit["signal"], libc::SIGKILL);
+        }
         assert!(t0.elapsed() < Duration::from_secs(5));
     }
 

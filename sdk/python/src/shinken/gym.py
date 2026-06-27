@@ -4,10 +4,12 @@ RL stacks consume environments through a gym-style surface (cua-bench, CUA-Gym, 
 wrappers all ship one), and in every one of them ``reset()`` re-provisions the sandbox —
 cua-bench's own ``Environment.reset()`` closes the session and creates a brand-new VM per
 episode (see ``notes/cua-teardown.md`` §4/§7). This module ships the same API shape with
-the runtime-state semantics underneath (D5): **reset() IS a fork from the task's golden
-checkpoint** — task setup runs exactly once, every episode starts from the byte-identical
-golden state, and on the Docker disk tier with the warm pool enabled a reset is ~0.1–0.6 s
-instead of a cold boot per episode (measured: ``docs/engineering/benchmarks.md`` §1).
+the runtime-state semantics underneath (D5): **reset() restores from the task checkpoint**.
+Fidelity is provider-specific: the Docker disk/warm tiers preserve filesystem state and
+restart or retain separate processes, while an explicitly requested memory tier preserves
+process/GUI state. Tasks must replay launch/focus after a disk restore instead of assuming a
+byte-identical live desktop. Measured restore latencies are in
+``docs/engineering/benchmarks.md`` §1.
 
 Everything here is a *consumer* of the narrow waist (``docs/design/agent-runtime.md``):
 sessions come from a provider, episodes are recorded as the existing typed
@@ -168,10 +170,10 @@ class ShinkenGymEnv:
     :attr:`episodes` (as an :class:`Episode`, carrying the reward out-of-band) when it
     ends — on ``done``, on the next ``reset()``, on :meth:`abort`, or on ``close()``.
 
-    With a warm-pool provider (``DockerLocalProvider(warm_pool_size=K)``) the golden
-    checkpoint taken by :meth:`make` captures its filesystem delta, so every reset is
-    served by the pre-booted pool (graft, no boot) and falls back to the classic
-    boot-from-committed-image path on a pool miss — same disk-tier semantics either way.
+    Provider fidelity is enforced before setup: filesystem checkpoints restart processes;
+    process-memory tasks must use a provider that advertises that tier. The former live
+    warm-pool graft is intentionally disabled until pool-hit/pool-miss equivalence can be
+    proven.
     """
 
     def __init__(
@@ -205,6 +207,10 @@ class ShinkenGymEnv:
         self._handle: Any = None  # current replica
         self._sess: Any = None  # connected session for the current replica
         self._steps: list[Step] = []  # in-flight episode
+        # The exact observation returned to the policy for its next decision. A
+        # trajectory Step records this as s_t before dispatch and separately retains
+        # the post-action observation as next_observation (s_{t+1}).
+        self._current_observation: dict | None = None
         self._episode_open = False
         self._reset_ms = 0.0
         self._done = False
@@ -249,6 +255,7 @@ class ShinkenGymEnv:
         self._episode_open = True
         self._done = False
         obs = self._observe()
+        self._current_observation = obs
         info = {
             "task": getattr(self.task, "name", ""),
             "instruction": getattr(self.task, "instruction", "") or "",
@@ -276,6 +283,9 @@ class ShinkenGymEnv:
         sess = self._session()
         if self._done:
             raise GymError("episode is done — call reset() for a fresh fork")
+        if self._current_observation is None:
+            raise GymError("episode has no current observation — call reset() for a fresh fork")
+        agent_observation = self._current_observation
         raw_text = action if isinstance(action, str) else None
         actions = self._coerce_actions(action)
         dispatch = [a for a in actions if a.get("verb") not in _CONTROL_VERBS]
@@ -300,13 +310,22 @@ class ShinkenGymEnv:
                     terminal="aborted", exit_reason="sandbox_died", error=f"sandbox_died: {err}"
                 )
                 raise SandboxDied(f"replica died mid-step: {err}")
+        # ``obs`` is what the policy receives for its NEXT turn. Update the cursor only
+        # after dispatch completed, then record the transition as (s_t, a_t, s_{t+1}).
+        self._current_observation = obs
         step_info: dict = {}
         if raw_text is not None:
             step_info["raw_text"] = raw_text
         step_index = len(self._steps)
         episode_index = len(self.episodes)
         self._steps.append(
-            Step(index=step_index, observation=obs, actions=dispatch, info=step_info)
+            Step(
+                index=step_index,
+                observation=agent_observation,
+                actions=dispatch,
+                info=step_info,
+                next_observation=obs,
+            )
         )
         if not done and self.max_steps is not None and len(self._steps) >= self.max_steps:
             done, terminal = True, "max_steps"
@@ -447,6 +466,10 @@ class ShinkenGymEnv:
             "instruction": getattr(self.task, "instruction", "") or "",
             "golden_checkpoint": self.golden_checkpoint,
             "reset_ms": round(self._reset_ms, 3),
+            # Old Gym artifacts omitted this marker and stored post-action frames in
+            # Step.observation. Consumers can now reject/explicitly migrate those
+            # ambiguous legacy records instead of silently training on (s_{t+1}, a_t).
+            "transition_semantics": "s_t_action_s_t_plus_1_v1",
         }
         if error is not None:
             meta["error"] = error
@@ -473,6 +496,7 @@ class ShinkenGymEnv:
             with contextlib.suppress(Exception):
                 self.provider.destroy(self._handle)
             self._handle = None
+        self._current_observation = None
 
 
 def _receipt_dict(receipt: Any) -> Any:
@@ -485,8 +509,7 @@ def _receipt_dict(receipt: Any) -> Any:
 def make(task: Any, provider: Any, **kwargs: Any) -> ShinkenGymEnv:
     """Module-level ``make()`` (the gym entry point trainers expect): construct the env
     and build the golden checkpoint eagerly — boot base, run ``task.setup`` once,
-    checkpoint. With a warm-pool provider the pool is primed in the provider's own
-    background thread, so the first ``reset()`` already forks warm."""
+    checkpoint. Provider preflight rejects unsupported state-fidelity/fast-reset requests."""
     return ShinkenGymEnv(task, provider, **kwargs).make()
 
 
@@ -502,8 +525,8 @@ class ShinkenGymPool:
     single golden checkpoint concurrently; ``step()``/``evaluate()`` fan the per-env calls
     out on the same worker threads (the IO itself is multiplexed on the shared loop).
 
-    The provider is caller-owned (size its ``warm_pool_size`` to N for boot-free resets);
-    the pool owns the golden snapshot and reclaims it on :meth:`close`."""
+    The provider is caller-owned; the pool owns the golden snapshot and reclaims it on
+    :meth:`close`."""
 
     def __init__(self, task: Any, provider: Any, n: int, **env_kwargs: Any) -> None:
         if n < 1:
@@ -579,8 +602,10 @@ class ShinkenGymPool:
 # ------------------------------------------------------------------- trajectory exporter
 
 #: Exporter columns — one row per step, dict-of-lists (the HF ``Dataset.from_dict`` shape).
-#: ``image`` is raw PNG/JPEG bytes (or None on the structured knob, which fills
-#: ``tree_text`` instead); ``reward`` is the episode reward broadcast to its rows;
+#: ``image`` is the raw PNG/JPEG policy input ``s_t`` (or None on the structured knob,
+#: which fills ``tree_text`` instead), paired with that row's action(s). The post-action
+#: ``s_{t+1}`` remains available on ``Step.next_observation`` / trajectory serialization;
+#: the flattened column set stays backward compatible. ``reward`` is the episode reward;
 #: ``terminal``/``exit_reason`` carry the typed failure taxonomy (so a trainer drops
 #: ``sandbox_died`` rollouts without poisoning the reward signal).
 EXPORT_COLUMNS = (
@@ -609,6 +634,8 @@ def episodes_to_records(episodes: list[Episode]) -> dict[str, list]:
     for ep in episodes:
         steps = ep.trajectory.steps
         for step in steps:
+            # Step.observation is the observation the agent actually consumed before
+            # producing Step.actions: the exported training pair is (s_t, a_t).
             obs = step.observation or {}
             records["episode"].append(ep.index)
             records["step"].append(step.index)

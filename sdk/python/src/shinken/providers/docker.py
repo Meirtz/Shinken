@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import fnmatch
 import json
@@ -13,7 +14,7 @@ import shutil
 import socket
 import struct
 import subprocess
-import tempfile
+import tarfile
 import threading
 import time
 import uuid
@@ -32,6 +33,7 @@ from .base import (
     SandboxHealth,
     SandboxProvider,
     SandboxSpec,
+    UnsatisfiedSandboxSpec,
 )
 
 
@@ -70,7 +72,8 @@ def _maybe_float(value: str) -> float | None:
 
 # Mask secret env values when rendering a command for an error/log (#153). Matches a
 # `KEY=VALUE` arg whose KEY ends in TOKEN/SECRET/PASSWORD/KEY (e.g. SHINKEND_TOKEN).
-_SECRET_ENV_RE = re.compile(r"^([A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|KEY))=.+$")
+_SECRET_ENV_RE = re.compile(r"^([A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|KEY))=.+$", re.IGNORECASE)
+_SECRET_KEY_RE = re.compile(r"(?:TOKEN|SECRET|PASSWORD|KEY)$", re.IGNORECASE)
 
 
 def _redact_cmd(cmd: list[str]) -> str:
@@ -114,6 +117,9 @@ class DockerLocalProvider(SandboxProvider):
         notes=("Local/CI compatibility provider; Docker is not the production isolation tier.",),
     )
 
+    _SNAPSHOT_RECORD_VERSION = 1
+    _SNAPSHOT_RECORD_LABEL = "shinken.snapshot_record.v1"
+
     def __init__(
         self,
         image: str = "shinken/sandbox-linux",
@@ -154,38 +160,35 @@ class DockerLocalProvider(SandboxProvider):
                 f"unsupported network_mode {network_mode!r} (expected 'bridge' or 'none')"
             )
         self.network_mode = network_mode
-        # Checkpoint registry (#206): ckpt_id -> {snapshot_id, event_seq, agent_state_ref}.
-        # In-memory for the local reference tier; a real Control Plane persists the DAG.
+        # These dictionaries are caches, not the source of truth. Every snapshot record
+        # is persisted on the committed image and can repopulate them after provider
+        # reconstruction (or in another process with access to the same Docker daemon).
         self._checkpoints: dict[str, dict[str, Any]] = {}
         # Snapshot registry: snapshot tag -> the SandboxSpec it was committed from, so
         # restore()/fork() can rebuild geometry + resource limits instead of silently
         # reverting to defaults. Also the reclamation set for cleanup_snapshots().
         self._snapshots: dict[str, SandboxSpec] = {}
-        # Warm-pool state graft (opt-in, S8): keep `warm_pool_size` pre-booted BASE-image
-        # containers ready (replenished by a background thread), and serve restore()/
-        # fork() by claiming one and grafting the snapshot's filesystem delta onto it —
-        # skipping the cold boot entirely. Files-only semantics, the SAME state tier as
-        # `docker commit`: running processes are NOT restored, deletions/changes are the
-        # `docker diff` set captured at snapshot time, and live runtime state
-        # (/run, /dev, X sockets/locks) is deliberately excluded from the graft so the
-        # warm container's own daemons keep their footing. A snapshot without a captured
-        # delta (or with a spec the pool can't match) falls back to the classic
-        # boot-from-committed-image path.
+        self._snapshot_records: dict[str, dict[str, Any]] = {}
+        # Public snapshot id -> immutable Docker image id returned by `docker commit`.
+        # Restore never trusts the mutable convenience tag once this is known.
+        self._snapshot_images: dict[str, str] = {}
+        # Legacy warm-pool storage remains so shutdown/introspection stay source-compatible,
+        # but construction with a non-zero pool is rejected below. Immutable source deltas
+        # alone are insufficient: grafting onto live guest writers is not equivalent to a
+        # cold restore.
         self._deltas: dict[str, dict[str, Any]] = {}
         self._delta_dir: Path | None = None
         self._pool: queue.Queue[SandboxHandle] | None = None
         self._pool_target = max(0, int(warm_pool_size))
+        if self._pool_target:
+            raise ProviderError(
+                "Docker warm-pool graft is disabled: a running target cannot yet be "
+                "proven equivalent to a cold restore; use the CRIU tier for fast_reset"
+            )
         self._pool_spec = warm_pool_spec or SandboxSpec()
         self._pool_claim_timeout = warm_pool_claim_timeout
         self._pool_stop = threading.Event()
         self._pool_thread: threading.Thread | None = None
-        if self._pool_target > 0:
-            self._delta_dir = Path(tempfile.mkdtemp(prefix="shinken-deltas-"))
-            self._pool = queue.Queue()
-            self._pool_thread = threading.Thread(
-                target=self._replenish_pool, name="shinken-warm-pool", daemon=True
-            )
-            self._pool_thread.start()
 
     def connect(self, handle: SandboxHandle, **connect_kwargs):
         """Connect, then wire file transfer through the **actual guest** filesystem via
@@ -210,6 +213,12 @@ class DockerLocalProvider(SandboxProvider):
             if spec is not None
             else SandboxSpec(image=self.image)
         )
+        self._validate_spec(spec)
+        if self.network_mode == "none":
+            raise ProviderError(
+                "network_mode='none' cannot expose shinkend's tcp_ws transport; "
+                "refusing before docker run instead of entering readiness retries"
+            )
         for attempt in range(self._CREATE_ATTEMPTS):
             try:
                 return self._create_once(spec)
@@ -224,6 +233,40 @@ class DockerLocalProvider(SandboxProvider):
                 if not (lost_race or boot_flake) or attempt == self._CREATE_ATTEMPTS - 1:
                     raise
         raise AssertionError("unreachable")  # pragma: no cover
+
+    def _fast_reset_supported(self) -> bool:
+        """Whether this instance has an equivalence-preserving fast restore path."""
+        return False
+
+    def _validate_spec(self, spec: SandboxSpec) -> None:
+        if spec.os != "linux":
+            raise UnsatisfiedSandboxSpec(
+                "os", spec.os, f"{self.capabilities.name} supports Linux sandboxes only"
+            )
+        if spec.needs_gui and not self.capabilities.supports_gui:
+            raise UnsatisfiedSandboxSpec(
+                "needs_gui", True, f"{self.capabilities.name} does not provide a GUI"
+            )
+        if spec.needs_gpu and not self.capabilities.supports_gpu:
+            raise UnsatisfiedSandboxSpec(
+                "needs_gpu", True, f"{self.capabilities.name} does not provide GPU passthrough"
+            )
+        if spec.state_fidelity not in ("filesystem", "process_memory"):
+            raise UnsatisfiedSandboxSpec(
+                "state_fidelity", spec.state_fidelity, "unknown state-fidelity contract"
+            )
+        if spec.state_fidelity == "process_memory" and self.capabilities.snapshot_kind != "process":
+            raise UnsatisfiedSandboxSpec(
+                "state_fidelity",
+                spec.state_fidelity,
+                f"{self.capabilities.name} snapshots filesystem state only",
+            )
+        if spec.fast_reset and not self._fast_reset_supported():
+            raise UnsatisfiedSandboxSpec(
+                "fast_reset",
+                True,
+                f"{self.capabilities.name} has no configured equivalence-preserving fast path",
+            )
 
     def _create_once(self, spec: SandboxSpec) -> SandboxHandle:
         handle = self._launch_container(spec)
@@ -253,6 +296,12 @@ class DockerLocalProvider(SandboxProvider):
         IDLE so nothing races the restored desktop for the display/port/PIDs);
         ``token`` reuses an existing runtime token (a restored ``shinkend`` keeps the
         token it held in memory at dump time)."""
+        self._validate_spec(spec)
+        if self.network_mode == "none":
+            raise ProviderError(
+                "network_mode='none' cannot expose shinkend's tcp_ws transport; "
+                "refusing before docker run"
+            )
         token = token or secrets.token_hex(16)
         port = _free_port(self.host)
         name = f"{self.name_prefix}-{uuid.uuid4().hex[:10]}"
@@ -285,6 +334,10 @@ class DockerLocalProvider(SandboxProvider):
             f"SHINKEND_TOKEN={token}",
             "-e",
             f"SCREEN_GEOMETRY={spec.screen_geometry}",
+            "-e",
+            # The daemon now defaults arbitrary exec off. Provider-owned, isolated,
+            # bearer-token-protected sandboxes are the explicit opt-in boundary.
+            "SHINKEND_ENABLE_EXEC=1",
         ]
         if self.hostname:
             cmd += ["--hostname", self.hostname]
@@ -292,7 +345,7 @@ class DockerLocalProvider(SandboxProvider):
         # Provider-reserved names stay authoritative: they are set above and the LAST
         # -e wins in docker, so reserved keys are skipped here instead of trusted.
         for key, value in (spec.extra_env or {}).items():
-            if key in ("SHINKEND_TOKEN", "SCREEN_GEOMETRY"):
+            if key in ("SHINKEND_TOKEN", "SCREEN_GEOMETRY", "SHINKEND_ENABLE_EXEC"):
                 continue
             cmd += ["-e", f"{key}={value}"]
         # Publish the shinkend port only when the guest has a network; --network none is
@@ -334,6 +387,7 @@ class DockerLocalProvider(SandboxProvider):
                     "pids_limit": spec.pids_limit,
                     "shm_size": spec.shm_size,
                 },
+                "sandbox_spec": self._spec_to_record(spec),
             },
         )
         return handle
@@ -538,9 +592,10 @@ class DockerLocalProvider(SandboxProvider):
         return str(cid)
 
     def _spec_from_handle(self, handle: SandboxHandle) -> SandboxSpec:
-        """Rebuild the originating SandboxSpec from a handle's metadata (geometry +
-        resource limits), so a snapshot restored later boots at the SAME resolution and
-        limits as the golden state instead of silently reverting to defaults."""
+        """Rebuild the complete originating request from provider-owned metadata."""
+        recorded = handle.metadata.get("sandbox_spec")
+        if isinstance(recorded, dict):
+            return self._spec_from_record(recorded)
         resources: dict[str, Any] = dict(handle.metadata.get("resources") or {})
         return SandboxSpec(
             image=str(handle.metadata.get("image") or self.image),
@@ -559,69 +614,468 @@ class DockerLocalProvider(SandboxProvider):
             },
         )
 
-    def snapshot(self, handle: SandboxHandle, name: str | None = None) -> str:
-        """Disk snapshot via `docker commit` → a tagged image id (snapshot_kind=disk).
-        Records the originating spec so restore()/fork() preserve geometry + limits.
-        When the warm pool is enabled, also captures the snapshot's filesystem delta
-        (``docker diff`` + a tar of the added/changed paths) so restore() can graft it
-        onto a pre-booted container instead of cold-booting the committed image."""
-        tag = f"shinken-snap:{name or uuid.uuid4().hex[:12]}"
+    @classmethod
+    def _label_safe_value(cls, value: Any) -> Any:
+        """Return JSON-safe metadata without embedding secret-like field values."""
+        if isinstance(value, dict):
+            return {
+                str(key): "<redacted>"
+                if _SECRET_KEY_RE.search(str(key))
+                else cls._label_safe_value(item)
+                for key, item in value.items()
+            }
+        if isinstance(value, list | tuple):
+            return [cls._label_safe_value(item) for item in value]
+        if value is None or isinstance(value, str | int | float | bool):
+            return value
+        return f"<opaque:{type(value).__name__}>"
+
+    @classmethod
+    def _metadata_redactions(cls, value: Any, prefix: str = "") -> list[str]:
+        """Paths whose exact values cannot be persisted safely in an image label."""
+        if isinstance(value, dict):
+            paths: list[str] = []
+            for key, item in value.items():
+                path = f"{prefix}.{key}" if prefix else str(key)
+                if _SECRET_KEY_RE.search(str(key)):
+                    paths.append(path)
+                else:
+                    paths.extend(cls._metadata_redactions(item, path))
+            return paths
+        if isinstance(value, list | tuple):
+            paths = []
+            for index, item in enumerate(value):
+                path = f"{prefix}[{index}]" if prefix else f"[{index}]"
+                paths.extend(cls._metadata_redactions(item, path))
+            return paths
+        if value is None or isinstance(value, str | int | float | bool):
+            return []
+        return [prefix or "<root>"]
+
+    @classmethod
+    def _spec_to_record(cls, spec: SandboxSpec, *, for_label: bool = False) -> dict[str, Any]:
+        extra_env = dict(spec.extra_env or {})
+        metadata: dict[str, Any] = dict(spec.metadata or {})
+        redacted_env_keys: list[str] = []
+        redacted_metadata_paths: list[str] = []
+        if for_label:
+            redacted_env_keys = [key for key in extra_env if _SECRET_KEY_RE.search(key)]
+            extra_env = {
+                key: value for key, value in extra_env.items() if key not in redacted_env_keys
+            }
+            redacted_metadata_paths = cls._metadata_redactions(metadata)
+            metadata = cls._label_safe_value(metadata)
+        return {
+            "image": spec.image,
+            "os": spec.os,
+            "needs_gui": spec.needs_gui,
+            "needs_gpu": spec.needs_gpu,
+            "fast_reset": spec.fast_reset,
+            "state_fidelity": spec.state_fidelity,
+            "memory": spec.memory,
+            "cpus": spec.cpus,
+            "pids_limit": spec.pids_limit,
+            "shm_size": spec.shm_size,
+            "screen_geometry": spec.screen_geometry,
+            "extra_env": extra_env,
+            "redacted_extra_env_keys": redacted_env_keys,
+            "redacted_metadata_paths": redacted_metadata_paths,
+            "metadata": metadata,
+        }
+
+    @staticmethod
+    def _spec_from_record(data: dict[str, Any]) -> SandboxSpec:
+        metadata = dict(data.get("metadata") or {})
+        redacted_env_keys = list(data.get("redacted_extra_env_keys") or [])
+        redacted_metadata_paths = list(data.get("redacted_metadata_paths") or [])
+        if redacted_env_keys:
+            metadata["_shinken_unresolved_secret_env"] = redacted_env_keys
+        if redacted_metadata_paths:
+            metadata["_shinken_unresolved_metadata"] = redacted_metadata_paths
+        return SandboxSpec(
+            image=data.get("image"),
+            os=str(data.get("os", "linux")),
+            needs_gui=bool(data.get("needs_gui", True)),
+            needs_gpu=bool(data.get("needs_gpu", False)),
+            fast_reset=bool(data.get("fast_reset", False)),
+            state_fidelity=str(data.get("state_fidelity", "filesystem")),
+            memory=data.get("memory"),
+            cpus=data.get("cpus"),
+            pids_limit=data.get("pids_limit"),
+            shm_size=data.get("shm_size"),
+            screen_geometry=str(data.get("screen_geometry", "1280x800x24")),
+            extra_env=dict(data.get("extra_env") or {}),
+            metadata=metadata,
+        )
+
+    def _snapshot_record(
+        self,
+        *,
+        snapshot_id: str,
+        spec: SandboxSpec,
+        name: str | None,
+        checkpoint_id: str | None,
+        event_seq: int | None,
+        agent_state_ref: str | None,
+        tier_metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "version": self._SNAPSHOT_RECORD_VERSION,
+            "provider": self.capabilities.name,
+            "snapshot_kind": self.capabilities.snapshot_kind,
+            "snapshot_id": snapshot_id,
+            "checkpoint_id": checkpoint_id,
+            "name": name,
+            "event_seq": event_seq,
+            "agent_state_ref": agent_state_ref,
+            "spec": self._spec_to_record(spec, for_label=True),
+            "tier_metadata": dict(tier_metadata or {}),
+        }
+
+    def _encode_snapshot_record(self, record: dict[str, Any]) -> str:
+        try:
+            raw = json.dumps(record, sort_keys=True, separators=(",", ":")).encode()
+        except (TypeError, ValueError) as exc:
+            raise ProviderError(f"snapshot metadata is not JSON-serializable: {exc}") from exc
+        return base64.urlsafe_b64encode(raw).decode("ascii")
+
+    def _decode_snapshot_record(self, encoded: str) -> dict[str, Any]:
+        try:
+            raw = base64.urlsafe_b64decode(encoded.encode("ascii"))
+            record = json.loads(raw)
+        except (ValueError, UnicodeError, json.JSONDecodeError) as exc:
+            raise ProviderError(f"invalid persisted snapshot record: {exc}") from exc
+        if not isinstance(record, dict):
+            raise ProviderError("invalid persisted snapshot record: expected an object")
+        return record
+
+    def _snapshot_commit_changes(self, record: dict[str, Any]) -> list[str]:
+        labels = [
+            "LABEL shinken.snapshot=true",
+            f"LABEL shinken.provider={self.capabilities.name}",
+            f"LABEL shinken.owner_pid={os.getpid()}",
+            f"LABEL shinken.created_at={time.time()}",
+            f"LABEL shinken.snapshot_id={record['snapshot_id']}",
+            f"LABEL {self._SNAPSHOT_RECORD_LABEL}={self._encode_snapshot_record(record)}",
+            # docker commit inherits parent image labels. Clear optional identity labels
+            # first so a plain descendant snapshot cannot masquerade as its parent's
+            # checkpoint/name during global label discovery.
+            "LABEL shinken.snapshot_name=",
+            "LABEL shinken.checkpoint_id=",
+        ]
+        checkpoint_id = record.get("checkpoint_id")
+        if checkpoint_id:
+            labels.append(f"LABEL shinken.checkpoint_id={checkpoint_id}")
+        changes = ["-c", "ENV SHINKEND_TOKEN="]
+        for key in record.get("spec", {}).get("redacted_extra_env_keys", []):
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+                raise ProviderError(f"invalid secret environment key {key!r}")
+            changes += ["-c", f"ENV {key}="]
+        for label in labels:
+            changes += ["-c", label]
+        return changes
+
+    def _remember_snapshot_record(
+        self, record: dict[str, Any], *, image_ref: str | None = None
+    ) -> None:
+        if record.get("version") != self._SNAPSHOT_RECORD_VERSION:
+            raise ProviderError(f"unsupported snapshot record version {record.get('version')!r}")
+        if record.get("provider") != self.capabilities.name:
+            raise ProviderError(
+                f"snapshot belongs to provider {record.get('provider')!r}, "
+                f"not {self.capabilities.name!r}"
+            )
+        if record.get("snapshot_kind") != self.capabilities.snapshot_kind:
+            raise ProviderError(
+                f"snapshot fidelity {record.get('snapshot_kind')!r} is incompatible with "
+                f"{self.capabilities.snapshot_kind!r}"
+            )
+        snapshot_id = record.get("snapshot_id")
+        spec_data = record.get("spec")
+        if not isinstance(snapshot_id, str) or not isinstance(spec_data, dict):
+            raise ProviderError("persisted snapshot record is missing snapshot_id/spec")
+        spec = self._spec_from_record(spec_data)
+        self._snapshots[snapshot_id] = spec
+        self._snapshot_records[snapshot_id] = record
+        if image_ref:
+            self._snapshot_images[snapshot_id] = image_ref
+        checkpoint_id = record.get("checkpoint_id")
+        if isinstance(checkpoint_id, str) and checkpoint_id:
+            self._checkpoints[checkpoint_id] = {
+                "snapshot_id": snapshot_id,
+                "event_seq": record.get("event_seq"),
+                "agent_state_ref": record.get("agent_state_ref"),
+                "name": record.get("name"),
+            }
+            self._snapshot_records[checkpoint_id] = record
+        self._hydrate_tier_metadata(record)
+
+    def _hydrate_tier_metadata(self, record: dict[str, Any]) -> None:
+        """Hook for tiers whose persistent record has additional restore metadata."""
+
+    def _inspect_snapshot_record(self, image: str) -> tuple[dict[str, Any] | None, str]:
+        try:
+            result = _run([self.docker_bin, "image", "inspect", image], timeout=30.0)
+        except ProviderError:
+            return None, image
+        try:
+            data = json.loads(result.stdout)
+            item = data[0] if isinstance(data, list) else data
+            labels = (item.get("Config") or {}).get("Labels") or {}
+        except (AttributeError, IndexError, json.JSONDecodeError, TypeError):
+            return None, image
+        encoded = labels.get(self._SNAPSHOT_RECORD_LABEL)
+        immutable_id = str(item.get("Id") or image)
+        return (self._decode_snapshot_record(encoded) if encoded else None), immutable_id
+
+    def _discover_labeled_image(self, label: str, value: str) -> str | None:
+        try:
+            result = _run(
+                [
+                    self.docker_bin,
+                    "images",
+                    "--filter",
+                    f"label={label}={value}",
+                    "--no-trunc",
+                    "--format",
+                    "{{.ID}}",
+                ]
+            )
+        except ProviderError:
+            return None
+        return next(
+            (line.strip() for line in result.stdout.splitlines() if line.strip()),
+            None,
+        )
+
+    def _resolve_snapshot(
+        self, snapshot_or_checkpoint_id: str
+    ) -> tuple[str, str, dict[str, Any] | None]:
+        key = str(snapshot_or_checkpoint_id)
+        cached = self._checkpoints.get(key)
+        if cached is not None:
+            snapshot_key = str(cached["snapshot_id"])
+            image_ref = self._snapshot_images.get(snapshot_key)
+            if image_ref is None:
+                image_ref = self._discover_labeled_image("shinken.snapshot_id", snapshot_key)
+            if image_ref is None:
+                raise ProviderError(f"snapshot image for checkpoint {key!r} is unavailable")
+            return (
+                snapshot_key,
+                image_ref,
+                self._snapshot_records.get(key) or self._snapshot_records.get(snapshot_key),
+            )
+        if key in self._snapshot_records:
+            image_ref = self._snapshot_images.get(key)
+            if image_ref is None:
+                image_ref = self._discover_labeled_image("shinken.snapshot_id", key)
+            if image_ref is None:
+                raise ProviderError(f"snapshot image {key!r} is unavailable")
+            return key, image_ref, self._snapshot_records[key]
+        is_checkpoint = key.startswith("ckpt-")
+        label = "shinken.checkpoint_id" if is_checkpoint else "shinken.snapshot_id"
+        image_ref = self._discover_labeled_image(label, key)
+        if image_ref is None and not is_checkpoint:
+            image_ref = key  # legacy snapshots used the Docker image ref as their id
+        if image_ref is None:
+            raise ProviderError(f"unknown checkpoint {key!r}")
+        record, immutable_id = self._inspect_snapshot_record(image_ref)
+        if record is not None:
+            if not immutable_id.startswith("sha256:"):
+                raise ProviderError(
+                    f"persisted snapshot resolved to non-immutable image ref {immutable_id!r}"
+                )
+            if is_checkpoint and record.get("checkpoint_id") != key:
+                raise ProviderError(f"checkpoint label/record mismatch for {key!r}")
+            if not is_checkpoint and record.get("snapshot_id") != key:
+                raise ProviderError(f"snapshot label/record mismatch for {key!r}")
+            self._remember_snapshot_record(record, image_ref=immutable_id)
+            snapshot_key = str(record["snapshot_id"])
+            return snapshot_key, immutable_id, record
+        if is_checkpoint:
+            raise ProviderError(f"checkpoint {key!r} has no persisted snapshot record")
+        return key, immutable_id, None  # legacy image: Docker itself remains the authority
+
+    @staticmethod
+    def _lineage_metadata(
+        snapshot_id: str, record: dict[str, Any] | None, requested_id: str
+    ) -> dict[str, Any]:
+        metadata: dict[str, Any] = {"snapshot_id": snapshot_id}
+        if record is not None:
+            metadata.update(
+                {
+                    "checkpoint_id": record.get("checkpoint_id"),
+                    "checkpoint_name": record.get("name"),
+                    "event_seq": record.get("event_seq"),
+                    "agent_state_ref": record.get("agent_state_ref"),
+                    "snapshot_record_version": record.get("version"),
+                }
+            )
+        if requested_id.startswith("ckpt-"):
+            metadata["checkpoint_id"] = requested_id
+        return metadata
+
+    @staticmethod
+    def _validate_replay_metadata(
+        spec: SandboxSpec | None, *, process_memory: bool = False
+    ) -> None:
+        if spec is None:
+            return
+        unresolved_metadata = list(spec.metadata.get("_shinken_unresolved_metadata", []))
+        if unresolved_metadata:
+            raise UnsatisfiedSandboxSpec(
+                "metadata",
+                unresolved_metadata,
+                "exact metadata was intentionally not persisted; restore requires "
+                "caller-side reinjection",
+            )
+        unresolved_env = list(spec.metadata.get("_shinken_unresolved_secret_env", []))
+        if unresolved_env and not process_memory:
+            raise UnsatisfiedSandboxSpec(
+                "extra_env",
+                unresolved_env,
+                "secret values are intentionally absent from the checkpoint image; "
+                "restore requires caller-side secret reinjection",
+            )
+
+    def _take_snapshot(
+        self,
+        handle: SandboxHandle,
+        *,
+        name: str | None = None,
+        checkpoint_id: str | None = None,
+        event_seq: int | None = None,
+        agent_state_ref: str | None = None,
+    ) -> str:
+        """Commit one immutable, UUID-addressed disk snapshot and its full record."""
+        tag = f"shinken-snap:{uuid.uuid4().hex}"
         cid = self._container_of(handle)
-        # Stamp the snapshot image with the same ownership labels containers get at
-        # create (#leaks): shinken.snapshot=true makes every committed image findable
-        # globally (not just via this instance's in-memory registry), and the
-        # owner/created labels make gc(snapshots=True) owner-aware.
+        spec = self._spec_from_handle(handle)
+        self._validate_spec(spec)
+        record = self._snapshot_record(
+            snapshot_id=tag,
+            spec=spec,
+            name=name,
+            checkpoint_id=checkpoint_id,
+            event_seq=event_seq,
+            agent_state_ref=agent_state_ref,
+        )
         commit = [
             self.docker_bin,
             "commit",
-            "-c",
-            "LABEL shinken.snapshot=true",
-            "-c",
-            f"LABEL shinken.owner_pid={os.getpid()}",
-            "-c",
-            f"LABEL shinken.created_at={time.time()}",
+            *self._snapshot_commit_changes(record),
             cid,
             tag,
         ]
-        _run(commit, timeout=self.startup_timeout)
-        self._snapshots[tag] = self._spec_from_handle(handle)
+        committed = _run(commit, timeout=self.startup_timeout)
+        image_ref = committed.stdout.strip().splitlines()[-1]
+        if not image_ref.startswith("sha256:"):
+            raise ProviderError(
+                f"docker commit did not return an immutable sha256 image id: {image_ref!r}"
+            )
+        self._remember_snapshot_record(record, image_ref=image_ref)
+        # The creating process can replay caller-provided secret env values without
+        # persisting them. Reconstructed providers get an explicit unresolved marker.
+        self._snapshots[tag] = spec
         if self._pool is not None:
             try:
-                self._deltas[tag] = self._capture_delta(cid, tag)
-            except ProviderError:
-                # No delta -> this snapshot simply restores via the classic path.
+                self._deltas[tag] = self._capture_delta(cid, image_ref)
+            except ProviderError as exc:
                 self._deltas.pop(tag, None)
+                if spec.fast_reset:
+                    self.delete_snapshot(tag)
+                    raise UnsatisfiedSandboxSpec(
+                        "fast_reset", True, f"immutable delta capture failed: {exc}"
+                    ) from exc
         return tag
+
+    def snapshot(self, handle: SandboxHandle, name: str | None = None) -> str:
+        """Create a UUID-addressed disk snapshot; ``name`` is metadata only."""
+        return self._take_snapshot(handle, name=name)
 
     def restore(self, snapshot_id: str) -> SandboxHandle:
         """Launch a fresh sandbox from a snapshot image (or a checkpoint id) — a new live
         container off the committed filesystem layer, at the geometry/limits captured when
-        the snapshot was taken (not provider defaults). With the warm pool enabled and a
-        captured delta available, restore instead claims a pre-booted container and
-        grafts the delta onto it (files-only, same tier as `docker commit`) — falling
-        back to the classic cold boot when the pool is empty or incompatible."""
-        image = self._checkpoints.get(snapshot_id, {}).get("snapshot_id", snapshot_id)
-        spec = self._snapshots.get(image)
+        the snapshot was taken (not provider defaults). The unproven live warm-graft path
+        is rejected at construction, so this path always restores the immutable image id."""
+        snapshot_key, image_ref, record = self._resolve_snapshot(snapshot_id)
+        spec = self._snapshots.get(snapshot_key)
+        self._validate_replay_metadata(spec)
+        lineage = self._lineage_metadata(snapshot_key, record, str(snapshot_id))
+        pool_status = "disabled"
         if self._pool is not None:
-            handle = self._restore_from_pool(image, spec)
+            if self._deltas.get(snapshot_key) is None:
+                pool_status = "no_immutable_delta"
+            elif not self._pool_compatible(spec):
+                pool_status = "incompatible"
+            else:
+                pool_status = "empty"
+            handle = self._restore_from_pool(snapshot_key, spec)
             if handle is not None:
+                restored_spec = replace(
+                    spec,
+                    image=image_ref,
+                    metadata={**spec.metadata, **lineage},
+                )
+                self._apply_spec_metadata(handle, restored_spec)
+                handle.metadata.update(
+                    {**lineage, "restore_path": "warm_pool", "pool_status": "hit"}
+                )
                 return handle
-        spec = replace(spec, image=image) if spec is not None else SandboxSpec(image=image)
-        return self.create(spec)
+        if spec is not None and spec.fast_reset:
+            raise UnsatisfiedSandboxSpec(
+                "fast_reset",
+                True,
+                f"warm-pool restore unavailable ({pool_status}); cold fallback is forbidden",
+            )
+        launch_spec = (
+            replace(spec, image=image_ref, metadata={**spec.metadata, **lineage})
+            if spec is not None
+            else SandboxSpec(image=image_ref, metadata=lineage)
+        )
+        handle = self.create(launch_spec)
+        handle.metadata.update({**lineage, "restore_path": "cold", "pool_status": pool_status})
+        return handle
+
+    def _apply_spec_metadata(self, handle: SandboxHandle, spec: SandboxSpec) -> None:
+        """Make a claimed warm handle describe the state it now represents."""
+        handle.metadata.update(spec.metadata)
+        handle.metadata.update(
+            {
+                "image": spec.image or self.image,
+                "screen_geometry": spec.screen_geometry,
+                "resources": {
+                    "memory": spec.memory,
+                    "cpus": spec.cpus,
+                    "pids_limit": spec.pids_limit,
+                    "shm_size": spec.shm_size,
+                },
+                "sandbox_spec": self._spec_to_record(spec),
+            }
+        )
 
     def delete_snapshot(self, snapshot_id: str) -> None:
         """Reclaim a committed snapshot image (`docker rmi`). Resolves a checkpoint id to
         its snapshot first. Idempotent and best-effort — a still-referenced image is left."""
-        image = self._checkpoints.get(snapshot_id, {}).get("snapshot_id", snapshot_id)
+        try:
+            snapshot_key, image_ref, _record = self._resolve_snapshot(snapshot_id)
+        except ProviderError:
+            return
         subprocess.run(
-            [self.docker_bin, "rmi", "-f", image],
+            [self.docker_bin, "rmi", "-f", image_ref],
             check=False,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             timeout=30,
         )
-        self._snapshots.pop(image, None)
-        delta = self._deltas.pop(image, None)
+        self._snapshots.pop(snapshot_key, None)
+        self._snapshot_records.pop(snapshot_key, None)
+        self._snapshot_images.pop(snapshot_key, None)
+        for checkpoint_id, checkpoint in list(self._checkpoints.items()):
+            if checkpoint.get("snapshot_id") == snapshot_key:
+                self._checkpoints.pop(checkpoint_id, None)
+                self._snapshot_records.pop(checkpoint_id, None)
+        delta = self._deltas.pop(snapshot_key, None)
         if delta and delta.get("tar"):
             with contextlib.suppress(OSError):
                 os.remove(delta["tar"])
@@ -630,9 +1084,8 @@ class DockerLocalProvider(SandboxProvider):
         """The originating :class:`SandboxSpec` recorded when this provider instance
         took the snapshot/checkpoint (geometry + resource limits — the spec-compat
         info a :class:`~shinken.Checkpoint` carries), or ``None`` when unknown."""
-        key = str(snapshot_or_checkpoint_id)
-        image = self._checkpoints.get(key, {}).get("snapshot_id", key)
-        return self._snapshots.get(image)
+        snapshot_key, _image_ref, _record = self._resolve_snapshot(str(snapshot_or_checkpoint_id))
+        return self._snapshots.get(snapshot_key)
 
     def cleanup_snapshots(self) -> int:
         """Reclaim the snapshot images THIS PROCESS committed (`docker rmi`): the
@@ -696,13 +1149,14 @@ class DockerLocalProvider(SandboxProvider):
         """Named restore point binding a disk snapshot to optional agent state — a node
         in the checkpoint DAG (D5). `resume(ckpt_id)` restores it. ``name`` labels the
         underlying snapshot image."""
-        snapshot_id = self.snapshot(handle, name=name)
-        ckpt_id = f"ckpt-{uuid.uuid4().hex[:12]}"
-        self._checkpoints[ckpt_id] = {
-            "snapshot_id": snapshot_id,
-            "event_seq": event_seq,
-            "agent_state_ref": agent_state_ref,
-        }
+        ckpt_id = f"ckpt-{uuid.uuid4().hex}"
+        self._take_snapshot(
+            handle,
+            name=name,
+            checkpoint_id=ckpt_id,
+            event_seq=event_seq,
+            agent_state_ref=agent_state_ref,
+        )
         return ckpt_id
 
     def _labeled_container_ids(self) -> list[str]:
@@ -876,7 +1330,15 @@ class DockerLocalProvider(SandboxProvider):
         report.containers = len(doomed)
         if snapshots:
             result = _run(
-                [self.docker_bin, "images", "-q", "--filter", "label=shinken.snapshot=true"]
+                [
+                    self.docker_bin,
+                    "images",
+                    "-q",
+                    "--filter",
+                    "label=shinken.snapshot=true",
+                    "--filter",
+                    f"label=shinken.provider={self.capabilities.name}",
+                ]
             )
             image_ids = list(
                 dict.fromkeys(  # `images -q` repeats an id per tag; dedupe, keep order
@@ -891,29 +1353,24 @@ class DockerLocalProvider(SandboxProvider):
                 else:
                     report.skipped += 1
             for image_id in img_doomed:
-                subprocess.run(
-                    [self.docker_bin, "rmi", "-f", image_id],
-                    check=False,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    timeout=30,
-                )
+                record, immutable_id = self._inspect_snapshot_record(image_id)
+                if record is not None:
+                    self._remember_snapshot_record(record, image_ref=immutable_id)
+                    self.delete_snapshot(str(record["snapshot_id"]))
+                else:
+                    subprocess.run(
+                        [self.docker_bin, "rmi", "-f", image_id],
+                        check=False,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=30,
+                    )
             report.images = len(img_doomed)
         return report
 
-    # --- warm-pool state graft (opt-in, S8) -------------------------------------------
-    # fork→usable without a cold boot: pre-booted base-image containers + the snapshot's
-    # filesystem delta applied in place. SEMANTIC LIMITS (documented, on purpose):
-    # files only — exactly the state tier `docker commit` already captures (no process/
-    # memory state; that is CriuDockerProvider's tier); the delta is the `docker diff` set at
-    # snapshot time, applied as tar-extract (adds/changes, as root) + rm (deletions),
-    # which is the operational equivalent of applying the commit layer's .wh. whiteouts;
-    # live runtime state (/run, /var/run, /dev, X sockets/locks, /proc, /sys) is
-    # excluded so the warm container's own daemons keep their footing; and a graft onto
-    # a container whose processes are concurrently writing the same paths is
-    # last-writer-wins. Pool sizing: each warm container costs one cold boot (paid in
-    # the background) and one idle desktop's RSS; bursts beyond the pool fall back to
-    # the classic cold path.
+    # --- quarantined warm-pool utilities (restore is intentionally disabled) ---------
+    # Delta extraction is kept correct and testable for a future frozen-target design,
+    # but `_restore_from_pool` refuses to apply it to a running container.
 
     _GRAFT_EXCLUDES = (
         "/tmp/.X11-unix*",
@@ -929,62 +1386,89 @@ class DockerLocalProvider(SandboxProvider):
     def _graft_excluded(cls, path: str) -> bool:
         return any(fnmatch.fnmatch(path, pat) for pat in cls._GRAFT_EXCLUDES)
 
-    def _capture_delta(self, cid: str, tag: str) -> dict[str, Any]:
-        """Record the live container's filesystem delta vs its base image, right after
-        `docker commit`: `docker diff` enumerates added (A) / changed (C) / deleted (D)
-        paths, the A/C set is tarred OUT of the container (one `docker exec tar`), and
-        the D set is kept as a deletion list. Equivalent to extracting the commit
-        layer's tar (whiteout files included) but without serializing the whole image
-        through `docker save`. Window caveat: the container keeps running between the
-        commit and this capture, so a concurrently-written file may differ from the
-        committed layer by that sliver."""
-        diff = _run([self.docker_bin, "diff", cid], timeout=self.startup_timeout)
-        adds: list[str] = []
+    def _capture_delta(self, _cid: str, image_ref: str) -> dict[str, Any]:
+        """Build a graft from the immutable committed image's top layer.
+
+        Reading the live donor after ``docker commit`` creates a consistency race. A
+        committed image id is immutable, so ``docker image save`` is the source of truth.
+        Overlay whiteouts become explicit deletions and are never extracted into the
+        target container.
+        """
+        assert self._delta_dir is not None
+        suffix = image_ref.split(":", 1)[-1]
+        image_tar_path = self._delta_dir / f"{suffix}.image.tar"
+        graft_tar_path = self._delta_dir / f"{suffix}.tar"
         deletions: list[str] = []
-        for line in diff.stdout.splitlines():
-            parts = line.split(None, 1)
-            if len(parts) != 2:
-                continue
-            kind, path = parts
-            if self._graft_excluded(path):
-                continue
-            if kind == "D":
-                deletions.append(path)
-            elif kind in ("A", "C"):
-                adds.append(path)
-        tar_path: str | None = None
-        if adds:
-            assert self._delta_dir is not None
-            tar_path = str(self._delta_dir / f"{tag.split(':', 1)[-1]}.tar")
-            # --no-recursion: docker diff already lists every changed path individually,
-            # so directory entries must not drag their unchanged children along.
-            with open(tar_path, "wb") as out:
-                proc = subprocess.run(
-                    [
-                        self.docker_bin,
-                        "exec",
-                        "-i",
-                        cid,
-                        "tar",
-                        "-cf",
-                        "-",
-                        "--no-recursion",
-                        "-C",
-                        "/",
-                        "-T",
-                        "-",
-                    ],
-                    input="\n".join(p.lstrip("/") for p in adds).encode(),
-                    stdout=out,
-                    stderr=subprocess.PIPE,
-                    timeout=self.startup_timeout,
-                )
-            if proc.returncode != 0:
-                with contextlib.suppress(OSError):
-                    os.remove(tar_path)
-                err = proc.stderr.decode(errors="replace").strip()
-                raise ProviderError(f"delta capture failed for {tag}: {err}")
-        return {"tar": tar_path, "deletions": deletions}
+        added = 0
+        try:
+            _run(
+                [self.docker_bin, "image", "save", "-o", str(image_tar_path), image_ref],
+                timeout=max(self.startup_timeout, 60.0),
+            )
+            with tarfile.open(image_tar_path, "r:*") as image_tar:
+                manifest_file = image_tar.extractfile("manifest.json")
+                if manifest_file is None:
+                    raise ProviderError("docker image save omitted manifest.json")
+                manifest = json.load(manifest_file)
+                layer_name = manifest[0]["Layers"][-1]
+                layer_file = image_tar.extractfile(layer_name)
+                if layer_file is None:
+                    raise ProviderError(f"docker image save omitted layer {layer_name}")
+                with (
+                    tarfile.open(fileobj=layer_file, mode="r|*") as layer_tar,
+                    tarfile.open(graft_tar_path, mode="w") as graft_tar,
+                ):
+                    for member in layer_tar:
+                        name = member.name
+                        while name.startswith("./"):
+                            name = name[2:]
+                        name = name.lstrip("/")
+                        if not name or name == ".." or name.startswith("../") or "/../" in name:
+                            raise ProviderError(
+                                f"unsafe path in committed image layer: {member.name}"
+                            )
+                        parent, basename = os.path.split(name)
+                        if basename == ".wh..wh..opq":
+                            target = f"/{parent}" if parent else "/"
+                            if target != "/" and not self._graft_excluded(target):
+                                deletions.append(target)
+                            continue
+                        if basename.startswith(".wh."):
+                            target_name = os.path.join(parent, basename[4:])
+                            target = f"/{target_name}"
+                            if not self._graft_excluded(target):
+                                deletions.append(target)
+                            continue
+                        path = f"/{name}"
+                        if self._graft_excluded(path):
+                            continue
+                        member.name = name
+                        payload = layer_tar.extractfile(member) if member.isfile() else None
+                        graft_tar.addfile(member, payload)
+                        added += 1
+        except ProviderError:
+            raise
+        except (
+            OSError,
+            KeyError,
+            IndexError,
+            TypeError,
+            json.JSONDecodeError,
+            tarfile.TarError,
+        ) as exc:
+            raise ProviderError(f"immutable delta capture failed for {image_ref}: {exc}") from exc
+        finally:
+            with contextlib.suppress(OSError):
+                image_tar_path.unlink()
+        if not added:
+            with contextlib.suppress(OSError):
+                graft_tar_path.unlink()
+        return {
+            "tar": str(graft_tar_path) if added else None,
+            "deletions": list(dict.fromkeys(deletions)),
+            "source": "committed_image_layer",
+            "image_ref": image_ref,
+        }
 
     def _pool_compatible(self, spec: SandboxSpec | None) -> bool:
         """A warm container can only impersonate a snapshot whose originating spec
@@ -995,77 +1479,25 @@ class DockerLocalProvider(SandboxProvider):
         pool = self._pool_spec
         return (
             (spec.image or self.image) == (pool.image or self.image)
+            and spec.os == pool.os
+            and spec.needs_gui == pool.needs_gui
+            and spec.needs_gpu == pool.needs_gpu
+            and spec.state_fidelity == pool.state_fidelity
             and spec.screen_geometry == pool.screen_geometry
             and spec.memory == pool.memory
             and spec.cpus == pool.cpus
             and spec.pids_limit == pool.pids_limit
             and spec.shm_size == pool.shm_size
+            and spec.extra_env == pool.extra_env
         )
 
     def _restore_from_pool(self, image: str, spec: SandboxSpec | None) -> SandboxHandle | None:
-        """Claim a warm container and graft `image`'s delta onto it. Returns None when
-        the pool path does not apply (no delta captured, incompatible spec, or pool
-        empty past the claim timeout) — the caller falls back to the classic boot."""
-        delta = self._deltas.get(image)
-        if delta is None or self._pool is None or not self._pool_compatible(spec):
+        """Reject the live-target graft until process/filesystem parity is proven."""
+        if self._pool is None:
             return None
-        try:
-            if self._pool_claim_timeout > 0:
-                handle = self._pool.get(timeout=self._pool_claim_timeout)
-            else:
-                handle = self._pool.get_nowait()
-        except queue.Empty:
-            return None
-        try:
-            cid = self._container_of(handle)
-            if delta["deletions"]:
-                _run(
-                    [
-                        self.docker_bin,
-                        "exec",
-                        "-u",
-                        "0",
-                        cid,
-                        "rm",
-                        "-rf",
-                        "--",
-                        *delta["deletions"],
-                    ],
-                    timeout=self.startup_timeout,
-                )
-            if delta["tar"]:
-                with open(delta["tar"], "rb") as tar_in:
-                    proc = subprocess.run(
-                        [
-                            self.docker_bin,
-                            "exec",
-                            "-i",
-                            "-u",
-                            "0",
-                            cid,
-                            "tar",
-                            "-xpf",
-                            "-",
-                            "-C",
-                            "/",
-                        ],
-                        stdin=tar_in,
-                        capture_output=True,
-                        timeout=self.startup_timeout,
-                    )
-                if proc.returncode != 0:
-                    raise ProviderError(
-                        f"delta graft failed: {proc.stderr.decode(errors='replace').strip()}"
-                    )
-            # Readiness barrier: the warm container was ready when pooled and the graft
-            # restarts nothing, so this is one fast guest-side `ready` round trip.
-            self._wait_ready(handle)
-        except Exception:
-            self.destroy(handle)
-            raise
-        handle.metadata["image"] = image  # restored-state lineage, like the classic path
-        handle.metadata["pool_graft"] = True
-        return handle
+        raise ProviderError(
+            f"warm restore for {image!r} is disabled: live-target equivalence is unproven"
+        )
 
     def _replenish_pool(self) -> None:
         """Background thread: keep the pool at its target size by cold-booting base

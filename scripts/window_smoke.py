@@ -2,7 +2,7 @@
 active window) against a real shinkend, and verify the frame is a sub-region of the
 full screen.
 
-Env: optional SHK_ADDR (default 127.0.0.1:8765), optional SHK_TOKEN, optional
+Env: optional SHK_ADDR (default 127.0.0.1:8765), required SHK_TOKEN, optional
 SHK_WINDOW (an X11 window id, decimal) to capture by id.
 """
 

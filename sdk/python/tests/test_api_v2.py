@@ -397,7 +397,8 @@ def _mock_docker(monkeypatch) -> list[list[str]]:
 
     def fake_run(cmd, timeout=30.0):
         calls.append(cmd)
-        return subprocess.CompletedProcess(cmd, 0, stdout="cid\n", stderr="")
+        out = "sha256:api-v2-image\n" if cmd[:2] == ["docker", "commit"] else "cid\n"
+        return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
 
     monkeypatch.setattr("shinken.providers.docker._run", fake_run)
     monkeypatch.setattr("shinken.providers.docker._free_port", lambda _host: 19012)
@@ -437,11 +438,12 @@ def test_fork_image_gc_accounting(monkeypatch):
     snap = child.metadata["fork_snapshot"]
     assert snap.startswith("shinken-snap:")
     assert snap in provider._snapshots  # accounted while the child lives
+    image_ref = provider._snapshot_images[snap]
     # the intermediate must NOT propagate into descendants' specs (grandchild forks)
     assert "fork_snapshot" not in provider._spec_from_handle(child).metadata
 
     provider.destroy(child)
-    assert any(c[:3] == ["docker", "rmi", "-f"] and snap in c for c in rmis), rmis
+    assert any(c[:3] == ["docker", "rmi", "-f"] and image_ref in c for c in rmis), rmis
     assert snap not in provider._snapshots  # zero images left per fork+destroy cycle
     assert any(c[:2] == ["docker", "commit"] for c in calls)
 
@@ -475,6 +477,8 @@ def test_gc_skips_live_owners_unless_force(monkeypatch):
     report = provider.gc(snapshots=True)
     assert isinstance(report, GcReport)
     assert report.containers == 1 and report.images == 1 and report.skipped == 2
+    images_query = next(c for c in calls if c[:3] == ["docker", "images", "-q"])
+    assert "label=shinken.provider=docker-local" in images_query
     rm = next(c for c in calls if c[:3] == ["docker", "rm", "-f"])
     assert rm[3:] == ["c-dead"]
     assert ["docker", "rmi", "-f", "i-dead"] in rmis

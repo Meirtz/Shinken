@@ -24,9 +24,9 @@ for suite in codec_ladder delta_screencast action_latency fork fanout client_sca
   python3 "benchmarks/bench_${suite}.py"
 done
 
-# fork suite, warm-pool mode (S4b): same script, pool-accelerated graft path
-echo "=== bench_fork (pool mode) ==="
-SHINKEN_BENCH_FORK_MODE=pool python3 benchmarks/bench_fork.py
+# S4b warm-pool graft is intentionally not run. Its tracked result is a historical
+# artifact: grafting onto a live target was not equivalent to classic restore.
+echo "=== bench_fork pool mode skipped (disabled pending equivalence-safe design) ==="
 
 # fork suite, CRIU memory mode (S4c): live process+memory checkpoint/fork. Runs
 # PRIVILEGED containers and needs the criu image variant, so it is image-gated:

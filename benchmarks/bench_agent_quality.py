@@ -144,13 +144,19 @@ class StudyModel:
                 f"SHK_SMOKE_MODEL_{suffix}"
             )
 
-        base, key, model = pick("BASE_URL"), pick("API_KEY"), pick("MODEL") or pick("NAME")
+        base, key, model = (
+            pick("BASE_URL"),
+            pick("API_KEY"),
+            pick("MODEL") or pick("NAME"),
+        )
         if base and key and model:
             return cls(base, key, model)
         return None
 
     def turn(self, instruction: str, obs: dict, history: list[str]) -> str:
-        prev = "\n".join(f"{i + 1}. {h}" for i, h in enumerate(history[-8:])) or "(none)"
+        prev = (
+            "\n".join(f"{i + 1}. {h}" for i, h in enumerate(history[-8:])) or "(none)"
+        )
         mime = "image/jpeg" if obs.get("format") == "jpeg" else "image/png"
         uri = f"data:{mime};base64," + base64.b64encode(obs["bytes"]).decode("ascii")
         text = (
@@ -168,7 +174,10 @@ class StudyModel:
                         "role": "user",
                         "content": [
                             {"type": "text", "text": text},
-                            {"type": "image_url", "image_url": {"url": uri, "detail": "high"}},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": uri, "detail": "high"},
+                            },
                         ],
                     },
                 ],
@@ -271,7 +280,9 @@ def _wait_ready(sess: Any, titles: list[str], timeout_s: float = 25.0) -> float:
             time.sleep(0.8)  # content paint beat (cat + zenity layout)
             return time.time() - t0
         time.sleep(0.25)
-    raise RuntimeError(f"task windows {titles} never mapped within {timeout_s}s (saw {seen})")
+    raise RuntimeError(
+        f"task windows {titles} never mapped within {timeout_s}s (saw {seen})"
+    )
 
 
 def _observe_tier(sess: Any, tier: dict) -> dict:
@@ -284,7 +295,9 @@ def _observe_tier(sess: Any, tier: dict) -> dict:
     return obs
 
 
-def _rescale_targets(actions: list[dict], obs: dict, screen: tuple[int, int]) -> list[dict]:
+def _rescale_targets(
+    actions: list[dict], obs: dict, screen: tuple[int, int]
+) -> list[dict]:
     """Model pixel coordinates live in the SERVED image space; the ACI executes in
     native screen space. Rescale point_px targets by the served->native ratio (identity
     at native tiers; point_norm passes through untouched)."""
@@ -383,15 +396,21 @@ def run_episode(
             success=ep.reward == 1.0,
             steps=len(ep.trajectory.steps),
             exit_reason=ep.trajectory.exit_reason,
-            kind="pass" if ep.reward == 1.0 else ("fail" if ep.reward is not None else "error"),
+            kind="pass"
+            if ep.reward == 1.0
+            else ("fail" if ep.reward is not None else "error"),
             parse_errors=parse_errors,
             frame_bytes_mean=round(sum(frame_bytes) / len(frame_bytes)),
             receipt=(ep.info.get("receipt") if isinstance(ep.info, dict) else None),
         )
     except (SandboxDied, ProviderError) as exc:
-        # Infra death (replica died / warm-pool graft lost its container): typed,
+        # Infra death (replica died or the provider lost its container): typed,
         # excluded from the denominators, retry-eligible — never scored as a failure.
-        row.update(success=False, kind="sandbox_died", error=f"{type(exc).__name__}: {exc}"[:300])
+        row.update(
+            success=False,
+            kind="sandbox_died",
+            error=f"{type(exc).__name__}: {exc}"[:300],
+        )
     except Exception as exc:  # noqa: BLE001 — classify; one episode never kills the study
         kind = "sandbox_died" if is_connection_loss(exc) else "error"
         row.update(success=False, kind=kind, error=f"{type(exc).__name__}: {exc}"[:300])
@@ -414,7 +433,9 @@ def main() -> int:
         default="auto",
         help="auto = model when an endpoint is configured, else oracle",
     )
-    ap.add_argument("--seeds", type=int, default=None, help="replicates per task x tier")
+    ap.add_argument(
+        "--seeds", type=int, default=None, help="replicates per task x tier"
+    )
     ap.add_argument("--max-steps", type=int, default=MAX_STEPS_DEFAULT)
     ap.add_argument("--tasks", type=int, default=None, help="cap the task list (debug)")
     ap.add_argument("--out", default=None, help="results file stem (default per mode)")
@@ -459,9 +480,6 @@ def main() -> int:
         image=IMAGE,
         name_prefix="shinken-bench",
         startup_timeout=120.0,
-        warm_pool_size=2,
-        warm_pool_spec=SandboxSpec(screen_geometry=GEOMETRY),
-        warm_pool_claim_timeout=0.25,
     )
     episodes: list[dict] = []
     try:
@@ -483,7 +501,14 @@ def main() -> int:
                     try:
                         for seed in range(seeds):
                             row = run_episode(
-                                env, task, tier_label, tier, agent, seed, args.max_steps, screen
+                                env,
+                                task,
+                                tier_label,
+                                tier,
+                                agent,
+                                seed,
+                                args.max_steps,
+                                screen,
                             )
                             if row.get("kind") == "sandbox_died":
                                 # ONE infra retry on a fresh fork (the typed retry-eligible
@@ -492,7 +517,14 @@ def main() -> int:
                                 row["retried"] = True
                                 episodes.append(row)
                                 row = run_episode(
-                                    env, task, tier_label, tier, agent, seed, args.max_steps, screen
+                                    env,
+                                    task,
+                                    tier_label,
+                                    tier,
+                                    agent,
+                                    seed,
+                                    args.max_steps,
+                                    screen,
                                 )
                             episodes.append(row)
                             print(
@@ -506,7 +538,7 @@ def main() -> int:
             finally:
                 golden.dispose()
     finally:
-        provider.shutdown_pool()
+        provider.cleanup_snapshots()
 
     verdicts = [e for e in episodes if e.get("kind") in ("pass", "fail")]
     by_tier: dict[str, dict] = {}
@@ -521,7 +553,9 @@ def main() -> int:
                 round(sum(e["steps"] for e in wins) / len(wins), 2) if wins else None
             ),
             "frame_bytes_mean": (
-                round(sum(e["frame_bytes_mean"] for e in rows) / len(rows)) if rows else None
+                round(sum(e["frame_bytes_mean"] for e in rows) / len(rows))
+                if rows
+                else None
             ),
         }
     payload: dict = {
@@ -530,7 +564,9 @@ def main() -> int:
             "kind": agent.kind,
             "model": label if use_model else None,
             "endpoint": (
-                "openai-compatible chat completions (env-configured)" if use_model else None
+                "openai-compatible chat completions (env-configured)"
+                if use_model
+                else None
             ),
             "temperature": 0.0 if use_model else None,
         },

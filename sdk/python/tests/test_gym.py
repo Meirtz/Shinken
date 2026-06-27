@@ -60,6 +60,66 @@ class _ForkProvider:
         self.calls["delete_snapshot"] += 1
 
 
+class _TransitionSession:
+    """Small deterministic env whose observation bytes expose state transitions.
+
+    The regular mock runtime serves a fixed 1x1 PNG, which cannot prove whether an
+    exported row contains s_t or s_{t+1}. This session emits distinct bytes per state.
+    """
+
+    def __init__(self) -> None:
+        self.state = 0
+        self.closed = False
+
+    def _observation(self) -> dict:
+        image = f"state-{self.state}".encode()
+        return {"bytes": image, "png": image, "format": "png", "w": 1, "h": 1}
+
+    def screenshot(self, **_kwargs):
+        return self._observation()
+
+    def step(self, actions, *, observe=None):
+        del observe
+        self.state += 1
+        return {
+            "observation": self._observation(),
+            "results": [{"verb": action["verb"], "ok": True} for action in actions],
+        }
+
+    def close(self):
+        self.closed = True
+
+
+class _TransitionProvider:
+    """Lifecycle stub for transition-semantics and dataloader tests."""
+
+    def __init__(self) -> None:
+        self.next_replica = 0
+
+    def create(self, spec=None):
+        del spec
+        return "base"
+
+    def connect(self, handle, **_kwargs):
+        del handle
+        return _TransitionSession()
+
+    def checkpoint(self, handle, *, name=None, event_seq=None, agent_state_ref=None):
+        del handle, name, event_seq, agent_state_ref
+        return "golden-transition"
+
+    def resume(self, checkpoint):
+        assert checkpoint == "golden-transition"
+        self.next_replica += 1
+        return f"replica-{self.next_replica}"
+
+    def destroy(self, handle):
+        del handle
+
+    def delete_snapshot(self, checkpoint):
+        assert checkpoint == "golden-transition"
+
+
 def _typed_hi_task(setups: list | None = None) -> g.GymTask:
     """Verifier reads the mock's OBSERVED state (not the task's inputs): reward 1.0 only
     when the episode actually typed 'hi'."""
@@ -163,6 +223,39 @@ def test_step_accepts_canonical_dicts_and_lists(mock_shinkend):
         assert {"x": 10, "y": 20} in [{"x": c["x"], "y": c["y"]} for c in state["clicks"]]
         assert state["typed"] == "hi" and "ctrl+s" in state["keys"]
         assert obs["png"][:8] == b"\x89PNG\r\n\x1a\n"  # post-step frame, fused via step()
+
+
+def test_trajectory_and_exporter_pair_agent_input_with_action():
+    """A transition is (s_t, a_t, s_{t+1}); the HF row must use (s_t, a_t)."""
+    task = g.GymTask("transition", instruction="advance once")
+    with g.make(task, _TransitionProvider()) as env:
+        initial, _ = env.reset()
+        action = {"verb": "type_text", "text": "advance"}
+        post, reward, done, _ = env.step(action)
+        assert initial["bytes"] == b"state-0"
+        assert post["bytes"] == b"state-1"
+        assert reward is None and not done
+
+        _, _, done, _ = env.step("<done/>")
+        assert done
+        episode = env.episodes[-1]
+
+    first, terminal = episode.trajectory.steps
+    assert first.observation == initial  # reset's s0 is the first policy input
+    assert first.actions == [action]
+    assert first.next_observation == post
+    assert terminal.observation == post  # the next turn consumes the previous s_{t+1}
+    assert terminal.actions == []
+    assert terminal.next_observation is not None
+
+    serialized = episode.trajectory.to_dict()["steps"]
+    assert episode.trajectory.metadata["transition_semantics"] == "s_t_action_s_t_plus_1_v1"
+    assert serialized[0]["observation"]["bytes"] == b"state-0"
+    assert serialized[0]["next_observation"]["bytes"] == b"state-1"
+
+    records = g.episodes_to_records([episode])
+    assert records["image"] == [b"state-0", b"state-1"]
+    assert json.loads(records["actions_json"][0]) == [action]
 
 
 def test_step_routes_raw_model_text_dialect_and_xml(mock_shinkend):
@@ -397,6 +490,38 @@ def test_dataloader_batches_step_routing_and_autoreset_fork(mock_shinkend):
     assert prov.calls["delete_snapshot"] == 1
 
 
+def test_dataloader_preserves_observation_generation_across_async_step():
+    """The async facade must record exactly the observation yielded for each response."""
+    pool = g.ShinkenGymPool(
+        g.GymTask("transition", instruction="advance once"), _TransitionProvider(), 1
+    )
+    loader = g.MultiTurnDataloader(pool, total_episodes=1)
+    try:
+        initial_batch = next(loader)
+        initial = initial_batch["observation"][0]
+        assert initial["bytes"] == b"state-0"
+        rows = loader.async_step(
+            {
+                "env_id": initial_batch["env_id"],
+                "responses": [{"verb": "type_text", "text": "advance"}],
+            }
+        )
+        assert not rows[0]["done"]
+
+        next_batch = next(loader)
+        post = next_batch["observation"][0]
+        assert post["bytes"] == b"state-1"
+        rows = loader.async_step({"env_id": next_batch["env_id"], "responses": ["<done/>"]})
+        assert rows[0]["done"]
+
+        first, terminal = loader.episodes[0].trajectory.steps
+        assert first.observation == initial
+        assert first.next_observation == post
+        assert terminal.observation == post
+    finally:
+        loader.close()
+
+
 def test_dataloader_accepts_their_worker_id_key(mock_shinkend):
     pool = g.ShinkenGymPool(_typed_hi_task(), _ForkProvider(mock_shinkend), 1)
     loader = g.MultiTurnDataloader(pool, total_episodes=1)
@@ -444,11 +569,12 @@ requires_docker = pytest.mark.skipif(
 
 
 @requires_docker
-def test_live_golden_fork_resets_inherit_state_and_meet_latency(tmp_path):
-    """The wedge, live: golden checkpoint once -> 3 fork-resets on the real Docker disk
-    tier (warm pool primed) -> every replica inherits the golden file, and the measured
-    reset_ms p50 stays under 1.5 s (vs the cold sandbox re-provision every other gym pays
-    per reset)."""
+def test_live_golden_resets_inherit_filesystem_state(tmp_path):
+    """Golden checkpoint once -> three cold disk restores, each inheriting the marker.
+
+    The former live warm graft is intentionally not exercised: it is disabled until
+    pool-hit/pool-miss equivalence can be proved.
+    """
     from shinken.providers.base import ProviderError
     from shinken.providers.docker import DockerLocalProvider
 
@@ -467,9 +593,7 @@ def test_live_golden_fork_resets_inherit_state_and_meet_latency(tmp_path):
     task = g.GymTask(
         "live-gym", instruction="inherit the golden marker", setup=setup, verify=verify
     )
-    provider = DockerLocalProvider(
-        image="shinken/sandbox-linux", startup_timeout=120.0, warm_pool_size=2
-    )
+    provider = DockerLocalProvider(image="shinken/sandbox-linux", startup_timeout=120.0)
     try:
         with g.make(task, provider) as env:
             reset_ms: list[float] = []
@@ -481,11 +605,7 @@ def test_live_golden_fork_resets_inherit_state_and_meet_latency(tmp_path):
                 reset_ms.append(info["reset_ms"])
                 assert obs["png"][:8] == b"\x89PNG\r\n\x1a\n"
                 assert env.evaluate() == 1.0  # state inheritance, per replica
-            p50 = sorted(reset_ms)[1]
-            print(
-                f"\nlive fork-reset reset_ms: {[round(ms) for ms in reset_ms]} (p50 {p50:.0f} ms)"
-            )
-            assert p50 < 1500.0, f"reset_ms p50 {p50:.0f} ms >= 1500 ms ({reset_ms})"
+            assert all(ms > 0 for ms in reset_ms)
             # one real step over the typed ACI on the final replica
             _, _, done, info = env.step('<actions><click x="100" y="100"/></actions>')
             assert not done and info["results"][0]["ok"]
@@ -494,4 +614,4 @@ def test_live_golden_fork_resets_inherit_state_and_meet_latency(tmp_path):
             ep = env.episodes[-1]
             assert ep.trajectory.exit_reason == "task_complete" and len(ep.trajectory.steps) == 2
     finally:
-        provider.shutdown_pool()  # reclaim the warm containers — lean local artifacts
+        provider.destroy_all()

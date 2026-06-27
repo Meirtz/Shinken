@@ -63,7 +63,9 @@ def test_docker_connect_injects_context_and_checkpoint(mock_shinkend, monkeypatc
     # attaches the provider context, and checkpoint() runs provider.checkpoint.
     monkeypatch.setattr(
         "shinken.providers.docker._run",
-        lambda cmd, timeout=30.0: subprocess.CompletedProcess(cmd, 0, stdout="img\n", stderr=""),
+        lambda cmd, timeout=30.0: subprocess.CompletedProcess(
+            cmd, 0, stdout="sha256:checkpoint-image\n", stderr=""
+        ),
     )
     handle = SandboxHandle(
         provider="docker-local",

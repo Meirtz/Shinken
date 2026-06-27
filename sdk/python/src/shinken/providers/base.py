@@ -36,10 +36,26 @@ DisplayKind = Literal["none", "x11", "wayland", "browser", "provider_managed"]
 # What a provider's snapshot captures: nothing, filesystem only, full memory, process
 # tree (CRIU), or an opaque provider-managed snapshot.
 SnapshotKind = Literal["none", "disk", "memory", "process", "provider_managed"]
+StateFidelity = Literal["filesystem", "process_memory"]
 
 
 class ProviderError(RuntimeError):
     """Raised when a sandbox provider cannot complete a lifecycle operation."""
+
+
+class UnsatisfiedSandboxSpec(ProviderError):
+    """A provider cannot honor one requested :class:`SandboxSpec` field.
+
+    This is deliberately distinct from an operational provider failure: callers can
+    route the same request to a different provider without treating a deterministic
+    capability mismatch as a transient Docker/VM error.
+    """
+
+    def __init__(self, field: str, requested: Any, detail: str) -> None:
+        self.field = field
+        self.requested = requested
+        self.detail = detail
+        super().__init__(f"unsatisfied SandboxSpec.{field}={requested!r}: {detail}")
 
 
 class UnsupportedProviderOperation(ProviderError):
@@ -96,6 +112,9 @@ class SandboxSpec:
     # ``SCREEN_GEOMETRY``) cannot be overridden through this.
     extra_env: dict[str, str] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Minimum restore fidelity required by the caller. Kept at the end to preserve
+    # positional compatibility of the historical SandboxSpec constructor.
+    state_fidelity: StateFidelity = "filesystem"
 
 
 @dataclass(repr=False)

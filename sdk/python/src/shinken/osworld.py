@@ -102,8 +102,8 @@ class DesktopEnv:
         self.address = address
         self.observation_type = observation_type
         self.action_space = action_space
-        # Bearer token for a non-loopback bind (e.g. a runtime-injected shinkend reachable
-        # on 0.0.0.0 via a published port — see shinken.inject); None for a loopback session.
+        # Mandatory bearer token for the runtime (including loopback). Runtime injection
+        # generates one and returns it alongside the reachable address.
         self.token = token
         self._env: Any = None
         self._instruction = ""

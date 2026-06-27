@@ -10,8 +10,9 @@ cookie), and a final ``/verify`` call scores the rollout (``reward: float``). Tr
 This module puts a real desktop behind that contract — and the per-rollout resource the
 docs ask for ("initialization, isolation, and cleanup … per rollout") is exactly the
 runtime-state primitive: **every rollout is a fork from the task's golden checkpoint**
-(task setup runs once; reset p50 ~60 ms on the warm-pool tier vs the re-provision-per-
-episode pattern). Tasks come from CUA-Gym exported bundles
+(task setup runs once; the reference Docker filesystem tier restores each rollout from
+an immutable checkpoint image). The historical live warm-pool graft is disabled because
+it could race guest writers. Tasks come from CUA-Gym exported bundles
 (:mod:`shinken.integrations.cua_gym`), whose ``reward.py`` (``REWARD: X.X`` last-line
 contract) becomes the ``/verify`` scorer.
 

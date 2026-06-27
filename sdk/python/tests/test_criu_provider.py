@@ -1,7 +1,7 @@
 """CRIU memory-tier provider (snapshot_kind="process") — offline contract tests.
 
 These pin the tier's shape without Docker: the loud privileged posture, the
-dump-(--leave-running)+commit checkpoint pairing, the idle-boot + parked-PID +
+dump-(--leave-stopped)+commit+resume consistency window, the idle-boot + parked-PID +
 criu-restore fork path, and the donor-token inheritance. The live proof
 (dump → restore → the in-memory marker survives → donor still live) is
 ``scripts/criu_smoke.py``; the measured numbers are ``benchmarks/bench_fork.py``
@@ -10,13 +10,15 @@ in memory mode.
 
 from __future__ import annotations
 
+import base64
+import json
 import subprocess
 
 import pytest
 
 import shinken
-from shinken.providers import CriuDockerProvider, SandboxSpec
-from shinken.providers.base import ProviderError, SandboxHandle
+from shinken.providers import CriuDockerProvider, DockerLocalProvider, SandboxSpec
+from shinken.providers.base import ProviderError, SandboxHandle, UnsatisfiedSandboxSpec
 from shinken.providers.criu import (
     MemoryMarkerError,
     read_memory_marker,
@@ -46,6 +48,11 @@ def _mock_docker(monkeypatch, *, ns_last_pid: str = "431") -> list[list[str]]:
             "exec",
         ] and "criu dump" in " ".join(cmd):
             out = f"{ns_last_pid}\n"
+        elif cmd[:2] == ["docker", "commit"]:
+            commit_count = sum(c[:2] == ["docker", "commit"] for c in calls)
+            out = f"sha256:criu-image-{commit_count}\n"
+        elif cmd[:2] == ["docker", "exec"] and "/proc/$pid/environ" in " ".join(cmd):
+            out = "donor-token\n"
         elif cmd[:2] == ["docker", "images"] or cmd[:2] == ["docker", "ps"]:
             # List queries (the v2 label sweeps in cleanup_snapshots/list/gc) see an
             # empty daemon — only the provider's own in-memory ledger exists here.
@@ -106,30 +113,136 @@ def test_create_runs_privileged_init_with_images_volume(monkeypatch):
     assert "--privileged" in run_cmd
     assert "--init" in run_cmd
     assert "ckpt-vol-test:/ckpt" in run_cmd
+    assert "shinken.criu_images_volume=ckpt-vol-test" in run_cmd
     assert any(a.startswith("SHINKEN_CRIU_PID_FLOOR=") for a in run_cmd)
     assert run_cmd[-1] == "shinken/sandbox-linux-criu"  # image CMD = supervised boot
 
 
-# --- checkpoint: criu dump --leave-running + docker commit ------------------------------
+def test_criu_accepts_process_memory_contract(monkeypatch):
+    _mock_docker(monkeypatch)
+    provider = CriuDockerProvider(images_volume="v")
+    handle = provider.create(SandboxSpec(state_fidelity="process_memory"))
+    assert handle.metadata["sandbox_spec"]["state_fidelity"] == "process_memory"
 
 
-def test_snapshot_dumps_leave_running_then_commits(monkeypatch):
+@pytest.mark.parametrize(
+    ("spec", "field"),
+    [
+        (SandboxSpec(os="macos"), "os"),
+        (SandboxSpec(needs_gpu=True), "needs_gpu"),
+        (SandboxSpec(fast_reset=True), "fast_reset"),
+    ],
+)
+def test_criu_rejects_unsatisfied_spec_before_docker(monkeypatch, spec, field):
+    calls: list[list[str]] = []
+    monkeypatch.setattr("shinken.providers.docker._run", lambda cmd, **_kwargs: calls.append(cmd))
+    with pytest.raises(UnsatisfiedSandboxSpec) as raised:
+        CriuDockerProvider(images_volume="v").create(spec)
+    assert raised.value.field == field
+    assert calls == []
+
+
+def test_list_recovers_live_process_token_and_volume(monkeypatch):
+    rebuilt = SandboxHandle(
+        provider="docker-criu",
+        sandbox_id="restored",
+        addr="127.0.0.1:1",
+        token="temporary-container-token",
+        metadata={"container_id": "cid", "image": "sha256:source"},
+    )
+    monkeypatch.setattr(DockerLocalProvider, "list", lambda _self: [rebuilt])
+
+    def fake_run(cmd, timeout=30.0):
+        if cmd[:3] == ["docker", "inspect", "-f"]:
+            out = "persisted-volume\n"
+        elif cmd[:2] == ["docker", "exec"]:
+            out = "donor-token\n"
+        else:  # pragma: no cover - guards the contract
+            raise AssertionError(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
+
+    monkeypatch.setattr("shinken.providers.criu._run", fake_run)
+    provider = CriuDockerProvider(images_volume="different-default")
+    assert provider.list() == [rebuilt]
+    assert rebuilt.token == "donor-token"
+    assert rebuilt.metadata["criu_images_volume"] == "persisted-volume"
+    assert provider._image_volumes["sha256:source"] == "persisted-volume"
+
+
+# --- checkpoint: one stopped memory+filesystem consistency window -----------------------
+
+
+def test_snapshot_dumps_stopped_commits_then_resumes_donor(monkeypatch):
     calls = _mock_docker(monkeypatch, ns_last_pid="431")
     provider = CriuDockerProvider(images_volume="v")
     snap = provider.snapshot(_handle("donor1"), name="golden")
-    assert snap == "shinken-memsnap:golden"
-    exec_cmd = next(c for c in calls if c[:2] == ["docker", "exec"])
-    script = exec_cmd[-1]
+    assert snap.startswith("shinken-memsnap:") and "golden" not in snap
+    dump_i = next(i for i, c in enumerate(calls) if "criu dump" in " ".join(c))
+    commit_i = next(i for i, c in enumerate(calls) if c[:2] == ["docker", "commit"])
+    resume_i = next(i for i, c in enumerate(calls) if "kill -s CONT -- -1" in " ".join(c))
+    assert dump_i < commit_i < resume_i
+    script = calls[dump_i][-1]
     assert "criu dump" in script
-    assert "--leave-running" in script  # donor stays live — a true checkpoint
+    assert "--leave-stopped" in script
     assert "--tcp-close" in script
     assert "/tmp/shinken-tree.pid" in script
-    assert "/ckpt/golden" in script
-    commit = next(c for c in calls if c[:2] == ["docker", "commit"])
-    assert commit[2] == "donor1" and commit[3] == snap
+    assert provider._mem[snap]["images_dir"] in script
+    commit = calls[commit_i]
+    assert commit[-2:] == ["donor1", snap]
+    assert "LABEL shinken.snapshot_name=golden" not in commit
+    assert "LABEL shinken.snapshot_name=" in commit
     # the parked restore floor sits ABOVE the donor's recorded PID range
     assert provider._mem[snap]["park"] == 431 + 128
-    assert provider._mem[snap]["token"] == "donor-token"
+    assert "token" not in provider._mem[snap]
+
+
+def test_criu_same_human_name_mints_distinct_ids(monkeypatch):
+    _mock_docker(monkeypatch)
+    provider = CriuDockerProvider(images_volume="v")
+    first = provider.snapshot(_handle(), name="same")
+    second = provider.snapshot(_handle(), name="same")
+    assert first != second
+
+
+def test_criu_resumes_donor_when_commit_fails(monkeypatch):
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, timeout=30.0):
+        calls.append(cmd)
+        if "criu dump" in " ".join(cmd):
+            return subprocess.CompletedProcess(cmd, 0, stdout="431\n", stderr="")
+        if cmd[:2] == ["docker", "commit"]:
+            raise ProviderError("commit failed")
+        return subprocess.CompletedProcess(cmd, 0, stdout="cid\n", stderr="")
+
+    monkeypatch.setattr("shinken.providers.criu._run", fake_run)
+    provider = CriuDockerProvider(images_volume="v")
+    with pytest.raises(ProviderError, match="commit failed"):
+        provider.snapshot(_handle())
+    commit_i = next(i for i, c in enumerate(calls) if c[:2] == ["docker", "commit"])
+    resume_i = next(i for i, c in enumerate(calls) if "kill -s CONT -- -1" in " ".join(c))
+    cleanup_i = next(i for i, c in enumerate(calls) if c[:3] == ["docker", "run", "--rm"])
+    assert commit_i < resume_i < cleanup_i
+    assert any(arg.startswith("/ckpt/") for arg in calls[cleanup_i])
+
+
+def test_criu_resumes_donor_when_dump_fails(monkeypatch):
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, timeout=30.0):
+        calls.append(cmd)
+        if "criu dump" in " ".join(cmd):
+            raise ProviderError("dump failed")
+        return subprocess.CompletedProcess(cmd, 0, stdout="cid\n", stderr="")
+
+    monkeypatch.setattr("shinken.providers.criu._run", fake_run)
+    provider = CriuDockerProvider(images_volume="v")
+    with pytest.raises(ProviderError, match="dump failed"):
+        provider.snapshot(_handle())
+    dump_i = next(i for i, c in enumerate(calls) if "criu dump" in " ".join(c))
+    resume_i = next(i for i, c in enumerate(calls) if "kill -s CONT -- -1" in " ".join(c))
+    cleanup_i = next(i for i, c in enumerate(calls) if c[:3] == ["docker", "run", "--rm"])
+    assert dump_i < resume_i < cleanup_i
 
 
 # --- restore: idle boot + parked PIDs + criu restore ------------------------------------
@@ -143,7 +256,7 @@ def test_restore_boots_idle_parks_pids_and_restores(monkeypatch):
     child = provider.restore(snap)
     run_cmd = next(c for c in calls if c[:2] == ["docker", "run"])
     # restore target boots IDLE off the committed image — nothing races the restore
-    assert run_cmd[-3:] == [snap, "sleep", "infinity"]
+    assert run_cmd[-3:] == ["sha256:criu-image-1", "sleep", "infinity"]
     assert "--privileged" in run_cmd and "--init" in run_cmd
     restore_exec = next(
         c for c in calls if c[:2] == ["docker", "exec"] and "criu restore" in " ".join(c)
@@ -154,7 +267,8 @@ def test_restore_boots_idle_parks_pids_and_restores(monkeypatch):
     # the replica handle carries the DONOR's token (the restored shinkend keeps it)
     assert child.token == "donor-token"
     assert child.metadata["memory_restore"] is True
-    assert child.metadata["image"] == snap
+    assert child.metadata["image"] == "sha256:criu-image-1"
+    assert child.metadata["snapshot_id"] == snap
 
 
 def test_restore_unknown_snapshot_raises():
@@ -184,43 +298,159 @@ def test_checkpoint_resume_roundtrip_uses_memory_path(monkeypatch):
     assert resumed.metadata["memory_restore"] is True
 
 
+def test_fresh_criu_provider_recovers_tier_metadata_without_label_token(monkeypatch):
+    calls = _mock_docker(monkeypatch)
+    original = CriuDockerProvider(images_volume="persisted-volume")
+    checkpoint = original.checkpoint(
+        _handle("donor1", token="never-in-label"),
+        name="memory-golden",
+        event_seq=9,
+    )
+    commit = next(c for c in calls if c[:2] == ["docker", "commit"])
+    encoded = next(
+        arg.split("=", 1)[1]
+        for arg in commit
+        if arg.startswith("LABEL shinken.snapshot_record.v1=")
+    )
+    raw = base64.urlsafe_b64decode(encoded).decode()
+    record = json.loads(raw)
+    assert "never-in-label" not in raw
+    assert "token" not in json.dumps(record["tier_metadata"]).lower()
+
+    fresh_calls: list[list[str]] = []
+
+    def fresh_run(cmd, timeout=30.0):
+        fresh_calls.append(cmd)
+        joined = " ".join(cmd)
+        if cmd[:2] == ["docker", "images"]:
+            out = "sha256:persisted-criu\n"
+        elif cmd[:3] == ["docker", "image", "inspect"]:
+            out = json.dumps(
+                [
+                    {
+                        "Id": "sha256:persisted-criu",
+                        "Config": {"Labels": {CriuDockerProvider._SNAPSHOT_RECORD_LABEL: encoded}},
+                    }
+                ]
+            )
+        elif cmd[:2] == ["docker", "exec"] and "/proc/$pid/environ" in joined:
+            out = "never-in-label\n"
+        elif cmd[:2] == ["docker", "run"]:
+            out = "restored-container\n"
+        else:
+            out = "cid\n"
+        return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
+
+    monkeypatch.setattr("shinken.providers.criu._run", fresh_run)
+    monkeypatch.setattr("shinken.providers.docker._run", fresh_run)
+    fresh = CriuDockerProvider(images_volume="different-default")
+    restored = fresh.restore(checkpoint)
+    snapshot_id = record["snapshot_id"]
+    assert fresh._mem[snapshot_id] == {
+        "images_dir": record["tier_metadata"]["images_dir"],
+        "park": record["tier_metadata"]["park"],
+        "images_volume": "persisted-volume",
+    }
+    run_cmd = next(c for c in fresh_calls if c[:2] == ["docker", "run"])
+    assert "persisted-volume:/ckpt" in run_cmd
+    assert run_cmd[-3:] == ["sha256:persisted-criu", "sleep", "infinity"]
+    assert restored.token == "never-in-label"
+    assert restored.metadata["checkpoint_id"] == checkpoint
+    assert restored.metadata["event_seq"] == 9
+
+
 def test_delete_snapshot_reclaims_image_and_images_dir(monkeypatch):
-    _mock_docker(monkeypatch)
+    calls = _mock_docker(monkeypatch)
     removed: list[list[str]] = []
 
     def fake_subprocess_run(cmd, **_kwargs):
         removed.append(list(cmd))
         return subprocess.CompletedProcess(cmd, 0)
 
-    monkeypatch.setattr("shinken.providers.criu.subprocess.run", fake_subprocess_run)
     monkeypatch.setattr("shinken.providers.docker.subprocess.run", fake_subprocess_run)
     provider = CriuDockerProvider(images_volume="v")
     snap = provider.snapshot(_handle("donor1"), name="g3")
+    images_dir = provider._mem[snap]["images_dir"]
     provider.delete_snapshot(snap)
     assert snap not in provider._mem
     rmi = next(c for c in removed if c[:2] == ["docker", "rmi"])
-    assert snap in rmi
-    rm_dir = next(c for c in removed if "rm" in c and "/ckpt/g3" in c)
+    assert "sha256:criu-image-1" in rmi
+    rm_dir = next(c for c in calls if "rm" in c and images_dir in c)
     assert "--rm" in rm_dir and "v:/ckpt" in rm_dir
 
 
-def test_cleanup_snapshots_removes_volume(monkeypatch):
-    _mock_docker(monkeypatch)
+def test_cleanup_snapshots_removes_owned_dir_not_shared_volume(monkeypatch):
+    calls = _mock_docker(monkeypatch)
     removed: list[list[str]] = []
 
     def fake_subprocess_run(cmd, **_kwargs):
         removed.append(list(cmd))
         return subprocess.CompletedProcess(cmd, 0)
 
-    monkeypatch.setattr("shinken.providers.criu.subprocess.run", fake_subprocess_run)
     monkeypatch.setattr("shinken.providers.docker.subprocess.run", fake_subprocess_run)
     provider = CriuDockerProvider(images_volume="v")
-    provider.snapshot(_handle("donor1"), name="g4")
+    snap = provider.snapshot(_handle("donor1"), name="g4")
+    images_dir = provider._mem[snap]["images_dir"]
     count = provider.cleanup_snapshots()
     assert count == 1
-    assert ["docker", "volume", "rm", "-f", "v"] in removed
-    # the per-snapshot rm container is skipped — the volume goes away wholesale
-    assert not any("/ckpt/g4" in " ".join(c) for c in removed)
+    assert ["docker", "volume", "rm", "-f", "v"] not in removed + calls
+    assert any(images_dir in " ".join(c) for c in calls)
+
+
+def test_gc_snapshot_removes_criu_dump_before_image(monkeypatch):
+    provider = CriuDockerProvider(images_volume="v")
+    snapshot_id = "shinken-memsnap:" + "a" * 32
+    images_dir = "/ckpt/" + "a" * 32
+    record = provider._snapshot_record(
+        snapshot_id=snapshot_id,
+        spec=SandboxSpec(state_fidelity="process_memory"),
+        name=None,
+        checkpoint_id=None,
+        event_seq=None,
+        agent_state_ref=None,
+        tier_metadata={"images_dir": images_dir, "park": 559, "images_volume": "v"},
+    )
+    encoded = provider._encode_snapshot_record(record)
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, timeout=30.0):
+        calls.append(cmd)
+        if cmd[:2] == ["docker", "ps"]:
+            out = ""
+        elif cmd[:3] == ["docker", "images", "-q"]:
+            out = "sha256:dead-criu\n"
+        elif cmd[:4] == ["docker", "image", "inspect", "-f"]:
+            out = "sha256:dead-criu\t99999999\t1.0\n"
+        elif cmd[:3] == ["docker", "image", "inspect"]:
+            out = json.dumps(
+                [
+                    {
+                        "Id": "sha256:dead-criu",
+                        "Config": {"Labels": {CriuDockerProvider._SNAPSHOT_RECORD_LABEL: encoded}},
+                    }
+                ]
+            )
+        else:
+            out = "cleanup-ok\n"
+        return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
+
+    removed: list[list[str]] = []
+    monkeypatch.setattr("shinken.providers.criu._run", fake_run)
+    monkeypatch.setattr("shinken.providers.docker._run", fake_run)
+    monkeypatch.setattr(
+        "shinken.providers.docker.subprocess.run",
+        lambda cmd, **_kwargs: removed.append(list(cmd)) or subprocess.CompletedProcess(cmd, 0),
+    )
+    report = provider.gc(snapshots=True, force=True)
+    assert report.images == 1
+    images_query = next(c for c in calls if c[:3] == ["docker", "images", "-q"])
+    assert "label=shinken.provider=docker-criu" in images_query
+    cleanup_i = next(i for i, c in enumerate(calls) if images_dir in c)
+    inspect_i = next(
+        i for i, c in enumerate(calls) if c[:3] == ["docker", "image", "inspect"] and "-f" not in c
+    )
+    assert inspect_i < cleanup_i
+    assert ["docker", "rmi", "-f", "sha256:dead-criu"] in removed
 
 
 # --- the process-memory marker (the state files-only tiers cannot carry) ----------------

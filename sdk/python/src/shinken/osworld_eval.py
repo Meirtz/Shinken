@@ -162,8 +162,8 @@ class RecordingActuator:
 def make_shinken_actuator(addr: str | None = None, token: str | None = None) -> Any:
     """Alpha path: the Shinken DesktopEnv shim → a shinkend in the VM (pixel pyautogui → ACI).
 
-    ``token`` gates a non-loopback bind — set it when actuating a runtime-injected shinkend
-    reachable on a published port (see :func:`inject_and_actuate`)."""
+    ``token`` is mandatory for the runtime; pass the one returned by runtime injection
+    (see :func:`inject_and_actuate`)."""
     from shinken.osworld import DesktopEnv as ShinkenDesktopEnv
 
     env = ShinkenDesktopEnv(

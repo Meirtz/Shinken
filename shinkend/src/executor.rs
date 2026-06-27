@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::{bail, ensure, Context, Result};
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine as _;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{
     AtomEnum, ClientMessageEvent, ConfigureWindowAux, ConnectionExt as _, EventMask,
@@ -276,6 +276,81 @@ pub struct CapturedImage {
     pub h: u16,
 }
 
+/// A rectangle in the runtime's global action coordinate space.  For X11 this is
+/// the root-window pixel space used by `point_px`; unlike an image's `w`/`h`, it is
+/// never affected by `max_long_edge`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FrameRect {
+    pub x: i32,
+    pub y: i32,
+    pub w: u16,
+    pub h: u16,
+}
+
+/// Pixel dimensions of the image actually delivered to the model/client.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FrameSize {
+    pub w: u16,
+    pub h: u16,
+}
+
+/// Complete frame -> action mapping carried by image observations.
+///
+/// `w`/`h` name the full global action space, `source_rect` is the captured region
+/// in that space before scaling, and `delivered` is the post-`max_long_edge` image.
+/// `dpr` is explicit even where it is 1 so HiDPI backends never need an implicit
+/// convention.  A point in the delivered image can therefore be mapped back to the
+/// global `point_px` space without guessing from the image dimensions.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CoordinateSpace {
+    pub origin: String,
+    pub w: u16,
+    pub h: u16,
+    pub dpr: f64,
+    pub source_rect: FrameRect,
+    pub delivered: FrameSize,
+}
+
+impl CoordinateSpace {
+    pub fn new(
+        screen: (u16, u16),
+        source_rect: FrameRect,
+        delivered: (u16, u16),
+        dpr: f64,
+    ) -> Self {
+        Self {
+            origin: "top-left".to_string(),
+            w: screen.0,
+            h: screen.1,
+            dpr,
+            source_rect,
+            delivered: FrameSize {
+                w: delivered.0,
+                h: delivered.1,
+            },
+        }
+    }
+}
+
+/// Encoded capture plus the exact mapping from its delivered pixels to actions.
+#[derive(Debug, Clone)]
+pub struct CapturedFrame {
+    pub image: CapturedImage,
+    /// `None` means the backend cannot yet prove its capture/action unit mapping;
+    /// X11 returns `Some` for every supported scope.
+    pub display: Option<CoordinateSpace>,
+}
+
+/// Raw RGB capture plus the same mapping.  The screenshot dedup path uses this so a
+/// `not_modified` reply can still carry fresh coordinates after a window moves.
+#[derive(Debug, Clone)]
+pub struct RawCapturedFrame {
+    pub rgb: Vec<u8>,
+    pub w: u16,
+    pub h: u16,
+    pub display: Option<CoordinateSpace>,
+}
+
 impl CapturedImage {
     /// Base64 of the encoded image bytes — only for the legacy base64-in-JSON path.
     pub fn to_base64(&self) -> String {
@@ -327,6 +402,18 @@ pub trait Executor: Send + Sync {
     fn capture(&self, _scope: &str, _opts: EncodeOpts) -> Result<CapturedImage> {
         self.screenshot()
     }
+    /// Capture an encoded image together with its frame -> global action mapping.
+    /// The default deliberately reports no mapping: display/action units are
+    /// backend-specific (notably Retina capture pixels vs CoreGraphics points), so
+    /// inventing `dpr=1` would be worse than an explicit absence. X11 overrides this
+    /// for every scope with its real root-window mapping.
+    fn capture_frame(&self, scope: &str, opts: EncodeOpts) -> Result<CapturedFrame> {
+        let image = self.capture(scope, opts)?;
+        Ok(CapturedFrame {
+            image,
+            display: None,
+        })
+    }
     /// Capture a region as raw RGB8 `(pixels, w, h)`, downscaled (if `max_long_edge`)
     /// but NOT encoded — the dirty-tile delta path (B2) needs pixels to diff before
     /// deciding what to encode. Downscale happens HERE, before tiling, so tile
@@ -340,6 +427,20 @@ pub trait Executor: Send + Sync {
             "raw capture (delta screencast) not supported by the {} backend",
             self.backend()
         )
+    }
+    /// Raw counterpart of [`Executor::capture_frame`].
+    fn capture_raw_frame(
+        &self,
+        scope: &str,
+        max_long_edge: Option<u32>,
+    ) -> Result<RawCapturedFrame> {
+        let (rgb, w, h) = self.capture_raw(scope, max_long_edge)?;
+        Ok(RawCapturedFrame {
+            rgb,
+            w,
+            h,
+            display: None,
+        })
     }
     /// Whether [`Executor::capture_raw`] works on this backend — checked at
     /// `start_screencast` dispatch so a `delta` request on a backend without raw
@@ -398,7 +499,7 @@ pub trait Executor: Send + Sync {
         bail!("clipboard not supported by the {} backend", self.backend())
     }
 
-    /// Live pointer position in CAPTURE PIXELS, or `None` when the backend cannot
+    /// Live pointer position in global `point_px` ACTION PIXELS, or `None` when the backend cannot
     /// report it. Observation **metadata only**: captures stay cursor-free by design
     /// (neither X11 `XGetImage` nor CoreGraphics composites the hardware cursor —
     /// load-bearing for frame-hash dedup and idle suppression), so this is how a
@@ -1364,17 +1465,33 @@ impl X11Executor {
         })
     }
 
-    /// Resolve a [`Scope`] to captured RGB8 + dimensions.
-    fn capture_scope(&self, scope: Scope) -> Result<(Vec<u8>, u16, u16)> {
+    /// Resolve a [`Scope`] to captured RGB8 + dimensions + the captured rectangle
+    /// in root/global action coordinates.  Keeping the resolved window id and its
+    /// root offset in the same operation prevents `active_window` metadata from
+    /// accidentally describing a different window than the pixels.
+    fn capture_scope_with_rect(&self, scope: Scope) -> Result<(Vec<u8>, u16, u16, FrameRect)> {
         match scope {
-            Scope::Screen => self.capture_drawable(self.root, self.width, self.height),
+            Scope::Screen => {
+                let (rgb, w, h) = self.capture_drawable(self.root, self.width, self.height)?;
+                Ok((rgb, w, h, FrameRect { x: 0, y: 0, w, h }))
+            }
             Scope::ActiveWindow => match self.active_window()? {
-                Some(win) => self.capture_window(win),
+                Some(win) => self.capture_window_with_rect(win),
                 // No focused window (e.g. a bare desktop) — fall back to full screen.
-                None => self.capture_drawable(self.root, self.width, self.height),
+                None => {
+                    let (rgb, w, h) = self.capture_drawable(self.root, self.width, self.height)?;
+                    Ok((rgb, w, h, FrameRect { x: 0, y: 0, w, h }))
+                }
             },
-            Scope::Window(id) => self.capture_window(id),
+            Scope::Window(id) => self.capture_window_with_rect(id),
         }
+    }
+
+    /// Compatibility helper for the existing capture API, which historically
+    /// returned only pixels and dimensions.
+    fn capture_scope(&self, scope: Scope) -> Result<(Vec<u8>, u16, u16)> {
+        let (rgb, w, h, _) = self.capture_scope_with_rect(scope)?;
+        Ok((rgb, w, h))
     }
 
     /// The active window: the EWMH `_NET_ACTIVE_WINDOW` when a window manager
@@ -1415,17 +1532,23 @@ impl X11Executor {
         Ok(Some(win))
     }
 
-    /// Capture one window by id, sized to its current geometry.
-    fn capture_window(&self, win: Window) -> Result<(Vec<u8>, u16, u16)> {
-        let (w, h) = {
+    /// Capture one window by id, sized to its current geometry, retaining the
+    /// translation of its drawable origin into root coordinates.
+    fn capture_window_with_rect(&self, win: Window) -> Result<(Vec<u8>, u16, u16, FrameRect)> {
+        let (w, h, x, y) = {
             let conn = self.conn.lock().expect("x11 conn lock");
             let geo = conn
                 .get_geometry(win)?
                 .reply()
                 .context("window geometry (is the window id valid and mapped?)")?;
-            (geo.width, geo.height)
+            let pos = conn
+                .translate_coordinates(win, self.root, 0, 0)?
+                .reply()
+                .context("translate window origin into root coordinates")?;
+            (geo.width, geo.height, pos.dst_x as i32, pos.dst_y as i32)
         };
-        self.capture_drawable(win, w, h)
+        let (rgb, w, h) = self.capture_drawable(win, w, h)?;
+        Ok((rgb, w, h, FrameRect { x, y, w, h }))
     }
 
     /// Grab a drawable's `w`x`h` region as RGB8 (X delivers BGR[X]; reorder for PNG).
@@ -1956,11 +2079,45 @@ impl Executor for X11Executor {
         encode_frame(&rgb, w, h, opts)
     }
 
+    fn capture_frame(&self, scope: &str, opts: EncodeOpts) -> Result<CapturedFrame> {
+        let (rgb, w, h, source_rect) = self.capture_scope_with_rect(parse_scope(scope))?;
+        let image = encode_frame(&rgb, w, h, opts)?;
+        let display = CoordinateSpace::new(
+            (self.width, self.height),
+            source_rect,
+            (image.w, image.h),
+            1.0,
+        );
+        Ok(CapturedFrame {
+            image,
+            display: Some(display),
+        })
+    }
+
     fn capture_raw(&self, scope: &str, max_long_edge: Option<u32>) -> Result<(Vec<u8>, u16, u16)> {
         let (rgb, w, h) = self.capture_scope(parse_scope(scope))?;
         Ok(match max_long_edge {
             Some(m) => downscale_rgb(&rgb, w, h, m),
             None => (rgb, w, h),
+        })
+    }
+
+    fn capture_raw_frame(
+        &self,
+        scope: &str,
+        max_long_edge: Option<u32>,
+    ) -> Result<RawCapturedFrame> {
+        let (rgb, w, h, source_rect) = self.capture_scope_with_rect(parse_scope(scope))?;
+        let (rgb, w, h) = match max_long_edge {
+            Some(m) => downscale_rgb(&rgb, w, h, m),
+            None => (rgb, w, h),
+        };
+        let display = CoordinateSpace::new((self.width, self.height), source_rect, (w, h), 1.0);
+        Ok(RawCapturedFrame {
+            rgb,
+            w,
+            h,
+            display: Some(display),
         })
     }
 
@@ -2241,10 +2398,26 @@ impl Executor for LazyX11Executor {
             .capture(scope, opts)
     }
 
+    fn capture_frame(&self, scope: &str, opts: EncodeOpts) -> Result<CapturedFrame> {
+        self.try_connect()
+            .context("X11 display not available yet")?
+            .capture_frame(scope, opts)
+    }
+
     fn capture_raw(&self, scope: &str, max_long_edge: Option<u32>) -> Result<(Vec<u8>, u16, u16)> {
         self.try_connect()
             .context("X11 display not available yet")?
             .capture_raw(scope, max_long_edge)
+    }
+
+    fn capture_raw_frame(
+        &self,
+        scope: &str,
+        max_long_edge: Option<u32>,
+    ) -> Result<RawCapturedFrame> {
+        self.try_connect()
+            .context("X11 display not available yet")?
+            .capture_raw_frame(scope, max_long_edge)
     }
 
     fn supports_raw_capture(&self) -> bool {
@@ -2456,6 +2629,21 @@ mod tests {
     #[test]
     fn virtual_executor_reports_default_screen_size() {
         assert_eq!(VirtualExecutor::default().screen_size(), (1280, 800));
+    }
+
+    #[test]
+    fn default_capture_contract_never_invents_a_coordinate_mapping() {
+        let frame = VirtualExecutor::default()
+            .capture_frame("screen", EncodeOpts::default())
+            .unwrap();
+        assert!(
+            frame.display.is_none(),
+            "a backend must override capture_frame only after proving capture/action units"
+        );
+        let raw = VirtualExecutor::default()
+            .capture_raw_frame("screen", None)
+            .unwrap();
+        assert!(raw.display.is_none());
     }
 
     #[test]

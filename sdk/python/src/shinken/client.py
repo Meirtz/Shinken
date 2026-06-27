@@ -12,6 +12,7 @@ import base64
 import contextlib
 import json
 import logging
+import math
 import os
 import random
 import shutil
@@ -52,6 +53,7 @@ __all__ = [
     "FrameCache",
     "SandboxFleet",
     "SharedLoop",
+    "map_target_from_observation",
 ]
 
 _log = logging.getLogger("shinken.client")
@@ -230,6 +232,110 @@ def _target(target: Any, x: float | None, y: float | None) -> dict | None:
     return None
 
 
+def map_target_from_observation(target: dict, observation: dict) -> dict:
+    """Map an image-relative ACI target into the runtime's global ``point_px`` space.
+
+    ``point_px`` is interpreted in the pixels actually delivered in ``observation``;
+    ``point_norm`` is interpreted over that delivered frame.  The observation's
+    wire-level ``display`` descriptor supplies the pre-downscale global source rect,
+    so this handles both cropped windows and ``max_long_edge`` without guessing.
+
+    Existing ACI actions remain global by default: callers opt into this conversion
+    by passing the corresponding screenshot as ``frame=`` to :meth:`act`/pointer
+    helpers, or by calling this function directly.  ``element_ref`` targets are
+    returned unchanged because they are resolved independently of pixels.
+    """
+    if not isinstance(target, dict):
+        raise TypeError(f"target must be a dict, got {type(target).__name__}")
+    kind = target.get("kind")
+    if kind == "element_ref":
+        return dict(target)
+    if kind not in ("point_px", "point_norm"):
+        raise ValueError(f"cannot map target kind {kind!r} from an observation")
+
+    display = observation.get("display")
+    if not isinstance(display, dict):
+        raise ValueError(
+            "observation has no coordinate metadata; use a runtime that emits "
+            "display.source_rect + display.delivered or send a global target"
+        )
+    if display.get("origin") != "top-left":
+        raise ValueError(f"unsupported coordinate origin: {display.get('origin')!r}")
+    source = display.get("source_rect")
+    delivered = display.get("delivered")
+    if not isinstance(source, dict) or not isinstance(delivered, dict):
+        raise ValueError("incomplete coordinate metadata: source_rect and delivered are required")
+
+    def _positive_int(value: Any, label: str) -> int:
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError(f"invalid {label}: {value!r}")
+        return value
+
+    global_w = _positive_int(display.get("w"), "display.w")
+    global_h = _positive_int(display.get("h"), "display.h")
+    source_w = _positive_int(source.get("w"), "source_rect.w")
+    source_h = _positive_int(source.get("h"), "source_rect.h")
+    delivered_w = _positive_int(delivered.get("w"), "delivered.w")
+    delivered_h = _positive_int(delivered.get("h"), "delivered.h")
+    source_x, source_y = source.get("x"), source.get("y")
+    if isinstance(source_x, bool) or not isinstance(source_x, int):
+        raise ValueError(f"invalid source_rect.x: {source_x!r}")
+    if isinstance(source_y, bool) or not isinstance(source_y, int):
+        raise ValueError(f"invalid source_rect.y: {source_y!r}")
+    dpr = display.get("dpr")
+    if (
+        isinstance(dpr, bool)
+        or not isinstance(dpr, int | float)
+        or not math.isfinite(dpr)
+        or dpr <= 0
+    ):
+        raise ValueError(f"invalid display.dpr: {dpr!r}")
+
+    # Defend against pairing a target with stale metadata from a different image.
+    image = observation.get("image") if isinstance(observation.get("image"), dict) else {}
+    observed_w = observation.get("w", image.get("w"))
+    observed_h = observation.get("h", image.get("h"))
+    if observed_w is not None and observed_w != delivered_w:
+        raise ValueError(f"coordinate metadata/image width mismatch: {delivered_w} != {observed_w}")
+    if observed_h is not None and observed_h != delivered_h:
+        raise ValueError(
+            f"coordinate metadata/image height mismatch: {delivered_h} != {observed_h}"
+        )
+
+    x, y = target.get("x"), target.get("y")
+    for value, label in ((x, "x"), (y, "y")):
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int | float)
+            or not math.isfinite(value)
+        ):
+            raise ValueError(f"invalid {kind} {label}: {value!r}")
+
+    if kind == "point_px":
+        if not (0 <= x < delivered_w and 0 <= y < delivered_h):
+            raise ValueError(
+                f"point_px outside delivered frame: ({x}, {y}) not within "
+                f"[0, {delivered_w}) x [0, {delivered_h})"
+            )
+        # The runtime's nearest-neighbour downscale samples source floor(p * S/D).
+        # Reusing that inverse lands on the exact source pixel the model saw.
+        global_x = source_x + min(source_w - 1, math.floor(x * source_w / delivered_w))
+        global_y = source_y + min(source_h - 1, math.floor(y * source_h / delivered_h))
+    else:
+        if not (0 <= x <= 1 and 0 <= y <= 1):
+            raise ValueError(f"point_norm outside [0, 1]: ({x}, {y})")
+        # Match shinkend's point_norm endpoint contract: 1.0 is the last source pixel.
+        global_x = source_x + math.floor(x * (source_w - 1) + 0.5)
+        global_y = source_y + math.floor(y * (source_h - 1) + 0.5)
+
+    if not (0 <= global_x < global_w and 0 <= global_y < global_h):
+        raise ValueError(
+            f"mapped point ({global_x}, {global_y}) is outside the actionable display "
+            f"{global_w}x{global_h}; the selected window region is off-screen"
+        )
+    return {"kind": "point_px", "x": global_x, "y": global_y}
+
+
 def _image_payload(reply: dict) -> dict:
     """Decode an ``observation`` reply's image into the SDK screenshot shape:
     ``{'bytes', 'format', 'w', 'h', 'wire_len'}`` (+ ``frame_hash`` when the runtime
@@ -244,6 +350,7 @@ def _image_payload(reply: dict) -> dict:
         "format": img.get("format", "png"),
         "w": img.get("w"),
         "h": img.get("h"),
+        "scope": img.get("scope", "screen"),
         # On-the-wire size of the observation that carried this image (binary
         # frame or JSON text), for bandwidth accounting. None on mocked replies
         # injected without a transport.
@@ -256,9 +363,12 @@ def _image_payload(reply: dict) -> dict:
         out["frame_hash"] = frame_hash
     pointer = reply.get("pointer")
     if pointer is not None:
-        # live pointer position in capture pixels [x, y] — observation metadata;
+        # live pointer position in global point_px action coordinates [x, y] — metadata;
         # the frame itself is cursor-free (frame-hash dedup depends on that)
         out["pointer"] = pointer
+    display = reply.get("display")
+    if display is not None:
+        out["display"] = display
     return out
 
 
@@ -311,21 +421,7 @@ def _observation_dict(reply: dict) -> dict:
     for screenshots and act-returns-observation: ``{'bytes', 'format', 'w', 'h',
     'wire_len'}`` — plus the ``'png'`` back-compat alias only when the codec really is
     PNG, so legacy readers fail loudly instead of mislabeling JPEG bytes."""
-    img = reply.get("image") or {}
-    raw = _image_bytes(img)  # binary-path raw bytes, or text-path base64 decoded
-    out = {
-        "bytes": raw,
-        "format": img.get("format", "png"),
-        "w": img.get("w"),
-        "h": img.get("h"),
-        # On-the-wire size of the observation that carried this image (binary
-        # frame or JSON text), for bandwidth accounting. None on mocked replies
-        # injected without a transport.
-        "wire_len": reply.get("wire_len"),
-    }
-    if out["format"] == "png":
-        out["png"] = raw  # back-compat alias, only when it really is PNG
-    return out
+    return _image_payload(reply)
 
 
 #: The keys an ``observe=`` dict admits — the screenshot-shaped capture levers
@@ -913,7 +1009,12 @@ class AsyncSandbox:
         return spec
 
     async def act(
-        self, verb: str, target: dict | None = None, observe: Any = None, **kwargs: Any
+        self,
+        verb: str,
+        target: dict | None = None,
+        observe: Any = None,
+        frame: dict | None = None,
+        **kwargs: Any,
     ) -> dict:
         """Send one typed action and await its reply. Raises on failure.
 
@@ -923,8 +1024,17 @@ class AsyncSandbox:
         screenshot-shaped capture levers (``format``/``quality``/``max_long_edge``/
         ``scope``). When set, the OBSERVATION dict (same shape as :meth:`screenshot`)
         is returned instead of the ack. Only mutating verbs admit it; requires the
-        runtime's ``capabilities.observe_after_act``."""
+        runtime's ``capabilities.observe_after_act``.
+
+        ``frame`` is SDK-only: it maps image-relative ``point_px``/``point_norm``
+        targets through that observation's display descriptor before constructing
+        the global wire action. It is never sent to the runtime."""
         self._gate(verb)
+        if frame is not None:
+            if target is not None:
+                target = map_target_from_observation(target, frame)
+            if kwargs.get("to") is not None:
+                kwargs["to"] = map_target_from_observation(kwargs["to"], frame)
         obs_spec = self._observe_spec(observe)
         if obs_spec is not None:
             # The follow-up is a capture: gate it like one, so a session without the
@@ -1110,12 +1220,37 @@ class AsyncSandbox:
                     "error": str(exc),
                 }
                 continue
-            action: dict = {"verb": verb}
-            if a.get("target") is not None:
-                action["target"] = a["target"]
-            action.update(
-                {k: v for k, v in a.items() if k not in ("verb", "target") and v is not None}
-            )
+            try:
+                action: dict = {"verb": verb}
+                frame = a.get("frame")
+                if a.get("target") is not None:
+                    action["target"] = (
+                        map_target_from_observation(a["target"], frame)
+                        if frame is not None
+                        else a["target"]
+                    )
+                if a.get("to") is not None:
+                    action["to"] = (
+                        map_target_from_observation(a["to"], frame)
+                        if frame is not None
+                        else a["to"]
+                    )
+                action.update(
+                    {
+                        k: v
+                        for k, v in a.items()
+                        if k not in ("verb", "target", "to", "frame") and v is not None
+                    }
+                )
+            except Exception as exc:
+                rows[i] = {
+                    "index": i,
+                    "verb": verb,
+                    "ok": False,
+                    "status": classify_exception(exc),
+                    "error": str(exc),
+                }
+                continue
             cid = self._next_id()
             sends.append((i, cid, {"type": "action", "call_id": cid, "action": action}))
         observation: dict | None = None
@@ -1233,8 +1368,9 @@ class AsyncSandbox:
         x: float | None = None,
         y: float | None = None,
         observe: Any = None,
+        frame: dict | None = None,
     ):
-        return await self.act("click", _target(target, x, y), observe=observe)
+        return await self.act("click", _target(target, x, y), observe=observe, frame=frame)
 
     async def double_click(
         self,
@@ -1243,8 +1379,9 @@ class AsyncSandbox:
         x: float | None = None,
         y: float | None = None,
         observe: Any = None,
+        frame: dict | None = None,
     ):
-        return await self.act("double_click", _target(target, x, y), observe=observe)
+        return await self.act("double_click", _target(target, x, y), observe=observe, frame=frame)
 
     async def right_click(
         self,
@@ -1253,8 +1390,9 @@ class AsyncSandbox:
         x: float | None = None,
         y: float | None = None,
         observe: Any = None,
+        frame: dict | None = None,
     ):
-        return await self.act("right_click", _target(target, x, y), observe=observe)
+        return await self.act("right_click", _target(target, x, y), observe=observe, frame=frame)
 
     async def move(
         self,
@@ -1263,8 +1401,9 @@ class AsyncSandbox:
         x: float | None = None,
         y: float | None = None,
         observe: Any = None,
+        frame: dict | None = None,
     ):
-        return await self.act("move", _target(target, x, y), observe=observe)
+        return await self.act("move", _target(target, x, y), observe=observe, frame=frame)
 
     async def drag(
         self,
@@ -1278,6 +1417,7 @@ class AsyncSandbox:
         duration_ms: int | None = None,
         button: str | None = None,
         observe: Any = None,
+        frame: dict | None = None,
     ):
         """Drag: pointer down at the source, interpolated moves, button up at the
         destination. Source/destination are targets (or ``x``/``y`` + ``to_x``/``to_y``
@@ -1291,7 +1431,13 @@ class AsyncSandbox:
         if dst is None:
             raise ValueError("drag requires a destination (to= or to_x=/to_y=)")
         return await self.act(
-            "drag", src, to=dst, duration_ms=duration_ms, button=button, observe=observe
+            "drag",
+            src,
+            to=dst,
+            duration_ms=duration_ms,
+            button=button,
+            observe=observe,
+            frame=frame,
         )
 
     async def mouse_down(
@@ -1302,11 +1448,14 @@ class AsyncSandbox:
         y: float | None = None,
         button: str | None = None,
         observe: Any = None,
+        frame: dict | None = None,
     ):
         """Press (and hold) a pointer button — the decomposed half of a free-form
         gesture (down → moves → up). With a target the pointer moves there first;
         without one it presses at the current position."""
-        return await self.act("mouse_down", _target(target, x, y), button=button, observe=observe)
+        return await self.act(
+            "mouse_down", _target(target, x, y), button=button, observe=observe, frame=frame
+        )
 
     async def mouse_up(
         self,
@@ -1316,9 +1465,12 @@ class AsyncSandbox:
         y: float | None = None,
         button: str | None = None,
         observe: Any = None,
+        frame: dict | None = None,
     ):
         """Release a pointer button (see :meth:`mouse_down`)."""
-        return await self.act("mouse_up", _target(target, x, y), button=button, observe=observe)
+        return await self.act(
+            "mouse_up", _target(target, x, y), button=button, observe=observe, frame=frame
+        )
 
     async def scroll(
         self,
@@ -1328,8 +1480,9 @@ class AsyncSandbox:
         y: float | None = None,
         dy: float = 0.0,
         observe: Any = None,
+        frame: dict | None = None,
     ):
-        return await self.act("scroll", _target(target, x, y), dy=dy, observe=observe)
+        return await self.act("scroll", _target(target, x, y), dy=dy, observe=observe, frame=frame)
 
     async def list_windows(self) -> list[dict]:
         """Enumerate visible top-level windows — the Linux "enumerate apps" read
@@ -1555,6 +1708,11 @@ class AsyncSandbox:
         lever, same as on :meth:`astart_screencast` (the runtime has always accepted it
         on the ``screenshot`` action; the facade simply lacked the parameter).
 
+        Coordinate-aware runtimes also return ``display`` with the global action-space
+        dimensions, pre-scale ``source_rect``, delivered dimensions, and DPR. Pass this
+        returned dict as ``frame=`` to a pointer action when model coordinates came from
+        a cropped/downscaled screenshot.
+
         ``dedup`` turns on content-negotiated observation: the request carries
         ``if_none_match`` with the last seen ``frame_hash`` (this session's, or — with
         a shared :class:`FrameCache` — any session's on the same cache), and when the
@@ -1612,13 +1770,21 @@ class AsyncSandbox:
             self._last_shot[key] = candidate
             self._frame_cache.touch(key, frame_hash)
             self._frame_cache.record(hit=True)
-            return {
+            out = {
                 **frame,
                 "deduped": True,
                 "frame_hash": reply.get("frame_hash", frame_hash),
                 # the wire really moved only the compact not_modified observation
                 "wire_len": reply.get("wire_len"),
             }
+            # Pixel identity does not imply coordinate identity: a window can move
+            # while its contents remain byte-identical. Always prefer the fresh map
+            # (and pointer) carried by not_modified over the cached observation's.
+            if reply.get("display") is not None:
+                out["display"] = reply["display"]
+            if reply.get("pointer") is not None:
+                out["pointer"] = reply["pointer"]
+            return out
         out = _image_payload(reply)
         out["deduped"] = False
         frame_hash = out.get("frame_hash")
@@ -2392,6 +2558,7 @@ class Sandbox:
         x: float | None = None,
         y: float | None = None,
         observe: Any = None,
+        frame: dict | None = None,
     ):
         """Click. With ``observe`` (act-returns-observation), the runtime follows the
         ack with a fresh observation in the same round trip and the OBSERVATION dict
@@ -2399,7 +2566,7 @@ class Sandbox:
         observe=True)["bytes"]``. ``observe`` may also be a dict of the capture levers
         (``format``/``quality``/``max_long_edge``/``scope``). Same on every other
         mutating verb below."""
-        return self._run(self._inner.click(target, x=x, y=y, observe=observe))
+        return self._run(self._inner.click(target, x=x, y=y, observe=observe, frame=frame))
 
     def double_click(
         self,
@@ -2408,8 +2575,9 @@ class Sandbox:
         x: float | None = None,
         y: float | None = None,
         observe: Any = None,
+        frame: dict | None = None,
     ):
-        return self._run(self._inner.double_click(target, x=x, y=y, observe=observe))
+        return self._run(self._inner.double_click(target, x=x, y=y, observe=observe, frame=frame))
 
     def right_click(
         self,
@@ -2418,8 +2586,9 @@ class Sandbox:
         x: float | None = None,
         y: float | None = None,
         observe: Any = None,
+        frame: dict | None = None,
     ):
-        return self._run(self._inner.right_click(target, x=x, y=y, observe=observe))
+        return self._run(self._inner.right_click(target, x=x, y=y, observe=observe, frame=frame))
 
     def move(
         self,
@@ -2428,8 +2597,9 @@ class Sandbox:
         x: float | None = None,
         y: float | None = None,
         observe: Any = None,
+        frame: dict | None = None,
     ):
-        return self._run(self._inner.move(target, x=x, y=y, observe=observe))
+        return self._run(self._inner.move(target, x=x, y=y, observe=observe, frame=frame))
 
     def drag(
         self,
@@ -2443,6 +2613,7 @@ class Sandbox:
         duration_ms: int | None = None,
         button: str | None = None,
         observe: Any = None,
+        frame: dict | None = None,
     ):
         """Drag from a source to a destination (pointer down → interpolated moves →
         up); see :meth:`AsyncSandbox.drag`."""
@@ -2457,6 +2628,7 @@ class Sandbox:
                 duration_ms=duration_ms,
                 button=button,
                 observe=observe,
+                frame=frame,
             )
         )
 
@@ -2468,9 +2640,12 @@ class Sandbox:
         y: float | None = None,
         button: str | None = None,
         observe: Any = None,
+        frame: dict | None = None,
     ):
         """Press (and hold) a pointer button — see :meth:`AsyncSandbox.mouse_down`."""
-        return self._run(self._inner.mouse_down(target, x=x, y=y, button=button, observe=observe))
+        return self._run(
+            self._inner.mouse_down(target, x=x, y=y, button=button, observe=observe, frame=frame)
+        )
 
     def mouse_up(
         self,
@@ -2480,9 +2655,12 @@ class Sandbox:
         y: float | None = None,
         button: str | None = None,
         observe: Any = None,
+        frame: dict | None = None,
     ):
         """Release a pointer button — see :meth:`AsyncSandbox.mouse_up`."""
-        return self._run(self._inner.mouse_up(target, x=x, y=y, button=button, observe=observe))
+        return self._run(
+            self._inner.mouse_up(target, x=x, y=y, button=button, observe=observe, frame=frame)
+        )
 
     def scroll(
         self,
@@ -2492,8 +2670,9 @@ class Sandbox:
         y: float | None = None,
         dy: float = 0.0,
         observe: Any = None,
+        frame: dict | None = None,
     ):
-        return self._run(self._inner.scroll(target, x=x, y=y, dy=dy, observe=observe))
+        return self._run(self._inner.scroll(target, x=x, y=y, dy=dy, observe=observe, frame=frame))
 
     def list_windows(self) -> list[dict]:
         """Enumerate visible top-level windows (``{id, title, pid, x, y, w, h,
@@ -2918,14 +3097,16 @@ class Sandbox:
         self.close()
         provider.destroy(handle)
 
-    def act_model(self, adapter, tool_call: Any) -> dict:
+    def act_model(self, adapter, tool_call: Any, *, frame: dict | None = None) -> dict:
         """One model tool-call, end to end, in ~one round trip: translate it through
         the adapter (``adapter.to_aci_action(tool_call)``; adapters exposing the plural
         ``to_aci_actions`` work too), execute via the pipelined :meth:`step` with a
         fused post-step observation, and render the observation back into the model's
         tool-result shape (``adapter.to_tool_result(observation)``)::
 
-            result = env.act_model(AnthropicComputerUseAdapter(), tool_use["input"])
+            result = env.act_model(
+                AnthropicComputerUseAdapter(), tool_use["input"], frame=shown_screenshot
+            )
 
         Raises the adapter's :class:`~shinken.adapters.base.AdapterError` on an
         untranslatable call, and :class:`~shinken.errors.ShinkenError` when an action
@@ -2935,6 +3116,10 @@ class Sandbox:
             actions = [to_action(tool_call)]
         else:
             actions = list(adapter.to_aci_actions(tool_call))
+        if frame is not None:
+            # Adapter-emitted pixel/normalized targets describe the image the model
+            # saw. `step` consumes this SDK-only key and maps targets before the wire.
+            actions = [{**action, "frame": frame} for action in actions]
         res = self.step(actions, observe={})
         bad = next((r for r in res["results"] if r is not None and not r["ok"]), None)
         if bad is not None:

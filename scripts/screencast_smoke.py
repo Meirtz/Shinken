@@ -6,7 +6,7 @@ are collected opportunistically (a bare desktop may be static, in which case
 idle-frame suppression yields nothing more — that is correct behaviour). Run
 against the Linux integration Xvfb or the Docker container.
 
-Env: optional SHK_ADDR (default 127.0.0.1:8765), optional SHK_TOKEN.
+Env: optional SHK_ADDR (default 127.0.0.1:8765), required SHK_TOKEN.
 """
 
 import os

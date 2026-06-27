@@ -124,9 +124,11 @@ class _FakeForkProvider:
         self.calls: collections.Counter = collections.Counter()
         self.destroyed: list[str] = []
         self.guest_fs = _FakeGuestFS()
+        self.last_spec = None
 
     def create(self, spec=None):
         self.calls["create"] += 1
+        self.last_spec = spec
         return "base"
 
     def connect(self, handle):
@@ -221,6 +223,7 @@ def test_reset_builds_golden_once_then_forks(bundle_root, mock_shinkend):
         # golden build: one create, one checkpoint, base destroyed; replica resumed from it
         assert prov.calls["create"] == 1 and prov.calls["checkpoint"] == 1
         assert prov.calls["resume"] == 1 and "base" in prov.destroyed
+        assert prov.last_spec.state_fidelity == "process_memory"
         # the bundle's execute step ran in-guest during golden setup
         setup_cmds = [argv for argv, _ in fake.calls]
         assert ["sh", "-c", "python3 /home/user/initial_setup.py"] in setup_cmds

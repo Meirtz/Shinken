@@ -146,11 +146,28 @@ export interface Action {
   quality?: number;
 }
 
-export interface CoordinateSpace {
-  origin?: "top-left";
+export interface CoordinateRect {
+  x: number;
+  y: number;
   w: number;
   h: number;
-  dpr?: number;
+}
+
+export interface CoordinateSize {
+  w: number;
+  h: number;
+}
+
+export interface CoordinateSpace {
+  origin: "top-left";
+  /** Full global point_px action-space dimensions. */
+  w: number;
+  h: number;
+  dpr: number;
+  /** Captured pre-downscale region in global point_px coordinates. */
+  source_rect: CoordinateRect;
+  /** Image dimensions actually delivered to the client/model. */
+  delivered: CoordinateSize;
 }
 
 export interface Element {
