@@ -515,6 +515,55 @@ def test_docker_delete_snapshot_accepts_already_absent_image(monkeypatch):
     assert snapshot not in provider._snapshots
 
 
+def test_docker_delete_snapshot_propagates_discovery_failure(monkeypatch):
+    def fail_discovery(cmd, timeout=30.0):
+        raise ProviderError("docker daemon unavailable")
+
+    monkeypatch.setattr("shinken.providers.docker._run", fail_discovery)
+    with pytest.raises(ProviderError, match="docker daemon unavailable"):
+        DockerLocalProvider().delete_snapshot("shinken-snap:unknown")
+
+
+def test_docker_delete_snapshot_is_idempotent_after_proven_absence(monkeypatch):
+    calls = []
+
+    def empty_discovery(cmd, timeout=30.0):
+        calls.append(cmd)
+        if cmd[:3] == ["docker", "image", "inspect"]:
+            raise ProviderError("Error response from daemon: No such image")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("shinken.providers.docker._run", empty_discovery)
+    DockerLocalProvider().delete_snapshot("shinken-snap:already-gone")
+    assert calls and calls[0][:2] == ["docker", "images"]
+
+
+def test_docker_delete_snapshot_removes_unlabeled_legacy_image(monkeypatch):
+    calls = []
+
+    def legacy_discovery(cmd, timeout=30.0):
+        calls.append(cmd)
+        if cmd[:3] == ["docker", "image", "inspect"]:
+            return subprocess.CompletedProcess(
+                cmd,
+                0,
+                stdout=json.dumps([{"Id": "sha256:legacy", "Config": {"Labels": {}}}]),
+                stderr="",
+            )
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    removed = []
+    monkeypatch.setattr("shinken.providers.docker._run", legacy_discovery)
+    monkeypatch.setattr(
+        "shinken.providers.docker.subprocess.run",
+        lambda cmd, **_kwargs: removed.append(cmd)
+        or subprocess.CompletedProcess(cmd, 0, stdout="", stderr=""),
+    )
+    DockerLocalProvider().delete_snapshot("shinken-snap:legacy")
+    assert any(call[:3] == ["docker", "image", "inspect"] for call in calls)
+    assert removed == [["docker", "rmi", "-f", "sha256:legacy"]]
+
+
 def test_docker_rejects_cross_tier_persisted_record():
     provider = DockerLocalProvider()
     record = provider._snapshot_record(

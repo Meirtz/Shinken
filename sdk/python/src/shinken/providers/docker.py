@@ -894,10 +894,14 @@ class DockerLocalProvider(SandboxProvider):
     def _hydrate_tier_metadata(self, record: dict[str, Any]) -> None:
         """Hook for tiers whose persistent record has additional restore metadata."""
 
-    def _inspect_snapshot_record(self, image: str) -> tuple[dict[str, Any] | None, str]:
+    def _inspect_snapshot_record(
+        self, image: str, *, strict: bool = False
+    ) -> tuple[dict[str, Any] | None, str]:
         try:
             result = _run([self.docker_bin, "image", "inspect", image], timeout=30.0)
         except ProviderError:
+            if strict:
+                raise
             return None, image
         try:
             data = json.loads(result.stdout)
@@ -909,7 +913,9 @@ class DockerLocalProvider(SandboxProvider):
         immutable_id = str(item.get("Id") or image)
         return (self._decode_snapshot_record(encoded) if encoded else None), immutable_id
 
-    def _discover_labeled_image(self, label: str, value: str) -> str | None:
+    def _discover_labeled_image(
+        self, label: str, value: str, *, strict: bool = False
+    ) -> str | None:
         try:
             result = _run(
                 [
@@ -923,6 +929,8 @@ class DockerLocalProvider(SandboxProvider):
                 ]
             )
         except ProviderError:
+            if strict:
+                raise
             return None
         return next(
             (line.strip() for line in result.stdout.splitlines() if line.strip()),
@@ -930,7 +938,7 @@ class DockerLocalProvider(SandboxProvider):
         )
 
     def _resolve_snapshot(
-        self, snapshot_or_checkpoint_id: str
+        self, snapshot_or_checkpoint_id: str, *, strict: bool = False
     ) -> tuple[str, str, dict[str, Any] | None]:
         key = str(snapshot_or_checkpoint_id)
         cached = self._checkpoints.get(key)
@@ -938,7 +946,9 @@ class DockerLocalProvider(SandboxProvider):
             snapshot_key = str(cached["snapshot_id"])
             image_ref = self._snapshot_images.get(snapshot_key)
             if image_ref is None:
-                image_ref = self._discover_labeled_image("shinken.snapshot_id", snapshot_key)
+                image_ref = self._discover_labeled_image(
+                    "shinken.snapshot_id", snapshot_key, strict=strict
+                )
             if image_ref is None:
                 raise ProviderError(f"snapshot image for checkpoint {key!r} is unavailable")
             return (
@@ -949,18 +959,18 @@ class DockerLocalProvider(SandboxProvider):
         if key in self._snapshot_records:
             image_ref = self._snapshot_images.get(key)
             if image_ref is None:
-                image_ref = self._discover_labeled_image("shinken.snapshot_id", key)
+                image_ref = self._discover_labeled_image("shinken.snapshot_id", key, strict=strict)
             if image_ref is None:
                 raise ProviderError(f"snapshot image {key!r} is unavailable")
             return key, image_ref, self._snapshot_records[key]
         is_checkpoint = key.startswith("ckpt-")
         label = "shinken.checkpoint_id" if is_checkpoint else "shinken.snapshot_id"
-        image_ref = self._discover_labeled_image(label, key)
+        image_ref = self._discover_labeled_image(label, key, strict=strict)
         if image_ref is None and not is_checkpoint:
             image_ref = key  # legacy snapshots used the Docker image ref as their id
         if image_ref is None:
             raise ProviderError(f"unknown checkpoint {key!r}")
-        record, immutable_id = self._inspect_snapshot_record(image_ref)
+        record, immutable_id = self._inspect_snapshot_record(image_ref, strict=strict)
         if record is not None:
             if not immutable_id.startswith("sha256:"):
                 raise ProviderError(
@@ -976,6 +986,32 @@ class DockerLocalProvider(SandboxProvider):
         if is_checkpoint:
             raise ProviderError(f"checkpoint {key!r} has no persisted snapshot record")
         return key, immutable_id, None  # legacy image: Docker itself remains the authority
+
+    def _resolve_snapshot_for_delete(
+        self, snapshot_or_checkpoint_id: str
+    ) -> tuple[str, str, dict[str, Any] | None] | None:
+        """Strictly resolve deletion ownership; return ``None`` only for proven absence.
+
+        Normal restore discovery is intentionally best-effort for compatibility. Cleanup is
+        different: a daemon/query failure must propagate so the owner retains a retry handle.
+        """
+        key = str(snapshot_or_checkpoint_id)
+        # Checkpoint ids have never also been Docker image refs. A successful strict label
+        # query with no rows therefore proves that an uncached checkpoint is gone.
+        if (
+            key not in self._checkpoints
+            and key not in self._snapshot_records
+            and key not in self._snapshot_images
+            and key.startswith("ckpt-")
+        ):
+            if self._discover_labeled_image("shinken.checkpoint_id", key, strict=True) is None:
+                return None
+        try:
+            return self._resolve_snapshot(key, strict=True)
+        except ProviderError as exc:
+            if "no such image" in str(exc).lower():
+                return None
+            raise
 
     @staticmethod
     def _lineage_metadata(
@@ -1139,10 +1175,10 @@ class DockerLocalProvider(SandboxProvider):
         """Reclaim a committed snapshot image (`docker rmi`). Resolves a checkpoint id to
         its snapshot first. Idempotent, but fail closed while Docker still reports the image:
         ownership records are retained so a caller can retry cleanup."""
-        try:
-            snapshot_key, image_ref, _record = self._resolve_snapshot(snapshot_id)
-        except ProviderError:
+        resolved = self._resolve_snapshot_for_delete(snapshot_id)
+        if resolved is None:
             return
+        snapshot_key, image_ref, _record = resolved
         result = subprocess.run(
             [self.docker_bin, "rmi", "-f", image_ref],
             check=False,

@@ -13,6 +13,8 @@ Environment knobs (read here, not from YAML — NeMo Gym validates its own confi
 - ``SHINKEN_MAX_GOLDENS`` maximum cached task snapshots (default: 32)
 - ``SHINKEN_GOLDEN_TTL_S`` idle golden snapshot TTL (default: 3600)
 - ``SHINKEN_REAP_INTERVAL_S`` active maintenance interval (default: 30)
+- ``SHINKEN_MAX_PENDING_CLEANUP`` cleanup backlog high-water mark (default: 64)
+- ``SHINKEN_CLEANUP_RETRY_BATCH`` attempts per cleanup-queue drain (default: 16)
 """
 
 from __future__ import annotations
@@ -53,6 +55,14 @@ def engine_factory(_config: object) -> ShinkenComputerEngine:
             lifecycle[argument] = float(os.environ[env_name])
     if "SHINKEN_MAX_GOLDENS" in os.environ:
         lifecycle["max_goldens"] = int(os.environ["SHINKEN_MAX_GOLDENS"])
+    if "SHINKEN_MAX_PENDING_CLEANUP" in os.environ:
+        lifecycle["max_pending_cleanup"] = int(
+            os.environ["SHINKEN_MAX_PENDING_CLEANUP"]
+        )
+    if "SHINKEN_CLEANUP_RETRY_BATCH" in os.environ:
+        lifecycle["cleanup_retry_batch"] = int(
+            os.environ["SHINKEN_CLEANUP_RETRY_BATCH"]
+        )
     return ShinkenComputerEngine(
         provider, CuaGymTaskSource(root), spec=spec, **lifecycle
     )
