@@ -25,24 +25,29 @@ from shinken.integrations.cua_gym import CuaGymTaskSource  # noqa: E402
 from shinken.integrations.nemo_gym import ShinkenComputerEngine, rollout_rows  # noqa: E402
 
 
-def scripted_hello(engine: ShinkenComputerEngine, sid: str) -> None:
+def scripted_hello(engine: ShinkenComputerEngine, sid: str, generation: int) -> None:
     """Solve hello-file the way a CLI-leaning model would: one exec call."""
-    out = engine.tool(sid, "computer_exec", {"command": "printf 'shinken' > /tmp/hello.txt"})
+    out = engine.tool(
+        sid,
+        "computer_exec",
+        {"command": "printf 'shinken' > /tmp/hello.txt"},
+        generation=generation,
+    )
     assert '"returncode": 0' in out, out
 
 
-def scripted_zenity(engine: ShinkenComputerEngine, sid: str) -> None:
+def scripted_zenity(engine: ShinkenComputerEngine, sid: str, generation: int) -> None:
     """Solve zenity-entry the way a GUI model would: observe → click by id → type → diff."""
-    tree = engine.tool(sid, "computer_observe", {"mode": "tree"})
+    tree = engine.tool(sid, "computer_observe", {"mode": "tree"}, generation=generation)
     assert "Vendor" in tree, f"dialog not in tree:\n{tree}"
     entry = re.search(r"^\s*(e\d+) (?:text|entry) ", tree, re.M)
     assert entry, f"no entry element in tree:\n{tree}"
-    print(engine.tool(sid, "computer_click", {"target": entry.group(1)}))
-    print(engine.tool(sid, "computer_type_text", {"text": "ACME GmbH"}))
-    diff = engine.tool(sid, "computer_observe", {"mode": "diff"})
+    print(engine.tool(sid, "computer_click", {"target": entry.group(1)}, generation=generation))
+    print(engine.tool(sid, "computer_type_text", {"text": "ACME GmbH"}, generation=generation))
+    diff = engine.tool(sid, "computer_observe", {"mode": "diff"}, generation=generation)
     assert "ACME GmbH" in diff, f"typed value missing from diff:\n{diff}"
     print(f"diff confirms typed value:\n{diff}")
-    print(engine.tool(sid, "computer_key", {"keys": "Return"}))
+    print(engine.tool(sid, "computer_key", {"keys": "Return"}, generation=generation))
     time.sleep(0.8)  # zenity flushes stdout on exit
 
 
@@ -59,10 +64,10 @@ def main() -> int:
     try:
         for task in tasks:
             sid = f"local-{task.task_id}"
-            seeded = engine.seed(sid, task.task_id)
+            seeded = engine.seed(sid, task.task_id, generation=None)
             print(f"\n=== {task.task_id}: seeded (reset {seeded['reset_ms']:.0f} ms) ===")
-            solvers[task.task_id](engine, sid)
-            reward = engine.verify(sid)
+            solvers[task.task_id](engine, sid, seeded["generation"])
+            reward = engine.verify(sid, generation=seeded["generation"])
             print(f"=== {task.task_id}: REWARD {reward} ===")
             assert reward == 1.0, f"{task.task_id} scored {reward}"
     finally:

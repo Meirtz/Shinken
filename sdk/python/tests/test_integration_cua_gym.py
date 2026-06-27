@@ -279,6 +279,121 @@ def test_reset_destroys_resumed_handle_when_connect_fails(bundle_root, mock_shin
     assert provider.destroyed.count("replica-1") == 1
 
 
+def test_close_retains_handle_and_retries_destroy_failure(bundle_root):
+    class Session:
+        def __init__(self):
+            self.close_calls = 0
+
+        def close(self):
+            self.close_calls += 1
+
+    class FlakyDestroyProvider:
+        def __init__(self):
+            self.destroy_calls = 0
+
+        def destroy(self, handle):
+            self.destroy_calls += 1
+            if self.destroy_calls == 1:
+                raise RuntimeError("transient destroy failure")
+
+    provider = FlakyDestroyProvider()
+    env = cg.ShinkenCuaGymEnv(
+        cg.CuaGymTaskSource(bundle_root).get("task_a"),
+        provider,
+        exec_factory=lambda _p, _h: _FakeExec(),
+    )
+    session = Session()
+    env._handle = "replica-1"
+    env._sess = session
+    env._exec = _FakeExec()
+
+    with pytest.raises(RuntimeError, match="transient destroy failure"):
+        env.close()
+    assert env._handle == "replica-1"
+    assert env._sess is None
+    assert provider.destroy_calls == 1 and session.close_calls == 1
+
+    env.close()
+    assert env._handle is None and env._sess is None and env._exec is None
+    assert provider.destroy_calls == 2 and session.close_calls == 1
+
+
+def test_dispose_retains_golden_and_retries_delete_failure(bundle_root):
+    class FlakyDeleteProvider:
+        def __init__(self):
+            self.delete_calls = 0
+
+        def delete_snapshot(self, snapshot):
+            self.delete_calls += 1
+            if self.delete_calls == 1:
+                raise RuntimeError("transient snapshot delete failure")
+
+    provider = FlakyDeleteProvider()
+    env = cg.ShinkenCuaGymEnv(
+        cg.CuaGymTaskSource(bundle_root).get("task_a"),
+        provider,
+        exec_factory=lambda _p, _h: _FakeExec(),
+    )
+    env.golden_checkpoint = "golden-1"
+    with pytest.raises(RuntimeError, match="transient snapshot delete failure"):
+        env.dispose()
+    assert env.golden_checkpoint == "golden-1"
+
+    env.dispose()
+    assert env.golden_checkpoint is None
+    assert provider.delete_calls == 2
+
+
+def test_golden_build_retains_base_and_snapshot_after_destroy_failure(tmp_path):
+    _write_bundle(tmp_path, "no-setup", with_setup=False)
+
+    class Session:
+        def __init__(self):
+            self.close_calls = 0
+
+        def close(self):
+            self.close_calls += 1
+
+    class FlakyProvider:
+        def __init__(self):
+            self.destroy_calls = 0
+            self.deleted = []
+            self.session = Session()
+
+        def create(self, spec):
+            return "base-1"
+
+        def connect(self, handle):
+            return self.session
+
+        def checkpoint(self, handle):
+            return "golden-1"
+
+        def destroy(self, handle):
+            self.destroy_calls += 1
+            if self.destroy_calls == 1:
+                raise RuntimeError("transient base destroy failure")
+
+        def delete_snapshot(self, snapshot):
+            self.deleted.append(snapshot)
+
+    provider = FlakyProvider()
+    env = cg.ShinkenCuaGymEnv(
+        cg.CuaGymTaskSource(tmp_path).get("no-setup"),
+        provider,
+        exec_factory=lambda _p, _h: _FakeExec(),
+    )
+    with pytest.raises(RuntimeError, match="transient base destroy failure"):
+        env._build_golden()
+    assert env._pending_build_handles == ["base-1"]
+    assert env._pending_build_snapshots == ["golden-1"]
+
+    env.close()
+    assert provider.destroy_calls == 2
+    assert provider.deleted == ["golden-1"]
+    assert not env._pending_build_handles and not env._pending_build_snapshots
+
+
 def test_filesystem_fidelity_requires_trusted_caller_spec(bundle_root, mock_shinkend):
     task = cg.CuaGymTaskSource(bundle_root).get("task_a")
     provider = _FakeForkProvider(mock_shinkend)

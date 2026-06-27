@@ -42,12 +42,21 @@ Layering (no hard dependency on ``nemo_gym`` — same discipline as the other ad
 import base64
 import contextlib
 import json
+import logging
+import math
+import secrets
 import threading
 import time
+import weakref
 from collections.abc import Iterable, Iterator, Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from .cua_gym import CuaGymError, CuaGymTask, ShinkenCuaGymEnv
+
+_LOG = logging.getLogger(__name__)
+_SESSION_GENERATION_KEY = "shinken_rollout_generation"
+_LOCK_STRIPES = 257
 
 __all__ = [
     "COMPUTER_TOOLS",
@@ -171,7 +180,7 @@ COMPUTER_TOOLS: list[dict] = [
 ]
 
 SYSTEM_PROMPT = (
-    "You are a computer-use agent operating a real Linux desktop through tools.\n"
+    "You are a computer-use agent operating a real sandboxed desktop through tools.\n"
     "Loop: observe -> act -> observe the diff. Rules:\n"
     "1. Call computer_observe (mode='tree') once before your first action; afterwards "
     "prefer mode='diff' to see what changed.\n"
@@ -224,13 +233,23 @@ def _parse_click_target(target: str) -> dict:
 class _Rollout:
     """One live rollout: a forked replica + its observation revision state."""
 
-    __slots__ = ("env", "task", "observed_once", "last_used")
+    __slots__ = ("env", "task", "generation", "observed_once", "last_used")
 
-    def __init__(self, env: ShinkenCuaGymEnv, task: CuaGymTask) -> None:
+    def __init__(self, env: ShinkenCuaGymEnv, task: CuaGymTask, generation: int) -> None:
         self.env = env
         self.task = task
+        self.generation = generation
         self.observed_once = False
         self.last_used = time.monotonic()
+
+
+@dataclass
+class _Golden:
+    """A cached immutable snapshot plus an eviction-safe reset lease count."""
+
+    snapshot: Any
+    last_used: float
+    leases: int = 0
 
 
 class ShinkenComputerEngine:
@@ -244,8 +263,12 @@ class ShinkenComputerEngine:
     - :meth:`verify` — run the bundle's ``reward.py`` in the replica, tear the replica
       down, return the reward.
 
-    Replicas whose rollout never reaches ``verify`` are opportunistically reaped before
-    later seeds once older than ``idle_ttl_s``; server shutdown closes every remainder.
+    Calls for one session are linearized while different sessions remain concurrent.
+    After :meth:`start_maintenance` (called by the web adapter), replicas whose rollout never
+    reaches ``verify`` are actively reaped once older than ``idle_ttl_s``. Golden snapshots
+    are lease-protected during reset and bounded by both ``max_goldens`` and
+    ``golden_ttl_s``. :meth:`close` is a terminal lifecycle barrier: it rejects new work,
+    waits for admitted work, stops the reaper, and then tears down every remaining replica.
     All methods are blocking; async servers wrap them in a thread (see
     :func:`build_resources_server_cls`).
     """
@@ -259,133 +282,509 @@ class ShinkenComputerEngine:
         settle_ms: int = 200,
         exec_timeout: float = 60.0,
         idle_ttl_s: float = 900.0,
+        max_goldens: int = 32,
+        golden_ttl_s: float = 3600.0,
+        reap_interval_s: float = 30.0,
         env_factory: Any = ShinkenCuaGymEnv,
     ) -> None:
+        if max_goldens < 0:
+            raise ValueError("max_goldens must be >= 0")
+        if not callable(getattr(provider, "delete_snapshot", None)):
+            raise ValueError("provider must implement delete_snapshot for bounded golden ownership")
+        lifetimes = {
+            "idle_ttl_s": float(idle_ttl_s),
+            "golden_ttl_s": float(golden_ttl_s),
+            "reap_interval_s": float(reap_interval_s),
+        }
+        for name, value in lifetimes.items():
+            if not math.isfinite(value):
+                raise ValueError(f"{name} must be finite")
+            if value < 0:
+                raise ValueError(f"{name} must be >= 0")
         self.provider = provider
         self.tasks = tasks  # Mapping-like with .get(task_id) -> CuaGymTask
         self.spec = spec
         self.settle_ms = settle_ms
         self.exec_timeout = exec_timeout
-        self.idle_ttl_s = idle_ttl_s
+        self.idle_ttl_s = lifetimes["idle_ttl_s"]
+        self.max_goldens = int(max_goldens)
+        self.golden_ttl_s = lifetimes["golden_ttl_s"]
+        self.reap_interval_s = lifetimes["reap_interval_s"]
         self.env_factory = env_factory
         self._rollouts: dict[str, _Rollout] = {}
-        self._goldens: dict[str, str] = {}
-        self._golden_locks: dict[str, threading.Lock] = {}
+        self._goldens: dict[str, _Golden] = {}
+        self._session_inflight: dict[str, int] = {}
         self._lock = threading.Lock()
+        self._cleanup_lock = threading.Lock()
+        self._pending_snapshot_deletes: list[Any] = []
+        self._pending_env_closes: list[Any] = []
+        # Fixed stripes avoid the lock-map leak/ABA problem of one dynamically-created lock
+        # per session/task. Hash collisions reduce concurrency but cannot break correctness.
+        self._session_locks = tuple(threading.Lock() for _ in range(_LOCK_STRIPES))
+        self._golden_locks = tuple(threading.Lock() for _ in range(_LOCK_STRIPES))
+        self._lifecycle = threading.Condition()
+        self._operation_local = threading.local()
+        self._state = "open"
+        self._active_operations = 0
+        self._reaper_stop = threading.Event()
+        self._reaper_thread: threading.Thread | None = None
+
+    def start_maintenance(self) -> None:
+        """Start active resource maintenance for a long-lived server (idempotent).
+
+        Construction stays thread-free so the framework-free engine composes safely with
+        POSIX fork-based scorers. The web adapter starts this worker from app startup.
+        """
+        if self.reap_interval_s <= 0:
+            return
+        with self._lifecycle:
+            if self._state != "open":
+                raise CuaGymError(f"computer engine is {self._state}")
+            if self._reaper_thread is not None and self._reaper_thread.is_alive():
+                return
+            self._reaper_stop.clear()
+            self_ref = weakref.ref(self)
+            self._reaper_thread = threading.Thread(
+                target=self._run_reaper,
+                args=(self_ref, self._reaper_stop, self.reap_interval_s),
+                name="shinken-nemo-reaper",
+                daemon=True,
+            )
+            self._reaper_thread.start()
 
     # -- lifecycle ---------------------------------------------------------------
 
-    def seed(self, session_id: str, task_id: str) -> dict:
-        """Start a rollout: fork the task's golden checkpoint into a fresh replica."""
-        self._reap_idle()
-        try:
-            task = self.tasks.get(task_id)
-        except KeyError:
-            # ``CuaGymTaskSource.get`` is Mapping-like but deliberately raises a helpful
-            # KeyError, whereas a plain dict returns None. Normalize both at this boundary.
-            task = None
-        if task is None:
-            raise CuaGymError(f"unknown task_id {task_id!r}")
-        env = self.env_factory(task, self.provider, spec=self.spec, exec_timeout=self.exec_timeout)
-        try:
-            env.golden_checkpoint = self._golden_for(task, env)
-            t0 = time.perf_counter()
-            env.reset()
-            # Bundle extension: steps under config.json's "shinken_post_fork" replay on EVERY
-            # replica after the fork. The golden checkpoint carries file state on the disk
-            # tier; setup that must exist as a *running process* (an open dialog, a launched
-            # app) belongs here, not in the golden build. (On the CRIU memory tier the golden
-            # itself carries processes and this list is typically empty.)
-            post_fork = task.config.get("shinken_post_fork") or []
-            if post_fork:
-                sess, run = env._session(), env._guest_exec()
-                for step in post_fork:
-                    env._apply_setup_step(step, sess, run)
-        except BaseException:
-            # The env is not published in ``_rollouts`` until all post-fork initialization
-            # succeeds, so this path must reclaim it directly.
-            with contextlib.suppress(Exception):
-                env.close()
-            raise
-        reset_ms = (time.perf_counter() - t0) * 1000.0
-        self.end(session_id)  # a re-seeded session replaces its old replica
-        with self._lock:
-            self._rollouts[session_id] = _Rollout(env, task)
-        return {"task_id": task.task_id, "instruction": task.instruction, "reset_ms": reset_ms}
-
-    def _golden_for(self, task: CuaGymTask, env: ShinkenCuaGymEnv) -> str:
-        with self._lock:
-            lock = self._golden_locks.setdefault(task.task_id, threading.Lock())
-        with lock:
-            golden = self._goldens.get(task.task_id)
-            if golden is None:
-                golden = env._build_golden()
+    def seed(
+        self,
+        session_id: str,
+        task_id: str,
+        *,
+        generation: int | None,
+    ) -> dict:
+        """Start a rollout, atomically replacing the prior generation on this session."""
+        with self._operation(session_id=session_id):
+            with self._session_lock(session_id):
                 with self._lock:
-                    self._goldens[task.task_id] = golden
-            return golden
+                    current = self._rollouts.get(session_id)
+                if generation is not None and type(generation) is not int:
+                    raise CuaGymError("rollout generation must be an integer or None")
+                if current is not None:
+                    if generation is None:
+                        # An initial seed response may be lost. Retrying the same task without
+                        # a generation is idempotent; a different task is ambiguous and unsafe.
+                        if current.task.task_id != task_id:
+                            raise CuaGymError(
+                                f"session {session_id!r} is already seeded for "
+                                f"task {current.task.task_id!r}"
+                            )
+                        current.last_used = time.monotonic()
+                        return self._seed_result(current, reset_ms=0.0)
+                    if current.generation != generation:
+                        raise CuaGymError(
+                            f"stale rollout generation for session {session_id!r}; "
+                            "seed_session ran again"
+                        )
+                try:
+                    task = self.tasks.get(task_id)
+                except KeyError:
+                    # ``CuaGymTaskSource.get`` raises while a plain dict returns None.
+                    task = None
+                if task is None:
+                    raise CuaGymError(f"unknown task_id {task_id!r}")
 
-    def verify(self, session_id: str) -> float:
-        """Score the rollout with the bundle's ``reward.py`` and tear the replica down."""
-        rollout = self._get(session_id)
+                env = self.env_factory(
+                    task, self.provider, spec=self.spec, exec_timeout=self.exec_timeout
+                )
+                try:
+                    t0 = time.perf_counter()
+                    with self._golden_lease(task, env) as golden:
+                        env.golden_checkpoint = golden
+                        env.reset()
+                    # Process setup is replayed after every filesystem-tier fork.
+                    post_fork = task.config.get("shinken_post_fork") or []
+                    if post_fork:
+                        sess, run = env._session(), env._guest_exec()
+                        for step in post_fork:
+                            env._apply_setup_step(step, sess, run)
+                except BaseException:
+                    # The old generation remains current unless initialization fully succeeds.
+                    self._close_env(env)
+                    raise
+
+                reset_ms = (time.perf_counter() - t0) * 1000.0
+                with self._lock:
+                    # A random epoch cannot alias a signed session cookie retained across a
+                    # resources-server restart (a process-local counter could restart at 1).
+                    generation = secrets.randbits(128)
+                    previous = self._rollouts.get(session_id)
+                    published = _Rollout(env, task, generation)
+                    self._rollouts[session_id] = published
+                if previous is not None:
+                    self._close_env(previous.env)
+                return self._seed_result(published, reset_ms=reset_ms)
+
+    @staticmethod
+    def _seed_result(rollout: _Rollout, *, reset_ms: float) -> dict:
+        return {
+            "task_id": rollout.task.task_id,
+            "instruction": rollout.task.instruction,
+            "reset_ms": reset_ms,
+            "generation": rollout.generation,
+        }
+
+    @contextlib.contextmanager
+    def _golden_lease(self, task: CuaGymTask, env: ShinkenCuaGymEnv) -> Iterator[Any]:
+        """Get/build one task golden and pin it until the caller's reset completes."""
+        task_id = task.task_id
+        with self._golden_lock(task_id):
+            now = time.monotonic()
+            with self._lock:
+                entry = self._goldens.get(task_id)
+                if entry is not None:
+                    entry.leases += 1
+                    entry.last_used = now
+            if entry is None:
+                snapshot = env._build_golden()
+                entry = _Golden(snapshot=snapshot, last_used=now, leases=1)
+                with self._lock:
+                    self._goldens[task_id] = entry
         try:
-            return rollout.env.evaluate()
+            yield entry.snapshot
         finally:
-            self.end(session_id)
+            with self._lock:
+                current = self._goldens.get(task_id)
+                if current is entry:
+                    entry.leases -= 1
+                    entry.last_used = time.monotonic()
+            self._evict_goldens()
 
-    def end(self, session_id: str) -> None:
+    def verify(self, session_id: str, *, generation: int) -> float:
+        """Score the rollout with the bundle's ``reward.py`` and tear the replica down."""
+        with self._operation(session_id=session_id):
+            with self._session_lock(session_id):
+                rollout = self._current_rollout(session_id, generation)
+                try:
+                    return rollout.env.evaluate()
+                finally:
+                    detached = self._detach_rollout(session_id, rollout)
+                    if detached is not None:
+                        self._close_env(detached.env)
+
+    def end(self, session_id: str, *, generation: int) -> None:
         """Tear down a rollout's replica without scoring (idempotent)."""
-        with self._lock:
-            rollout = self._rollouts.pop(session_id, None)
-        if rollout is not None:
-            with contextlib.suppress(Exception):
-                rollout.env.close()
+        with self._operation(fail_if_closed=False, session_id=session_id) as admitted:
+            if not admitted:
+                return
+            with self._session_lock(session_id):
+                with self._lock:
+                    rollout = self._rollouts.get(session_id)
+                    if (
+                        rollout is None
+                        or type(generation) is not int
+                        or rollout.generation != generation
+                    ):
+                        return
+                    self._rollouts.pop(session_id, None)
+                self._close_env(rollout.env)
 
     def close(self, *, delete_goldens: bool = True) -> None:
-        """Tear down every live replica (and, by default, the shared golden snapshots)."""
-        with self._lock:
-            ids = list(self._rollouts)
-        for sid in ids:
-            self.end(sid)
-        if delete_goldens and hasattr(self.provider, "delete_snapshot"):
-            with self._lock:
-                goldens, self._goldens = dict(self._goldens), {}
-            for snap in goldens.values():
-                with contextlib.suppress(Exception):
-                    self.provider.delete_snapshot(snap)
+        """Terminal barrier: reject new work, drain admitted calls, then reclaim resources."""
+        if getattr(self._operation_local, "depth", 0):
+            raise CuaGymError("cannot close the computer engine from an active engine operation")
+        owner = False
+        with self._lifecycle:
+            if self._state == "open":
+                self._state = "closing"
+                owner = True
+            elif self._state == "closing":
+                self._lifecycle.wait_for(lambda: self._state == "closed")
 
-    def _get(self, session_id: str) -> _Rollout:
+        if not owner:
+            # A later close(delete_goldens=True) may release snapshots retained by an earlier
+            # close(delete_goldens=False), while replica teardown remains idempotent.
+            if delete_goldens:
+                self._delete_remaining_goldens()
+            self._drain_env_closes()
+            self._drain_snapshot_deletes()
+            self._raise_pending_cleanup()
+            return
+
+        self._reaper_stop.set()
+        thread = self._reaper_thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join()
+
+        with self._lifecycle:
+            self._lifecycle.wait_for(lambda: self._active_operations == 0)
+
+        with self._lock:
+            rollouts = list(self._rollouts.values())
+            self._rollouts.clear()
+        for rollout in rollouts:
+            self._close_env(rollout.env)
+        if delete_goldens:
+            self._delete_remaining_goldens()
+        self._drain_env_closes()
+        self._drain_snapshot_deletes()
+
+        with self._lifecycle:
+            self._state = "closed"
+            self._lifecycle.notify_all()
+        self._raise_pending_cleanup()
+
+    @contextlib.contextmanager
+    def _operation(
+        self, *, fail_if_closed: bool = True, session_id: str | None = None
+    ) -> Iterator[bool]:
+        admitted = False
+        with self._lifecycle:
+            if self._state == "open":
+                self._active_operations += 1
+                admitted = True
+            elif fail_if_closed:
+                raise CuaGymError(f"computer engine is {self._state}")
+        if not admitted:
+            yield False
+            return
+        if session_id is not None:
+            with self._lock:
+                self._session_inflight[session_id] = self._session_inflight.get(session_id, 0) + 1
+        self._operation_local.depth = getattr(self._operation_local, "depth", 0) + 1
+        try:
+            yield True
+        finally:
+            self._operation_local.depth -= 1
+            if session_id is not None:
+                with self._lock:
+                    remaining = self._session_inflight[session_id] - 1
+                    if remaining:
+                        self._session_inflight[session_id] = remaining
+                    else:
+                        self._session_inflight.pop(session_id, None)
+            with self._lifecycle:
+                self._active_operations -= 1
+                if self._active_operations == 0:
+                    self._lifecycle.notify_all()
+
+    def _session_lock(self, session_id: str) -> threading.Lock:
+        return self._session_locks[hash(session_id) % len(self._session_locks)]
+
+    def _golden_lock(self, task_id: str) -> threading.Lock:
+        return self._golden_locks[hash(task_id) % len(self._golden_locks)]
+
+    def _current_rollout(self, session_id: str, generation: int) -> _Rollout:
         with self._lock:
             rollout = self._rollouts.get(session_id)
         if rollout is None:
             raise CuaGymError(
                 f"no live rollout for session {session_id!r} — seed_session must run first"
             )
-        rollout.last_used = time.monotonic()
+        if type(generation) is not int or rollout.generation != generation:
+            raise CuaGymError(
+                f"stale rollout generation for session {session_id!r}; seed_session ran again"
+            )
         return rollout
 
-    def _reap_idle(self) -> None:
+    def _detach_rollout(self, session_id: str, expected: _Rollout) -> _Rollout | None:
+        with self._lock:
+            if self._rollouts.get(session_id) is not expected:
+                return None
+            return self._rollouts.pop(session_id)
+
+    def maintenance_once(self) -> dict[str, int]:
+        """Synchronously reap idle replicas and evict expired/LRU golden snapshots."""
+        with self._operation(fail_if_closed=False) as admitted:
+            if not admitted:
+                return {"rollouts_reaped": 0, "goldens_evicted": 0}
+            return self._maintenance_once()
+
+    def _maintenance_once(self) -> dict[str, int]:
+        result = {
+            "rollouts_reaped": self._reap_idle_rollouts(),
+            "goldens_evicted": self._evict_goldens(),
+        }
+        self._drain_env_closes()
+        self._drain_snapshot_deletes()
+        return result
+
+    def _reap_idle_rollouts(self) -> int:
         if self.idle_ttl_s <= 0:
-            return
+            return 0
         cutoff = time.monotonic() - self.idle_ttl_s
         with self._lock:
-            stale = [sid for sid, r in self._rollouts.items() if r.last_used < cutoff]
-        for sid in stale:
-            self.end(sid)
+            candidates = list(self._rollouts)
+        reaped = 0
+        for session_id in candidates:
+            session_lock = self._session_lock(session_id)
+            if not session_lock.acquire(blocking=False):
+                continue
+            try:
+                with self._lock:
+                    rollout = self._rollouts.get(session_id)
+                    if (
+                        rollout is None
+                        or self._session_inflight.get(session_id, 0)
+                        or rollout.last_used >= cutoff
+                    ):
+                        continue
+                    self._rollouts.pop(session_id, None)
+                self._close_env(rollout.env)
+                reaped += 1
+            finally:
+                session_lock.release()
+        return reaped
+
+    def _evict_goldens(self) -> int:
+        now = time.monotonic()
+        cutoff = now - self.golden_ttl_s
+        with self._lock:
+            removable = [
+                (task_id, entry) for task_id, entry in self._goldens.items() if entry.leases == 0
+            ]
+            evicted = {
+                task_id
+                for task_id, entry in removable
+                if self.golden_ttl_s > 0 and entry.last_used < cutoff
+            }
+            remaining_count = len(self._goldens) - len(evicted)
+            if remaining_count > self.max_goldens:
+                for task_id, _entry in sorted(removable, key=lambda item: item[1].last_used):
+                    if remaining_count <= self.max_goldens:
+                        break
+                    if task_id not in evicted:
+                        evicted.add(task_id)
+                        remaining_count -= 1
+            snapshots = [self._goldens.pop(task_id).snapshot for task_id in evicted]
+        self._queue_snapshot_deletes(snapshots)
+        return len(snapshots)
+
+    def _delete_remaining_goldens(self) -> None:
+        with self._lock:
+            snapshots = [entry.snapshot for entry in self._goldens.values()]
+            self._goldens.clear()
+        self._queue_snapshot_deletes(snapshots)
+
+    def _queue_snapshot_deletes(self, snapshots: Iterable[Any]) -> None:
+        with self._lock:
+            self._pending_snapshot_deletes.extend(snapshots)
+        self._drain_snapshot_deletes()
+
+    def _drain_snapshot_deletes(self) -> None:
+        if not self._cleanup_lock.acquire(blocking=False):
+            return
+        try:
+            with self._lock:
+                pending, self._pending_snapshot_deletes = self._pending_snapshot_deletes, []
+            if not pending:
+                return
+            failed = []
+            delete_snapshot = getattr(self.provider, "delete_snapshot", None)
+            if delete_snapshot is None:
+                failed = pending
+            else:
+                for snapshot in pending:
+                    try:
+                        delete_snapshot(snapshot)
+                    except Exception:
+                        failed.append(snapshot)
+                        _LOG.warning(
+                            "failed to delete NeMo Gym golden snapshot; queued for retry",
+                            exc_info=True,
+                        )
+            if failed:
+                with self._lock:
+                    self._pending_snapshot_deletes.extend(failed)
+        finally:
+            self._cleanup_lock.release()
+
+    def _close_env(self, env: Any) -> None:
+        try:
+            env.close()
+        except Exception:
+            with self._lock:
+                if not any(pending is env for pending in self._pending_env_closes):
+                    self._pending_env_closes.append(env)
+            _LOG.warning(
+                "failed to close NeMo Gym rollout environment; queued for retry",
+                exc_info=True,
+            )
+
+    def _drain_env_closes(self) -> None:
+        if not self._cleanup_lock.acquire(blocking=False):
+            return
+        try:
+            with self._lock:
+                pending, self._pending_env_closes = self._pending_env_closes, []
+            failed = []
+            for env in pending:
+                try:
+                    env.close()
+                except Exception:
+                    failed.append(env)
+                    _LOG.warning(
+                        "failed to close queued NeMo Gym rollout environment",
+                        exc_info=True,
+                    )
+            if failed:
+                with self._lock:
+                    self._pending_env_closes.extend(failed)
+        finally:
+            self._cleanup_lock.release()
+
+    def _raise_pending_cleanup(self) -> None:
+        with self._lock:
+            env_count = len(self._pending_env_closes)
+            snapshot_count = len(self._pending_snapshot_deletes)
+        if env_count or snapshot_count:
+            raise CuaGymError(
+                "computer engine closed with retryable cleanup pending: "
+                f"{env_count} environment(s), {snapshot_count} snapshot(s); call close() again"
+            )
+
+    @staticmethod
+    def _run_reaper(
+        engine_ref: "weakref.ReferenceType[ShinkenComputerEngine]",
+        stop: threading.Event,
+        interval_s: float,
+    ) -> None:
+        while not stop.wait(interval_s):
+            engine = engine_ref()
+            if engine is None:
+                return
+            try:
+                engine.maintenance_once()
+            except Exception:
+                _LOG.exception("NeMo Gym resource maintenance failed")
+            finally:
+                del engine
 
     # -- tools -------------------------------------------------------------------
 
-    def tool(self, session_id: str, name: str, arguments: Mapping[str, Any]) -> str:
+    def tool(
+        self,
+        session_id: str,
+        name: str,
+        arguments: Mapping[str, Any],
+        *,
+        generation: int,
+    ) -> str:
         """Dispatch one tool call; the returned string is what the model sees."""
-        rollout = self._get(session_id)
-        handler = getattr(self, f"_tool_{name.removeprefix('computer_')}", None)
-        if handler is None:
-            raise CuaGymError(f"unknown tool {name!r}")
-        try:
-            return handler(rollout, dict(arguments))
-        except CuaGymError:
-            raise
-        except Exception as exc:  # the model sees a typed, actionable error string
-            return f"error: {type(exc).__name__}: {exc}"
+        with self._operation(session_id=session_id):
+            with self._session_lock(session_id):
+                rollout = self._current_rollout(session_id, generation)
+                rollout.last_used = time.monotonic()
+                handler = getattr(self, f"_tool_{name.removeprefix('computer_')}", None)
+                if handler is None:
+                    raise CuaGymError(f"unknown tool {name!r}")
+                try:
+                    return handler(rollout, dict(arguments))
+                except CuaGymError:
+                    raise
+                except Exception as exc:  # the model sees a typed, actionable error string
+                    return f"error: {type(exc).__name__}: {exc}"
+                finally:
+                    # TTL is measured from completed activity, so a long call is never reaped.
+                    rollout.last_used = time.monotonic()
 
     def _sess(self, rollout: _Rollout) -> Any:
         return rollout.env._session()
@@ -464,13 +863,42 @@ def extract_task_id(payload: Mapping[str, Any]) -> str | None:
 
 
 def _install_engine_shutdown(app: Any, engine: ShinkenComputerEngine) -> None:
-    """Bind engine-owned replicas/snapshots to the enclosing web app's lifetime."""
+    """Bind active maintenance and engine-owned resources to the web app lifetime."""
     import asyncio
+
+    def start_engine() -> None:
+        engine.start_maintenance()
 
     async def close_engine() -> None:
         await asyncio.to_thread(engine.close)
 
+    app.add_event_handler("startup", start_engine)
     app.add_event_handler("shutdown", close_engine)
+
+
+def _request_generation(request: Any) -> int:
+    generation = request.session.get(_SESSION_GENERATION_KEY)
+    if type(generation) is not int:
+        raise CuaGymError("session carries no Shinken rollout generation — seed_session first")
+    return generation
+
+
+def _seed_request_generation(request: Any) -> int | None:
+    generation = request.session.get(_SESSION_GENERATION_KEY)
+    if generation is not None and type(generation) is not int:
+        raise CuaGymError("session carries an invalid Shinken rollout generation")
+    return generation
+
+
+def _require_single_worker(config: Any) -> None:
+    workers = config.get("num_workers") if isinstance(config, Mapping) else None
+    if workers is None:
+        workers = getattr(config, "num_workers", 1)
+    if workers is not None and (type(workers) is not int or workers != 1):
+        raise CuaGymError(
+            "ShinkenComputerEngine state is process-local; num_workers must be 1. "
+            "Scale with multiple session-routed resources-server instances instead."
+        )
 
 
 def build_resources_server_cls(engine_factory: Any) -> type:
@@ -502,6 +930,7 @@ def build_resources_server_cls(engine_factory: Any) -> type:
 
         def model_post_init(self, context: Any) -> None:
             super().model_post_init(context)
+            _require_single_worker(self.config)
             self._engine = engine_factory(self.config)
 
         def setup_webserver(self) -> FastAPI:
@@ -517,9 +946,14 @@ def build_resources_server_cls(engine_factory: Any) -> type:
         def _make_tool_route(self, name: str):
             async def route(request: Request) -> PlainTextResponse:
                 session_id = request.session[SESSION_ID_KEY]
+                generation = _request_generation(request)
                 args = await request.json()
                 out = await asyncio.to_thread(
-                    self._engine.tool, session_id, name, args if isinstance(args, dict) else {}
+                    self._engine.tool,
+                    session_id,
+                    name,
+                    args if isinstance(args, dict) else {},
+                    generation=generation,
                 )
                 return PlainTextResponse(out)
 
@@ -536,12 +970,17 @@ def build_resources_server_cls(engine_factory: Any) -> type:
                     "seed_session body carries no responses_create_params.metadata.task_id "
                     "— generate datasets with shinken.integrations.nemo_gym.rollout_rows"
                 )
-            await asyncio.to_thread(self._engine.seed, session_id, task_id)
+            generation = _seed_request_generation(request)
+            seeded = await asyncio.to_thread(
+                self._engine.seed, session_id, task_id, generation=generation
+            )
+            request.session[_SESSION_GENERATION_KEY] = seeded["generation"]
             return BaseSeedSessionResponse()
 
         async def verify(self, request: Request, body: BaseVerifyRequest) -> BaseVerifyResponse:
             session_id = request.session[SESSION_ID_KEY]
-            reward = await asyncio.to_thread(self._engine.verify, session_id)
+            generation = _request_generation(request)
+            reward = await asyncio.to_thread(self._engine.verify, session_id, generation=generation)
             return BaseVerifyResponse(**body.model_dump(), reward=reward)
 
     return ShinkenComputerResourcesServer

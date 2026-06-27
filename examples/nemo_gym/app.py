@@ -9,6 +9,10 @@ Environment knobs (read here, not from YAML — NeMo Gym validates its own confi
 - ``CUA_GYM_TASKS``     task-bundle root (default: the two demo bundles shipped in-repo)
 - ``SHINKEN_IMAGE``     sandbox image (default: the provider's default, shinken/sandbox-linux)
 - ``SHINKEN_STATE_FIDELITY`` trusted caller opt-in: ``filesystem`` or ``process_memory``
+- ``SHINKEN_IDLE_TTL_S`` abandoned rollout TTL (default: 900)
+- ``SHINKEN_MAX_GOLDENS`` maximum cached task snapshots (default: 32)
+- ``SHINKEN_GOLDEN_TTL_S`` idle golden snapshot TTL (default: 3600)
+- ``SHINKEN_REAP_INTERVAL_S`` active maintenance interval (default: 30)
 """
 
 from __future__ import annotations
@@ -35,7 +39,18 @@ def engine_factory(_config: object) -> ShinkenComputerEngine:
     if fidelity not in (None, "filesystem", "process_memory"):
         raise ValueError("SHINKEN_STATE_FIDELITY must be filesystem or process_memory")
     spec = SandboxSpec(state_fidelity=fidelity) if fidelity is not None else None
-    return ShinkenComputerEngine(provider, CuaGymTaskSource(root), spec=spec)
+    lifecycle = {}
+    float_knobs = {
+        "SHINKEN_IDLE_TTL_S": "idle_ttl_s",
+        "SHINKEN_GOLDEN_TTL_S": "golden_ttl_s",
+        "SHINKEN_REAP_INTERVAL_S": "reap_interval_s",
+    }
+    for env_name, argument in float_knobs.items():
+        if env_name in os.environ:
+            lifecycle[argument] = float(os.environ[env_name])
+    if "SHINKEN_MAX_GOLDENS" in os.environ:
+        lifecycle["max_goldens"] = int(os.environ["SHINKEN_MAX_GOLDENS"])
+    return ShinkenComputerEngine(provider, CuaGymTaskSource(root), spec=spec, **lifecycle)
 
 
 ShinkenComputerResourcesServer = build_resources_server_cls(engine_factory)

@@ -5,6 +5,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
+import threading
+import types
 
 import pytest
 
@@ -14,6 +17,8 @@ from shinken.integrations.nemo_gym import (
     ShinkenComputerEngine,
     _install_engine_shutdown,
     _parse_click_target,
+    _require_single_worker,
+    build_resources_server_cls,
     extract_task_id,
     rollout_rows,
 )
@@ -63,6 +68,8 @@ class FakeEnv:
         self.log: list = []
         self._sess = FakeSess(self.log)
         self.closed = False
+        self.close_calls = 0
+        self.closed_event = threading.Event()
 
     def _build_golden(self):
         self.log.append(("build_golden", self.task.task_id))
@@ -94,6 +101,16 @@ class FakeEnv:
 
     def close(self):
         self.closed = True
+        self.close_calls += 1
+        self.closed_event.set()
+
+
+class FakeProvider:
+    def __init__(self):
+        self.deleted: list[str] = []
+
+    def delete_snapshot(self, snapshot):
+        self.deleted.append(snapshot)
 
 
 def make_task(tmp_path, task_id="t1", config=None):
@@ -108,10 +125,35 @@ def make_task(tmp_path, task_id="t1", config=None):
 
 def make_engine(tmp_path, **kw):
     task = make_task(tmp_path, config=kw.pop("task_config", None))
+    provider = kw.pop("provider", FakeProvider())
+    kw.setdefault("reap_interval_s", 0)
     engine = ShinkenComputerEngine(
-        provider=object(), tasks={task.task_id: task}, env_factory=FakeEnv, **kw
+        provider=provider, tasks={task.task_id: task}, env_factory=FakeEnv, **kw
     )
     return engine, task
+
+
+def start_call(fn):
+    result: list = []
+    done = threading.Event()
+
+    def run():
+        try:
+            result.append(fn())
+        except BaseException as exc:
+            result.append(exc)
+        finally:
+            done.set()
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    return thread, done, result
+
+
+def join_call(thread, done, timeout=2.0):
+    assert done.wait(timeout), "concurrent engine call did not finish"
+    thread.join(timeout)
+    assert not thread.is_alive(), "concurrent engine call deadlocked"
 
 
 # ----------------------------------------------------------------- schemas / rows
@@ -153,38 +195,44 @@ def test_click_target_parsing():
 
 def test_seed_tool_verify_lifecycle(tmp_path):
     engine, task = make_engine(tmp_path)
-    seeded = engine.seed("s1", task.task_id)
+    seeded = engine.seed("s1", task.task_id, generation=None)
+    generation = seeded["generation"]
     assert seeded["task_id"] == task.task_id and seeded["reset_ms"] >= 0
 
-    tree = engine.tool("s1", "computer_observe", {"mode": "tree"})
+    tree = engine.tool("s1", "computer_observe", {"mode": "tree"}, generation=generation)
     assert "e1 frame" in tree and "focus: e2" in tree
-    diff = engine.tool("s1", "computer_observe", {"mode": "diff"})
+    diff = engine.tool("s1", "computer_observe", {"mode": "diff"}, generation=generation)
     assert diff.startswith("~ e2")  # second observe goes through observe_diff
 
-    assert engine.tool("s1", "computer_click", {"target": "e2"}) == "clicked e2"
-    assert engine.tool("s1", "computer_click", {"target": "10,20"}) == "clicked at (10, 20)"
-    engine.tool("s1", "computer_type_text", {"text": "hi"})
-    engine.tool("s1", "computer_key", {"keys": "Return"})
-    engine.tool("s1", "computer_scroll", {"dy": -3})
+    assert (
+        engine.tool("s1", "computer_click", {"target": "e2"}, generation=generation) == "clicked e2"
+    )
+    assert (
+        engine.tool("s1", "computer_click", {"target": "10,20"}, generation=generation)
+        == "clicked at (10, 20)"
+    )
+    engine.tool("s1", "computer_type_text", {"text": "hi"}, generation=generation)
+    engine.tool("s1", "computer_key", {"keys": "Return"}, generation=generation)
+    engine.tool("s1", "computer_scroll", {"dy": -3}, generation=generation)
 
-    out = json.loads(engine.tool("s1", "computer_exec", {"command": "ls"}))
+    out = json.loads(engine.tool("s1", "computer_exec", {"command": "ls"}, generation=generation))
     assert out["returncode"] == 0 and len(out["stdout"]) == 2000  # truncated
 
-    shot = engine.tool("s1", "computer_screenshot", {})
+    shot = engine.tool("s1", "computer_screenshot", {}, generation=generation)
     assert "1280x800" in shot and "computer_observe" in shot
 
-    assert engine.verify("s1") == 1.0
+    assert engine.verify("s1", generation=generation) == 1.0
     with pytest.raises(CuaGymError, match="seed_session must run first"):
-        engine.tool("s1", "computer_observe", {"mode": "tree"})
+        engine.tool("s1", "computer_observe", {"mode": "tree"}, generation=generation)
 
 
 def test_unknown_tool_and_unknown_task(tmp_path):
     engine, task = make_engine(tmp_path)
     with pytest.raises(CuaGymError, match="unknown task_id"):
-        engine.seed("s1", "nope")
-    engine.seed("s1", task.task_id)
+        engine.seed("s1", "nope", generation=None)
+    seeded = engine.seed("s1", task.task_id, generation=None)
     with pytest.raises(CuaGymError, match="unknown tool"):
-        engine.tool("s1", "computer_frobnicate", {})
+        engine.tool("s1", "computer_frobnicate", {}, generation=seeded["generation"])
 
 
 def test_unknown_task_from_raising_task_source_is_normalized(tmp_path):
@@ -193,16 +241,20 @@ def test_unknown_task_from_raising_task_source_is_normalized(tmp_path):
             raise KeyError(task_id)
 
     engine = ShinkenComputerEngine(
-        provider=object(), tasks=RaisingTaskSource(), env_factory=FakeEnv
+        provider=FakeProvider(),
+        tasks=RaisingTaskSource(),
+        env_factory=FakeEnv,
+        reap_interval_s=0,
     )
     with pytest.raises(CuaGymError, match="unknown task_id"):
-        engine.seed("s1", "missing")
+        engine.seed("s1", "missing", generation=None)
+    engine.close()
 
 
 def test_golden_is_built_once_and_shared(tmp_path):
     engine, task = make_engine(tmp_path)
-    engine.seed("s1", task.task_id)
-    engine.seed("s2", task.task_id)
+    engine.seed("s1", task.task_id, generation=None)
+    engine.seed("s2", task.task_id, generation=None)
     builds = [
         e for sid in ("s1", "s2") for e in engine._rollouts[sid].env.log if e[0] == "build_golden"
     ]
@@ -215,7 +267,7 @@ def test_post_fork_steps_replay_per_seed(tmp_path):
         tmp_path,
         task_config={"shinken_post_fork": [{"type": "execute", "parameters": {"command": "x"}}]},
     )
-    engine.seed("s1", task.task_id)
+    engine.seed("s1", task.task_id, generation=None)
     assert ("post_fork", "execute") in engine._rollouts["s1"].env.log
 
 
@@ -235,19 +287,23 @@ def test_post_fork_failure_closes_unpublished_replica(tmp_path):
         config={"shinken_post_fork": [{"type": "execute", "parameters": {"command": "x"}}]},
     )
     engine = ShinkenComputerEngine(
-        provider=object(), tasks={task.task_id: task}, env_factory=FailingPostForkEnv
+        provider=FakeProvider(),
+        tasks={task.task_id: task},
+        env_factory=FailingPostForkEnv,
+        reap_interval_s=0,
     )
     with pytest.raises(RuntimeError, match="post-fork setup failed"):
-        engine.seed("s1", task.task_id)
+        engine.seed("s1", task.task_id, generation=None)
     assert created[0].closed
     assert "s1" not in engine._rollouts
+    engine.close()
 
 
 def test_reseed_replaces_replica_and_close_reaps(tmp_path):
     engine, task = make_engine(tmp_path)
-    engine.seed("s1", task.task_id)
+    first = engine.seed("s1", task.task_id, generation=None)
     first_env = engine._rollouts["s1"].env
-    engine.seed("s1", task.task_id)
+    engine.seed("s1", task.task_id, generation=first["generation"])
     assert first_env.closed  # the old replica was torn down
     engine.close()
     assert not engine._rollouts
@@ -256,25 +312,743 @@ def test_reseed_replaces_replica_and_close_reaps(tmp_path):
 def test_webserver_shutdown_closes_engine_resources():
     class App:
         def add_event_handler(self, event, handler):
-            assert event == "shutdown"
-            self.shutdown = handler
+            setattr(self, event, handler)
 
     class Engine:
+        started = False
         closed = False
+
+        def start_maintenance(self):
+            self.started = True
 
         def close(self):
             self.closed = True
 
     app, engine = App(), Engine()
     _install_engine_shutdown(app, engine)
+    app.startup()
     asyncio.run(app.shutdown())
-    assert engine.closed
+    assert engine.started and engine.closed
 
 
 def test_idle_rollouts_are_reaped(tmp_path):
     engine, task = make_engine(tmp_path, idle_ttl_s=0.01)
-    engine.seed("s1", task.task_id)
+    engine.seed("s1", task.task_id, generation=None)
     stale_env = engine._rollouts["s1"].env
     engine._rollouts["s1"].last_used -= 10
-    engine.seed("s2", task.task_id)  # any seed sweeps the idle table
+    engine.maintenance_once()
     assert "s1" not in engine._rollouts and stale_env.closed
+
+
+def test_same_session_seeds_are_serialized_without_replica_leak(tmp_path):
+    created = []
+    first_reset_entered = threading.Event()
+    release_first_reset = threading.Event()
+
+    class BlockingFirstResetEnv(FakeEnv):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.index = len(created)
+            created.append(self)
+
+        def reset(self):
+            if self.index == 0:
+                first_reset_entered.set()
+                assert release_first_reset.wait(2)
+            return super().reset()
+
+    task = make_task(tmp_path)
+    engine = ShinkenComputerEngine(
+        FakeProvider(),
+        {task.task_id: task},
+        env_factory=BlockingFirstResetEnv,
+        reap_interval_s=0,
+    )
+    first_thread, first_done, first_result = start_call(
+        lambda: engine.seed("s1", task.task_id, generation=None)
+    )
+    assert first_reset_entered.wait(1)
+
+    second_started = threading.Event()
+
+    def second_seed():
+        second_started.set()
+        return engine.seed("s1", task.task_id, generation=None)
+
+    second_thread, second_done, second_result = start_call(second_seed)
+    assert second_started.wait(1)
+    assert not second_done.wait(0.05)
+    assert len(created) == 1  # second seed cannot construct behind the same-session gate
+
+    release_first_reset.set()
+    join_call(first_thread, first_done)
+    join_call(second_thread, second_done)
+    assert isinstance(first_result[0], dict) and isinstance(second_result[0], dict)
+    assert len(created) == 1
+    assert first_result[0]["generation"] == second_result[0]["generation"]
+    assert engine._rollouts["s1"].env is created[0]
+    assert created[0].close_calls == 0
+    engine.close()
+
+
+def test_failed_reseed_preserves_previous_generation(tmp_path):
+    created = []
+
+    class FailingSecondResetEnv(FakeEnv):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.index = len(created)
+            created.append(self)
+
+        def reset(self):
+            if self.index == 1:
+                raise RuntimeError("replacement reset failed")
+            return super().reset()
+
+    task = make_task(tmp_path)
+    engine = ShinkenComputerEngine(
+        FakeProvider(),
+        {task.task_id: task},
+        env_factory=FailingSecondResetEnv,
+        reap_interval_s=0,
+    )
+    first = engine.seed("s1", task.task_id, generation=None)
+    engine._rollouts["s1"].last_used -= 10
+    with pytest.raises(RuntimeError, match="replacement reset failed"):
+        engine.seed("s1", task.task_id, generation=first["generation"])
+
+    assert engine._rollouts["s1"].env is created[0]
+    assert engine._rollouts["s1"].generation == first["generation"]
+    assert not created[0].closed
+    assert created[1].close_calls == 1
+    engine.close()
+
+
+def test_verify_and_reseed_are_linearized_by_generation(tmp_path):
+    evaluate_entered = threading.Event()
+    release_evaluate = threading.Event()
+    created = []
+
+    class BlockingEvaluateEnv(FakeEnv):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            created.append(self)
+
+        def evaluate(self):
+            evaluate_entered.set()
+            assert release_evaluate.wait(2)
+            return super().evaluate()
+
+    task = make_task(tmp_path)
+    engine = ShinkenComputerEngine(
+        FakeProvider(),
+        {task.task_id: task},
+        env_factory=BlockingEvaluateEnv,
+        reap_interval_s=0,
+    )
+    initial = engine.seed("s1", task.task_id, generation=None)
+    verify_thread, verify_done, verify_result = start_call(
+        lambda: engine.verify("s1", generation=initial["generation"])
+    )
+    assert evaluate_entered.wait(1)
+
+    seed_started = threading.Event()
+
+    def reseed():
+        seed_started.set()
+        return engine.seed("s1", task.task_id, generation=initial["generation"])
+
+    seed_thread, seed_done, seed_result = start_call(reseed)
+    assert seed_started.wait(1)
+    assert not seed_done.wait(0.05)
+    assert not created[0].closed
+
+    release_evaluate.set()
+    join_call(verify_thread, verify_done)
+    join_call(seed_thread, seed_done)
+    assert verify_result == [1.0]
+    assert isinstance(seed_result[0], dict)
+    assert created[0].close_calls == 1
+    assert engine._rollouts["s1"].env is created[1]
+    assert not created[1].closed
+    engine.close()
+
+
+def test_active_tool_is_not_reaped_and_refreshes_idle_deadline(tmp_path):
+    observe_entered = threading.Event()
+    release_observe = threading.Event()
+
+    class BlockingSess(FakeSess):
+        def observe(self, structured=False, settle_ms=None, **kwargs):
+            observe_entered.set()
+            assert release_observe.wait(2)
+            return super().observe(structured=structured, settle_ms=settle_ms, **kwargs)
+
+    class BlockingToolEnv(FakeEnv):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._sess = BlockingSess(self.log)
+
+    task = make_task(tmp_path)
+    engine = ShinkenComputerEngine(
+        FakeProvider(),
+        {task.task_id: task},
+        env_factory=BlockingToolEnv,
+        idle_ttl_s=0.01,
+        reap_interval_s=0,
+    )
+    first = engine.seed("s1", task.task_id, generation=None)
+    second_session = next(
+        f"s2-{index}"
+        for index in range(1000)
+        if engine._session_lock(f"s2-{index}") is not engine._session_lock("s1")
+    )
+    engine.seed(second_session, task.task_id, generation=None)
+    rollout = engine._rollouts["s1"]
+    other = engine._rollouts[second_session]
+    other.last_used -= 10
+    tool_thread, tool_done, tool_result = start_call(
+        lambda: engine.tool(
+            "s1", "computer_observe", {"mode": "tree"}, generation=first["generation"]
+        )
+    )
+    assert observe_entered.wait(1)
+    rollout.last_used -= 10  # emulate a call whose execution exceeds the configured TTL
+
+    maintenance_started = threading.Event()
+
+    def maintain():
+        maintenance_started.set()
+        return engine.maintenance_once()
+
+    reaper_thread, reaper_done, reaper_result = start_call(maintain)
+    assert maintenance_started.wait(1)
+    join_call(reaper_thread, reaper_done)
+    assert not rollout.env.closed
+    assert other.env.closed
+
+    release_observe.set()
+    join_call(tool_thread, tool_done)
+    assert "e1 frame" in tool_result[0]
+    assert reaper_result == [{"rollouts_reaped": 1, "goldens_evicted": 0}]
+    assert engine._rollouts["s1"] is rollout
+    assert second_session not in engine._rollouts
+    assert not rollout.env.closed
+    engine.close()
+
+
+def test_background_reaper_collects_without_a_later_seed(tmp_path):
+    engine, task = make_engine(tmp_path, idle_ttl_s=0.01, reap_interval_s=0.005)
+    assert engine._reaper_thread is None  # core construction is fork-safe and thread-free
+    engine.start_maintenance()
+    engine.seed("s1", task.task_id, generation=None)
+    rollout = engine._rollouts["s1"]
+    rollout.last_used -= 10
+
+    assert rollout.env.closed_event.wait(1), "background reaper did not collect idle rollout"
+    assert "s1" not in engine._rollouts
+    thread = engine._reaper_thread
+    engine.close()
+    assert thread is not None and not thread.is_alive()
+
+
+def test_close_is_a_barrier_and_rejects_new_work(tmp_path):
+    reset_entered = threading.Event()
+    release_reset = threading.Event()
+    created = []
+
+    class BlockingResetEnv(FakeEnv):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            created.append(self)
+
+        def reset(self):
+            reset_entered.set()
+            assert release_reset.wait(2)
+            return super().reset()
+
+    provider = FakeProvider()
+    task = make_task(tmp_path)
+    engine = ShinkenComputerEngine(
+        provider,
+        {task.task_id: task},
+        env_factory=BlockingResetEnv,
+        reap_interval_s=0.01,
+    )
+    engine.start_maintenance()
+    seed_thread, seed_done, seed_result = start_call(
+        lambda: engine.seed("s1", task.task_id, generation=None)
+    )
+    assert reset_entered.wait(1)
+
+    close_started = threading.Event()
+
+    def close_engine():
+        close_started.set()
+        engine.close()
+
+    close_thread, close_done, close_result = start_call(close_engine)
+    assert close_started.wait(1)
+    assert not close_done.wait(0.05)
+    assert not created[0].closed
+
+    second_close_thread, second_close_done, second_close_result = start_call(engine.close)
+    release_reset.set()
+    join_call(seed_thread, seed_done)
+    join_call(close_thread, close_done)
+    join_call(second_close_thread, second_close_done)
+
+    assert isinstance(seed_result[0], dict)
+    assert close_result == [None] and second_close_result == [None]
+    assert created[0].close_calls == 1
+    assert not engine._rollouts and not engine._goldens
+    assert provider.deleted == [f"snap:{task.task_id}"]
+    assert engine._reaper_thread is not None and not engine._reaper_thread.is_alive()
+    with pytest.raises(CuaGymError, match="computer engine is closed"):
+        engine.seed("s2", task.task_id, generation=None)
+    with pytest.raises(CuaGymError, match="computer engine is closed"):
+        engine.tool("s1", "computer_observe", {"mode": "tree"}, generation=1)
+    with pytest.raises(CuaGymError, match="computer engine is closed"):
+        engine.verify("s1", generation=1)
+    engine.end("s1", generation=1)  # idempotent even after terminal shutdown
+
+
+def test_stale_generation_cannot_touch_reseeded_rollout(tmp_path):
+    engine, task = make_engine(tmp_path)
+    first = engine.seed("s1", task.task_id, generation=None)
+    second = engine.seed("s1", task.task_id, generation=first["generation"])
+    current = engine._rollouts["s1"]
+
+    with pytest.raises(CuaGymError, match="stale rollout generation"):
+        engine.tool("s1", "computer_observe", {"mode": "tree"}, generation=first["generation"])
+    with pytest.raises(CuaGymError, match="stale rollout generation"):
+        engine.verify("s1", generation=first["generation"])
+    engine.end("s1", generation=first["generation"])
+    assert engine._rollouts["s1"] is current and not current.env.closed
+
+    assert "e1 frame" in engine.tool(
+        "s1", "computer_observe", {"mode": "tree"}, generation=second["generation"]
+    )
+    assert engine.verify("s1", generation=second["generation"]) == 1.0
+
+
+def test_same_task_concurrent_seeds_singleflight_golden_build(tmp_path):
+    build_entered = threading.Event()
+    release_build = threading.Event()
+    build_calls = 0
+
+    class BlockingBuildEnv(FakeEnv):
+        def _build_golden(self):
+            nonlocal build_calls
+            build_calls += 1
+            build_entered.set()
+            assert release_build.wait(2)
+            return super()._build_golden()
+
+    task = make_task(tmp_path)
+    engine = ShinkenComputerEngine(
+        FakeProvider(),
+        {task.task_id: task},
+        env_factory=BlockingBuildEnv,
+        reap_interval_s=0,
+    )
+    first_thread, first_done, first_result = start_call(
+        lambda: engine.seed("s1", task.task_id, generation=None)
+    )
+    assert build_entered.wait(1)
+    second_thread, second_done, second_result = start_call(
+        lambda: engine.seed("s2", task.task_id, generation=None)
+    )
+    assert not second_done.wait(0.05)
+    assert build_calls == 1
+
+    release_build.set()
+    join_call(first_thread, first_done)
+    join_call(second_thread, second_done)
+    assert isinstance(first_result[0], dict) and isinstance(second_result[0], dict)
+    assert build_calls == 1
+    assert set(engine._rollouts) == {"s1", "s2"}
+    engine.close()
+
+
+def test_golden_cache_evicts_lru_and_deletes_each_snapshot_once(tmp_path):
+    provider = FakeProvider()
+    tasks = {task_id: make_task(tmp_path, task_id) for task_id in ("t1", "t2", "t3")}
+    engine = ShinkenComputerEngine(
+        provider,
+        tasks,
+        env_factory=FakeEnv,
+        max_goldens=2,
+        golden_ttl_s=0,
+        reap_interval_s=0,
+    )
+    for index, task_id in enumerate(("t1", "t2"), start=1):
+        seeded = engine.seed(f"s{index}", task_id, generation=None)
+        engine.end(f"s{index}", generation=seeded["generation"])
+    engine._goldens["t1"].last_used -= 10
+
+    seeded = engine.seed("s3", "t3", generation=None)
+    engine.end("s3", generation=seeded["generation"])
+    assert set(engine._goldens) == {"t2", "t3"}
+    assert provider.deleted == ["snap:t1"]
+
+    engine.close()
+    assert sorted(provider.deleted) == ["snap:t1", "snap:t2", "snap:t3"]
+    assert all(provider.deleted.count(snapshot) == 1 for snapshot in provider.deleted)
+
+
+def test_golden_in_reset_is_not_evicted_under_cache_pressure(tmp_path):
+    reset_entered = threading.Event()
+    release_reset = threading.Event()
+    provider = FakeProvider()
+
+    class BlockingT1ResetEnv(FakeEnv):
+        def reset(self):
+            if self.task.task_id == "t1":
+                reset_entered.set()
+                assert release_reset.wait(2)
+            return super().reset()
+
+    first_task = make_task(tmp_path, "t1")
+    engine = ShinkenComputerEngine(
+        provider,
+        {"t1": first_task},
+        env_factory=BlockingT1ResetEnv,
+        max_goldens=0,
+        golden_ttl_s=0,
+        reap_interval_s=0,
+    )
+    second_task_id = next(
+        f"t2-{index}"
+        for index in range(1000)
+        if engine._golden_lock(f"t2-{index}") is not engine._golden_lock("t1")
+    )
+    engine.tasks = {"t1": first_task, second_task_id: make_task(tmp_path, second_task_id)}
+    second_session = next(
+        f"s2-{index}"
+        for index in range(1000)
+        if engine._session_lock(f"s2-{index}") is not engine._session_lock("s1")
+    )
+
+    first_thread, first_done, first_result = start_call(
+        lambda: engine.seed("s1", "t1", generation=None)
+    )
+    assert reset_entered.wait(1)
+    second_thread, second_done, second_result = start_call(
+        lambda: engine.seed(second_session, second_task_id, generation=None)
+    )
+    join_call(second_thread, second_done)
+    assert isinstance(second_result[0], dict)
+    assert f"snap:{second_task_id}" in provider.deleted
+    assert "snap:t1" not in provider.deleted
+
+    release_reset.set()
+    join_call(first_thread, first_done)
+    assert isinstance(first_result[0], dict)
+    assert provider.deleted.count("snap:t1") == 1
+    engine.close()
+
+
+def test_seed_generation_cas_is_idempotent_and_rejects_stale_request(tmp_path):
+    created = []
+
+    class CountingEnv(FakeEnv):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            created.append(self)
+
+    task = make_task(tmp_path)
+    engine = ShinkenComputerEngine(
+        FakeProvider(), {task.task_id: task}, env_factory=CountingEnv, reap_interval_s=0
+    )
+    first = engine.seed("s1", task.task_id, generation=None)
+    retry = engine.seed("s1", task.task_id, generation=None)
+    assert retry["generation"] == first["generation"]
+    assert len(created) == 1
+
+    second = engine.seed("s1", task.task_id, generation=first["generation"])
+    assert second["generation"] != first["generation"]
+    assert len(created) == 2 and created[0].close_calls == 1
+    with pytest.raises(CuaGymError, match="stale rollout generation"):
+        engine.seed("s1", task.task_id, generation=first["generation"])
+    assert engine._rollouts["s1"].generation == second["generation"]
+    assert not created[1].closed
+    engine.close()
+
+
+def test_direct_engine_operations_require_generation_token(tmp_path):
+    engine, task = make_engine(tmp_path)
+    seeded = engine.seed("s1", task.task_id, generation=None)
+    with pytest.raises(TypeError, match="generation"):
+        engine.tool("s1", "computer_observe", {"mode": "tree"})
+    with pytest.raises(TypeError, match="generation"):
+        engine.verify("s1")
+    with pytest.raises(TypeError, match="generation"):
+        engine.end("s1")
+    assert engine.verify("s1", generation=seeded["generation"]) == 1.0
+
+
+def test_end_rejects_bool_and_float_generation_aliases(tmp_path, monkeypatch):
+    monkeypatch.setattr("shinken.integrations.nemo_gym.secrets.randbits", lambda bits: 1)
+    engine, task = make_engine(tmp_path)
+    seeded = engine.seed("s1", task.task_id, generation=None)
+    assert seeded["generation"] == 1
+
+    engine.end("s1", generation=True)
+    engine.end("s1", generation=1.0)
+    assert "s1" in engine._rollouts
+    engine.end("s1", generation=1)
+    assert "s1" not in engine._rollouts
+    engine.close()
+
+
+def test_snapshot_delete_failure_remains_owned_and_retries(tmp_path):
+    class FlakyDeleteProvider(FakeProvider):
+        def __init__(self):
+            super().__init__()
+            self.attempts: list[str] = []
+
+        def delete_snapshot(self, snapshot):
+            self.attempts.append(snapshot)
+            if len(self.attempts) == 1:
+                raise RuntimeError("transient delete failure")
+            super().delete_snapshot(snapshot)
+
+    provider = FlakyDeleteProvider()
+    task = make_task(tmp_path)
+    engine = ShinkenComputerEngine(
+        provider,
+        {task.task_id: task},
+        env_factory=FakeEnv,
+        max_goldens=0,
+        golden_ttl_s=0,
+        reap_interval_s=0,
+    )
+    seeded = engine.seed("s1", task.task_id, generation=None)
+    assert provider.attempts == ["snap:t1"]
+    assert engine._pending_snapshot_deletes == ["snap:t1"]
+
+    engine.maintenance_once()
+    assert provider.attempts == ["snap:t1", "snap:t1"]
+    assert provider.deleted == ["snap:t1"]
+    assert not engine._pending_snapshot_deletes
+    engine.end("s1", generation=seeded["generation"])
+    engine.close()
+
+
+def test_close_surfaces_permanent_cleanup_failure_and_allows_retry(tmp_path):
+    class ToggleDeleteProvider(FakeProvider):
+        def __init__(self):
+            super().__init__()
+            self.failing = True
+            self.attempts = 0
+
+        def delete_snapshot(self, snapshot):
+            self.attempts += 1
+            if self.failing:
+                raise RuntimeError("persistent delete failure")
+            super().delete_snapshot(snapshot)
+
+    provider = ToggleDeleteProvider()
+    engine, task = make_engine(tmp_path, provider=provider)
+    engine.seed("s1", task.task_id, generation=None)
+    with pytest.raises(CuaGymError, match="cleanup pending"):
+        engine.close()
+    assert engine._state == "closed"
+    assert engine._pending_snapshot_deletes == [f"snap:{task.task_id}"]
+
+    provider.failing = False
+    engine.close()
+    assert provider.deleted == [f"snap:{task.task_id}"]
+    assert not engine._pending_snapshot_deletes
+
+
+def test_rollout_close_failure_remains_owned_and_retries(tmp_path):
+    class FlakyCloseEnv(FakeEnv):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.close_attempts = 0
+
+        def close(self):
+            self.close_attempts += 1
+            if self.close_attempts == 1:
+                raise RuntimeError("transient close failure")
+            super().close()
+
+    task = make_task(tmp_path)
+    engine = ShinkenComputerEngine(
+        FakeProvider(), {task.task_id: task}, env_factory=FlakyCloseEnv, reap_interval_s=0
+    )
+    seeded = engine.seed("s1", task.task_id, generation=None)
+    env = engine._rollouts["s1"].env
+    engine.end("s1", generation=seeded["generation"])
+    assert engine._pending_env_closes == [env]
+
+    engine.maintenance_once()
+    assert env.closed and env.close_attempts == 2
+    assert not engine._pending_env_closes
+    engine.close()
+
+
+def test_generation_epoch_does_not_alias_across_engine_restart(tmp_path, monkeypatch):
+    epochs = iter((111, 222))
+    monkeypatch.setattr("shinken.integrations.nemo_gym.secrets.randbits", lambda bits: next(epochs))
+    task = make_task(tmp_path)
+
+    first_engine = ShinkenComputerEngine(
+        FakeProvider(), {task.task_id: task}, env_factory=FakeEnv, reap_interval_s=0
+    )
+    first = first_engine.seed("s1", task.task_id, generation=None)
+    first_engine.close()
+
+    second_engine = ShinkenComputerEngine(
+        FakeProvider(), {task.task_id: task}, env_factory=FakeEnv, reap_interval_s=0
+    )
+    second = second_engine.seed("s1", task.task_id, generation=first["generation"])
+    assert (first["generation"], second["generation"]) == (111, 222)
+    with pytest.raises(CuaGymError, match="stale rollout generation"):
+        second_engine.tool(
+            "s1", "computer_observe", {"mode": "tree"}, generation=first["generation"]
+        )
+    second_engine.close()
+
+
+def test_provider_cleanup_and_lifetime_config_fail_closed():
+    with pytest.raises(ValueError, match="delete_snapshot"):
+        ShinkenComputerEngine(object(), {})
+    for name in ("idle_ttl_s", "golden_ttl_s", "reap_interval_s"):
+        with pytest.raises(ValueError, match=rf"{name} must be finite"):
+            ShinkenComputerEngine(FakeProvider(), {}, **{name: float("nan")})
+        with pytest.raises(ValueError, match=rf"{name} must be >= 0"):
+            ShinkenComputerEngine(FakeProvider(), {}, **{name: -1})
+
+
+def test_close_can_retain_then_explicitly_delete_goldens(tmp_path):
+    provider = FakeProvider()
+    engine, task = make_engine(tmp_path, provider=provider)
+    seeded = engine.seed("s1", task.task_id, generation=None)
+    env = engine._rollouts["s1"].env
+
+    engine.close(delete_goldens=False)
+    assert env.closed
+    assert task.task_id in engine._goldens
+    assert not provider.deleted
+    assert engine.maintenance_once() == {"rollouts_reaped": 0, "goldens_evicted": 0}
+
+    engine.close(delete_goldens=True)
+    assert provider.deleted == [f"snap:{task.task_id}"]
+    assert not engine._goldens and not engine._pending_snapshot_deletes
+    engine.end("s1", generation=seeded["generation"])
+
+
+def test_multi_worker_resources_server_config_is_rejected():
+    _require_single_worker({"num_workers": 1})
+    _require_single_worker({})
+    with pytest.raises(CuaGymError, match="num_workers must be 1"):
+        _require_single_worker({"num_workers": 2})
+    with pytest.raises(CuaGymError, match="num_workers must be 1"):
+        _require_single_worker({"num_workers": "2"})
+    with pytest.raises(CuaGymError, match="num_workers must be 1"):
+        _require_single_worker(types.SimpleNamespace(num_workers=2))
+
+
+def test_nemo_adapter_threads_cookie_generation_through_routes(monkeypatch):
+    class Model:
+        def __init__(self, **values):
+            self.__dict__.update(values)
+
+        def model_dump(self):
+            return dict(self.__dict__)
+
+    class SimpleResourcesServer:
+        def model_post_init(self, context):
+            return None
+
+        def setup_webserver(self):
+            return None
+
+    class PlainTextResponse:
+        def __init__(self, content):
+            self.body = content
+
+    fastapi = types.ModuleType("fastapi")
+    fastapi.FastAPI = object
+    fastapi.Request = object
+    responses = types.ModuleType("fastapi.responses")
+    responses.PlainTextResponse = PlainTextResponse
+    nemo_gym = types.ModuleType("nemo_gym")
+    nemo_gym.__path__ = []
+    base = types.ModuleType("nemo_gym.base_resources_server")
+    base.BaseSeedSessionRequest = Model
+    base.BaseSeedSessionResponse = Model
+    base.BaseVerifyRequest = Model
+    base.BaseVerifyResponse = Model
+    base.SimpleResourcesServer = SimpleResourcesServer
+    server_utils = types.ModuleType("nemo_gym.server_utils")
+    server_utils.SESSION_ID_KEY = "sid"
+    for name, module in {
+        "fastapi": fastapi,
+        "fastapi.responses": responses,
+        "nemo_gym": nemo_gym,
+        "nemo_gym.base_resources_server": base,
+        "nemo_gym.server_utils": server_utils,
+    }.items():
+        monkeypatch.setitem(sys.modules, name, module)
+
+    calls = []
+
+    class Engine:
+        def seed(self, session_id, task_id, *, generation):
+            calls.append(("seed", session_id, task_id, generation))
+            return {"generation": 7 if generation is None else 8}
+
+        def tool(self, session_id, name, arguments, *, generation):
+            calls.append(("tool", session_id, name, arguments, generation))
+            return "observed"
+
+        def verify(self, session_id, *, generation):
+            calls.append(("verify", session_id, generation))
+            return 0.75
+
+    class Request:
+        def __init__(self):
+            self.session = {"sid": "session-1"}
+
+        async def json(self):
+            return {"mode": "tree"}
+
+    server_cls = build_resources_server_cls(lambda _config: Engine())
+    server = object.__new__(server_cls)
+    server._engine = Engine()
+    request = Request()
+    body = Model(responses_create_params={"metadata": {"task_id": "task-1"}})
+    asyncio.run(server.seed_session(request, body))
+    assert request.session["shinken_rollout_generation"] == 7
+    asyncio.run(server.seed_session(request, body))
+    assert request.session["shinken_rollout_generation"] == 8
+
+    response = asyncio.run(server._make_tool_route("computer_observe")(request))
+    assert response.body == "observed"
+    verified = asyncio.run(server.verify(request, Model(request_id="r1")))
+    assert verified.reward == 0.75 and verified.request_id == "r1"
+    assert calls == [
+        ("seed", "session-1", "task-1", None),
+        ("seed", "session-1", "task-1", 7),
+        ("tool", "session-1", "computer_observe", {"mode": "tree"}, 8),
+        ("verify", "session-1", 8),
+    ]
+
+    missing_generation = Request()
+    with pytest.raises(CuaGymError, match="no Shinken rollout generation"):
+        asyncio.run(server._make_tool_route("computer_observe")(missing_generation))
+    missing_generation.session["shinken_rollout_generation"] = True
+    with pytest.raises(CuaGymError, match="no Shinken rollout generation"):
+        asyncio.run(server.verify(missing_generation, Model()))
+
+
+def test_reentrant_close_is_rejected_instead_of_deadlocking(tmp_path):
+    engine, _task = make_engine(tmp_path)
+    with engine._operation():
+        with pytest.raises(CuaGymError, match="active engine operation"):
+            engine.close()
+    engine.close()
