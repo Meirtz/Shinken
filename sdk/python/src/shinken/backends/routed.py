@@ -50,8 +50,10 @@ def dispatch_action(env: Any, action: dict) -> dict:
     verb = action.get("verb")
     caps = getattr(env, "capabilities", None)
     advertised = set(getattr(caps, "verbs", []) or [])
-    # pointer family maps to click() with a button/count; gate on the base 'click' verb.
-    base = {"double_click": "click", "right_click": "click", "move": "click"}.get(verb, verb)
+    # Click variants map to click() with a button/count. ``move`` is deliberately NOT a
+    # click variant: falling back to click would turn a harmless pointer move into an
+    # unintended mutating action.
+    base = {"double_click": "click", "right_click": "click"}.get(verb, verb)
     if advertised and base not in advertised and verb not in advertised:
         raise UnsupportedProviderOperation(
             f"backend does not advertise verb {verb!r} (has: {sorted(advertised)})"
@@ -65,7 +67,10 @@ def dispatch_action(env: Any, action: dict) -> dict:
         count = 2 if verb == "double_click" else action.get("count", 1)
         return env.click(x=x, y=y, ref=ref, button=button, count=count)
     if verb == "move":
-        return env.click(x=x, y=y, ref=ref) if not hasattr(env, "move") else env.move(x=x, y=y)
+        move = getattr(env, "move", None)
+        if not callable(move):
+            raise UnsupportedProviderOperation("backend does not implement advertised verb 'move'")
+        return move(x=x, y=y)
     if verb == "drag":
         tx, ty = _point(action.get("to"))
         return env.drag(x=x, y=y, to_x=tx, to_y=ty)
@@ -155,10 +160,17 @@ class RoutedSession:
     # -- Sandbox-shaped surface (drive() drives this) --------------------------------
     @property
     def capabilities(self):
-        """Union of verbs across surfaces; ``per_source`` carries each surface's own set."""
+        """Union only the capabilities explicitly advertised by the routed surfaces.
+
+        ``per_source`` carries each surface's own verb set. Targets and observation types are
+        unions too: a routed session must not invent ``element_ref`` or ``tree`` support when
+        every underlying surface is pixel-only.
+        """
         from ..client import Capabilities
 
         verbs: set[str] = set()
+        targets: set[str] = set()
+        observation_types: set[str] = set()
         structured = False
         per_source: dict[str, list[str]] = {}
         for name, env in self._surfaces.items():
@@ -166,12 +178,14 @@ class RoutedSession:
             sv = list(getattr(c, "verbs", []) or [])
             per_source[name] = sv
             verbs.update(sv)
+            targets.update(getattr(c, "targets", []) or [])
+            observation_types.update(getattr(c, "observation_types", []) or [])
             structured = structured or bool(getattr(c, "structured_observation", False))
         cap = Capabilities(
             schema_version=1,
             verbs=sorted(verbs),
-            targets=["point_px", "element_ref"],
-            observation_types=["screenshot", "tree"],
+            targets=sorted(targets),
+            observation_types=sorted(observation_types),
             structured_observation=structured,
         )
         cap.per_source = per_source  # type: ignore[attr-defined]
