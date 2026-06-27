@@ -354,11 +354,11 @@ so the hot loop never prompts.
 | Piece | Status |
 |---|---|
 | Pixel tier: screenshot/screencast, X11 capture + XTEST input, `key`/`type_text`, fidelity knobs (`scope`/`max_long_edge`/`format`/`quality`) | **built** (Linux/X11, live CI) |
-| AT-SPI/CDP → normalized `Element` reference paths; SDK-side `element_ref` resolution | **built** (SDK-side; guest-side bails) |
+| AT-SPI/CDP → normalized `Element` reference paths; Linux guest stable refs + guest-side `element_ref` resolution; SDK-local AT-SPI/CDP fallback | **built** (Linux guest + SDK fallback) |
 | Coverage evidence (Qt/GTK/CDP/Electron/terminal/canvas; tree-diff ~1–3% of screenshot bytes) | **measured** (spike #2/E5) |
 | Typed in-guest `exec` channel (argv default + shell opt-in; buffered + streamed; group-kill timeouts; gateway-audited; PTY reserved) | **built** (G1; [aci-spec §3.4](aci-spec.md)) |
-| One dual-tier `observe`; stable-id + diff engine; settle-before-observe; act-returns-observation; app/window scoping; element verb family; serialization grammar; hint packs | **designed-only** (D13) |
-| macOS engine (ScreenCaptureKit + AXUIElement + CGEvent + TCC posture) | **designed-only** (D14) |
+| Stable-id + diff engine; settle-before-observe; act-returns-observation; `list_windows`; core element verbs | **built** (Linux/AT-SPI v1); combined dual-tier `observe`, app selector/`apps`, `set_text_selection`/`scroll_element`, and hint packs remain designed (D13) |
+| macOS engine | **capture + input v1 built** (CoreGraphics + CGEvent, TCC-honest, local-only proof); ScreenCaptureKit, AXUIElement observation, and co-use tier designed (D14) |
 | Windows engine (UIA + SendInput) | **designed-only** (D10) |
 | Browser Runtime (three tab surfaces, in-guest) | **designed-only**; CDP coverage basis measured (the built `browser-runtime` *backend* in the next row is the SDK-local adapter, not this runtime) |
 | Operation-layer backend contract (third-party drivers under the ACI; honest capability negotiation; `RoutedSession` CU↔BU) | **built** (D15; `shinken.backends` — `cua`/`mcp-computer`/`browser-runtime`/`e2b`/`routed`) |

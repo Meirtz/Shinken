@@ -28,9 +28,12 @@ ACI, action/observation, the **agent-runtime narrow waist** (Workload × Runtime
 checkpoint/fork/resume**, capability events, artifact refs, model adapters, and a tiny eval harness
 (incl. OSWorld-as-a-Workload + a golden→fork-N→score loop). Runtime **replay** / `.skn` was
 intentionally deferred (#216) and is **not** a v0.0.1 semantic.
+The built D15 operation-layer backend waist separately exposes Linux, macOS, Windows, and browser
+surfaces through the same capability-negotiated ACI, with proof depth varying by backend.
 The later phases do not introduce the meaning of Shinken; they optimize and harden the same
 semantics for fork density (CRIU memory + CoW fast tiers), WebRTC/SFU/NVENC media, multi-tenant
-control-plane operation, cross-substrate scheduling, and cross-OS production tiers.
+control-plane operation, cross-substrate scheduling, and managed first-party native cross-OS
+production tiers.
 
 ---
 
@@ -565,7 +568,7 @@ The design principle throughout (D12): an **open, self-hostable core** — reusa
 | **D7** | Eval = thin verifier-DAG orchestration on the runtime; `N≥5` CoW forks → pass@k / pass^k | §1.2 Eval Service; §5 step 8; §6 branching |
 | **D8** | Native streaming SDK core + optional MCP facade; never route the hot loop through MCP | §1.1 SDK + MCP facade; §1.4 Operator contract |
 | **D9** | Control plane = Fleet Manager + Action Gateway + dual-timer sessions + OTel-GenAI; sandbox = circuit-breakable | §1.2 control plane; §7 scaling + telemetry |
-| **D10** | Cross-platform: Linux first-class v1; Windows + macOS heavier v1 tiers; Android roadmap; one control plane + one Guest Runtime contract + one ACI | §3 matrix; §1.3 three-way packaging; §4 transport |
+| **D10** | Cross-platform now through built pluggable D15 backends + one ACI; Shinken-owned native engines are phased (Linux/X11 deepest CI evidence, macOS v1 local proof, Windows/Wayland follow-ups); Android roadmap | §3 matrix; §1.3 three-way packaging; §4 transport |
 | **D11** | GPU is opt-in; encode never on A100/H100/H200/B200 (use Ada L4 / L40S); two pools (vGPU density + MIG/Confidential Containers trusted) | §3 matrix notes; §7 distinct GPU pools; §8 GPU table row |
 | **D12** | Open self-hostable core + optional hosted commercial layer; vendor-neutral, NVIDIA-optimized where present | §8 build-on table; throughout |
 | **D13** | Operation layer: one observe contract (stable element ids → `~/+/-` diffs, settle-before-observe), act-returns-observation, element verb family — built for Linux/AT-SPI v1 | §1.3 ACI executor + observation engine; §2 observation rungs; §5 step 2 |

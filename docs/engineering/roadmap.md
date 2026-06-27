@@ -6,13 +6,13 @@
 > in [`10-phase0-plan.md`](v0.0.1-plan.md).
 > Sibling docs: [00 Vision](../design/vision.md) · [01 PRD](../design/prd.md) · [02 Architecture](../design/architecture.md) · [03 OSWorld teardown](../design/osworld-analysis.md) · [04 Landscape](../design/landscape.md) · [05 Tech decisions / ADRs](../design/tech-decisions.md) · [07 Glossary](../design/glossary.md) · [08 Isolation & capability note](../design/threat-model.md) · [09 Economics & build-vs-buy](../design/economics-and-build-vs-buy.md)
 
-> **What's actually built so far → [`STATUS.md`](status.md).** Phase 0's pixel slice (actions +
-> screenshot + real-time screencast + bandwidth levers + focused-window capture, Linux/X11) is
-> implemented and under live CI; the **a11y-coverage spike below has been measured (E5 — verdict:
-> hybrid per-window structured + pixel fallback; D3's structured-default stays Provisional)**, and
-> the operation layer that consumes it ([D13](../design/tech-decisions.md),
-> [operation-layer.md](../design/operation-layer.md)) is designed-only. This roadmap is the *plan*,
-> not the current state.
+> **What's actually built so far → [`STATUS.md`](status.md).** Shinken's Linux/X11 native path is
+> implemented under live CI, including the core D13 stable-id/diff/settle observation layer; a
+> macOS capture+input v1 has local-only proof. The D15 operation-layer backend waist is built across
+> Linux, macOS, Windows, and browser surfaces, with proof depth varying by backend. The
+> **a11y-coverage spike below has been measured (E5 — verdict: hybrid per-window structured + pixel
+> fallback; D3's structured-default stays Provisional)**; remaining D13/native-engine gaps are
+> listed in status.md. This roadmap is the *plan*, not the current state.
 
 Shinken's roadmap is deliberately **semantic-complete first, then optimize as we scale**. The
 scope is the full CUA infrastructure stack, not a narrow local demo. The first release,
@@ -21,11 +21,10 @@ dialects/adapters, GUI act/observe, layered observation, runtime state (checkpoi
 capabilities, artifact movement, and tiny eval evidence. (Runtime **replay** / `.skn` was
 intentionally deferred — see #216 — and is not a v0.0.1 semantic.) Later phases make those same semantics fast, forkable, multi-tenant,
 cross-substrate, and production-hardened. The completeness review behind the broader design is
-still blunt: the scale/cost assumptions — that a normalized accessibility (a11y) tree covers enough
-real applications to become the structured fast path, that copy-on-write (CoW) fork density is
-economically real, and that the dual-channel WebRTC latency budget actually closes — are **all
-vendor-quoted and unverified** as of 2026-06-02. So v0.0.1 proves the semantics; the spikes gate
-performance and cloud-scale commitments.
+still blunt: the a11y spike has measured uneven coverage and retained the hybrid fallback, while
+the scale/cost assumptions that copy-on-write (CoW) fork density is economically real and that the
+dual-channel WebRTC latency budget closes remain unproven by first-party evidence. So v0.0.1 proves
+the semantics; the remaining spikes gate performance and cloud-scale commitments.
 
 Every phase reconciles to the fifteen authoritative decisions **D1–D15** in [`05-tech-decisions.md`](../design/tech-decisions.md), and the plan reuses generally-available building blocks — the OSS `kubernetes-sigs/agent-sandbox` CRD, [HashiCorp Vault](https://www.hashicorp.com/en/blog/vault-enterprise-1-21-spiffe-auth-with-spire-cross-namespace-secret-import), and (for the optional pixel channel) [NICE DCV](https://docs.aws.amazon.com/dcv/latest/adminguide/what-is-dcv.html) or a custom WebRTC + hardware-encode pipeline — rather than rebuilding undifferentiated infrastructure. **Every speed/density/cost figure below is tagged (vendor-published, unverified)** unless a spike has produced a first-party number; see [`09-economics-and-build-vs-buy.md`](../design/economics-and-build-vs-buy.md) for the measurement plan that retires those tags.
 
@@ -77,8 +76,8 @@ gantt
     section Phase 2 - Eval + training-data users
     Eval layer + OSWorld-Verified + replay-as-training-data :p2, after p1, 150d
 
-    section Phase 3 - Cross-OS
-    Windows + macOS tiers          :p3, after p2, 180d
+    section Phase 3 - Native cross-OS fleet tiers
+    Windows + managed macOS tiers  :p3, after p2, 180d
 
     section Phase 4 - Cloud scale
     Ultra-high concurrency + multi-tenant + optional GPU/NVENC + GPU-TEE :p4, after p3, 240d
@@ -92,7 +91,7 @@ gantt
 | **0 / v0.0.1** | Feature-complete local/reference CUA runtime | D2, D3, D6, D7, D8, D13 | none (local Docker/QEMU) | runtime-state support (checkpoint/fork/resume) advertised + Docker disk-tier reference impl; contract tests; a11y coverage measured, not a pixel-loop blocker (`.skn` audit ledger deferred to Phase 1+, #216) |
 | **1** | Performance and productionization: Linux fast-fork + streaming + panel | D1, D3, D4, D6, D9 | `agent-sandbox` CRD, Vault, NICE DCV or WebRTC+NVENC | a11y-coverage, CoW-fork density, dual-channel latency |
 | **2** | Eval + OSWorld-Verified + first eval/training users | D5, D7, D8 | `agent-sandbox` CRD (parallel replicas) | reuses Phase 1 spikes |
-| **3** | Cross-OS (Windows + macOS) | D1, D10, D14 | Apple hardware pool; Windows licensing | macOS-reset feasibility, Windows-licensing |
+| **3** | First-party native Windows + managed macOS fleet tiers | D1, D10, D14 | Apple hardware pool; Windows licensing | macOS-reset feasibility, Windows-licensing |
 | **4** | Cloud ultra-high-concurrency + optional GPU/TEE | D4, D9, D11 | NICE DCV, GPU-TEE/NRAS/Confidential Containers, vGPU/MIG | NVENC-density, GPU-TEE-attestation |
 | **Later** | Android + multi-player | D10 (Android), scope decision | redroid/Cuttlefish | touch-schema; multi-cursor |
 
@@ -290,9 +289,14 @@ resource-scoping), and the Control Panel human UI.
 
 ---
 
-## Phase 3 — Cross-OS (Windows + macOS tiers)
+## Phase 3 — First-party native Windows + managed macOS fleet tiers
 
-**Objective:** Deliver the cross-platform desktop promise ([D10](../design/tech-decisions.md)) by adding the **heavier, longer-lived** Windows and macOS tiers behind the *same* control plane, the *same* Guest Runtime contract, and the *same* ACI ([D10](../design/tech-decisions.md)). These tiers come after the eval layer because they are licensing-gated and low-density, and the earliest users (Linux/OSWorld-first) do not need them on day one.
+**Objective:** Deepen Shinken-owned native runtime and managed-fleet coverage by adding the
+**heavier, longer-lived** Windows and macOS tiers behind the *same* control plane, Guest Runtime
+contract, and ACI ([D10](../design/tech-decisions.md)). Cross-platform desktop reach already exists
+through the built D15 backend layer; this phase removes dependence on external drivers for those
+managed tiers. It follows the eval layer because Windows licensing and macOS density are gating
+constraints, while current first-party native validation is concentrated on Linux/X11.
 
 ### Goals
 

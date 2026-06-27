@@ -1,9 +1,11 @@
 # Spike — macOS sandbox automation readiness (entitlements + TCC)
 
 **Issue:** #43 · **Decisions it grounds:** [D6](../design/tech-decisions.md) (capabilities) and
-[D10](../design/tech-decisions.md) (substrate/provider) · **Status:** research spike — macOS is
-**designed-only / not built** (the proven slice is Linux/X11; see [status.md](status.md)). This
-document is the readiness analysis #43 requires, drawn from public Apple developer documentation.
+[D10](../design/tech-decisions.md) (substrate/provider) · **Status:** historical research spike.
+At the time of this analysis the native macOS runtime was not built. It has since been superseded
+by a capture+input v1 with local-only proof; AX observation and managed-pool readiness remain
+designed. See [status.md](status.md) for current truth. This document preserves the public-source
+readiness analysis #43 required.
 
 ## The question
 
@@ -124,8 +126,9 @@ circuit-breakable dependency elsewhere (D9).
 
 ## Non-goals and fallback
 
-- **Non-goals (v0.0.1):** no macOS runtime is built; this is the readiness design only. No
-  attempt to bypass SIP/TCC or to self-grant — Shinken is honest about the boundary, not a tool to
+- **Non-goals at the time of the spike (v0.0.1 planning):** this was readiness design only; the
+  later capture+input v1 is tracked in [status.md](status.md). No attempt to bypass SIP/TCC or to
+  self-grant — Shinken is honest about the boundary, not a tool to
   defeat it. Unmanaged, unsigned silent pre-granting is out of scope (it is not possible by design).
 - **Fallback when a permission cannot be pre-granted:**
   - Missing **Accessibility** or **Screen Recording** → the Sandbox reports *not automation-ready*;

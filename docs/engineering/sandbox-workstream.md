@@ -12,7 +12,9 @@ explicitly; do not imply Docker/qcow2 can deliver Firecracker-class fork semanti
 
 ## Scope
 
-The immediate scope is a low-concurrency local provider layer around today's Linux/X11 slice:
+This workstream covers Shinken-owned substrate/provider depth, not the already-built D15
+cross-platform backend waist. Its immediate scope is a low-concurrency local provider layer around
+the Linux/X11 native path:
 
 - `DockerLocalProvider` starts the existing `shinken/sandbox-linux` image, waits for `shinkend`,
   records lifecycle timings, and cleans up containers.
@@ -23,7 +25,8 @@ The immediate scope is a low-concurrency local provider layer around today's Lin
   return `unsupported` rather than pretending reset is a fork.
 
 Out of scope for this first pass: Firecracker or QEMU fleet implementation, Kubernetes control
-plane, WebRTC/SFU, cross-OS guests, GPU scheduling, and production multi-tenancy.
+plane, WebRTC/SFU, first-party native Windows/macOS guest tiers, GPU scheduling, and production
+multi-tenancy.
 
 ## Provider Capability Contract
 

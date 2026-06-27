@@ -35,14 +35,17 @@ loop-closure evidence, not a convergence claim.
 | a stack with its own driver | the same ACI runs **over your system**: trycua/cua, codex-style MCP desktop servers, CDP browsers, and E2B desktops plug in *under* the typed interface as backends (D15) |
 
 It is built for that training loop first, and the two properties that make it fast — **runtime
-state** (checkpoint/fork/resume, so every `reset()` is a fork) and **fleet scale** (thousands
+state** (checkpoint/fork/resume: on fork-capable stateful substrates, `reset()` restores or spawns
+from a checkpoint; other backends advertise `supports_fork=False`) and **fleet scale** (thousands
 of live environments per process) — are the same ones an eval harness or an agent product
 needs, so benchmarks, cloud browsers, VNC desktops, and model adapters all plug into the same
-typed interface: **Shinken is the runtime underneath**. And it is honest about maturity: what
-is real today is a **measured Linux/X11 vertical slice under live CI** — every claim below
-links to first-party data you can rerun ([`benchmarks/`](benchmarks)) or audit
-([`docs/benchmarks/`](docs/benchmarks/README.md)); design-only parts are marked, here and in
-the [status map](docs/engineering/status.md).
+typed interface: **Shinken is the runtime underneath**. Its cross-platform reach is built today
+through pluggable CU/BU backends behind that ACI. First-party native-runtime implementation and
+automated validation are deepest on Linux/X11; the native macOS v1 has local-only proof, and
+backend/platform proof depth is stated explicitly. Every measured claim below links to data you
+can rerun ([`benchmarks/`](benchmarks)) or audit
+([`docs/benchmarks/`](docs/benchmarks/README.md)); design-only parts are marked, here and in the
+[status map](docs/engineering/status.md).
 
 <p align="center">
   <img src="docs/assets/shinken-agent-sandbox-overview.png" alt="Shinken — agent sandbox runtime" width="860">
@@ -93,9 +96,10 @@ with shinken.connect(token=os.environ["SHK_TOKEN"]) as env:  # authenticated ACI
     shot = env.screenshot(format="jpeg", quality=80)  # opt-in bandwidth lever
 ```
 
-<p align="center"><img src="docs/assets/hero-three-platforms.png" width="860" alt="One typed interface, every desktop: Linux, macOS, Windows and mobile screens driven by the same ACI verbs — type_text, click e7, observe, fork x16"></p>
-<p align="center"><sub>Illustration — but the loop it depicts is the real one: the same 22-verb ACI
-(<code>type_text</code> · <code>click e7</code> · <code>observe</code> · <code>fork ×16</code>) drives every surface above.</sub></p>
+<p align="center"><img src="docs/assets/hero-three-platforms.png" width="860" alt="One typed, capability-negotiated ACI across Linux, macOS, Windows, and browser surfaces"></p>
+<p align="center"><sub>Illustration: the same typed ACI reaches every surface above. Each backend
+advertises its exact verbs, targets, and observation tiers; <code>fork ×N</code> requires a
+stateful sandbox substrate.</sub></p>
 
 **Runtime state is the product.** Reach a state once, checkpoint it live, spawn replicas that
 *prove* they inherited it:
@@ -239,7 +243,9 @@ underneath is the variable, and you pick it per platform:
   [open-codex-computer-use](https://github.com/iFurySt/open-codex-computer-use) — in as the
   `mcp-computer` backend.
 - **Windows** — **open-source** drivers through the same interface today: the `cua` backend
-  (VM) or the `e2b` backend (cloud desktop); the native engine (UIA tier) is designed.
+  with a Windows-capable upstream provider, or the `mcp-computer` backend over a cross-platform
+  UIA server. Shinken's native Windows engine (UIA tier) is designed. The `e2b` backend is a
+  cloud **Linux** desktop, not a Windows path.
 - **Browser** — any CDP browser through the `browser-runtime` backend: pixels, input, and
   semantic node ids.
 
@@ -274,8 +280,9 @@ python scripts/macos_smoke.py        # non-destructive: readiness, capture, hove
 
 ## Architecture
 
-One typed ACI; the substrate under it is interchangeable. Solid = built (Linux/X11 in CI; macOS
-v1 local). Dashed = designed, not yet built.
+One typed ACI; the substrate under it is interchangeable. Solid = built (cross-platform D15
+backends; Linux/X11 native path in CI; macOS native v1 with local-only proof). Dashed = designed,
+not yet built.
 
 ```mermaid
 flowchart TB
@@ -440,18 +447,19 @@ Shinken's wedge is the unclaimed intersection of the axes below. Survey date
 
 | | cross-OS desktop | runtime fork | structured + pixel obs | eval on same runtime | streaming |
 |---|---|---|---|---|---|
-| **Shinken** | **Linux native (CI) + macOS v1; macOS/Windows reachable today via backends** (cua · mcp-computer, same ACI); native Win/Wayland designed | **disk/filesystem + privileged CRIU process-memory tiers built + measured**; sub-ms CoW designed | hybrid (coverage measured) | **yes — `run_eval_forked` built** | PNG/JPEG/delta built; WebRTC designed |
+| **Shinken** | **Linux native (CI) + macOS v1; built macOS/Windows adapter paths** (cua · mcp-computer, same ACI; external live parity pending); native Win/Wayland designed | **disk/filesystem + privileged CRIU process-memory tiers built + measured**; sub-ms CoW designed | hybrid (coverage measured) | **yes — `run_eval_forked` built** | PNG/JPEG/delta built; WebRTC designed |
 | trycua/cua | yes | cloud-only — local `snapshot()` raises (measured); local verbs = `docker pause` / stopped-VM clone | a11y trees | recreates env per reset | VNC + polled PNG (measured: 174 ms/step vs our 2.9 ms) |
 | E2B desktop | Linux | cloud pause/resume, 1:1 (API-key required — no keyless/local mode, measured) | none | n/a | raw VNC |
 | Morph | Linux | **ms-class CoW (vendor-published P99 ~1.3 ms)** | none | n/a | n/a |
 | OSWorld | Linux (in practice) | slow revert, no fork | full-XML per step | *is* the benchmark | full-frame PNG poll |
 | browser SaaS | no (Chromium only) | no | DOM | no | WebRTC/HLS |
 
-On **cross-OS**: rather than wait for a native engine on every OS, Shinken reaches all three
-desktops *now* through the operation-layer backends (D15) — the same typed ACI driving a
+On **cross-OS**: rather than wait for a native engine on every OS, Shinken has built adapter paths
+for all three desktops through the operation-layer backends (D15) — the same typed ACI driving a
 cross-platform AX/UIA/AT-SPI server (`mcp-computer`, e.g. [open-codex-computer-use](https://github.com/iFurySt/open-codex-computer-use)) or a
-macOS/Linux/Windows VM (`cua`). Linux is native and CI-gated; macOS has a native v1 too; the
-native Windows/Wayland engines are the designed follow-ups. The waist is the portability layer.
+macOS/Linux/Windows VM (`cua`). The adapter contracts are fixture-tested, but real cua/mcp live
+integration is still pending. Linux is native and CI-gated; macOS has a native v1 too; the native
+Windows/Wayland engines are the designed follow-ups. The waist is the portability layer.
 
 The cua and e2b cells marked *measured* are first-party, rerunnable numbers — both stacks as
 shipped, same host, same window, pinned versions

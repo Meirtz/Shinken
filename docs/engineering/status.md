@@ -2,24 +2,28 @@
 
 > Date: 2026-06-27 · Scope: what is **actually built and proven** vs **designed-only** vs
 > **unvalidated**. The design corpus (vision/PRD/architecture/ADRs/roadmap) intentionally describes
-> the full CUA infrastructure stack; the *implementation* is the first well-tested local slice of
-> that stack. This page is the honest map between target scope and current code. When in doubt, this
+> the full CUA infrastructure stack. The built implementation spans a cross-platform D15 backend
+> waist and Shinken-owned native runtimes; the deepest well-tested native slice is local Linux/X11.
+> This page is the honest map between target scope and current code. When in doubt, this
 > file describes what exists today; the roadmap describes what v0.0.1 and later releases must add.
 >
 > Audience: users and implementers · Role: implementation reality check. This is the source of truth
 > for what exists today.
 
-The one-line summary: **Shinken currently ships a Linux/X11-first local environment/runtime
-data plane: typed ACI, pixel + AT-SPI observation, Docker filesystem state, a privileged CRIU
-process-memory implementation pending live revalidation, fork-native gym/eval, and protocol
-adapters. It does not yet ship a distributed fleet control plane, durable trajectory/artifact
-service, token-exact policy/trainer integration, CoW/microVM fast tier, or native
-Windows/Wayland/full-macOS runtime.**
+The one-line summary: **Shinken currently ships a cross-platform, backend-pluggable CUA
+environment/runtime and rollout data plane behind one typed ACI. Built operation-layer backends
+reach Linux, macOS, Windows, and browser surfaces; proof depth varies by backend. Shinken's
+deepest first-party native-runtime implementation and automated validation are currently on
+Linux/X11, with a native macOS v1 supported by local-only proof. It does not yet ship a
+distributed fleet control plane, durable trajectory/artifact service, token-exact policy/trainer
+integration, CoW/microVM fast tier, or native Windows/Wayland/full-macOS runtime.**
 
-## ✅ Implemented & proven (Linux / X11)
+## ✅ Implemented and validated capabilities
 
-The Proof column states the actual evidence level. Most rows have unit and live coverage;
-exceptions such as the post-hardening CRIU path are called out explicitly.
+The Proof column states the actual evidence level for each capability and platform. Linux/X11 has
+the deepest native live-CI coverage; macOS native v1 has local-only proof; the cross-platform
+backends have fixture coverage plus backend-specific live gates. Exceptions such as external
+drivers not yet live-run and the post-hardening CRIU path are called out explicitly.
 
 | Capability | State | Proof |
 |---|---|---|
@@ -81,9 +85,10 @@ exceptions such as the post-hardening CRIU path are called out explicitly.
 
 ## 🔵 Designed-only — documented, **not implemented**
 
-These appear in the vision/PRD/architecture/README in present-ish tense, but **no working code exists yet**:
+The remaining pieces named below are not implemented, even where an adjacent capability or backend
+path is already built:
 
-- **Cross-platform**: the **Windows tier** (nothing exists). **macOS now has a v1 native engine** — capture + input built with local-only proof (see Partial above; no mac CI, AX observation not built). Even on Linux, capture/input is **X11 only** — **Wayland** (the modern Linux default) is unaddressed and would break XTEST/GetImage.
+- **First-party native runtime coverage**: the cross-platform backend layer is built (D15, see the implemented table above); what is still designed-only is Shinken's **native Windows engine** and **Wayland engine**. **macOS has a native v1 engine** — capture + input built with local-only proof (see Partial above; no mac CI, AX observation not built). The current native Linux capture/input path is **X11 only**; Wayland would require a different implementation than XTEST/GetImage.
 - **Structured / accessibility observation (ADR D3) — the Linux/AT-SPI guest engine v1 is now BUILT** (see Implemented above: `observe` + stable ids + diff + settle + guest-side element_ref + `invoke_action`/`set_value`, live-smoked against zenity). Still designed-only within D3: the **in-guest CDP backend** (browser/Electron trees — today `cdp.py` remains SDK-local), Set-of-Marks, Windows UIA / macOS AX, and the structured-*default* posture itself — the spike's verdict (**hybrid**: weak GTK coverage, canvas measured at zero, E5) stands, so structure is an upgrade path over the screenshot baseline, not the default.
 - **Operation layer (D13, [operation-layer.md](../design/operation-layer.md)) — the core contract is now BUILT for Linux v1**: the **stable-id observation engine** (`observe` with `~/+/-` diff rendering, line budget + full-tree fallback, typed stale-ref + re-observe hint, settle-before-observe), **act-returns-observation** (per-action `observe` on every mutating verb), the coordinate-tier completions (`drag`, `mouse_down`/`mouse_up`), the element verbs (`invoke_action`, `set_value` — the canon's `invoke_element_action`/`set_element_value`, shipped under the shorter wire names), the `list_windows` query, and the **G2+G3 desktop verbs** (`clipboard_get`/`clipboard_set`, `launch_app`, `activate_window` — see Implemented above). Still designed-only within D13: `set_text_selection`, `scroll_element`, the per-app observe *selector* (`observe {app}`), the `apps` query, and hint packs.
 - **macOS engine (D14) — the capture+input v1 slice is now BUILT** (`shinkend --backend macos`: CoreGraphics one-shot/raw capture + CGEvent pointer/keyboard/scroll/drag under the Executor trait, TCC-gated readiness; local-only proof via `scripts/macos_smoke.py` — no mac CI). v1 is **exclusive-desktop semantics**: input posts to the global HID tap and moves the real cursor. Still designed-only within D14: the **co-use tier** (per-app background input via `CGEventPostToPid` + a software cursor overlay for the human; until it lands, co-use is served by the `mcp-computer` backend, D15), the **AXUIElement observation tier** (incl. the Chromium/Electron accessibility-enable attributes, permissions-pending observe = typed keep-alive), and the ScreenCaptureKit upgrade path ([macos-engine.md](macos-engine.md); readiness analysis: [spike-macos-readiness.md](spike-macos-readiness.md)).

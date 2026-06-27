@@ -192,7 +192,8 @@ aarch64-unknown-linux-musl`) to stay untouched.
 
 - **AX tree (`AXUIElement`) observation**: out of scope. The Linux a11y engine (#2/D3)
   defines the structured-observation contract; the macOS implementation follows it.
-  `element_ref` targets bail, exactly like the X11 backend today.
+  `element_ref` targets bail on macOS native v1; Linux/AT-SPI is the built reference
+  implementation for guest-side ref resolution.
 - **ScreenCaptureKit**: the capture upgrade path above (also unlocks dirty-rect
   screencasts and cursor-change events).
 - **Event-driven capture**: `damage_cursor()` is `None` → screencast loops poll-capture
