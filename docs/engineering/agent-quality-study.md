@@ -168,8 +168,8 @@ tiers) plus ~600 prompt tokens of text; with a reasoning-class model budget ~1�
 completion tokens per call. Pilot-measured per-episode token costs are recorded in
 `agent_quality_pilot.json` (`tokens` and per-episode `prompt_tokens`/
 `completion_tokens`) — multiply by ~640/12 to project the full bill for a given
-endpoint. Wall time is model-latency-dominated; the sandbox side is ~1–2 s per episode
-(warm-pool fork ~0.1 s, launcher+readiness ~1 s).
+endpoint. Wall time is model-latency-dominated. Sandbox time must be read from each run's
+receipts; the historical ~0.1 s live-graft result is excluded because that path is disabled.
 
 ## 9. Limitations
 

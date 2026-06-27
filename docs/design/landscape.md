@@ -413,9 +413,10 @@ tier nobody else manages. This survey originally named three load-bearing risks 
 first-party data (canon §7-8); two are retired. **Measured 2026-06 (E5):** the a11y-coverage
 assumption behind the structured bandwidth thesis (D3) — verdict hybrid per-window structured +
 pixel fallback, so D3 stays Provisional, not structured-by-default. **Resolved 2026-06:** the
-absence of first-party fork/density/latency numbers — the fork ladder (disk fork 0.60 s, CRIU live
-process+memory fork 0.40 s, warm-pool graft 0.12 s), the 3,096-live-session single-thread client
-plane, and the 13.4 ms act+observe step (~14× vs OSWorld's guest server as shipped) are published
+absence of first-party fork/density/latency numbers — the fork ladder's current Docker filesystem
+path is 0.60 s, while CRIU 0.40 s and live-graft 0.12 s are explicitly historical pre-hardening
+rows (graft disabled; atomic CRIU rerun pending). The 3,096-protocol-session single-thread client
+plane and 13.4 ms act+observe step (~14× vs OSWorld's guest server as shipped) are published
 first-party in [Shinken benchmarks](../benchmarks/README.md). Still open: the macOS/Windows
 fast-reset infeasibility (plus Windows guest licensing). Those open items, plus the
 isolation & capability boundaries and the economics, are carried into [05 Tech Decisions](tech-decisions.md), the [08 Isolation & capability note](threat-model.md), and [09 Economics & Build-vs-Buy](economics-and-build-vs-buy.md).

@@ -54,6 +54,12 @@ photographic *stills*; motion/video content remains unmeasured locally.
 
 ## 1. Runtime-state checkpoint / fork / resume (S4 — `bench_fork.py`)
 
+> **Historical-result warning (2026-06-27):** current code disables the live-target warm
+> graft because pool-hit/pool-miss equivalence was unproven, and CRIU now holds the process
+> tree stopped across dump + filesystem commit. Warm rows below remain historical artifacts;
+> CRIU latency/fidelity must be rerun on the atomic implementation. The classic disk row is
+> still representative.
+
 The differentiating loop — reach a state once, checkpoint it, mint N live replicas — measured
 on the Docker disk tier, with **every replica marker-verified** (`state_verify=marker`: the
 golden marker file is read back out of each fork; a timing row only counts if the fork was
@@ -66,8 +72,8 @@ CRIU fork would pass it), and **fs** (an in-guest filesystem-delta digest — sh
 sorted path+content list under `/home` + `/tmp`, volatile boot artifacts excluded — vs the
 golden's at checkpoint; covers file paths+contents, misses metadata/paths outside those
 trees/process state). 16 cold boots, 16 checkpoints, verified forks across fan-outs N ∈ {1, 2, 4, 8, 16, 32},
-in two modes: **classic** (boot a fresh container from the committed image) and **warm-pool
-graft** (S4b: claim a pre-booted base container and apply the checkpoint's filesystem delta —
+with historical data from two modes: **classic** (boot a fresh container from the committed image) and **warm-pool
+graft** (S4b, now disabled: claim a pre-booted base container and apply the checkpoint's filesystem delta —
 `docker diff` adds/changes tarred in, deletions removed — files-only, the same state tier as
 `docker commit`).
 
@@ -103,23 +109,23 @@ with zero flakes.
 ![warm-pool graft vs cold paths](../assets/bench/fork_resume_pool.png)
 
 **Reads:**
-- **Checkpointing a live sandbox is sub-second (~0.53 s) and non-disruptive** — cheap enough
-  to take per task-step in an eval/RL loop. With the warm pool on, checkpoint also captures
-  the filesystem delta (+~0.32 s) so later forks can skip the boot entirely.
+- **Checkpointing a live sandbox is sub-second (~0.53 s) and non-disruptive** in the tracked
+  disk run. The historical pool mode additionally captured a filesystem delta (+~0.32 s), but
+  current code rejects that live-graft mode.
 - **A classic disk-tier fork is now ~0.60 s** — after the readiness fix (§9), the cost is genuinely the committed
   layer instantiation + desktop bring-up, not the readiness theater that used to hide it
   (8.57 s before). Fan-out wall-clock stays strongly sublinear in N (0.42 s → 2.10 s for
   1 → 16 replicas, ~0.13 s/replica at N=16), with the rare boot flake isolated to honest
   per-replica infra rows.
-- **A warm-pool fork is ~0.12 s to a USABLE, state-verified replica** (p50 117.9 ms, p90
-  137.1 ms over 30 grafted replicas) — claim + delta graft + guest-ready barrier. The pool
+- **The now-disabled warm-pool experiment measured ~0.12 s to a marker-verified replica**
+  (p50 117.9 ms, p90 137.1 ms over 30 grafted replicas) — claim + delta graft + guest-ready barrier. The pool
   turns fork latency into a capacity question: bursts within the pool (≤K=8 here) get
   ~0.1 s forks (the suite waits for the replenisher between rounds, so K=8 serves the N=8
   round fully); bursts beyond it degrade gracefully to the ~1.7 s classic path
   (`pool_graft` and the round's `pool_at_start` are recorded per row, so the modes never
   mix silently — measured hit rate at these round sizes: 0.48). Each warm container costs
   one background cold boot and one idle desktop's RSS.
-- **Semantic limits of the graft (on purpose):** files only — identical state tier to
+- **Why the graft is now disabled:** files only — nominally the same state tier as
   `docker commit` (no process/memory state; that is the CRIU memory tier, below). The delta
   is applied onto a LIVE base desktop: live runtime state (`/run`, `/dev`, X sockets/locks)
   is excluded, and concurrent guest writes to grafted paths are last-writer-wins. A snapshot
@@ -127,23 +133,21 @@ with zero flakes.
 
 ### 1b. The CRIU memory rung (S4c — `SHINKEN_BENCH_FORK_MODE=memory`)
 
-The same suite against the **built CRIU memory tier** (`CriuDockerProvider`,
-`snapshot_kind="process"` — productized from the positive spike,
-[`spikes/criu-memory-tier/`](../../spikes/criu-memory-tier/REPORT.md)): checkpoint =
-`criu dump --leave-running` of the supervised desktop tree **plus** `docker commit` of the
-donor (the donor keeps running — a true checkpoint); fork = a fresh **privileged** container
+The current CRIU tier (`CriuDockerProvider`, `snapshot_kind="process"`) checkpoints with
+`criu dump --leave-stopped`, commits the rootfs while that tree is still stopped, then resumes
+the donor; restore uses a fresh **privileged** container
 booted idle off the committed image, PID counter parked, then `criu restore`. On top of the
 golden-file check, **every replica must pass the process-memory verifier**: a python planted
 inside the checkpointed tree (via `launch_app`, so it is a child of `shinkend` in the dumped
 session) holds a counter that exists only in its heap; after restore the SAME pid must answer
 with the same nonce and a counter ≥ the pre-dump reading. A files-only restore has no such
-process at all — this rung measures state the disk tier and the warm-pool graft *cannot*
-carry. Short-config validation run (REPS=8, N ∈ {1, 4, 8}; quiet host):
+process at all. The table below is the **historical pre-hardening run** (REPS=8,
+N ∈ {1, 4, 8}); it must be regenerated for the stopped-window implementation:
 
 | leg (memory tier) | p50 | n |
 |---|---:|---:|
 | cold boot → usable (criu image) | 0.233 s | 8 |
-| checkpoint (`criu dump --leave-running` + `docker commit`, donor stays live) | **0.70 s** | 8 |
+| checkpoint (old `--leave-running` + later commit path) | **0.70 s** | 8 |
 | fork → usable (privileged boot + `criu restore` + connect + first obs) | **0.40 s** | 13 |
 
 | memory fan-out from ONE checkpoint | wall-clock | wall / replica | file + memory verified |
@@ -155,13 +159,14 @@ carry. Short-config validation run (REPS=8, N ∈ {1, 4, 8}; quiet host):
 ![cold boot vs memory-tier fork, and fan-out scaling](../assets/bench/fork_resume_memory.png)
 
 **Reads:**
-- **A memory-tier fork is ~0.4 s to a usable replica that carries LIVE process+memory
+- **The old path measured ~0.4 s to a usable replica carrying process+memory
   state** — open apps, mid-task processes, X11 clients, in-heap program state — proven per
   replica by the in-memory marker (13/13 here, plus the live smoke `scripts/criu_smoke.py`).
   The warm-pool graft is ~3× faster to *a* replica (~0.12 s) but files-only; this rung is
   what "resume exactly where the agent was" actually costs on commodity Docker.
-- **Checkpointing stays sub-second (~0.70 s) and the donor keeps running** (`--leave-running`)
-  — the donor's marker keeps beating across the dump. Established TCP connections are closed
+- **The historical checkpoint measured ~0.70 s and the donor kept running.** The hardened
+  path instead stops the tree for dump + filesystem commit and then resumes it; its latency
+  awaits a privileged rerun. Established TCP connections are closed
   at dump (`--tcp-close`) by design: agent WebSocket sessions reconnect (the documented
   `resume_stream` semantics); replicas restore the *listening* socket and accept new
   connections within ~1–2 ms of restore.

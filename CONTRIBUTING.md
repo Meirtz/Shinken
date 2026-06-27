@@ -41,8 +41,8 @@ names, internal URLs, and confidential markers are not. CI enforces this
 
 ## Local dev (as code lands)
 
-- Rust: `cd shinkend && cargo fmt && cargo clippy --all-targets -- -D warnings && cargo test`
-- Python: `cd sdk/python && pip install -e . && ruff check . && pytest -q`
+- Rust: `cd shinkend && cargo fmt --all -- --check && cargo clippy --locked --all-targets -- -D warnings && cargo test --locked --all`
+- Python: `cd sdk/python && pip install -e ".[dev]" && ruff check . && ruff format --check . && pytest -q`
 - Schemas: `python3 -c "import json,glob;[json.load(open(f)) for f in glob.glob('schema/**/*.json',recursive=True)]"`
 - Guard: `bash scripts/check-no-internal.sh`
 

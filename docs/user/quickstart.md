@@ -12,16 +12,17 @@ Current implementation: Linux/X11 reference slice (plus the local-only macOS cap
 engine, `--backend macos`). Authoritative built-vs-designed map:
 [`../engineering/status.md`](../engineering/status.md).
 
-- `shinkend` WebSocket Guest Runtime — the **22-verb ACI**: pointer/keyboard (incl. `drag`,
+- `shinkend` WebSocket Guest Runtime — the **22-verb maximum ACI**: pointer/keyboard (incl. `drag`,
   `mouse_down`/`mouse_up`), screenshot + real-time screencast + focused-window capture,
-  typed in-guest `exec` (argv/shell, buffered + streamed), `clipboard_get`/`clipboard_set`,
+  typed in-guest `exec` (argv/shell, buffered + streamed; default-off), `clipboard_get`/`clipboard_set`,
   `launch_app`, `activate_window`, `list_windows`.
 - **Structured observation** (Linux/AT-SPI guest engine v1): `observe` with stable element
   ids + tree diffs + settle; `element_ref` targets, `invoke_action`/`set_value`.
 - Python SDK and CLI (sync + async, pipelined `step()`), TypeScript control-surface SDK,
   model adapters (Anthropic/OpenAI/Kimi-VL) and XML/dialect action parsing.
-- Checkpoint / fork / resume: Docker disk tier, warm-pool graft, and the opt-in
-  **CRIU memory tier** (privileged-only) — plus the fork-native gym (`reset()` = fork)
+- Checkpoint / fork / resume: Docker disk tier and the opt-in **CRIU memory tier**
+  (privileged-only; atomic consistency window). The former live warm-pool graft is disabled
+  until equivalence is proven — plus the checkpoint-native gym (`reset()` = restore)
   and `run_eval_forked`.
 - Operation-layer **backends** (D15): drive the same ACI over trycua/cua, a codex-style MCP
   desktop server, a CDP browser, or an E2B desktop (`shinken.backends`).
@@ -36,11 +37,15 @@ Windows/Wayland engines, and the macOS AX observation tier.
 From the repository root:
 
 ```bash
-cargo run --manifest-path shinkend/Cargo.toml
+export SHK_TOKEN="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
+SHINKEND_TOKEN="$SHK_TOKEN" cargo run --manifest-path shinkend/Cargo.toml
 ```
 
-By default `shinkend` binds `127.0.0.1:8765`. Binding a non-loopback address requires
-`SHINKEND_TOKEN`.
+By default `shinkend` binds `127.0.0.1:8765`, but loopback is not an authentication
+boundary: every TCP listener requires `SHINKEND_TOKEN`. Copy the same value into the other
+shell as `SHK_TOKEN`. Browser `Origin` headers are rejected unless exactly allowlisted via
+`SHINKEND_ALLOWED_ORIGINS`; in-guest process execution is enabled only with
+`SHINKEND_ENABLE_EXEC=1` (provider-managed Docker sandboxes set this explicitly).
 
 ## Install The Python SDK
 
@@ -54,15 +59,16 @@ pip install -e ".[dev]"
 In another shell:
 
 ```bash
-shinken connect
+SHK_TOKEN="<same token>" shinken connect
 ```
 
 Or from Python:
 
 ```python
+import os
 import shinken
 
-env = shinken.connect()
+env = shinken.connect(token=os.environ["SHK_TOKEN"])
 print(env.platform)
 print(env.screen_size())
 print(env.capabilities)
@@ -74,9 +80,10 @@ env.close()
 Pointer and keyboard actions work when `shinkend` can reach an X11 display.
 
 ```python
+import os
 import shinken
 
-with shinken.connect() as env:
+with shinken.connect(token=os.environ["SHK_TOKEN"]) as env:
     env.move(x=300, y=200)
     env.click(x=300, y=200)
     env.type_text("hello from Shinken")

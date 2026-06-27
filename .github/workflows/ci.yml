@@ -154,7 +154,9 @@ jobs:
           xvfb_ready=0
           for _ in $(seq 1 50); do xdotool getmouselocation >/dev/null 2>&1 && { xvfb_ready=1; break; }; sleep 0.1; done
           [ "$xvfb_ready" = 1 ] || { echo "::error::Xvfb (:99) never became ready"; exit 1; }
-          SHINKEND_ADDR=127.0.0.1:8765 ./shinkend/target/debug/shinkend &
+          TOKEN=$(openssl rand -hex 32)
+          export SHK_TOKEN="$TOKEN"
+          SHINKEND_ADDR=127.0.0.1:8765 SHINKEND_TOKEN="$TOKEN" ./shinkend/target/debug/shinkend &
           sleep 1
           python scripts/m1_smoke.py 127.0.0.1:8765
           eval "$(xdotool getmouselocation --shell)"
@@ -244,7 +246,8 @@ jobs:
           pip install -e sdk/python
           TOKEN=$(openssl rand -hex 16)
           trap 'docker rm -f shk >/dev/null 2>&1 || true' EXIT
-          docker run -d --name shk -p 127.0.0.1:8765:8765 -e SHINKEND_TOKEN="$TOKEN" shinken/sandbox-linux
+          docker run -d --name shk -p 127.0.0.1:8765:8765 \
+            -e SHINKEND_TOKEN="$TOKEN" -e SHINKEND_ENABLE_EXEC=1 shinken/sandbox-linux
           shk_ready=0
           for _ in $(seq 1 60); do
             SHK_TOKEN="$TOKEN" python - <<'PY' && { shk_ready=1; break; } || sleep 1

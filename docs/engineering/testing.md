@@ -4,16 +4,11 @@ Audience: implementers working on v0.0.1.
 
 This page summarizes the current test surface and the v0.0.1 contract tests still needed.
 
-## Pre-Public Test Policy
+## Merge Test Policy
 
-Until Shinken is ready to go public, **the required gate is local CI-equivalent testing**.
-GitHub Actions may still exist in the repository as a future/public mirror, but it is not the
-authoritative merge gate while the project is pre-public. A PR is considered test-ready when the
-maintainer ran the relevant local commands below and included the command list/results in the PR
-description.
-
-After public launch, the same checks should run remotely again on every PR. The local commands stay
-as the contributor fast path and as the fallback when remote CI is unavailable.
+**GitHub Actions is the authoritative gate for the exact commit being merged.** Local commands are
+the contributor fast path and should use the same locked/formatting flags, but do not override a red
+or missing remote job. Required checks should be enforced by branch protection.
 
 ## Local Gate Commands
 
@@ -35,9 +30,9 @@ make sandbox-bench
 Rust only:
 
 ```bash
-cargo fmt --manifest-path shinkend/Cargo.toml -- --check
-cargo clippy --manifest-path shinkend/Cargo.toml --all-targets -- -D warnings
-cargo test --manifest-path shinkend/Cargo.toml --all
+cargo fmt --manifest-path shinkend/Cargo.toml --all -- --check
+cargo clippy --locked --manifest-path shinkend/Cargo.toml --all-targets -- -D warnings
+cargo test --locked --manifest-path shinkend/Cargo.toml --all
 ```
 
 Python only:
@@ -46,6 +41,7 @@ Python only:
 cd sdk/python
 pip install -e ".[dev]"
 ruff check .
+ruff format --check .
 pytest -q
 ```
 
@@ -106,7 +102,7 @@ asserts element ids are stable across two `observe`s, clicks the entry **by elem
 The CRIU memory-tier smoke (`scripts/criu_smoke.py`, **local-only — needs Docker + privileged
 containers + the `shinken/sandbox-linux-criu` image**, not wired into CI) proves the
 process-memory claim end-to-end: it plants an in-heap counter inside the checkpointed tree,
-checkpoints (`criu dump --leave-running` + commit), asserts the donor keeps serving AND its
+checkpoints (`criu dump --leave-stopped` + commit in one consistency window + donor resume), asserts the donor keeps serving AND its
 counter keeps beating, restores a replica, and asserts the replica answers with the **same pid,
 same nonce, and a counter ≥ the pre-dump reading** — the check no files-only tier can pass —
 plus the golden-file inheritance check. Offline unit coverage for the tier is

@@ -98,8 +98,31 @@ union so the *same* verb serves pixel models, normalized models, and element-ref
 target = oneof{ point_px{x,y} | point_norm{x,y∈0..1} | element_ref{ref, source} }
 ```
 
-Every observation carries a `CoordinateSpace {origin, w, h, dpr}`; coordinate normalization lives in
-the protocol, once. v0 verbs (**22**, matching the `Verb` enum in
+Every coordinate-aware one-shot screenshot observation (including observe-after-act) carries this
+frame descriptor (the field is optional on the wire only for compatibility with older/legacy
+backends):
+
+```jsonc
+"display": {
+  "origin": "top-left",
+  "w": 1920, "h": 1080, "dpr": 1.0,                 // global point_px action space
+  "source_rect": {"x": 320, "y": 180, "w": 800, "h": 600}, // pre-scale global crop
+  "delivered": {"w": 400, "h": 300}                // pixels actually shown to the model
+}
+```
+
+`point_px` and `point_norm` on the ACI wire remain **global-screen actions**. When a target instead
+comes from a delivered frame, the SDK maps a delivered pixel `p` to
+`source_origin + floor(p * source_size / delivered_size)`; normalized coordinates map across
+`[0, source_size - 1]`, so `1.0` lands on the final source pixel. This covers both a scoped window
+and `max_long_edge` downscaling without inferring scale from image dimensions. Callers must provide
+the exact observation used by the model (`frame=`); absent metadata is a typed client error, never a
+guessed click. X11 reports the root-window offset for `active_window`/`window:<id>` and `dpr=1`.
+Backends whose capture and actuation units have not been proven equivalent (notably scoped Retina
+capture) omit `display` rather than fabricate a mapping.
+
+Coordinate normalization therefore lives in the protocol/SDK boundary, once. v0 verbs (**22**,
+matching the `Verb` enum in
 [`../../schema/aci.schema.json`](../../schema/aci.schema.json) and the runtime's advertised
 capabilities):
 
@@ -526,7 +549,9 @@ schema-ready shape (`ViewObservation`):
 { "type": "observation", "kind": "view", "seq": 312,
   "app": { "name": "Text Editor", "pid": 4242,
            "window": { "id": "w:18", "title": "Untitled", "key": true } },
-  "space": { "w": 1280, "h": 800 },                       // CoordinateSpace, as today
+  "display": { "origin": "top-left", "w": 1920, "h": 1080, "dpr": 1,
+               "source_rect": {"x": 320, "y": 180, "w": 1280, "h": 800},
+               "delivered": {"w": 1280, "h": 800} },
   "image": { "format": "jpeg", "quality": 80, "w": 1280, "h": 800, "ref": "<bytes>" },
   "tree": { "mode": "full",
             "elements": [ /* Element[] — existing $defs.Element, refs stable in-session */ ],

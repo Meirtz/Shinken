@@ -3,9 +3,9 @@
 Audience: implementers working on the current milestone.
 
 This section tracks **what is built, what v0.0.1 must still implement, and how release correctness is
-verified**. Until Shinken goes public, correctness is verified by local CI-equivalent commands rather
-than GitHub Actions; remote CI is a future/public mirror of the same gate. This section should stay
-aligned with the GitHub milestone and issues.
+verified**. GitHub Actions is the authoritative merge gate; local commands mirror its core locked
+lint/test flags as a contributor preflight. This section should stay aligned with the GitHub milestone
+and issues.
 
 ## Current Engineering Sources
 
