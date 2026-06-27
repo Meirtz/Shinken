@@ -10,14 +10,17 @@ For the canonical glossary, see [`../design/glossary.md`](../design/glossary.md)
 Shinken is the open infrastructure stack for computer-use agents. It aims to provide one substrate
 for production agent deployment, evaluation, and trajectory-data capture.
 
-v0.0.1 implements the complete semantics locally/reference scale. Later versions optimize the same
-semantics for performance, fork density, WebRTC streaming, multi-tenant control plane, and cross-OS
-production tiers.
+v0.0.1 implements the complete semantics at local/reference scale. The D15 backend waist already
+connects Linux, macOS, Windows, and browser surfaces through one ACI, with backend-specific proof
+depth. Later versions optimize the same semantics for performance, fork density, WebRTC streaming,
+the multi-tenant control plane, and managed first-party native cross-OS production tiers.
 
 ## Sandbox
 
-A Sandbox is one isolated guest computer: a Linux desktop today, later Windows/macOS/Android tiers
-behind the same ACI. A Session is a live attach/run against a Sandbox.
+A Sandbox is one capability-described computer surface behind the ACI. Today that can be a
+Shinken-managed Linux/X11 desktop, the native macOS v1, or a Linux/macOS/Windows/browser surface
+reached through a D15 backend. A Session is a live attach/run against a Sandbox. Native Windows,
+Wayland, and full macOS AX engines remain separate first-party implementation gaps.
 
 ## Guest Runtime
 

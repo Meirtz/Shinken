@@ -8,8 +8,9 @@ current canonical plan at [`../engineering/v0.0.1-plan.md`](../engineering/v0.0.
 
 ## What You Can Run Today
 
-Current implementation: Linux/X11 reference slice (plus the local-only macOS capture+input
-engine, `--backend macos`). Authoritative built-vs-designed map:
+Current implementation: cross-platform operation-layer backends behind one ACI, plus Shinken's
+Linux/X11 native reference runtime and the local-only macOS capture+input engine
+(`--backend macos`). Backend/platform proof depth varies. Authoritative built-vs-designed map:
 [`../engineering/status.md`](../engineering/status.md).
 
 - `shinkend` WebSocket Guest Runtime — the **22-verb maximum ACI**: pointer/keyboard (incl. `drag`,
@@ -30,7 +31,7 @@ engine, `--backend macos`). Authoritative built-vs-designed map:
 
 Not implemented yet: production capability enforcement (the control-plane layer),
 `.skn` recording/replay, the cloud control plane, the sub-ms CoW fork fast tier,
-Windows/Wayland engines, and the macOS AX observation tier.
+Shinken-owned native Windows/Wayland engines, and the macOS AX observation tier.
 
 ## Run The Guest Runtime
 

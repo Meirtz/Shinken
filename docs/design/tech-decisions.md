@@ -39,7 +39,7 @@
 | **D7** | Eval layer = thin orchestration on the runtime, inverting OSWorld | Accepted (phased) | Typed verifier DAG, golden snapshot per task, N≥5 forked replicas, readiness probes |
 | **D8** | Interfaces = native streaming SDK core + optional MCP facade | Accepted | One IDL → py/ts SDKs; MCP facade at two altitudes; never the hot loop over MCP |
 | **D9** | Control plane = Fleet Manager + Action Gateway | Accepted | Warm pools + fork-on-demand; single auth→rate→budget→policy chokepoint; dual-timer sessions |
-| **D10** | Cross-platform = one control plane, one Guest Runtime contract, one ACI | Accepted (phased) | Linux first-class v1; Windows + macOS heavier v1 tiers; Android roadmap |
+| **D10** | Cross-platform = one ACI across pluggable backends; one Guest Runtime contract for native engines | Accepted (phased native engines) | Cross-platform D15 backends built; native Linux/X11 has the deepest CI evidence, native macOS v1 has local proof, native Windows/Wayland are phased follow-ups; Android roadmap |
 | **D11** | GPU = optional acceleration tier | Provisional | Opt-in; encode **never on A100/H100**; vGPU (density) + MIG/CoCo (trusted); NICE DCV is the build-vs-buy fork |
 | **D12** | Business = open self-hostable core + optional hosted commercial layer | Accepted | No lock-in; runtime-state wedge; trajectory export as byproduct; optimized for NVIDIA where present |
 | **D13** | Operation layer = one dual-tier observe + stable element identity/diffs + an element verb family | Accepted (phased) | One observe returns pixels + tree + focus; stable ids → `~/+/-` diffs; settle-before-observe; act-returns-observation; per-app scoping; physical events first — design canon in [operation-layer.md](operation-layer.md) |
@@ -50,7 +50,11 @@
 
 ## D1 — Isolation: tiered, substrate-pluggable, routed by `(OS × needs-GPU × needs-fast-fork)`
 
-**Status:** Accepted (phased). The Linux fork tier is v1; the GPU and cross-OS tiers ship as heavier, longer-lived tiers and grow across the roadmap. The "no single VMM" finding is firm; per-tier VMM selection (notably crosvm vs QEMU-microvm for the desktop tier) is gated on a first-party PoC.
+**Status:** Accepted (phased). The current Shinken-managed fast-fork tier is Linux; GPU and native
+Windows/macOS managed substrate tiers are heavier, longer-lived roadmap phases. This is a
+substrate/runtime-state distinction, not the product's platform boundary: D15 backends already
+provide cross-platform reach. The "no single VMM" finding is firm; per-tier VMM selection (notably
+crosvm vs QEMU-microvm for the desktop tier) is gated on a first-party PoC.
 
 ### Context
 
@@ -517,9 +521,10 @@ Running a computer-use platform at ultra-high concurrency is a **fleet-of-idle-V
 
 ---
 
-## D10 — Cross-platform: one control plane, one Guest Runtime contract, one ACI
+## D10 — Cross-platform: one ACI across pluggable backends and native Guest Runtimes
 
-**Status:** Accepted (phased). Linux v1; Windows + macOS v1 heavier tiers; Android roadmap.
+**Status:** Accepted. Cross-platform backend operation is built; Shinken-owned native engines are
+phased, and Android remains roadmap.
 
 ### Context
 
@@ -527,7 +532,12 @@ Running a computer-use platform at ultra-high concurrency is a **fleet-of-idle-V
 
 ### Decision
 
-**Linux is first-class in v1** (the fork tier). **Windows + macOS ship in v1** as heavier, longer-lived tiers; **Android is roadmap.** Above the per-OS divergence sit exactly three unifying contracts:
+**Cross-platform operation is available now** through the built D15 backend layer (`cua`,
+`mcp-computer`, `browser-runtime`, `e2b`, and CU↔BU `RoutedSession`) behind one typed ACI.
+Shinken-owned native-engine rollout is phased: **Linux/X11 currently has the deepest
+implementation and automated validation**, **macOS has a capture+input v1 with local-only proof**,
+and native **Windows/Wayland** engines remain follow-ups. **Android is roadmap.** Above the native
+per-OS divergence sit exactly three unifying contracts:
 
 - **One** control plane (D9),
 - **One** Guest Runtime (`shinkend`) contract — the in-Sandbox daemon executing the ACI and emitting the event stream,
@@ -660,9 +670,12 @@ The market punishes closed single-modality products (Scrapybara sunset). The ope
 ## D13 — Operation layer: one observe contract, stable element identity, and an element verb family
 
 **Status:** Accepted (phased). The contract is committed design canon (the full specification is
-[`operation-layer.md`](operation-layer.md)); the guest-side observation engine, the new verbs, and
-the per-OS engines are **designed-only, not built** ([status.md](../engineering/status.md)). The
-coverage evidence underneath it is first-party (spike #2/E5).
+[`operation-layer.md`](operation-layer.md)). Its Linux/AT-SPI core is built: stable element ids,
+tree diffs, settle-before-observe, act-returns-observation, guest-side element actions, and the
+core desktop verbs. D15's cross-platform backend waist is also built. The combined dual-tier
+observe shape, remaining app-scoped verbs/hint packs, in-guest CDP runtime, and native UIA/AX
+engines remain phased; see [status.md](../engineering/status.md). The coverage evidence underneath
+the hybrid default is first-party (spike #2/E5).
 
 ### Context
 
@@ -751,9 +764,10 @@ CDP pixels for web tasks) is outlined in the same document as designed/phase-nex
 
 ## D14 — macOS engine substrate: ScreenCaptureKit + AXUIElement + CGEvent under TCC
 
-**Status:** Accepted (phased). Designed-only — no macOS runtime is built (the proven slice is
-Linux/X11); this ADR fixes the API substrate the Phase-3 macOS engine implements, so the operation
-layer (D13) is specified against real platform surfaces. Readiness analysis:
+**Status:** Accepted (phased). A native macOS capture+input v1 is built with CoreGraphics/CGEvent
+and local-only proof. ScreenCaptureKit capture, AXUIElement observation, and the co-use tier remain
+designed follow-ups; this ADR fixes their API substrate so the operation layer (D13) is specified
+against real platform surfaces. Readiness analysis:
 [macOS readiness spike](../engineering/spike-macos-readiness.md).
 
 ### Context
@@ -936,7 +950,7 @@ The fifteen decisions interlock; the load-bearing couplings:
 - **The `tool_runner` boundary is where D2 and D6 meet:** code-as-action and every privileged action route through the controlled API that enforces the Cedar decision and the egress allowlist before executing.
 - **The Action Gateway (D9) is the single place D6 is enforced:** auth → rate → budget → Cedar → dispatch.
 - **GPU (D11) is the one tier that breaks the fork invariant (D1):** it is snapshot-light by physics (VFIO/vGPU state is non-migratable), opt-in, and the encode hardware must be physically separate from any A100/H100 AI fleet.
-- **The operation layer (D13) is where D2 and D3 meet at the per-step loop:** the element verb family extends the D2 tagged-union, and the stable-id/diff/settle observation engine is how D3's structured track is actually consumed; the per-OS engines (Linux today, macOS per D14, Windows per D10) implement one contract.
+- **The operation layer (D13) is where D2 and D3 meet at the per-step loop:** the element verb family extends the D2 tagged-union, and the stable-id/diff/settle observation engine is how D3's structured track is actually consumed; first-party native engines (Linux/AT-SPI built, macOS capture+input v1 built with AX pending, Windows pending) and the D15 cross-platform backends implement one contract at different capability levels.
 - **The backend contract (D15) is the substrate seam (D1) reused at the operation layer:** a third-party driver plugs in as a `SandboxProvider` returning a duck-typed Sandbox, and honest capability negotiation is what lets the *same* typed ACI admit a pixels-only backend without the fork-native state (D1) and structured-observe (D3/D13) that distinguish Shinken's own — consumers degrade loudly off `capabilities`, never silently.
 - **a11y coverage (D3)** — the formerly load-bearing unverified assumption — is now **first-party measured** (spike #2/E5: hybrid per-window verdict; D3's structured-default stays Provisional); **every remaining "(vendor-published, unverified)"** number in this document still requires the first-party measurement plan before it anchors an SLA.
 

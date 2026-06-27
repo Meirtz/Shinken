@@ -334,7 +334,9 @@ RPC path is not acceptable for hot binary transfer.
 
 ### In scope (v1)
 
-- **Guests:** Linux (first-class fork tier), Windows + macOS (heavier longer-lived tiers) — D1, D10.
+- **Platform reach:** cross-platform D15 backends behind one ACI; Shinken-owned native guests use a
+  Linux fast-fork tier plus heavier, longer-lived Windows/macOS tiers as those engines mature —
+  D1, D10, D15.
 - **One** control plane + **one** Guest Runtime contract + **one** ACI across all OSes (D10).
 - Screenshot-first observation with structured upgrades, dual-channel streaming, event-sourced branchable replay, the sandbox Capability Manager, the eval layer, and the native SDK + MCP facade (D2–D9).
 - GPU as an **opt-in** acceleration wedge (encode tier + accelerated guest tier); NICE DCV as a build-vs-buy pixel channel (D11).

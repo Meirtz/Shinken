@@ -5,7 +5,8 @@ reasons behind it.
 
 This section is the **design canon**. It is allowed to describe the full Shinken scope: the complete
 CUA infrastructure stack across runtime, control plane, control panel, replay/data, capabilities,
-eval, substrates, streaming, and future cross-OS/GPU tiers.
+eval, substrates, streaming, and future managed native cross-OS/GPU tiers. The D15 backend waist
+already supplies cross-platform reach; native runtime and fleet depth are separate maturity axes.
 
 ## Canonical Design Docs
 

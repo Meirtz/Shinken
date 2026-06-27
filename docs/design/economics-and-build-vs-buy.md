@@ -416,7 +416,9 @@ The asymmetry between tiers is the whole point of the economics:
 *thin* warm pool and lean on fast replenishment — warm cost is small. **Windows/macOS/GPU tiers:**
 because there is no fast fork, the pool *is* the capacity, so you pay for standing idle instances and
 the sizing collapses to "expected concurrent sessions, plus burst." This is the cost reason the canon
-(**D1**/**D10**) treats Linux as first-class and Windows/macOS/GPU as heavier, scarcer tiers.
+(**D1**/**D10**) treats the Linux fast-fork tier as low-latency/high-density and the
+Windows/macOS/GPU managed tiers as heavier and scarcer; it is a substrate-economics distinction,
+not the product's platform boundary.
 
 ### 4.3 Idle economics dominate — auto-suspend is the lever
 

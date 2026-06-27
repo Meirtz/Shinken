@@ -61,6 +61,7 @@ Core semantics that must be demonstrable (most are covered by the jobs above):
 ## Explicitly NOT required for v0.0.1
 
 Performance/latency targets, CoW-fork density, dual-channel WebRTC/SFU/NVENC, GPU-TEE,
-multi-tenant control plane, and cross-OS (Windows/macOS) + Wayland. These are gated on
+multi-tenant control plane, and Shinken-owned native Windows/Wayland plus managed macOS fleet
+tiers. Cross-platform D15 backends are already built; these native/fleet tiers are gated on
 their own spikes and later milestones; the a11y-coverage spike (#2) likewise gates how
 fast structured observation becomes the default fast path.

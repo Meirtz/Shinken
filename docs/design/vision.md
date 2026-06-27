@@ -101,8 +101,9 @@ capability events, artifact transfer, deterministic tasks, and a tiny verifier h
 exist and be tested at local scale. The **`.skn` recording ledger was deferred (#216/#217)** and
 returns as the supporting audit ledger that runtime-state checkpoints branch from — runtime state
 leads, replay follows. Later milestones are not where the core meaning appears; they are where the
-same semantics become fast, forkable, multi-tenant, cross-substrate, cross-OS, and
-production-hardened.
+same semantics become fast, forkable, multi-tenant, cross-substrate, and production-hardened with
+deeper first-party native cross-OS fleet coverage. Cross-platform backend reach is already part of
+the current operation-layer waist (D15).
 
 ## 4. The five headline outcomes (as user value)
 
@@ -197,7 +198,7 @@ The single organizing principle: **production agent deployment and evaluation ru
    └──────────────────────────────────────────────┘  capability manager
 ```
 
-This inverts the OSWorld world, where the benchmark *was* the platform and production was an afterthought. Built-in conformance ships task + grader + environment **versioned together** — OSWorld-Verified, WindowsAgentArena ([arxiv.org/abs/2409.08264](https://arxiv.org/abs/2409.08264)), AndroidWorld ([arxiv.org/abs/2405.14573](https://arxiv.org/abs/2405.14573)), WebArena/VisualWebArena/WebVoyager — because graders are tested artifacts, not stringly-typed afterthoughts (the lesson of OSWorld's 300+ grader bugs). Phasing (see [06 Roadmap](../engineering/roadmap.md)): **local single-VM v0 → Linux fast-fork cloud tier → eval layer at concurrency → Windows/macOS heavier tiers → GPU/trusted tiers.** Linux is first-class v1; Windows and macOS ship v1 as heavier, longer-lived tiers; Android is roadmap (D10).
+This inverts the OSWorld world, where the benchmark *was* the platform and production was an afterthought. Built-in conformance ships task + grader + environment **versioned together** — OSWorld-Verified, WindowsAgentArena ([arxiv.org/abs/2409.08264](https://arxiv.org/abs/2409.08264)), AndroidWorld ([arxiv.org/abs/2405.14573](https://arxiv.org/abs/2405.14573)), WebArena/VisualWebArena/WebVoyager — because graders are tested artifacts, not stringly-typed afterthoughts (the lesson of OSWorld's 300+ grader bugs). The operation-layer backend waist already reaches Linux, macOS, Windows, and browser surfaces through one ACI (D15), with backend-specific proof depth. Native/fleet phasing (see [06 Roadmap](../engineering/roadmap.md)) is separate: **local native runtime → Linux fast-fork cloud tier → eval layer at concurrency → first-party Windows/managed macOS tiers → GPU/trusted tiers.** Current first-party native implementation and automated validation are strongest on Linux/X11; macOS capture+input v1 has local proof; native Windows/Wayland and full macOS AX remain follow-ups. Android is roadmap (D10).
 
 ## 9. Explicit non-goals
 

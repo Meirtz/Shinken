@@ -2,18 +2,21 @@
 
 Shinken is an **AI-native, cross-platform sandbox runtime + control plane + control panel for
 computer-use agents** — the runtime that benchmarks and harnesses plug into. See [README.md](README.md) and
-[`docs/`](docs/README.md). The design corpus is complete; the **implementation is a proven
-Linux/X11 vertical slice** — handshake/auth, pointer+keyboard actions, pixel observation
-(screenshot + real-time screencast + bandwidth levers + focused-window capture),
-Docker disk-tier checkpoint/fork/resume + the privileged-only **CRIU memory tier**
-(live process+memory forks) + `run_eval_forked`, a local capability-gateway shim,
-the **guest structured-observation engine v1 (Linux/AT-SPI: `observe` with stable element ids,
-tree-text diff, settle; guest-side `element_ref` actions + `invoke_action`/`set_value`)**,
-and a Python SDK, all under live CI, plus a **macOS engine v1** (native CoreGraphics/CGEvent
+[`docs/`](docs/README.md). The implementation has two distinct maturity axes. The
+**cross-platform operation-layer backend waist is built**: `cua`, `mcp-computer`,
+`browser-runtime`, and `e2b` expose computer-use and browser surfaces behind the same typed ACI,
+and `RoutedSession` composes CU↔BU. Proof depth varies by external driver. Shinken's own
+**first-party native runtime is deepest on Linux/X11 under live CI** — handshake/auth,
+pointer+keyboard actions, pixel observation (screenshot + real-time screencast + bandwidth levers
+and focused-window capture), Docker disk-tier checkpoint/fork/resume + the privileged-only
+**CRIU memory tier** (live process+memory forks) + `run_eval_forked`, a local
+capability-gateway shim, and the **guest structured-observation engine v1 (Linux/AT-SPI:
+`observe` with stable element ids, tree-text diff, settle; guest-side `element_ref` actions +
+`invoke_action`/`set_value`)**. A **macOS engine v1** also exists (native CoreGraphics/CGEvent
 backend in `shinkend`; capture+input built, local-only proof — no mac CI, AX designed-only;
 [docs/engineering/macos-engine.md](docs/engineering/macos-engine.md)). **Production permission
-enforcement, `.skn` recording/playback, the control plane, and the rest of cross-platform
-(Windows, Wayland, macOS AX) are designed-only and not yet built**. The a11y-coverage spike (#2)
+enforcement, `.skn` recording/playback, the control plane, and Shinken-owned native Windows,
+Wayland, and full macOS AX engines are designed-only and not yet built**. The a11y-coverage spike (#2)
 has been **measured (E5) — verdict: hybrid per-window structured + pixel fallback, so D3's
 structured-default stays Provisional** (canvas is a measured zero with a change-blind diff,
 Electron is measured on both CDP and forced AT-SPI; games/native-GL still unmeasured; the
@@ -65,8 +68,9 @@ checkout). Anything committed is world-readable.
 
 ## Status & next steps
 
-**Built & proven (Linux/X11):** M0 transport/auth + M1 act-and-observe are done — the **22-verb
-ACI surface** (pointer+keyboard incl. `drag`/`mouse_down`/`mouse_up`, act-returns-observation via
+**Built native-runtime core and cross-platform backend waist:** on Shinken's first-party
+Linux/X11 native path, M0 transport/auth + M1 act-and-observe are done — the **22-verb ACI
+surface** (pointer+keyboard incl. `drag`/`mouse_down`/`mouse_up`, act-returns-observation via
 the per-action `observe` argument, the `observe`/`invoke_action`/`set_value` structured family,
 the G2+G3 desktop verbs — `clipboard_get`/`clipboard_set` via native X11 selections (no xclip),
 `launch_app`, `activate_window` (EWMH + WM-less fallback) — `list_windows`, and the **typed
@@ -127,8 +131,8 @@ The immediate work (per the recalibrated priorities):
    shim), `.skn` recording/playback, the sub-ms CoW fork fast tier
    (the CRIU **memory tier is now BUILT** — `CriuDockerProvider`, productized from the positive
    `spikes/criu-memory-tier/` spike; only the CoW/microVM fast tier remains designed),
-   control plane + concurrency, dual-channel WebRTC/NVENC, and the rest of cross-platform —
-   **Windows** + **Wayland** + macOS AX/ScreenCaptureKit (the **macOS engine v1**
+   control plane + concurrency, dual-channel WebRTC/NVENC, and the rest of the first-party native
+   runtime coverage — **Windows** + **Wayland** + macOS AX/ScreenCaptureKit (the **macOS engine v1**
    capture+input slice IS built, local-only: `shinkend --backend macos`,
    [docs/engineering/macos-engine.md](docs/engineering/macos-engine.md)).
 4. **CoW-fork density** and **dual-channel WebRTC latency** remain Phase-1 boundary spikes (D1/D4).
