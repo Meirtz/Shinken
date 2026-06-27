@@ -308,31 +308,68 @@ def test_docker_memory_parser():
 
 
 def test_redact_cmd_masks_secret_env():
-    # #153: secret env values are masked when a command is rendered for an error/log
+    # #153: every Docker -e/--env value is masked, including names without a conventional
+    # secret suffix. Inline long/short flag forms follow the same rule.
     masked = _redact_cmd(
         [
             "docker",
             "run",
             "-e",
             "SHINKEND_TOKEN=deadbeef",
+            "--env",
+            "DATABASE_URL=postgres://user:pass@db/prod",
+            "--env=AUTHORIZATION=Bearer sensitive-auth",
+            "-e=SESSION_COOKIE=sensitive-cookie",
             "-e",
-            "api_token=lowercase-secret",
+            "PASSWD=hunter2",
+            "-e",
+            "PUBLIC_SETTING=not-secret-but-still-private",
             "img",
         ]
     )
-    assert "deadbeef" not in masked
-    assert "SHINKEND_TOKEN=***" in masked
-    assert "lowercase-secret" not in masked
-    assert "api_token=***" in masked
+    for value in (
+        "deadbeef",
+        "postgres://user:pass@db/prod",
+        "Bearer sensitive-auth",
+        "sensitive-cookie",
+        "hunter2",
+        "not-secret-but-still-private",
+    ):
+        assert value not in masked
+    for key in (
+        "SHINKEND_TOKEN",
+        "DATABASE_URL",
+        "AUTHORIZATION",
+        "SESSION_COOKIE",
+        "PASSWD",
+        "PUBLIC_SETTING",
+    ):
+        assert f"{key}=***" in masked
     # non-secret args are preserved verbatim
     assert _redact_cmd(["SCREEN_GEOMETRY=1280x800x24"]) == "SCREEN_GEOMETRY=1280x800x24"
 
 
-@pytest.mark.parametrize("assignment", ["SHINKEND_TOKEN=supersecret", "api_token=supersecret"])
-def test_run_error_does_not_leak_token(monkeypatch, assignment):
-    # #153: a failing docker invocation must not echo the runtime token into the error
+@pytest.mark.parametrize(
+    "assignment",
+    [
+        "SHINKEND_TOKEN=supersecret",
+        "api_token=supersecret",
+        "DATABASE_URL=supersecret",
+        "AUTHORIZATION=supersecret",
+        "SESSION_COOKIE=supersecret",
+        "PASSWD=supersecret",
+    ],
+)
+def test_run_error_does_not_leak_env_value(monkeypatch, assignment):
+    # The engine may echo the full assignment in stderr; neither the rendered command nor
+    # captured process output may leak the value into ProviderError/logs.
     def boom(cmd, **_kwargs):
-        raise subprocess.CalledProcessError(1, cmd, output="", stderr="boom")
+        raise subprocess.CalledProcessError(
+            1,
+            cmd,
+            output="",
+            stderr=f"docker rejected {assignment}; value={assignment.split('=', 1)[1]}",
+        )
 
     monkeypatch.setattr(subprocess, "run", boom)
     with pytest.raises(ProviderError) as exc:

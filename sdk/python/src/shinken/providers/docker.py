@@ -73,17 +73,73 @@ def _maybe_float(value: str) -> float | None:
         return None
 
 
-# Mask secret env values when rendering a command for an error/log (#153). Matches a
-# `KEY=VALUE` arg whose KEY ends in TOKEN/SECRET/PASSWORD/KEY (e.g. SHINKEND_TOKEN).
+# Mask secret env values when rendering a command for an error/log (#153). The suffix
+# pattern protects standalone assignments retained for backward compatibility; Docker
+# ``-e/--env`` values are ALL treated as sensitive because names such as DATABASE_URL,
+# AUTHORIZATION, SESSION_COOKIE, and PASSWD do not share one reliable secret suffix.
 _SECRET_ENV_RE = re.compile(r"^([A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|KEY))=.+$", re.IGNORECASE)
 _SECRET_KEY_RE = re.compile(r"(?:TOKEN|SECRET|PASSWORD|KEY)$", re.IGNORECASE)
 
 
+def _env_assignments(cmd: list[str]) -> list[tuple[str, str]]:
+    """Return Docker ``-e/--env`` assignments as ``(key, value)`` pairs."""
+    assignments: list[tuple[str, str]] = []
+    expect_env = False
+    for arg in cmd:
+        if expect_env:
+            expect_env = False
+            if "=" in arg:
+                key, value = arg.split("=", 1)
+                assignments.append((key, value))
+            continue
+        if arg in ("-e", "--env"):
+            expect_env = True
+            continue
+        for prefix in ("--env=", "-e="):
+            if arg.startswith(prefix) and "=" in arg[len(prefix) :]:
+                key, value = arg[len(prefix) :].split("=", 1)
+                assignments.append((key, value))
+                break
+    return assignments
+
+
+def _mask_assignment(assignment: str) -> str:
+    """Redact an env assignment while preserving its key for diagnostics."""
+    if "=" not in assignment:
+        return assignment
+    key, _value = assignment.split("=", 1)
+    return f"{key}=***"
+
+
 def _redact_cmd(cmd: list[str]) -> str:
-    """Render a Docker command for error messages with secret env values masked (#153)
-    — e.g. ``SHINKEND_TOKEN=deadbeef`` → ``SHINKEND_TOKEN=***`` — so a failing invocation
-    never echoes the runtime token into an exception or log."""
-    return " ".join(_SECRET_ENV_RE.sub(r"\1=***", arg) for arg in cmd)
+    """Render a Docker command without exposing any explicitly supplied env value."""
+    rendered: list[str] = []
+    expect_env = False
+    for arg in cmd:
+        if expect_env:
+            rendered.append(_mask_assignment(arg))
+            expect_env = False
+            continue
+        if arg in ("-e", "--env"):
+            rendered.append(arg)
+            expect_env = True
+            continue
+        inline_prefix = next((p for p in ("--env=", "-e=") if arg.startswith(p)), None)
+        if inline_prefix is not None:
+            rendered.append(inline_prefix + _mask_assignment(arg[len(inline_prefix) :]))
+            continue
+        rendered.append(_SECRET_ENV_RE.sub(r"\1=***", arg))
+    return " ".join(rendered)
+
+
+def _redact_subprocess_output(output: str, cmd: list[str]) -> str:
+    """Remove env values if the container engine echoes them in stdout/stderr."""
+    redacted = output
+    for key, value in _env_assignments(cmd):
+        if value:
+            redacted = redacted.replace(value, "***")
+        redacted = redacted.replace(f"{key}={value}", f"{key}=***")
+    return redacted
 
 
 def _run(cmd: list[str], timeout: float = 30.0) -> subprocess.CompletedProcess[str]:
@@ -92,7 +148,8 @@ def _run(cmd: list[str], timeout: float = 30.0) -> subprocess.CompletedProcess[s
     except FileNotFoundError as exc:
         raise ProviderError(f"command not found: {cmd[0]}") from exc
     except subprocess.CalledProcessError as exc:
-        stderr = exc.stderr.strip() or exc.stdout.strip()
+        raw_error = (exc.stderr or "").strip() or (exc.stdout or "").strip()
+        stderr = _redact_subprocess_output(raw_error, cmd)
         raise ProviderError(f"{_redact_cmd(cmd)} failed: {stderr}") from exc
 
 
@@ -338,8 +395,9 @@ class DockerLocalProvider(SandboxProvider):
             "-e",
             f"SCREEN_GEOMETRY={spec.screen_geometry}",
             "-e",
-            # The daemon now defaults arbitrary exec off. Provider-owned, isolated,
-            # bearer-token-protected sandboxes are the explicit opt-in boundary.
+            # The daemon defaults arbitrary process spawning off. Provider-owned,
+            # isolated, bearer-token-protected sandboxes are the explicit opt-in
+            # boundary for both exec and executable-path launch_app.
             "SHINKEND_ENABLE_EXEC=1",
         ]
         if self.hostname:
