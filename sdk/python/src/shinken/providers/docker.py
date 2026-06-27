@@ -613,19 +613,20 @@ class DockerLocalProvider(SandboxProvider):
         return self.create(spec)
 
     def destroy(self, handle: SandboxHandle) -> None:
-        if handle.metadata.get("destroyed"):
-            return
-        try:
-            _run([self.docker_bin, "rm", "-f", handle.sandbox_id], timeout=15)
-        except subprocess.TimeoutExpired as exc:
-            raise ProviderError(f"timed out destroying sandbox {handle.sandbox_id}") from exc
-        handle.metadata["destroyed"] = True
+        if not handle.metadata.get("destroyed"):
+            try:
+                _run([self.docker_bin, "rm", "-f", handle.sandbox_id], timeout=15)
+            except subprocess.TimeoutExpired as exc:
+                raise ProviderError(f"timed out destroying sandbox {handle.sandbox_id}") from exc
+            handle.metadata["destroyed"] = True
         # fork() records its intermediate commit on the child handle; reclaim it with
         # the child (the container is gone, so `docker rmi` actually frees the layer)
-        # — fork no longer leaks one shinken-snap:* image per call.
+        # — fork no longer leaks one shinken-snap:* image per call. Keep the reference
+        # until deletion succeeds so a repeated destroy() can retry an rmi failure.
         fork_snapshot = handle.metadata.get("fork_snapshot")
         if fork_snapshot:
             self.delete_snapshot(str(fork_snapshot))
+            handle.metadata.pop("fork_snapshot", None)
 
     # --- runtime-state primitives (disk tier, #206) -----------------------------------
     # Reference implementation on Docker's filesystem layer via `docker commit` (no live
@@ -1136,18 +1137,25 @@ class DockerLocalProvider(SandboxProvider):
 
     def delete_snapshot(self, snapshot_id: str) -> None:
         """Reclaim a committed snapshot image (`docker rmi`). Resolves a checkpoint id to
-        its snapshot first. Idempotent and best-effort — a still-referenced image is left."""
+        its snapshot first. Idempotent, but fail closed while Docker still reports the image:
+        ownership records are retained so a caller can retry cleanup."""
         try:
             snapshot_key, image_ref, _record = self._resolve_snapshot(snapshot_id)
         except ProviderError:
             return
-        subprocess.run(
+        result = subprocess.run(
             [self.docker_bin, "rmi", "-f", image_ref],
             check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
             timeout=30,
         )
+        detail = str(result.stderr or result.stdout or "").strip()
+        if result.returncode != 0 and "no such image" not in detail.lower():
+            raise ProviderError(
+                f"failed to delete snapshot image {image_ref!r}: "
+                f"{detail or f'docker rmi exited {result.returncode}'}"
+            )
         self._snapshots.pop(snapshot_key, None)
         self._snapshot_records.pop(snapshot_key, None)
         self._snapshot_images.pop(snapshot_key, None)

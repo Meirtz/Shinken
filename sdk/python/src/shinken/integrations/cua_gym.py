@@ -360,6 +360,11 @@ class ShinkenCuaGymEnv:
         self._handle: Any = None  # current replica
         self._sess: Any = None  # connected Shinken session for the current replica
         self._exec: GuestExec | None = None
+        # Failed cleanup from an aborted golden build remains owned by this env so close()
+        # (and the engine's pending-close queue) can retry instead of forgetting handles.
+        self._pending_build_sessions: list[Any] = []
+        self._pending_build_handles: list[Any] = []
+        self._pending_build_snapshots: list[str] = []
 
     # --- lifecycle: golden checkpoint once, fork per reset -------------------------------
 
@@ -394,19 +399,42 @@ class ShinkenCuaGymEnv:
         """Create the base sandbox, replay the bundle's setup steps once, checkpoint the
         golden state, and destroy the base (replicas resume from the checkpoint)."""
         base = self.provider.create(self.spec)
+        sess = None
+        snapshot: str | None = None
+        primary_error: BaseException | None = None
         try:
             sess = self.provider.connect(base)
+            run = self._exec_channel(sess, base)
+            for step in self.task.setup_steps:
+                self._apply_setup_step(step, sess, run, handle=base)
+            snapshot = self.provider.checkpoint(base)
+        except BaseException as exc:
+            primary_error = exc
+
+        cleanup_errors: list[Exception] = []
+        if sess is not None:
             try:
-                run = self._exec_channel(sess, base)
-                for step in self.task.setup_steps:
-                    self._apply_setup_step(step, sess, run, handle=base)
-                return self.provider.checkpoint(base)
-            finally:
-                with contextlib.suppress(Exception):
-                    sess.close()
-        finally:
-            with contextlib.suppress(Exception):
-                self.provider.destroy(base)
+                sess.close()
+            except Exception as exc:
+                self._pending_build_sessions.append(sess)
+                cleanup_errors.append(exc)
+        try:
+            self.provider.destroy(base)
+        except Exception as exc:
+            self._pending_build_handles.append(base)
+            cleanup_errors.append(exc)
+
+        if primary_error is not None:
+            if cleanup_errors:
+                raise primary_error from cleanup_errors[0]
+            raise primary_error
+        if cleanup_errors:
+            if snapshot is not None:
+                self._pending_build_snapshots.append(snapshot)
+            raise cleanup_errors[0]
+        if snapshot is None:
+            raise CuaGymError("provider checkpoint returned no golden snapshot id")
+        return snapshot
 
     def _apply_setup_step(self, step: dict, sess: Any, run: GuestExec, handle: Any = None) -> None:
         kind = step.get("type")
@@ -511,15 +539,83 @@ class ShinkenCuaGymEnv:
         return reward
 
     def _teardown_replica(self) -> None:
+        session_error: Exception | None = None
         if self._sess is not None:
-            with contextlib.suppress(Exception):
+            try:
                 self._sess.close()
-            self._sess = None
+            except Exception as exc:
+                session_error = exc
+            else:
+                self._sess = None
+        destroy_error: Exception | None = None
         if self._handle is not None:
-            with contextlib.suppress(Exception):
+            try:
                 self.provider.destroy(self._handle)
-            self._handle = None
+            except Exception as exc:
+                destroy_error = exc
+            else:
+                self._handle = None
+                # A successfully destroyed substrate makes a failed connection close moot;
+                # retain no unusable session object, but still surface its close error below.
+                self._sess = None
         self._exec = None
+        build_cleanup_error: Exception | None = None
+        try:
+            self._drain_build_cleanup()
+        except Exception as exc:
+            build_cleanup_error = exc
+        if destroy_error is not None:
+            if session_error is not None:
+                raise destroy_error from session_error
+            if build_cleanup_error is not None:
+                raise destroy_error from build_cleanup_error
+            raise destroy_error
+        if session_error is not None:
+            if build_cleanup_error is not None:
+                raise session_error from build_cleanup_error
+            raise session_error
+        if build_cleanup_error is not None:
+            raise build_cleanup_error
+
+    def _drain_build_cleanup(self) -> None:
+        errors: list[Exception] = []
+        remaining_sessions = []
+        for sess in self._pending_build_sessions:
+            try:
+                sess.close()
+            except Exception as exc:
+                remaining_sessions.append(sess)
+                errors.append(exc)
+        self._pending_build_sessions = remaining_sessions
+
+        remaining_handles = []
+        for handle in self._pending_build_handles:
+            try:
+                self.provider.destroy(handle)
+            except Exception as exc:
+                remaining_handles.append(handle)
+                errors.append(exc)
+        self._pending_build_handles = remaining_handles
+
+        # Do not discard the snapshot that proves ownership while its base cleanup is still
+        # unresolved. Once handles are gone, deletion failures stay queued for the next close.
+        if not self._pending_build_handles:
+            remaining_snapshots = []
+            delete_snapshot = getattr(self.provider, "delete_snapshot", None)
+            for snapshot in self._pending_build_snapshots:
+                if not callable(delete_snapshot):
+                    remaining_snapshots.append(snapshot)
+                    errors.append(CuaGymError("provider cannot delete an aborted golden snapshot"))
+                    continue
+                try:
+                    delete_snapshot(snapshot)
+                except Exception as exc:
+                    remaining_snapshots.append(snapshot)
+                    errors.append(exc)
+            self._pending_build_snapshots = remaining_snapshots
+
+        if errors:
+            raise errors[0]
 
     def close(self) -> None:
         """Tear down the current replica (mirrors their ``Env.close``: connection-level)."""
@@ -527,11 +623,29 @@ class ShinkenCuaGymEnv:
 
     def dispose(self) -> None:
         """Full cleanup: the replica AND the golden checkpoint's snapshot image."""
-        self._teardown_replica()
-        if self.golden_checkpoint is not None and hasattr(self.provider, "delete_snapshot"):
-            with contextlib.suppress(Exception):
-                self.provider.delete_snapshot(self.golden_checkpoint)
-        self.golden_checkpoint = None
+        replica_error: Exception | None = None
+        try:
+            self._teardown_replica()
+        except Exception as exc:
+            replica_error = exc
+        snapshot_error: Exception | None = None
+        if self.golden_checkpoint is not None:
+            delete_snapshot = getattr(self.provider, "delete_snapshot", None)
+            if not callable(delete_snapshot):
+                snapshot_error = CuaGymError("provider cannot delete the CUA-Gym golden checkpoint")
+            else:
+                try:
+                    delete_snapshot(self.golden_checkpoint)
+                except Exception as exc:
+                    snapshot_error = exc
+                else:
+                    self.golden_checkpoint = None
+        if replica_error is not None:
+            if snapshot_error is not None:
+                raise replica_error from snapshot_error
+            raise replica_error
+        if snapshot_error is not None:
+            raise snapshot_error
 
     def __enter__(self) -> ShinkenCuaGymEnv:
         return self

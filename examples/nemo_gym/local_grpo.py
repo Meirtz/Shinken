@@ -80,7 +80,7 @@ def parse_action(text: str) -> tuple[str, str]:
     return "done", ""  # unparseable → end the episode (a wasted step, honestly)
 
 
-def apply_action(engine, sid: str, verb: str, arg: str) -> str:
+def apply_action(engine, sid: str, generation: int, verb: str, arg: str) -> str:
     tool = {
         "exec": ("computer_exec", {"command": arg}),
         "observe": ("computer_observe", {"mode": "diff" if "diff" in arg else "tree"}),
@@ -88,13 +88,14 @@ def apply_action(engine, sid: str, verb: str, arg: str) -> str:
         "type": ("computer_type_text", {"text": arg}),
         "key": ("computer_key", {"keys": arg}),
     }.get(verb)
-    return engine.tool(sid, *tool) if tool else ""  # done / unknown → no-op
+    return engine.tool(sid, *tool, generation=generation) if tool else ""  # done → no-op
 
 
 def rollout(model, tok, engine, task_id, sampler):
     """One episode → (reward, [(context_ids, action_ids) per assistant turn])."""
     sid = f"grpo-{task_id}-{time.perf_counter_ns()}"
-    seeded = engine.seed(sid, task_id)
+    seeded = engine.seed(sid, task_id, generation=None)
+    generation = seeded["generation"]
     turns: list[tuple[list, list]] = []
     messages = [
         {"role": "system", "content": SYSTEM},
@@ -120,14 +121,14 @@ def rollout(model, tok, engine, task_id, sampler):
             messages.append({"role": "assistant", "content": action_line})
             if verb == "done":
                 break
-            obs = apply_action(engine, sid, verb, arg)
+            obs = apply_action(engine, sid, generation, verb, arg)
             messages.append({"role": "user", "content": (obs or "(no output)")[:600]})
-        reward = engine.verify(sid)
+        reward = engine.verify(sid, generation=generation)
     except Exception:
         # Infrastructure/configuration failure is not a policy verdict. Turning it into
         # reward 0 would train on a fabricated negative and hide deterministic provider
         # mismatches (for example, requesting process-memory state from the disk tier).
-        engine.end(sid)
+        engine.end(sid, generation=generation)
         raise
     return reward, turns
 

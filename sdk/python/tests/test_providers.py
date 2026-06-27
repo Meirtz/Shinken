@@ -156,6 +156,41 @@ def test_docker_destroy_is_idempotent_after_success(monkeypatch):
     assert calls == [["docker", "rm", "-f", "one-shot"]]
 
 
+def test_docker_destroy_retries_fork_snapshot_cleanup(monkeypatch):
+    rm_calls: list[list[str]] = []
+
+    def remove_container(cmd, timeout=30.0):
+        rm_calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("shinken.providers.docker._run", remove_container)
+    provider = DockerLocalProvider()
+    delete_calls = []
+
+    def flaky_delete(snapshot):
+        delete_calls.append(snapshot)
+        if len(delete_calls) == 1:
+            raise ProviderError("transient rmi failure")
+
+    monkeypatch.setattr(provider, "delete_snapshot", flaky_delete)
+    handle = SandboxHandle(
+        "docker-local",
+        "fork-child",
+        "127.0.0.1:1",
+        metadata={"fork_snapshot": "shinken-snap:parent"},
+    )
+    with pytest.raises(ProviderError, match="transient rmi failure"):
+        provider.destroy(handle)
+    assert handle.metadata["destroyed"] is True
+    assert handle.metadata["fork_snapshot"] == "shinken-snap:parent"
+
+    provider.destroy(handle)
+    provider.destroy(handle)
+    assert rm_calls == [["docker", "rm", "-f", "fork-child"]]
+    assert delete_calls == ["shinken-snap:parent", "shinken-snap:parent"]
+    assert "fork_snapshot" not in handle.metadata
+
+
 def _docker_create(monkeypatch, **kwargs):
     commands: list[list[str]] = []
 
@@ -439,6 +474,45 @@ def test_docker_same_human_name_mints_distinct_snapshot_ids(monkeypatch):
     second = provider.snapshot(_handle("c1"), name="golden")
     assert first != second
     assert first.startswith("shinken-snap:") and second.startswith("shinken-snap:")
+
+
+def test_docker_delete_snapshot_retains_ownership_on_rmi_failure(monkeypatch):
+    _mock_docker(monkeypatch)
+    provider = DockerLocalProvider()
+    snapshot = provider.snapshot(_handle("c1"), name="golden")
+
+    def fail_rmi(cmd, **_kwargs):
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="docker daemon unavailable")
+
+    monkeypatch.setattr("shinken.providers.docker.subprocess.run", fail_rmi)
+    with pytest.raises(ProviderError, match="docker daemon unavailable"):
+        provider.delete_snapshot(snapshot)
+    assert snapshot in provider._snapshots
+    assert snapshot in provider._snapshot_records
+    assert snapshot in provider._snapshot_images
+
+    monkeypatch.setattr(
+        "shinken.providers.docker.subprocess.run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(cmd, 0, stdout="", stderr=""),
+    )
+    provider.delete_snapshot(snapshot)
+    assert snapshot not in provider._snapshots
+    assert snapshot not in provider._snapshot_records
+    assert snapshot not in provider._snapshot_images
+
+
+def test_docker_delete_snapshot_accepts_already_absent_image(monkeypatch):
+    _mock_docker(monkeypatch)
+    provider = DockerLocalProvider()
+    snapshot = provider.snapshot(_handle("c1"), name="golden")
+    monkeypatch.setattr(
+        "shinken.providers.docker.subprocess.run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 1, stdout="", stderr="Error response from daemon: No such image"
+        ),
+    )
+    provider.delete_snapshot(snapshot)
+    assert snapshot not in provider._snapshots
 
 
 def test_docker_rejects_cross_tier_persisted_record():
