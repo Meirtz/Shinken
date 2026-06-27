@@ -11,19 +11,22 @@ fmt: ## format rust + python
 	cargo fmt --manifest-path shinkend/Cargo.toml
 	cd sdk/python && ruff format .
 
-lint: ## lint rust + python + typescript (matches CI)
-	cargo fmt --manifest-path shinkend/Cargo.toml -- --check
-	cargo clippy --manifest-path shinkend/Cargo.toml --all-targets -- -D warnings
+lint: ## lint rust + python + typescript with the same flags as CI
+	cargo fmt --manifest-path shinkend/Cargo.toml --all -- --check
+	cargo clippy --locked --manifest-path shinkend/Cargo.toml --all-targets -- -D warnings
 	cd sdk/python && ruff check .
+	cd sdk/python && ruff format --check .
 	npm run ts:check
 
 test: ## test rust + python + typescript
-	cargo test --manifest-path shinkend/Cargo.toml --all
+	cargo test --locked --manifest-path shinkend/Cargo.toml --all
 	cd sdk/python && pytest -q
 	npm run ts:test
 
-run: ## run the Guest Runtime (ws://127.0.0.1:8765)
-	cargo run --manifest-path shinkend/Cargo.toml
+run: ## run the token-protected Guest Runtime (prints a fresh local token)
+	@TOKEN="$${SHINKEND_TOKEN:-$$(python3 -c 'import secrets; print(secrets.token_hex(32))')}"; \
+	echo "SHINKEND_TOKEN=$$TOKEN"; \
+	SHINKEND_TOKEN="$$TOKEN" cargo run --manifest-path shinkend/Cargo.toml
 
 sandbox-image: ## build the Linux Sandbox docker image
 	docker build -f images/linux/Dockerfile -t shinken/sandbox-linux .

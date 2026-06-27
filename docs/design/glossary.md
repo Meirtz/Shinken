@@ -103,10 +103,11 @@ Shinken's reset and branching primitive (**D1**, **D5**): instead of terminate-a
 Creating a new live Sandbox or run branch from a *checkpoint*. Fork is the runtime operation behind
 instant reset, N-run eval replicas, best-of-N exploration, and counterfactual reruns from a replay
 step. On the Linux fast-fork tier it should be CoW memory/disk fork; on Windows, macOS, or GPU
-providers it may be unsupported or degrade to slower restore/recreate semantics. Measured 2026-06
-(first-party, [benchmarks](../benchmarks/README.md)): Docker disk-tier fork 0.60 s (warm-pool
-graft 0.118 s) and a live process+memory fork via the privileged-only CRIU memory tier in 0.40 s;
-the sub-ms CoW tier remains designed-only.
+providers it may be unsupported or degrade to slower restore/recreate semantics. The first-party
+[benchmark corpus](../benchmarks/README.md) measures the current Docker disk-tier path at 0.60 s.
+Its 0.118 s live-graft and 0.40 s CRIU rows are historical pre-hardening artifacts: the graft is
+disabled and the atomic privileged CRIU path needs a live rerun. The sub-ms CoW tier remains
+designed-only.
 
 ### GPU-TEE
 

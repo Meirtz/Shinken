@@ -242,7 +242,9 @@ resource-scoping), and the Control Panel human UI.
 
 ### Success criteria
 
-- A warm pool serves CoW-forked Linux Sandboxes with sub-second time-to-first-action (first-party measured).
+- A deployed equivalence-safe warm/CoW pool serves Linux Sandboxes with sub-second
+  time-to-first-action and a first-party parity/latency result; the disabled historical
+  live-filesystem graft does not satisfy this criterion.
 - An agent runs a task while a human watches live in the Control Panel, approves an `install.privileged` unlock via the HITL card, and the approval is recorded as a first-class `permission` replay event ([D6](../design/tech-decisions.md)/[D5](../design/tech-decisions.md)).
 - A `.skn` can be **branched** from step N and re-run (counterfactual), proving instant-reset == branch ([D1](../design/tech-decisions.md)/[D5](../design/tech-decisions.md)).
 - All three Phase-1 spikes have first-party verdicts feeding the ADRs in [05](../design/tech-decisions.md).

@@ -37,8 +37,8 @@ A fork creates a new Sandbox or run branch from a checkpoint. It is the primitiv
 - training-data branch generation.
 
 On the Linux fast-fork tier this should use copy-on-write memory/disk. On GPU, Windows, macOS, or
-container-only providers it may degrade to slower snapshot restore, warm-pool swap, clone, or
-recreate.
+container-only providers it may degrade to slower snapshot restore, clone, or recreate. A provider
+must reject a requested fidelity/latency it cannot satisfy rather than silently degrade it.
 
 ### Resume
 
@@ -48,7 +48,7 @@ operation, but by itself it does not make the old desktop live again.
 
 ### Prepare expensive setup once, in the golden checkpoint
 
-Per-episode environment hygiene that an unsnapshotted runner is forced to repeat every reset — remounting shared memory for heavy browsers, applying enterprise/update-popup policy, masking auto-update timers, settling the desktop, installing fixtures — is exactly the cost runtime state removes. Bake that setup into the sandbox **once**, take a golden checkpoint, then `fork` per episode: every replica inherits the prepared state instantly instead of re-running minutes of setup-and-settle on a cold boot. This is the concrete mechanism behind the fork-vs-cold-boot economics (see [tech-decisions.md](../design/tech-decisions.md) D1/D7).
+Per-episode environment hygiene that an unsnapshotted runner repeats every reset — remounting shared memory, applying policy, masking updates, and installing fixtures — is the cost runtime state removes. Bake persistent setup into the sandbox once, take a checkpoint, then restore per episode. Filesystem tiers restart processes; an already-running GUI/window requires an explicitly requested process-memory tier. This is the concrete mechanism behind the restore-vs-cold-provision economics (see [tech-decisions.md](../design/tech-decisions.md) D1/D7).
 
 ## Future Timeline Link
 
@@ -77,8 +77,8 @@ The **Docker disk tier is implemented** (#209): `provider.snapshot()` (`docker c
 The SDK exposes provider-managed `sandbox.checkpoint()`, `sandbox.fork()`, and `sandbox.resume()`.
 
 The **CRIU memory tier is implemented too** (opt-in `shinken.CriuDockerProvider`,
-`snapshot_kind="process"`, Linux/Docker only): checkpoint = `criu dump --leave-running` of the
-supervised desktop tree + `docker commit` (the donor keeps running); restore/fork = a fresh
+`snapshot_kind="process"`, Linux/Docker only): checkpoint = `criu dump --leave-stopped`,
+`docker commit` in the same stopped consistency window, then donor resume; restore = a fresh
 **privileged** container + `criu restore`. Replicas carry **live process+memory+filesystem
 state** — open apps, mid-task processes, X11 clients, in-heap program state (verified per fork
 by an in-memory marker) — with one designed exception: established TCP connections are closed

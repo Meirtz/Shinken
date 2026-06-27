@@ -162,7 +162,13 @@ Keyboard model, mirroring the X11 backend's xdotool-style names:
 ## Running the live smoke
 
 ```sh
+# terminal 1
+export SHINKEND_TOKEN="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
+echo "$SHINKEND_TOKEN"  # copy this value
 cargo run --manifest-path shinkend/Cargo.toml -- --backend macos
+
+# terminal 2
+export SHK_TOKEN="<copied token>"
 python scripts/macos_smoke.py            # non-destructive: ready/screen_size/screenshot/hover
 python scripts/macos_smoke.py --unsafe   # adds click + type_text + key on the LIVE desktop
 ```

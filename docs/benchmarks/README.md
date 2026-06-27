@@ -21,9 +21,15 @@ with an **evidence class**, so a reader always knows what kind of claim they are
 
 ## The headline numbers
 
+> **Current-code note (2026-06-27):** the tracked warm-pool and CRIU rows below are
+> historical pre-hardening measurements. The live-target warm graft is now disabled because
+> pool-hit/pool-miss equivalence was not proven. CRIU now keeps the process tree stopped across
+> dump + filesystem commit; its privileged fidelity/latency suite must be rerun before the old
+> 0.70 s / 0.40 s timings are treated as current. The disk 0.60 s row is unchanged.
+
 | claim | number | class | figure | rerun |
 |---|---|---|---|---|
-| Fork a mid-task sandbox into a usable replica | **disk 0.60 s · CRIU memory 0.40 s (live process+heap) · warm-pool 0.12 s**; checkpoint stays live (0.53 s / 0.70 s) | local — rerunnable | [fork ladder](../assets/bench/fork_ladder.png) | `benchmarks/bench_fork.py` (+ `SHINKEN_BENCH_FORK_MODE=memory\|pool`) |
+| Restore a checkpoint into a usable replica | **disk/filesystem 0.60 s** current; **CRIU memory 0.40 s and warm-pool 0.12 s are historical pre-hardening artifacts** | local — disk rerunnable; CRIU rerun pending; warm disabled | [fork ladder](../assets/bench/fork_ladder.png) | `benchmarks/bench_fork.py` |
 | One process drives real desktops | **128 Docker desktops, 128/128 booted in 7.3 s, observe-all 142 ms p50, 2 OS threads** | local — rerunnable | [local fan-out](../assets/bench/local_fanout.png) | `benchmarks/bench_fanout.py` |
 | One event-loop thread holds the client plane | **3,096 live sessions — 2,320 frames/s ≈ 870 Mbps sustained at 0.93 cores** | local — rerunnable | [client scale](../assets/bench/client_scale.png) | `SHINKEN_BENCH_NS=16,64,256,1024,3096 benchmarks/bench_client_scale.py` |
 | Forked fleets pay for each distinct screen once | **18.6× whole-suite wire cut at 94.6% hit rate** (static ceiling ~654×; honest divergence floor ~1×) | local — rerunnable | [fork dedup](../assets/bench/fork_dedup.png) | `benchmarks/bench_fork_dedup.py` |
@@ -47,6 +53,11 @@ Figures live in [`docs/assets/bench/`](../assets/bench) and regenerate from trac
 ---
 
 ## 1. Runtime state — checkpoint / fork / resume `[local — rerunnable]`
+
+The tables preserve the measured history, including experiments no longer enabled in current
+code. In particular, `fork_resume_pool.json` measured a live-target graft now rejected by the
+provider, and `fork_resume_memory.json` predates the atomic stopped consistency window. They are
+evidence about those historical implementations, not current release-performance claims.
 
 The differentiating loop — reach a state once, checkpoint it, mint N live replicas — measured
 on the Docker disk tier (S4, `bench_fork.py`), with **every replica marker-verified** — the
@@ -72,27 +83,26 @@ tracked baseline):
 | N=8 | 1.30 s | 0.162 s | 8/8 |
 | N=16 | 2.10 s | **0.132 s** | 16/16 |
 
-Checkpointing a live sandbox is sub-second and non-disruptive. A classic fork is ~0.6 s
-(committed-layer instantiation + desktop bring-up — readiness theater no longer hides it),
-and the opt-in **warm pool** (pre-booted base containers + the checkpoint's `docker diff`
-delta grafted in) brings fork→usable to **~0.1 s** while staying files-only — the same state
-tier as `docker commit`, with bursts beyond the pool degrading gracefully to the classic
-path (recorded per replica). This is the shape `eval.run_eval_forked` exploits
+Checkpointing a live sandbox is sub-second and non-disruptive. A classic restore is ~0.6 s
+(committed-layer instantiation + desktop bring-up — readiness theater no longer hides it).
+The historical **warm-pool experiment** brought restore→usable to ~0.1 s, but its live graft
+could race guest writers and is now disabled. This is the safe disk shape
+`eval.run_eval_forked` exploits:
 (golden → fork-N → score). Memory/process state is the CRIU tier's job (built — next
 paragraph); the sub-ms CoW fast tier (D5) remains designed-only.
 
-**Memory tier (CRIU) — BUILT** `[local — rerunnable]` (S4c,
+**Memory tier (CRIU) — historical timing, atomic implementation pending live rerun** (S4c,
 `SHINKEN_BENCH_FORK_MODE=memory`; productized from the positive spike,
 [`spikes/criu-memory-tier/`](../../spikes/criu-memory-tier)): `CriuDockerProvider`
 (`snapshot_kind="process"`) checkpoints the **live desktop tree** with
-`criu dump --leave-running` + `docker commit` (the donor keeps running) and forks by
-`criu restore` into a fresh privileged container. Short-config validation run (quiet host):
+the former `criu dump --leave-running` + `docker commit` path and forks by
+`criu restore` into a fresh privileged container. The old short-config validation run reported:
 checkpoint p50 **0.70 s**, fork→usable p50 **0.40 s**, N=8 fan-out **0.175 s/replica** —
 and every replica passes both the golden-file check and the **process-memory verifier** (a
 python planted in the checkpointed tree answers after restore with the same pid/nonce and an
 in-heap counter ≥ its pre-dump reading — state no files-only mechanism above can carry).
-The warm-pool graft is ~3× faster to a replica but files-only; this rung is what "resume
-exactly where the agent was" costs. Caveats carried from the spike: every container runs
+The old warm-pool graft was ~3× faster but files-only and is disabled. This rung is what
+"resume exactly where the agent was" costs. Caveats carried from the spike: every container runs
 `--privileged` (in-container CRIU needs CAP_SYS_ADMIN — a latency/state-fidelity feature,
 not an isolation posture; the microVM tier remains the production boundary), established TCP
 is closed at dump (`resume_stream` reconnect), launcher-less a11y bus (CRIU 3.17 cannot dump
@@ -530,8 +540,8 @@ size-matched at 1024×768, PNG defaults on both sides. Methodology + full table:
 | e2b: pause / resume | n/a | pause ≈ 4 s per GiB RAM, resume ≈ 1 s, memory+disk preserved indefinitely; 1:1 persistence, no 1:N fork in the public SDK | `[vendor-published]` |
 
 The Shinken boot/fork cells here are the *suite's own* conservative re-measurements taken in
-the same run as the cua cells; the faster S9/warm-pool numbers in §1 are the current
-operating points. Sources for the vendor-published rows: <https://cua.ai/docs> (snapshots
+the same run as the cua cells. Section 1 preserves faster historical S9/warm-pool artifacts,
+but the unsafe warm graft is not a current operating point. Sources for the vendor-published rows: <https://cua.ai/docs> (snapshots
 guide; Linux sandbox table), <https://e2b.dev/docs/sandbox/persistence>,
 <https://github.com/e2b-dev/infra>. The strategic complement/compete read lives in
 [`../design/landscape.md` §2.17](../design/landscape.md).
