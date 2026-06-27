@@ -25,6 +25,7 @@ __all__ = [
     "Task",
     "VerifierReceipt",
     "check",
+    "coerce_verifier_receipt",
     "click_then_type_task",
     "key_sequence_task",
     "run_eval",
@@ -82,9 +83,26 @@ def _failure_exit_reason(exc: BaseException, kind: str) -> str:
     return _EXIT_REASON_FOR_KIND[kind]
 
 
+def _classify_verifier_failure(exc: BaseException) -> tuple[str, str]:
+    """Classify an exception raised *after* the agent run entered the verifier stage.
+
+    A lost/dead sandbox is still infrastructure death because the verifier could not read
+    the environment. Every other verifier exception is a scorer fault, even when the
+    evaluator forgot to wrap it in :class:`ScorerError` itself.
+    """
+    kind = _classify_run_failure(exc)
+    if kind == "sandbox_died":
+        return kind, "sandbox_died"
+    return "error", "scorer_error"
+
+
 def check(name: str, ok: bool, evidence: Any = None) -> dict:
     """Build one verifier check with optional evidence."""
-    return {"name": name, "ok": bool(ok), "evidence": evidence}
+    if not isinstance(name, str):
+        raise ValueError("verifier check `name` must be a string")
+    if not isinstance(ok, bool):
+        raise ValueError("verifier check `ok` must be a boolean")
+    return {"name": name, "ok": ok, "evidence": evidence}
 
 
 #: JSON Schema for a verifier receipt (tested; the eval contract surface).
@@ -100,6 +118,7 @@ RECEIPT_SCHEMA: dict = {
             "items": {
                 "type": "object",
                 "required": ["name", "ok"],
+                "additionalProperties": False,
                 "properties": {
                     "name": {"type": "string"},
                     "ok": {"type": "boolean"},
@@ -119,20 +138,37 @@ class VerifierReceipt:
     checks: list[dict]
 
     def __post_init__(self) -> None:
-        if not self.checks:
+        if not isinstance(self.passed, bool):
+            raise ValueError("verifier receipt `passed` must be a boolean")
+        if not isinstance(self.checks, list) or not self.checks:
             raise ValueError("a verifier receipt must contain at least one check")
+        for index, item in enumerate(self.checks):
+            if not isinstance(item, dict):
+                raise ValueError(f"verifier check {index} must be an object")
+            unknown = set(item) - {"name", "ok", "evidence"}
+            if unknown:
+                raise ValueError(f"verifier check {index} has unknown fields: {sorted(unknown)}")
+            if not isinstance(item.get("name"), str):
+                raise ValueError(f"verifier check {index} needs a string `name`")
+            if not isinstance(item.get("ok"), bool):
+                raise ValueError(f"verifier check {index} needs a boolean `ok`")
+        derived = all(item["ok"] for item in self.checks)
+        if self.passed is not derived:
+            raise ValueError(
+                "verifier receipt `passed` disagrees with its checks "
+                f"(passed={self.passed}, all(check.ok)={derived})"
+            )
 
     @classmethod
     def from_checks(cls, checks: list[dict]) -> VerifierReceipt:
-        if not checks:
-            raise ValueError("a verifier receipt must contain at least one check")
-        return cls(passed=all(c["ok"] for c in checks), checks=checks)
+        passed = all(isinstance(c, dict) and c.get("ok") is True for c in checks)
+        return cls(passed=passed, checks=checks)
 
     def to_dict(self) -> dict:
         return {"passed": self.passed, "checks": self.checks}
 
 
-def _coerce_receipt(verdict: Any) -> VerifierReceipt:
+def coerce_verifier_receipt(verdict: Any) -> VerifierReceipt:
     """Eagerly validate a verifier's return into a :class:`VerifierReceipt`.
 
     Accepts a real receipt, or anything receipt-SHAPED — an object/dict with a boolean
@@ -143,9 +179,12 @@ def _coerce_receipt(verdict: Any) -> VerifierReceipt:
     :class:`~shinken.errors.ScorerError` (``kind="garbage"``) → the run records
     ``exit_reason="scorer_error"``, never a fake verdict."""
     if isinstance(verdict, VerifierReceipt):
-        if not verdict.checks:
-            raise ScorerError("verifier returned a receipt with no checks", kind="garbage")
-        return verdict
+        try:
+            # Revalidate because ``checks`` is intentionally a mutable list and a verifier
+            # may have changed it after construction.
+            return VerifierReceipt(verdict.passed, list(verdict.checks))
+        except ValueError as exc:
+            raise ScorerError(f"invalid verifier receipt: {exc}", kind="garbage") from exc
     passed = getattr(verdict, "passed", None)
     checks = getattr(verdict, "checks", None)
     if passed is None and isinstance(verdict, dict):
@@ -154,12 +193,19 @@ def _coerce_receipt(verdict: Any) -> VerifierReceipt:
     if isinstance(passed, bool):
         if not isinstance(checks, list | tuple) or not checks:
             raise ScorerError("verifier returned a receipt with no checks", kind="garbage")
-        return VerifierReceipt(passed, list(checks))
+        try:
+            return VerifierReceipt(passed, list(checks))
+        except ValueError as exc:
+            raise ScorerError(f"invalid verifier receipt: {exc}", kind="garbage") from exc
     raise ScorerError(
         f"verifier returned {type(verdict).__name__!r}; expected a VerifierReceipt "
         "(or a receipt-shaped object/dict with a boolean `passed`)",
         kind="garbage",
     )
+
+
+# Backward-compatible private spelling used by older in-tree callers/tests.
+_coerce_receipt = coerce_verifier_receipt
 
 
 def _no_verdict_receipt() -> VerifierReceipt:
@@ -310,14 +356,19 @@ def run_eval(
             task.run(env)
             steps = max(0, getattr(env, "actions_dispatched", 0) - actions_before)
             wall = time.perf_counter() - t0
-            receipt = _coerce_receipt(task.verify(env))
-            passed = receipt.passed
-            kind = "pass" if passed else "fail"
         except Exception as exc:  # noqa: BLE001 — classify, never crash the eval loop
             wall = time.perf_counter() - t0
             kind = _classify_run_failure(exc)
             reason = _failure_exit_reason(exc, kind)
             err = f"{kind}: {exc}"
+        else:
+            try:
+                receipt = coerce_verifier_receipt(task.verify(env))
+                passed = receipt.passed
+                kind = "pass" if passed else "fail"
+            except Exception as exc:  # noqa: BLE001 — verifier faults are typed, not agent faults
+                kind, reason = _classify_verifier_failure(exc)
+                err = f"{kind}: {exc}"
         finally:
             if env is not None:
                 with contextlib.suppress(Exception):
@@ -409,14 +460,19 @@ def _score_replica(i: int, env: Any, task: Task) -> RunResult:
         task.run(env)
         steps = max(0, getattr(env, "actions_dispatched", 0) - before)
         wall = time.perf_counter() - t0
-        receipt = _coerce_receipt(task.verify(env))
-        passed = receipt.passed
-        kind = "pass" if passed else "fail"
     except Exception as exc:  # noqa: BLE001 — classify, never raise into the fork loop
         wall = time.perf_counter() - t0
         kind = _classify_run_failure(exc)
         reason = _failure_exit_reason(exc, kind)
         err = f"{kind}: {exc}"
+    else:
+        try:
+            receipt = coerce_verifier_receipt(task.verify(env))
+            passed = receipt.passed
+            kind = "pass" if passed else "fail"
+        except Exception as exc:  # noqa: BLE001 — verifier faults are typed, not agent faults
+            kind, reason = _classify_verifier_failure(exc)
+            err = f"{kind}: {exc}"
     return RunResult(i, passed, steps, wall, receipt, err, kind, reason)
 
 

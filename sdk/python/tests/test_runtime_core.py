@@ -112,6 +112,19 @@ def test_rollout_records_agent_fault_as_exit_reason_not_a_crash(mock_shinkend):
     assert "adapter emitted nonsense" in traj.metadata["error"]
 
 
+@pytest.mark.parametrize("callback", ["on_step", "stop"])
+def test_rollout_records_callback_fault_instead_of_escaping(mock_shinkend, callback):
+    def fail(*_args):
+        raise RuntimeError(f"{callback} callback failed")
+
+    kwargs = {callback: fail}
+    with shinken.connect(mock_shinkend) as session:
+        traj = rollout(session, ScriptedAgent(_PLAN), max_steps=5, **kwargs)
+    assert traj.terminal == "aborted" and traj.exit_reason == "agent_error"
+    assert len(traj.steps) == 1  # the action completed before the consumer callback failed
+    assert f"{callback} callback failed" in traj.metadata["error"]
+
+
 def test_step_token_fidelity_fields_are_reserved_and_unpopulated():
     # A-2 (#223): the fields exist for lossless RL-trainer conversion, default None,
     # and are serialized so a record's schema is stable before the train Workload lands.

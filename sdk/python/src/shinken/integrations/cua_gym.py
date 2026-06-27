@@ -155,6 +155,11 @@ class CuaGymTaskSource:
             if task is None:
                 self.skipped.append((bundle, reason or "unknown"))
             else:
+                previous = self._tasks.get(task.task_id)
+                if previous is not None:
+                    raise CuaGymError(
+                        f"duplicate task_id {task.task_id!r}: {previous.path} and {task.path}"
+                    )
                 self._tasks[task.task_id] = task
 
     @staticmethod

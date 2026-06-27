@@ -56,7 +56,7 @@ from ._lifecycle import connect_owned_handle
 from .client import FrameCache, SharedLoop
 from .dialect import parse_actions
 from .errors import SandboxDied, ShinkenError, is_connection_loss
-from .eval import Task
+from .eval import Task, coerce_verifier_receipt
 from .runtime.trajectory import Step, Trajectory
 
 __all__ = [
@@ -110,15 +110,14 @@ def _reward_from(verdict: Any) -> float:
         if not math.isfinite(reward):
             raise GymError(f"verifier returned a non-finite reward: {reward!r}")
         return reward
-    passed = getattr(verdict, "passed", None)
-    if passed is None and isinstance(verdict, dict):
-        passed = verdict.get("passed")
-    if isinstance(passed, bool):
-        return 1.0 if passed else 0.0
-    raise GymError(
-        f"verifier returned {type(verdict).__name__!r}; expected a float reward or a "
-        "VerifierReceipt-shaped object with a boolean .passed"
-    )
+    try:
+        receipt = coerce_verifier_receipt(verdict)
+    except Exception as exc:  # noqa: BLE001 — normalize the shared verifier contract here
+        raise GymError(
+            f"verifier returned an invalid receipt: {exc}; expected a float reward or a "
+            "non-empty, internally consistent VerifierReceipt"
+        ) from exc
+    return 1.0 if receipt.passed else 0.0
 
 
 @dataclass
@@ -721,7 +720,12 @@ class MultiTurnDataloader:
         loader = MultiTurnDataloader(pool, total_episodes=32)
         for batch in loader:                        # {"env_id", "image", "observation", …}
             responses = policy(batch)               # one raw-text response per row
-            loader.async_step({"env_id": batch["env_id"], "responses": responses})
+            loader.async_step({
+                "env_id": batch["env_id"],
+                "episode_id": batch["episode_id"],
+                "step": batch["step"],
+                "responses": responses,
+            })
         dataset = to_hf_dataset(loader.episodes)
 
     Where cua-bench's loader spawns a worker subprocess per env and its env re-creates
@@ -799,45 +803,81 @@ class MultiTurnDataloader:
     def async_step(self, batch_return: dict) -> list[dict]:
         """Apply the model's responses for a previously yielded batch (their
         ``async_step`` shape: a dict carrying the batch's ids + ``responses``). Accepts
-        ``env_id`` (ours) or ``worker_id`` (theirs). Returns one
+        ``env_id`` (ours) or ``worker_id`` (theirs), plus the yielded ``episode_id`` and
+        ``step`` generation. The latter two are mandatory: an env id is reusable, so it
+        cannot by itself prevent a delayed/retried response from landing in a later episode.
+        Returns one
         ``{"env_id", "reward", "done", "info"}`` row per response; a ``DialectError``
         aborts that env's episode as ``agent_error`` and reports ``done=True``."""
         env_ids = batch_return.get("env_id")
         if env_ids is None:
             env_ids = batch_return.get("worker_id")
-        responses = batch_return["responses"]
-        if env_ids is None or len(env_ids) != len(responses):
-            raise GymError("batch_return needs aligned env_id (or worker_id) and responses")
-        return [self.step(i, r) for i, r in zip(env_ids, responses, strict=True)]
+        episode_ids = batch_return.get("episode_id")
+        expected_steps = batch_return.get("step")
+        responses = batch_return.get("responses")
+        lengths = [
+            len(values)
+            for values in (env_ids, episode_ids, expected_steps, responses)
+            if values is not None and hasattr(values, "__len__")
+        ]
+        if (
+            env_ids is None
+            or episode_ids is None
+            or expected_steps is None
+            or responses is None
+            or len(lengths) != 4
+            or len(set(lengths)) != 1
+        ):
+            raise GymError(
+                "batch_return needs aligned env_id (or worker_id), episode_id, step, and responses"
+            )
+        targets = list(zip(env_ids, episode_ids, expected_steps, responses, strict=True))
+        # Validate the entire batch before mutating any env, so one stale row cannot leave
+        # an otherwise-valid batch half-applied.
+        for env_id, episode_id, expected_step, _response in targets:
+            self._validate_response_target(env_id, episode_id, expected_step)
+        if len({env_id for env_id, *_rest in targets}) != len(targets):
+            raise GymError("batch_return contains duplicate env_id rows")
+        return [self.step(i, r, episode_id=eid, expected_step=step) for i, eid, step, r in targets]
 
-    def step(self, env_id: int, response: Any) -> dict:
+    def step(
+        self,
+        env_id: int,
+        response: Any,
+        *,
+        episode_id: str,
+        expected_step: int,
+    ) -> dict:
         """Apply one response to one env; on episode end count it (and auto-reset =
         re-fork) — see :meth:`async_step` for the batch form."""
+        self._validate_response_target(env_id, episode_id, expected_step)
         env = self.pool.envs[env_id]
-        episode_id = env._episode_id
         try:
             obs, reward, done, info = env.step(response)
-        except SandboxDied as exc:
-            # Infra death is typed and retry-eligible: the episode was recorded with
-            # exit_reason="sandbox_died"; a fresh fork continues collection.
-            self._episode_finished(env_id)
-            return {
-                "env_id": env_id,
-                "episode_id": episode_id,
-                "reward": None,
-                "done": True,
-                "info": {"error": str(exc)},
-            }
-        except ValueError as exc:  # DialectError is a ValueError: unparseable model output
-            env.abort(f"agent_error: {exc}")
-            self._episode_finished(env_id)
-            return {
-                "env_id": env_id,
-                "episode_id": episode_id,
-                "reward": None,
-                "done": True,
-                "info": {"error": str(exc)},
-            }
+        except Exception as exc:
+            if isinstance(exc, SandboxDied) or is_connection_loss(exc):
+                # Infra death is typed and retry-eligible: the episode was recorded with
+                # exit_reason="sandbox_died"; a fresh fork continues collection. It does not
+                # consume the requested count of valid/agent-attempt episodes.
+                self._episode_finished(env_id, count_toward_budget=False)
+                return {
+                    "env_id": env_id,
+                    "episode_id": episode_id,
+                    "reward": None,
+                    "done": True,
+                    "info": {"error": str(exc)},
+                }
+            if isinstance(exc, ValueError):  # DialectError: unparseable model output
+                env.abort(f"agent_error: {exc}")
+                self._episode_finished(env_id)
+                return {
+                    "env_id": env_id,
+                    "episode_id": episode_id,
+                    "reward": None,
+                    "done": True,
+                    "info": {"error": str(exc)},
+                }
+            raise
         if done:
             self._episode_finished(env_id)
         else:
@@ -873,8 +913,38 @@ class MultiTurnDataloader:
         a response too, not just the ones holding a pending observation."""
         return sum(1 for env in self.pool.envs if env._episode_open)
 
-    def _episode_finished(self, env_id: int) -> None:
-        self._completed += 1
+    def _validate_response_target(self, env_id: Any, episode_id: Any, expected_step: Any) -> None:
+        if (
+            not isinstance(env_id, int)
+            or isinstance(env_id, bool)
+            or not 0 <= env_id < self.num_envs
+        ):
+            raise GymError(f"invalid env_id {env_id!r}")
+        if not isinstance(episode_id, str) or not episode_id:
+            raise GymError("response needs a non-empty episode_id")
+        if (
+            not isinstance(expected_step, int)
+            or isinstance(expected_step, bool)
+            or expected_step < 0
+        ):
+            raise GymError(f"invalid response step {expected_step!r}")
+        env = self.pool.envs[env_id]
+        current_episode = env._episode_id
+        current_step = len(env._steps)
+        if env_id in self._pending:
+            raise GymError(
+                f"response for env {env_id} has no outstanding yielded observation "
+                "(call next(loader) first)"
+            )
+        if not env._episode_open or current_episode != episode_id or current_step != expected_step:
+            raise GymError(
+                f"stale response for env {env_id}: expected episode_id={current_episode!r}, "
+                f"step={current_step}; got episode_id={episode_id!r}, step={expected_step}"
+            )
+
+    def _episode_finished(self, env_id: int, *, count_toward_budget: bool = True) -> None:
+        if count_toward_budget:
+            self._completed += 1
         self._pending.pop(env_id, None)
         if self.auto_reset and self._budget_left() > self._in_flight():
             obs, _info = self.pool.envs[env_id].reset()

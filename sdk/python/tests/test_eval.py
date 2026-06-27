@@ -147,6 +147,26 @@ def test_verifier_receipt_rejects_empty_checks():
         ev.VerifierReceipt(True, [])
 
 
+def test_verifier_check_builder_rejects_truthy_non_booleans():
+    with pytest.raises(ValueError, match="must be a boolean"):
+        ev.check("looks false", "false")
+
+
+@pytest.mark.parametrize(
+    ("passed", "checks", "message"),
+    [
+        (True, [{"name": "failed", "ok": False}], "disagrees"),
+        (False, [{"name": "passed", "ok": True}], "disagrees"),
+        (True, [1], "must be an object"),
+        (True, [{"name": "x", "ok": "yes"}], "boolean `ok`"),
+        (True, [{"name": "x", "ok": True, "extra": 1}], "unknown fields"),
+    ],
+)
+def test_verifier_receipt_rejects_malformed_or_inconsistent_checks(passed, checks, message):
+    with pytest.raises(ValueError, match=message):
+        ev.VerifierReceipt(passed, checks)
+
+
 @pytest.mark.parametrize(
     "verdict",
     [
@@ -162,6 +182,16 @@ def test_eval_empty_verifier_checks_are_scorer_error(verdict, mock_shinkend, tmp
     assert result.exit_reason == "scorer_error"
     assert result.passed is False
     assert result.receipt.checks
+
+
+def test_eval_inconsistent_verifier_receipt_is_scorer_error(mock_shinkend, tmp_path):
+    verdict = {"passed": True, "checks": [{"name": "failed", "ok": False}]}
+    task = ev.Task("inconsistent", run=lambda _e: None, verify=lambda _e: verdict)
+    summary = ev.run_eval(task, _factory(mock_shinkend), n=1, out_dir=str(tmp_path))
+    (result,) = summary.results
+    assert not result.passed
+    assert result.kind == "error" and result.exit_reason == "scorer_error"
+    assert "disagrees" in (result.error or "")
 
 
 # --- kind <-> exit_reason alignment (#56): one documented mapping, no drift -------------
@@ -198,6 +228,25 @@ def test_eval_scorer_error_refines_to_scorer_exit_reason(mock_shinkend, tmp_path
     # kind stays the coarse harness "error" (non-verdict); exit_reason is the finer field.
     assert r.kind == "error" and r.exit_reason == "scorer_error"
     assert not r.infra_failure  # a scorer fault is not retry-eligible infra death
+
+
+def test_eval_plain_verifier_exception_is_scorer_error(mock_shinkend, tmp_path):
+    def verify(_env):
+        raise RuntimeError("grader crashed")
+
+    task = ev.Task("t", run=lambda _e: None, verify=verify)
+    (result,) = ev.run_eval(task, _factory(mock_shinkend), n=1, out_dir=str(tmp_path)).results
+    assert result.kind == "error" and result.exit_reason == "scorer_error"
+    assert "grader crashed" in (result.error or "")
+
+
+def test_eval_verifier_transport_loss_remains_sandbox_died(mock_shinkend, tmp_path):
+    def verify(_env):
+        raise ConnectionResetError("sandbox vanished during grading")
+
+    task = ev.Task("t", run=lambda _e: None, verify=verify)
+    (result,) = ev.run_eval(task, _factory(mock_shinkend), n=1, out_dir=str(tmp_path)).results
+    assert result.kind == "sandbox_died" and result.exit_reason == "sandbox_died"
 
 
 def test_eval_failure_paths_set_exit_reason(mock_shinkend, tmp_path):

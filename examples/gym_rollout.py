@@ -120,7 +120,14 @@ def main() -> int:
         loader = MultiTurnDataloader(pool, total_episodes=n)
         for batch in loader:
             responses = [scripted_policy(step) for step in batch["step"]]
-            loader.async_step({"env_id": batch["env_id"], "responses": responses})
+            loader.async_step(
+                {
+                    "env_id": batch["env_id"],
+                    "episode_id": batch["episode_id"],
+                    "step": batch["step"],
+                    "responses": responses,
+                }
+            )
         print(
             f"dataloader: collected {loader._completed} more episodes "
             f"({len(pool.episodes)} total) — every boundary restores the golden checkpoint"

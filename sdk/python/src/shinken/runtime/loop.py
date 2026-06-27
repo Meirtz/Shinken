@@ -59,6 +59,24 @@ def rollout(
             actions = list(getattr(decision, "actions", None) or [])
             if actions:
                 session.act_batch(actions)
+            step = Step(
+                index=i,
+                observation=obs,
+                actions=actions,
+                note=getattr(decision, "note", None),
+            )
+            steps.append(step)
+            if on_step is not None:
+                on_step(step)
+            if getattr(decision, "done", False):
+                terminal = "done"
+                break
+            if not actions:
+                terminal = "stuck"
+                break
+            if stop is not None and stop(session, steps):
+                terminal = "stopped"
+                break
         except Exception as exc:  # noqa: BLE001 — classify into exit_reason, never crash a batch
             terminal = "aborted"
             exit_reason = (
@@ -67,19 +85,6 @@ def rollout(
                 else "agent_error"
             )
             error = f"{exit_reason}: {exc}"
-            break
-        step = Step(index=i, observation=obs, actions=actions, note=getattr(decision, "note", None))
-        steps.append(step)
-        if on_step is not None:
-            on_step(step)
-        if getattr(decision, "done", False):
-            terminal = "done"
-            break
-        if not actions:
-            terminal = "stuck"
-            break
-        if stop is not None and stop(session, steps):
-            terminal = "stopped"
             break
     if exit_reason is None:
         exit_reason = _EXIT_REASON_FOR_TERMINAL[terminal]
