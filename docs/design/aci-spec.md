@@ -585,9 +585,11 @@ On a permissions-gated engine (macOS TCC, D14), observe while grants are pending
   "missing": ["screen_recording"], "retry_after_ms": 1000 }
 ```
 
-All of §4.1 is **designed-only** (the guest observation engine is unbuilt — see
-[status.md](../engineering/status.md)); the built v0 surface is the screenshot/screencast contract
-above plus SDK-side AT-SPI/CDP reference paths.
+The Linux v1 subset of §4.1 is built in the guest runtime: AT-SPI trees, stable element refs,
+tree-text diffs, settle, guest-side ref actions, `invoke_action`, and `set_value`. The
+combined pixel+tree envelope illustrated above, macOS permission-pending observation,
+Windows UIA/macOS AX, and in-guest CDP remain designed-only; SDK-side AT-SPI/CDP paths remain
+compatibility fallbacks. See [status.md](../engineering/status.md).
 
 ---
 

@@ -229,8 +229,10 @@ underneath is the variable, and you pick it per platform:
 
 - **Linux** — Shinken's **own engine** (`shinkend` inside the Docker sandbox): the full
   proven slice — every verb, structured observation (stable element ids, diffs, settle),
-  all three fork tiers, live CI. **OSWorld-native** environments run through the built-in
-  compatibility map on the same interface.
+  and the Docker filesystem restore tier under live CI. The privileged CRIU process-memory
+  tier is implemented and unit-tested but awaits its post-hardening live rerun; the unsafe
+  warm graft is disabled and the CoW/microVM tier is designed-only. **OSWorld-native**
+  environments run through the built-in compatibility map on the same interface.
 - **macOS** — Shinken's **native engine v1** drives the real desktop (capture + input,
   Retina-correct); for background app control with an element tree today, plug an
   open-source codex-style AX server —
@@ -426,8 +428,9 @@ the fleet egress projections, and the legibility figures: [`docs/benchmarks/`](d
 **Functional.** Single-task OSWorld gate passed (1 task of the 369-task suite: Kimi K2.6 over
 `shinkend`, official evaluator **score 1.0**, 6 steps, 110 s — a conformance sweep has not
 been run). Tested in a 9-job CI with measured line coverage (**78% Rust / 87% Python**,
-[report §6b](docs/benchmarks/README.md)) and per-verb test traceability; every README
-snippet is itself executed by the test suite.
+[report §6b](docs/benchmarks/README.md)) and per-verb test traceability. README snippets
+have a dedicated test suite; Docker-dependent examples are opt-in and skipped when that
+live-test flag is not enabled.
 
 ## How it compares
 
@@ -559,8 +562,10 @@ framework** that orchestrates — and Shinken plugs in at each seam separately. 
   `shinken.integrations.cua_gym`: exported task bundles as a `TaskSource` + their VM-env
   method surface, with **fork-native reset**. The Docker disk tier preserves persistent
   filesystem setup and restarts processes; tasks that require an already-running GUI process
-  must request the CRIU process-memory tier or replay launch/focus after restore. 32k
-  oracle-validated RLVR tasks, zero authoring. Example: `examples/cua_gym_shinken.py`.
+  must request the CRIU process-memory tier or replay launch/focus after restore. CUA-Gym
+  reports a 32k-task generation corpus; the released bundle consumed by this adapter contains
+  **10,910 tasks**, and only the image/probe-compatible subset should enter training.
+  Example: `examples/cua_gym_shinken.py`.
 
 **Agent frameworks** — orchestration:
 

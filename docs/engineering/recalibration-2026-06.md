@@ -147,10 +147,10 @@ doc edits are done, the code is not) and two standing items with no inventory ro
    continuity, gap detectability), and the trajectory-level `exit_reason` (documented precedence
    `sandbox_died > setup_error > agent_error > scorer_error > max_steps > task_complete`,
    `shinken/runtime/trajectory.py`) have all shipped. *Done.*
-2. **D2 exec/file wire shape — SETTLED** (A‑7) — recorded in [tech-decisions](../design/tech-decisions.md)
-   D2: `exec`/file-transfer are NOT ACI wire verbs in v0.0.1 (they flow over the substrate's own
-   channel; SDK `put_file`/`get_file` stay substrate-side); typed wire verbs deferred post-v0.0.1.
-   *Done.*
+2. **D2 exec/file wire shape — SUPERSEDED by G1** (A‑7) — typed, bounded `exec` has since
+   shipped as an opt-in ACI wire verb; SDK `put_file`/`get_file` remain substrate-side artifact
+   channels and PTY remains reserved. The current decision is recorded in
+   [tech-decisions](../design/tech-decisions.md) D2.
 3. **Three-tier dependency split** (A‑4) — implement the host/base/runtime buckets in the Workload/Provider
    packaging before a heavy-evaluator Workload lands. *P1.*
 4. **Registry → entry points** (A‑3) — graduate out-of-tree discovery post-v0.0.1. *P1.*

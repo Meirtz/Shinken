@@ -172,8 +172,10 @@ priority order. None of this touches the waist — all are consumers/composition
    surface (screenshot/execute/run_python/upload/download/… — duck-typed, no cua-gym import)
    with **fork-native reset**: bundle setup runs once into a golden checkpoint and every
    `reset()` forks a replica from it, replacing their fresh-cloud-VM-per-environment lifecycle.
-   This unlocks 32k oracle-validated RLVR tasks with zero authoring; consumer-side only
-   (`TaskSource` never enters the waist). Example: `examples/cua_gym_shinken.py`.
+   CUA-Gym reports a 32k-task generation corpus; the released bundle used by this adapter
+   contains 10,910 tasks, of which only an image/probe-compatible subset is runnable.
+   The integration remains consumer-side (`TaskSource` never enters the waist). Example:
+   `examples/cua_gym_shinken.py`.
    <https://github.com/xlang-ai/CUA-Gym>
 3. **orchestrators — be provider-shaped — SHIPPED for Agentix** (`shinken.integrations.agentix`).
    `ShinkenAgentixProvider` exposes any Shinken provider (default `DockerLocalProvider`) + the

@@ -71,7 +71,9 @@ reward is already 1.0 on the unsolved state are excluded — no learning signal)
 python examples/nemo_gym/make_workspace.py --dest ~/nemogym-workspace \
     --task-root ~/datasets/cua-gym --ids-file <probe-receipt.json>
 # data/train.jsonl + data/validation.jsonl; serve with CUA_GYM_TASKS=~/datasets/cua-gym
-# and SHINKEN_IMAGE=shinken/sandbox-cua:latest in the resources server's environment
+# and SHINKEN_IMAGE=shinken/sandbox-cua:latest in the resources server's environment.
+# Only after auditing post-fork process replay, explicitly set:
+# SHINKEN_STATE_FIDELITY=filesystem
 ```
 
 Measured on this lane (2026-06-12, one M4 Pro laptop, Kimi K2.6 policy): a 24-task ×
@@ -113,14 +115,15 @@ exactly the shape Shinken's fleet numbers are built for: `num_generations_per_pr
 maps to N forks of one golden checkpoint at ~0.5 s each, where re-provisioning
 environments per generation is the cost the trainer otherwise eats.
 
-## 5. Close the loop on a laptop (MLX GRPO)
+## 5. Local optimizer-step smoke (not GRPO equivalence)
 
-NeMo RL is the production trainer, but it needs CUDA. To prove the *learning* half closes
-around Shinken's environment without a GPU node, [`local_grpo.py`](local_grpo.py) runs a
-real GRPO loop entirely on Apple Silicon: a small **MLX** policy (Qwen2.5-1.5B-Instruct-4bit
-+ LoRA — the only trainable params) drives `ShinkenComputerEngine`, group-relative advantage
-turns the CUA-Gym reward into a gradient, and an Adam step on the LoRA weights moves the
-policy.
+NeMo RL is the production trainer, but it needs CUDA. [`local_grpo.py`](local_grpo.py)
+provides a smaller Apple-Silicon smoke: an **MLX** policy
+(Qwen2.5-1.5B-Instruct-4bit + LoRA) drives `ShinkenComputerEngine`; group-relative
+advantages weight assistant-token log-probabilities; Adam updates the LoRA parameters.
+This proves reward → gradient → optimizer plumbing only. It is not a full GRPO
+implementation: it has no old-policy logprobs, importance ratios, clipping, KL term, or
+distributed weight synchronization, and it does not establish learning or convergence.
 
 ```bash
 python -m venv ~/venvs/mlxrl
@@ -128,8 +131,9 @@ python -m venv ~/venvs/mlxrl
 ~/venvs/mlxrl/bin/python examples/nemo_gym/local_grpo.py
 ```
 
-Measured (2026-06-12, M4 Pro, group 8, task `hello-file`) — **mean reward 0.25 → 0.875 over
-5 iterations in 62 s**, LoRA-updated every iteration that had reward spread:
+A recorded smoke (2026-06-12, M4 Pro, group 8, task `hello-file`) executed five LoRA
+updates when reward spread was present. The sampled rewards below are a run artifact, not
+a controlled learning-quality result:
 
 ```text
 iter 0: mean_reward=0.250  [0,0,0,0,0,1,0,1]   updated=True (20s)
@@ -139,10 +143,9 @@ iter 3: mean_reward=0.875  [1,1,1,0,1,1,1,1]   updated=True (11s)
 iter 4: mean_reward=0.875  [1,1,1,1,1,1,1,0]   updated=True (10s)
 ```
 
-This is the same loop NeMo RL runs at scale — fork-native env, group baseline,
-policy-gradient on the policy that produced the rollouts — just small enough to watch
-converge on one machine. `num_generations_per_prompt` in the GRPO config is exactly this
-group: N forks of one golden checkpoint.
+The environment-side grouping still matches the useful production shape:
+`num_generations_per_prompt` rollouts can be N forks of one golden checkpoint. Algorithm
+equivalence belongs to the real trainer connector, not this smoke.
 
 ## Notes
 
@@ -150,6 +153,11 @@ group: N forks of one golden checkpoint.
   once into the golden checkpoint, on the disk tier). Setup that must exist as a *running
   process* (an open dialog) goes in our bundle extension `shinken_post_fork` — replayed on
   every replica. On the CRIU memory tier the golden carries processes and that list is
-  typically empty.
+  typically empty. The in-tree entrypoints pass an audited
+  `SandboxSpec(state_fidelity="filesystem")` for the two demo bundles. Bundle content
+  cannot lower its own fidelity requirement: imported bundles default to
+  `process_memory` and fail closed on the Docker filesystem tier until a trusted caller
+  explicitly opts in after validating the post-fork replay, or selects a process-memory
+  provider.
 - Rollouts that never reach `/verify` are reaped after an idle TTL; `shinken gc` catches
   anything else.
