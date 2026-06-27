@@ -142,6 +142,28 @@ def test_dispatch_unadvertised_verb_raises():
         dispatch_action(s, {"verb": "navigate", "url": "https://x"})
 
 
+def test_dispatch_explicit_empty_capabilities_rejects_existing_method():
+    s = FakeSurface("disabled", [])
+    with pytest.raises(UnsupportedProviderOperation, match="click"):
+        dispatch_action(s, {"verb": "click", "target": {"kind": "point_px", "x": 1, "y": 2}})
+    assert not s.calls
+
+
+def test_dispatch_legacy_backend_without_capabilities_remains_duck_typed():
+    class LegacySurface:
+        def __init__(self):
+            self.calls = []
+
+        def click(self, **kwargs):
+            self.calls.append(kwargs)
+            return {"ok": True}
+
+    s = LegacySurface()
+    result = dispatch_action(s, {"verb": "click", "target": {"kind": "point_px", "x": 1, "y": 2}})
+    assert result == {"ok": True}
+    assert s.calls == [{"x": 1, "y": 2, "ref": None, "button": "left", "count": 1}]
+
+
 def test_dispatch_move_never_falls_back_to_click():
     s = _cu()  # click is supported; move is not
     with pytest.raises(UnsupportedProviderOperation, match="move"):

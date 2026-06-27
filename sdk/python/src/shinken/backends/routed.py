@@ -49,12 +49,16 @@ def dispatch_action(env: Any, action: dict) -> dict:
     ``capabilities.verbs`` does not list raises ``UnsupportedProviderOperation`` (loud)."""
     verb = action.get("verb")
     caps = getattr(env, "capabilities", None)
-    advertised = set(getattr(caps, "verbs", []) or [])
+    declared_verbs = getattr(caps, "verbs", None) if caps is not None else None
+    advertised = set(declared_verbs or [])
     # Click variants map to click() with a button/count. ``move`` is deliberately NOT a
     # click variant: falling back to click would turn a harmless pointer move into an
     # unintended mutating action.
     base = {"double_click": "click", "right_click": "click"}.get(verb, verb)
-    if advertised and base not in advertised and verb not in advertised:
+    # A declared capability list is authoritative even when it is empty.  Only legacy
+    # duck-typed backends that do not expose ``capabilities.verbs`` retain method-based
+    # dispatch compatibility.
+    if declared_verbs is not None and base not in advertised and verb not in advertised:
         raise UnsupportedProviderOperation(
             f"backend does not advertise verb {verb!r} (has: {sorted(advertised)})"
         )
