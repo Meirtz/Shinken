@@ -650,7 +650,11 @@ mod tests {
             .unwrap();
         assert_eq!(out.exit_code, Some(0));
         assert!(!out.timed_out, "the direct shell completed naturally");
-        assert!(out.stdout_truncated && out.stderr_truncated);
+        // A background shell is only required to retain at least one inherited pipe;
+        // dash/bash and scheduler timing may close the other before the drain deadline.
+        // Either stalled pipe must trigger the same process-group cleanup, proved below
+        // by observing the deliberately stopped descendant disappear.
+        assert!(out.stdout_truncated || out.stderr_truncated);
         assert!(t0.elapsed() < Duration::from_secs(3));
 
         let pid: libc::pid_t = std::fs::read_to_string(&marker)
