@@ -9,6 +9,18 @@ __pycache__/
 .venv/
 venv/
 .env
+.env.*
+!.env.example
+!.env.template
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+credentials*.json
+service-account*.json
+.secrets/
+secrets/
 *.egg-info/
 .mypy_cache/
 .pytest_cache/
@@ -66,12 +78,28 @@ map.md
 # local run receipts (minimal; raw ones never uploaded)
 runs/
 
+# Maintainer-only cloud/provider probes and their raw outputs. These were previously hidden
+# only by .git/info/exclude, which is local to one checkout and is not a repository
+# safety boundary.
+/cloud/
+/devtest/
+
 # Local-only Docker context and unpublished CUA/OSWorld image experiments. These files
 # may contain environment-specific paths, guest credentials, or private launch topology.
 /.dockerignore
 /images/linux/*cua*
+/images/linux/private/
+/images/linux/local/
 /images/linux/sk-exec-sidecar.py
 /scripts/osworld_arm_vm.sh
+/docker-compose.override.yml
+/docker-compose.override.yaml
+/compose.override.yml
+/compose.override.yaml
+
+# This one generic, public reference image is intentionally tracked. The wildcard above
+# protects unpublished CUA/provider variants such as Dockerfile.cua-<local-experiment>.
+!/images/linux/Dockerfile.cua
 
 # Local agent analysis and paper-draft artifacts; keep source-derived notes out of the
 # public repository even when they do not contain a literal credential.
