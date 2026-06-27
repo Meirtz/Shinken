@@ -556,8 +556,9 @@ def test_docker_delete_snapshot_removes_unlabeled_legacy_image(monkeypatch):
     monkeypatch.setattr("shinken.providers.docker._run", legacy_discovery)
     monkeypatch.setattr(
         "shinken.providers.docker.subprocess.run",
-        lambda cmd, **_kwargs: removed.append(cmd)
-        or subprocess.CompletedProcess(cmd, 0, stdout="", stderr=""),
+        lambda cmd, **_kwargs: (
+            removed.append(cmd) or subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        ),
     )
     DockerLocalProvider().delete_snapshot("shinken-snap:legacy")
     assert any(call[:3] == ["docker", "image", "inspect"] for call in calls)
