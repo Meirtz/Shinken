@@ -244,7 +244,8 @@ class ShinkenComputerEngine:
     - :meth:`verify` — run the bundle's ``reward.py`` in the replica, tear the replica
       down, return the reward.
 
-    Replicas whose rollout never reaches ``verify`` are reaped after ``idle_ttl_s``.
+    Replicas whose rollout never reaches ``verify`` are opportunistically reaped before
+    later seeds once older than ``idle_ttl_s``; server shutdown closes every remainder.
     All methods are blocking; async servers wrap them in a thread (see
     :func:`build_resources_server_cls`).
     """
@@ -277,23 +278,35 @@ class ShinkenComputerEngine:
     def seed(self, session_id: str, task_id: str) -> dict:
         """Start a rollout: fork the task's golden checkpoint into a fresh replica."""
         self._reap_idle()
-        task = self.tasks.get(task_id)
+        try:
+            task = self.tasks.get(task_id)
+        except KeyError:
+            # ``CuaGymTaskSource.get`` is Mapping-like but deliberately raises a helpful
+            # KeyError, whereas a plain dict returns None. Normalize both at this boundary.
+            task = None
         if task is None:
             raise CuaGymError(f"unknown task_id {task_id!r}")
         env = self.env_factory(task, self.provider, spec=self.spec, exec_timeout=self.exec_timeout)
-        env.golden_checkpoint = self._golden_for(task, env)
-        t0 = time.perf_counter()
-        env.reset()
-        # Bundle extension: steps under config.json's "shinken_post_fork" replay on EVERY
-        # replica after the fork. The golden checkpoint carries file state on the disk
-        # tier; setup that must exist as a *running process* (an open dialog, a launched
-        # app) belongs here, not in the golden build. (On the CRIU memory tier the golden
-        # itself carries processes and this list is typically empty.)
-        post_fork = task.config.get("shinken_post_fork") or []
-        if post_fork:
-            sess, run = env._session(), env._guest_exec()
-            for step in post_fork:
-                env._apply_setup_step(step, sess, run)
+        try:
+            env.golden_checkpoint = self._golden_for(task, env)
+            t0 = time.perf_counter()
+            env.reset()
+            # Bundle extension: steps under config.json's "shinken_post_fork" replay on EVERY
+            # replica after the fork. The golden checkpoint carries file state on the disk
+            # tier; setup that must exist as a *running process* (an open dialog, a launched
+            # app) belongs here, not in the golden build. (On the CRIU memory tier the golden
+            # itself carries processes and this list is typically empty.)
+            post_fork = task.config.get("shinken_post_fork") or []
+            if post_fork:
+                sess, run = env._session(), env._guest_exec()
+                for step in post_fork:
+                    env._apply_setup_step(step, sess, run)
+        except BaseException:
+            # The env is not published in ``_rollouts`` until all post-fork initialization
+            # succeeds, so this path must reclaim it directly.
+            with contextlib.suppress(Exception):
+                env.close()
+            raise
         reset_ms = (time.perf_counter() - t0) * 1000.0
         self.end(session_id)  # a re-seeded session replaces its old replica
         with self._lock:
@@ -450,6 +463,16 @@ def extract_task_id(payload: Mapping[str, Any]) -> str | None:
     return None
 
 
+def _install_engine_shutdown(app: Any, engine: ShinkenComputerEngine) -> None:
+    """Bind engine-owned replicas/snapshots to the enclosing web app's lifetime."""
+    import asyncio
+
+    async def close_engine() -> None:
+        await asyncio.to_thread(engine.close)
+
+    app.add_event_handler("shutdown", close_engine)
+
+
 def build_resources_server_cls(engine_factory: Any) -> type:
     """Build the ``nemo_gym`` ``SimpleResourcesServer`` subclass lazily (the ``nemo_gym``
     package is only required at server runtime, never for importing this module).
@@ -485,6 +508,10 @@ def build_resources_server_cls(engine_factory: Any) -> type:
             app = super().setup_webserver()
             for tool in COMPUTER_TOOLS:
                 app.post(f"/{tool['name']}")(self._make_tool_route(tool["name"]))
+            # ``SimpleResourcesServer`` owns the FastAPI app, while the engine owns all
+            # live replicas and golden snapshots. Tie those lifetimes together so normal
+            # server shutdown cannot orphan provider resources.
+            _install_engine_shutdown(app, self._engine)
             return app
 
         def _make_tool_route(self, name: str):

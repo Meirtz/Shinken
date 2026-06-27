@@ -3,6 +3,7 @@ fakes (no Docker, no nemo_gym install; the live proof is examples/nemo_gym/local
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
@@ -11,6 +12,7 @@ from shinken.integrations.cua_gym import CuaGymError, CuaGymTask
 from shinken.integrations.nemo_gym import (
     COMPUTER_TOOLS,
     ShinkenComputerEngine,
+    _install_engine_shutdown,
     _parse_click_target,
     extract_task_id,
     rollout_rows,
@@ -185,6 +187,18 @@ def test_unknown_tool_and_unknown_task(tmp_path):
         engine.tool("s1", "computer_frobnicate", {})
 
 
+def test_unknown_task_from_raising_task_source_is_normalized(tmp_path):
+    class RaisingTaskSource:
+        def get(self, task_id):
+            raise KeyError(task_id)
+
+    engine = ShinkenComputerEngine(
+        provider=object(), tasks=RaisingTaskSource(), env_factory=FakeEnv
+    )
+    with pytest.raises(CuaGymError, match="unknown task_id"):
+        engine.seed("s1", "missing")
+
+
 def test_golden_is_built_once_and_shared(tmp_path):
     engine, task = make_engine(tmp_path)
     engine.seed("s1", task.task_id)
@@ -205,6 +219,30 @@ def test_post_fork_steps_replay_per_seed(tmp_path):
     assert ("post_fork", "execute") in engine._rollouts["s1"].env.log
 
 
+def test_post_fork_failure_closes_unpublished_replica(tmp_path):
+    created = []
+
+    class FailingPostForkEnv(FakeEnv):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            created.append(self)
+
+        def _apply_setup_step(self, step, sess, run):
+            raise RuntimeError("post-fork setup failed")
+
+    task = make_task(
+        tmp_path,
+        config={"shinken_post_fork": [{"type": "execute", "parameters": {"command": "x"}}]},
+    )
+    engine = ShinkenComputerEngine(
+        provider=object(), tasks={task.task_id: task}, env_factory=FailingPostForkEnv
+    )
+    with pytest.raises(RuntimeError, match="post-fork setup failed"):
+        engine.seed("s1", task.task_id)
+    assert created[0].closed
+    assert "s1" not in engine._rollouts
+
+
 def test_reseed_replaces_replica_and_close_reaps(tmp_path):
     engine, task = make_engine(tmp_path)
     engine.seed("s1", task.task_id)
@@ -213,6 +251,24 @@ def test_reseed_replaces_replica_and_close_reaps(tmp_path):
     assert first_env.closed  # the old replica was torn down
     engine.close()
     assert not engine._rollouts
+
+
+def test_webserver_shutdown_closes_engine_resources():
+    class App:
+        def add_event_handler(self, event, handler):
+            assert event == "shutdown"
+            self.shutdown = handler
+
+    class Engine:
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    app, engine = App(), Engine()
+    _install_engine_shutdown(app, engine)
+    asyncio.run(app.shutdown())
+    assert engine.closed
 
 
 def test_idle_rollouts_are_reaped(tmp_path):

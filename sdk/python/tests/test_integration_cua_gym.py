@@ -196,6 +196,16 @@ def test_task_source_skips_malformed_bundles_visibly(tmp_path):
         src.get("no_reward")
 
 
+def test_task_source_rejects_duplicate_task_ids(tmp_path):
+    _write_bundle(tmp_path, "first")
+    second = _write_bundle(tmp_path, "second")
+    config = json.loads((second / "config.json").read_text())
+    config["id"] = "first"
+    (second / "config.json").write_text(json.dumps(config))
+    with pytest.raises(cg.CuaGymError, match=r"duplicate task_id 'first'.*first.*second"):
+        cg.CuaGymTaskSource(tmp_path)
+
+
 def test_parse_reward_contract():
     # Their contract: last `REWARD: X.X` line of reward.py stdout wins.
     assert cg.parse_reward("REWARD: 0.5") == 0.5

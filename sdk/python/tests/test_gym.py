@@ -382,9 +382,13 @@ def test_evaluate_reward_shapes(mock_shinkend):
     assert g._reward_from(0.25) == 0.25
     assert g._reward_from(-2.0) == -2.0
     assert g._reward_from(False) == 0.0
-    assert g._reward_from({"passed": True}) == 1.0
+    assert g._reward_from({"passed": True, "checks": [{"name": "ok", "ok": True}]}) == 1.0
     with pytest.raises(g.GymError, match="verifier returned"):
         g._reward_from("not a reward")
+    with pytest.raises(g.GymError, match="no checks"):
+        g._reward_from({"passed": True})
+    with pytest.raises(g.GymError, match="disagrees"):
+        g._reward_from({"passed": True, "checks": [{"name": "failed", "ok": False}]})
     with pytest.raises(g.GymError, match="non-finite"):
         g._reward_from(float("nan"))
     with pytest.raises(g.GymError, match="non-finite"):
@@ -542,7 +546,14 @@ def test_dataloader_batches_step_routing_and_autoreset_fork(mock_shinkend):
             "<done/>" if step > 0 else '<actions><type_text text="hi"/></actions>'
             for step in batch["step"]
         ]
-        rows = loader.async_step({"env_id": batch["env_id"], "responses": responses})
+        rows = loader.async_step(
+            {
+                "env_id": batch["env_id"],
+                "episode_id": batch["episode_id"],
+                "step": batch["step"],
+                "responses": responses,
+            }
+        )
         for row, step, episode_id in zip(rows, batch["step"], batch["episode_id"], strict=True):
             assert row["episode_id"] == episode_id
             assert row["done"] == (step > 0)
@@ -571,6 +582,8 @@ def test_dataloader_preserves_observation_generation_across_async_step():
         rows = loader.async_step(
             {
                 "env_id": initial_batch["env_id"],
+                "episode_id": initial_batch["episode_id"],
+                "step": initial_batch["step"],
                 "responses": [{"verb": "type_text", "text": "advance"}],
             }
         )
@@ -579,7 +592,14 @@ def test_dataloader_preserves_observation_generation_across_async_step():
         next_batch = next(loader)
         post = next_batch["observation"][0]
         assert post["bytes"] == b"state-1"
-        rows = loader.async_step({"env_id": next_batch["env_id"], "responses": ["<done/>"]})
+        rows = loader.async_step(
+            {
+                "env_id": next_batch["env_id"],
+                "episode_id": next_batch["episode_id"],
+                "step": next_batch["step"],
+                "responses": ["<done/>"],
+            }
+        )
         assert rows[0]["done"]
 
         first, terminal = loader.episodes[0].trajectory.steps
@@ -594,7 +614,14 @@ def test_dataloader_accepts_their_worker_id_key(mock_shinkend):
     pool = g.ShinkenGymPool(_typed_hi_task(), _ForkProvider(mock_shinkend), 1)
     loader = g.MultiTurnDataloader(pool, total_episodes=1)
     batch = next(loader)
-    rows = loader.async_step({"worker_id": batch["env_id"], "responses": ["<done/>"]})
+    rows = loader.async_step(
+        {
+            "worker_id": batch["env_id"],
+            "episode_id": batch["episode_id"],
+            "step": batch["step"],
+            "responses": ["<done/>"],
+        }
+    )
     assert rows[0]["done"]
     loader.close()
 
@@ -603,7 +630,14 @@ def test_dataloader_unparseable_response_aborts_as_agent_error(mock_shinkend):
     pool = g.ShinkenGymPool(_typed_hi_task(), _ForkProvider(mock_shinkend), 1)
     loader = g.MultiTurnDataloader(pool, total_episodes=2)
     batch = next(loader)
-    rows = loader.async_step({"env_id": batch["env_id"], "responses": ["just prose, no actions"]})
+    rows = loader.async_step(
+        {
+            "env_id": batch["env_id"],
+            "episode_id": batch["episode_id"],
+            "step": batch["step"],
+            "responses": ["just prose, no actions"],
+        }
+    )
     assert rows[0]["done"] and "error" in rows[0]["info"]
     aborted = loader.episodes[-1]
     assert aborted.trajectory.exit_reason == "agent_error"  # typed, recorded, not a crash
@@ -626,6 +660,77 @@ def test_dataloader_misaligned_batch_return_is_typed(mock_shinkend):
     with pytest.raises(g.GymError, match="aligned"):
         loader.async_step({"responses": ["<done/>"]})
     loader.close()
+
+
+def test_dataloader_rejects_delayed_response_from_previous_episode(mock_shinkend):
+    pool = g.ShinkenGymPool(_typed_hi_task(), _ForkProvider(mock_shinkend), 1)
+    loader = g.MultiTurnDataloader(pool, total_episodes=2)
+    try:
+        old = next(loader)
+        loader.async_step(
+            {
+                "env_id": old["env_id"],
+                "episode_id": old["episode_id"],
+                "step": old["step"],
+                "responses": ["<done/>"],
+            }
+        )
+        current = next(loader)  # auto-reset reused env 0 for a new episode
+        assert current["episode_id"] != old["episode_id"]
+        with pytest.raises(g.GymError, match="stale response"):
+            loader.async_step(
+                {
+                    "env_id": old["env_id"],
+                    "episode_id": old["episode_id"],
+                    "step": old["step"],
+                    "responses": ['<actions><type_text text="must-not-run"/></actions>'],
+                }
+            )
+        assert len(pool.envs[0]._steps) == 0
+    finally:
+        loader.close()
+
+
+def test_dataloader_sandbox_death_does_not_consume_valid_episode_budget(mock_shinkend):
+    class DeadSession:
+        def step(self, *_args, **_kwargs):
+            raise ConnectionResetError("replica died")
+
+        def close(self):
+            pass
+
+    provider = _ForkProvider(mock_shinkend)
+    pool = g.ShinkenGymPool(_typed_hi_task(), provider, 1)
+    loader = g.MultiTurnDataloader(pool, total_episodes=1)
+    try:
+        failed = next(loader)
+        pool.envs[0]._sess.close()
+        pool.envs[0]._sess = DeadSession()
+        rows = loader.async_step(
+            {
+                "env_id": failed["env_id"],
+                "episode_id": failed["episode_id"],
+                "step": failed["step"],
+                "responses": ['<actions><click x="1" y="1"/></actions>'],
+            }
+        )
+        assert rows[0]["done"] and rows[0]["reward"] is None
+        assert loader._completed == 0
+        assert loader.episodes[-1].trajectory.exit_reason == "sandbox_died"
+
+        retry = next(loader)
+        assert retry["episode_id"] != failed["episode_id"]
+        loader.async_step(
+            {
+                "env_id": retry["env_id"],
+                "episode_id": retry["episode_id"],
+                "step": retry["step"],
+                "responses": ["<done/>"],
+            }
+        )
+        assert loader._completed == 1
+    finally:
+        loader.close()
 
 
 # ---------------------------------------------------------------------------- live (Docker)
