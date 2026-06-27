@@ -413,6 +413,31 @@ def test_scorer_fault_is_typed_never_a_fake_zero(mock_shinkend):
         assert env.episodes[-1].trajectory.exit_reason == "scorer_error"
 
 
+@pytest.mark.parametrize(
+    "failure",
+    [
+        pytest.param(lambda: shinken.SandboxDied("replica exited"), id="typed-death"),
+        pytest.param(lambda: ConnectionResetError("verifier transport dropped"), id="transport"),
+    ],
+)
+def test_verifier_infrastructure_failure_remains_sandbox_died(mock_shinkend, failure):
+    def disconnected_verify(_sess):
+        raise failure()
+
+    task = g.GymTask("disconnected-verifier", verify=disconnected_verify)
+    with g.make(task, _ForkProvider(mock_shinkend)) as env:
+        env.reset()
+        with pytest.raises((shinken.SandboxDied, ConnectionResetError)):
+            env.step("<done/>")
+        ep = env.episodes[-1]
+        assert ep.reward is None
+        assert ep.trajectory.terminal == "aborted"
+        assert ep.trajectory.exit_reason == "sandbox_died"
+        assert ep.trajectory.metadata["error"].startswith("sandbox_died:")
+        with pytest.raises(g.GymError, match=r"episode is done.*reset"):
+            env.step("<done/>")
+
+
 def test_replica_death_finalizes_episode_as_sandbox_died(mock_shinkend):
     class _DeadSession:
         def step(self, *_a, **_k):
@@ -427,7 +452,53 @@ def test_replica_death_finalizes_episode_as_sandbox_died(mock_shinkend):
         ep = env.episodes[-1]
         assert ep.trajectory.exit_reason == "sandbox_died"
         assert "sandbox_died" in ep.trajectory.metadata["error"]
+        with pytest.raises(g.GymError, match=r"episode is done.*reset"):
+            env.step({"verb": "click", "target": {"kind": "point_px", "x": 2, "y": 2}})
         env._sess = None  # the dead stub has no close()
+
+
+def test_typed_batch_sandbox_death_closes_episode(mock_shinkend):
+    class _TypedDeadSession:
+        def step(self, *_a, **_k):
+            return {
+                "observation": {"png": b"post-action"},
+                "results": [{"ok": False, "error": "runtime exited"}],
+                "failure_kind": "sandbox_died",
+            }
+
+        def close(self):
+            pass
+
+    with g.make(_typed_hi_task(), _ForkProvider(mock_shinkend)) as env:
+        env.reset()
+        env._sess.close()
+        env._sess = _TypedDeadSession()
+        with pytest.raises(shinken.SandboxDied, match="runtime exited"):
+            env.step({"verb": "click", "target": {"kind": "point_px", "x": 1, "y": 1}})
+        assert env.episodes[-1].trajectory.exit_reason == "sandbox_died"
+        with pytest.raises(g.GymError, match=r"episode is done.*reset"):
+            env.step({"verb": "click", "target": {"kind": "point_px", "x": 2, "y": 2}})
+
+
+def test_generic_dispatch_exception_closes_episode_before_reraising(mock_shinkend):
+    class _BrokenSession:
+        def step(self, *_a, **_k):
+            raise RuntimeError("runtime adapter failed")
+
+        def close(self):
+            pass
+
+    with g.make(_typed_hi_task(), _ForkProvider(mock_shinkend)) as env:
+        env.reset()
+        env._sess.close()
+        env._sess = _BrokenSession()
+        with pytest.raises(RuntimeError, match="runtime adapter failed"):
+            env.step({"verb": "click", "target": {"kind": "point_px", "x": 1, "y": 1}})
+        ep = env.episodes[-1]
+        assert ep.trajectory.terminal == "aborted"
+        assert ep.trajectory.exit_reason == "agent_error"
+        with pytest.raises(g.GymError, match=r"episode is done.*reset"):
+            env.step({"verb": "click", "target": {"kind": "point_px", "x": 2, "y": 2}})
 
 
 def test_structured_observation_knob(mock_shinkend):
@@ -729,6 +800,129 @@ def test_dataloader_sandbox_death_does_not_consume_valid_episode_budget(mock_shi
             }
         )
         assert loader._completed == 1
+    finally:
+        loader.close()
+
+
+def test_dataloader_verifier_transport_loss_retries_without_consuming_budget(mock_shinkend):
+    verification_attempts = 0
+
+    def flaky_verify(_sess):
+        nonlocal verification_attempts
+        verification_attempts += 1
+        if verification_attempts == 1:
+            raise ConnectionResetError("replica died during scoring")
+        return 1.0
+
+    task = g.GymTask("flaky-verifier", verify=flaky_verify)
+    pool = g.ShinkenGymPool(task, _ForkProvider(mock_shinkend), 1)
+    loader = g.MultiTurnDataloader(pool, total_episodes=1)
+    try:
+        failed = next(loader)
+        rows = loader.async_step(
+            {
+                "env_id": failed["env_id"],
+                "episode_id": failed["episode_id"],
+                "step": failed["step"],
+                "responses": ["<done/>"],
+            }
+        )
+        assert rows[0]["done"] and rows[0]["reward"] is None
+        assert loader._completed == 0
+        assert loader.episodes[-1].trajectory.exit_reason == "sandbox_died"
+
+        retry = next(loader)
+        assert retry["episode_id"] != failed["episode_id"]
+        rows = loader.async_step(
+            {
+                "env_id": retry["env_id"],
+                "episode_id": retry["episode_id"],
+                "step": retry["step"],
+                "responses": ["<done/>"],
+            }
+        )
+        assert rows[0]["done"] and rows[0]["reward"] == 1.0
+        assert loader._completed == 1
+        assert verification_attempts == 2
+    finally:
+        loader.close()
+
+
+def test_dataloader_generic_dispatch_error_can_reset_and_retry(mock_shinkend):
+    class BrokenSession:
+        def step(self, *_args, **_kwargs):
+            raise RuntimeError("runtime adapter failed")
+
+        def close(self):
+            pass
+
+    pool = g.ShinkenGymPool(_typed_hi_task(), _ForkProvider(mock_shinkend), 1)
+    loader = g.MultiTurnDataloader(pool, total_episodes=1)
+    try:
+        failed = next(loader)
+        pool.envs[0]._sess.close()
+        pool.envs[0]._sess = BrokenSession()
+        with pytest.raises(RuntimeError, match="runtime adapter failed"):
+            loader.async_step(
+                {
+                    "env_id": failed["env_id"],
+                    "episode_id": failed["episode_id"],
+                    "step": failed["step"],
+                    "responses": ['<actions><click x="1" y="1"/></actions>'],
+                }
+            )
+        assert loader._completed == 0
+        assert loader.episodes[-1].trajectory.exit_reason == "agent_error"
+
+        retry = next(loader)
+        assert retry["episode_id"] != failed["episode_id"]
+        rows = loader.async_step(
+            {
+                "env_id": retry["env_id"],
+                "episode_id": retry["episode_id"],
+                "step": retry["step"],
+                "responses": ["<done/>"],
+            }
+        )
+        assert rows[0]["done"]
+        assert loader._completed == 1
+    finally:
+        loader.close()
+
+
+def test_dataloader_generic_error_requeues_unapplied_batch_rows(mock_shinkend):
+    class BrokenSession:
+        def step(self, *_args, **_kwargs):
+            raise RuntimeError("runtime adapter failed")
+
+        def close(self):
+            pass
+
+    pool = g.ShinkenGymPool(_typed_hi_task(), _ForkProvider(mock_shinkend), 2)
+    loader = g.MultiTurnDataloader(pool, total_episodes=2)
+    try:
+        batch = next(loader)
+        original_ids = dict(zip(batch["env_id"], batch["episode_id"], strict=True))
+        pool.envs[0]._sess.close()
+        pool.envs[0]._sess = BrokenSession()
+        with pytest.raises(RuntimeError, match="runtime adapter failed"):
+            loader.async_step(
+                {
+                    "env_id": batch["env_id"],
+                    "episode_id": batch["episode_id"],
+                    "step": batch["step"],
+                    "responses": [
+                        '<actions><click x="1" y="1"/></actions>',
+                        '<actions><click x="2" y="2"/></actions>',
+                    ],
+                }
+            )
+
+        retry = next(loader)
+        retried_ids = dict(zip(retry["env_id"], retry["episode_id"], strict=True))
+        assert set(retry["env_id"]) == {0, 1}
+        assert retried_ids[0] != original_ids[0]  # failed env received a fresh fork
+        assert retried_ids[1] == original_ids[1]  # untouched row was safely re-yielded
     finally:
         loader.close()
 

@@ -369,7 +369,6 @@ class ShinkenGymEnv:
                 exit_reason="scorer_error" if scorer_error is not None else None,
                 error=scorer_error,
             )
-            self._done = True
             info["terminal"] = terminal
         info["step"] = step_index
         info["episode"] = episode_index
@@ -392,7 +391,6 @@ class ShinkenGymEnv:
         policy emitted unparseable actions) without tearing the replica down; the next
         :meth:`reset` forks fresh."""
         self._finalize_episode(terminal="aborted", exit_reason=exit_reason, error=error)
-        self._done = True
 
     def close(self) -> None:
         """Finalize any in-flight episode and destroy the current replica. The golden
@@ -467,12 +465,25 @@ class ShinkenGymEnv:
 
     def _evaluate_for_done(self) -> tuple[float | None, str | None]:
         """Episode-end reward: the verifier's verdict, or ``(None, error)`` when the
-        verifier itself failed (a scorer fault is typed, never a fake 0.0)."""
+        verifier itself failed (a scorer fault is typed, never a fake 0.0).
+
+        A verifier may need to read the live sandbox.  Losing that transport is still
+        infrastructure death, not a scorer fault: record the aborted episode and let the
+        typed exception reach the dataloader so it can retry without consuming rollout
+        budget.
+        """
         if getattr(self.task, "verify", None) is None:
             return None, None
         try:
             return self.evaluate(), None
         except Exception as exc:  # noqa: BLE001 — classify into the episode, never crash
+            if isinstance(exc, SandboxDied) or is_connection_loss(exc):
+                self._finalize_episode(
+                    terminal="aborted",
+                    exit_reason="sandbox_died",
+                    error=f"sandbox_died: {exc}",
+                )
+                raise
             return None, f"scorer_error: {exc}"
 
     def _finalize_episode(
@@ -484,7 +495,10 @@ class ShinkenGymEnv:
         error: str | None = None,
     ) -> None:
         """Close the in-flight episode into a typed :class:`Trajectory` + :class:`Episode`.
-        No-op when no episode is open (back-to-back resets stay clean)."""
+        Marking the env done is part of this transition, so no exception path can close
+        the record while leaving the same replica accepting untracked follow-up steps.
+        Record creation is a no-op when no episode is open (back-to-back resets stay clean)."""
+        self._done = True
         if not self._episode_open:
             return
         self._episode_open = False
@@ -838,7 +852,25 @@ class MultiTurnDataloader:
             self._validate_response_target(env_id, episode_id, expected_step)
         if len({env_id for env_id, *_rest in targets}) != len(targets):
             raise GymError("batch_return contains duplicate env_id rows")
-        return [self.step(i, r, episode_id=eid, expected_step=step) for i, eid, step, r in targets]
+        rows: list[dict] = []
+        for index, (env_id, episode_id, expected_step, response) in enumerate(targets):
+            try:
+                rows.append(
+                    self.step(
+                        env_id,
+                        response,
+                        episode_id=episode_id,
+                        expected_step=expected_step,
+                    )
+                )
+            except BaseException:
+                # A runtime/harness error may propagate by design. Restore the yielded
+                # observations for this row (when it failed before closing the episode)
+                # and every not-yet-applied row, otherwise one failure in a multi-env
+                # batch strands the remaining live episodes with no pending response.
+                self._requeue_unapplied_targets(targets[index:])
+                raise
+        return rows
 
     def step(
         self,
@@ -941,6 +973,21 @@ class MultiTurnDataloader:
                 f"stale response for env {env_id}: expected episode_id={current_episode!r}, "
                 f"step={current_step}; got episode_id={episode_id!r}, step={expected_step}"
             )
+
+    def _requeue_unapplied_targets(self, targets: list[tuple[Any, Any, Any, Any]]) -> None:
+        """Return still-current yielded observations to the pending queue after a batch
+        aborts. A target whose episode already finalized stays closed and will reset on
+        the next iteration; untouched siblings are yielded again instead of being lost."""
+        for env_id, episode_id, expected_step, _response in targets:
+            env = self.pool.envs[env_id]
+            if (
+                env._episode_open
+                and not env._done
+                and env._episode_id == episode_id
+                and len(env._steps) == expected_step
+                and env._current_observation is not None
+            ):
+                self._pending[env_id] = env._current_observation
 
     def _episode_finished(self, env_id: int, *, count_toward_budget: bool = True) -> None:
         if count_toward_budget:
