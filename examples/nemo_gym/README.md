@@ -4,8 +4,9 @@
 feeds trainers like [NeMo RL](https://github.com/NVIDIA-NeMo/RL) GRPO). This example runs
 **real desktop computer-use environments** behind its resources-server contract, where the
 per-rollout resource is a **fork of the task's golden checkpoint** — task setup runs once,
-every rollout starts from a byte-identical live desktop in well under a second, instead of
-re-provisioning an environment per episode.
+and every rollout restores the verified task state in well under a second instead of
+re-provisioning an environment per episode. The Docker filesystem tier restarts processes;
+byte-identical live process/GUI state requires the explicitly selected CRIU memory tier.
 
 Observation is **text-first**: `computer_observe` returns the guest a11y engine's numbered
 tree (stable `e<N>` ids) and `mode="diff"` returns the `~/+/-` delta — a few hundred bytes
