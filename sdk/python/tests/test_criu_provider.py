@@ -506,8 +506,9 @@ def test_delete_unlabeled_legacy_snapshot_reclaims_image_and_images_dir(monkeypa
     monkeypatch.setattr("shinken.providers.docker._run", legacy_run)
     monkeypatch.setattr(
         "shinken.providers.docker.subprocess.run",
-        lambda cmd, **_kwargs: removed.append(cmd)
-        or subprocess.CompletedProcess(cmd, 0, stdout="", stderr=""),
+        lambda cmd, **_kwargs: (
+            removed.append(cmd) or subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        ),
     )
     provider = CriuDockerProvider(images_volume="v")
     provider._mem[snapshot_id] = {
