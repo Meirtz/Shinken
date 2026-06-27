@@ -485,6 +485,43 @@ def test_delete_snapshot_reclaims_image_and_images_dir(monkeypatch):
     assert "--rm" in rm_dir and "v:/ckpt" in rm_dir
 
 
+def test_delete_unlabeled_legacy_snapshot_reclaims_image_and_images_dir(monkeypatch):
+    snapshot_id = "shinken-memsnap:legacy"
+    images_dir = "/ckpt/" + "a" * 32
+    calls: list[list[str]] = []
+
+    def legacy_run(cmd, timeout=30.0):
+        calls.append(cmd)
+        if cmd[:3] == ["docker", "image", "inspect"]:
+            return subprocess.CompletedProcess(
+                cmd,
+                0,
+                stdout=json.dumps([{"Id": "sha256:legacy-criu", "Config": {"Labels": {}}}]),
+                stderr="",
+            )
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    removed = []
+    monkeypatch.setattr("shinken.providers.criu._run", legacy_run)
+    monkeypatch.setattr("shinken.providers.docker._run", legacy_run)
+    monkeypatch.setattr(
+        "shinken.providers.docker.subprocess.run",
+        lambda cmd, **_kwargs: removed.append(cmd)
+        or subprocess.CompletedProcess(cmd, 0, stdout="", stderr=""),
+    )
+    provider = CriuDockerProvider(images_volume="v")
+    provider._mem[snapshot_id] = {
+        "images_dir": images_dir,
+        "park": 1,
+        "images_volume": "v",
+    }
+
+    provider.delete_snapshot(snapshot_id)
+    assert snapshot_id not in provider._mem
+    assert any(cmd[:2] == ["docker", "run"] and images_dir in cmd for cmd in calls)
+    assert removed == [["docker", "rmi", "-f", "sha256:legacy-criu"]]
+
+
 def test_cleanup_snapshots_removes_owned_dir_not_shared_volume(monkeypatch):
     calls = _mock_docker(monkeypatch)
     removed: list[list[str]] = []

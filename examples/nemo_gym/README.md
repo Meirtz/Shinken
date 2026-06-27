@@ -171,11 +171,15 @@ equivalence belongs to the real trainer connector, not this smoke.
 
 - **Bounded ownership**: abandoned rollouts are reaped actively (not only when another seed
   arrives), and cached golden snapshots use reset leases plus TTL/LRU eviction. Defaults are
-  `idle_ttl_s=900`, `max_goldens=32`, `golden_ttl_s=3600`, and `reap_interval_s=30`; the example
-  server starts maintenance from its app lifecycle and exposes matching `SHINKEN_*` environment
-  overrides. Direct long-lived engine users call `start_maintenance()` explicitly; construction
-  is thread-free so fork-based scorers remain safe. Snapshot-delete failures remain tracked and
-  are retried by maintenance/close; terminal close raises while retryable ownership remains.
+  `idle_ttl_s=900`, `max_goldens=32`, `golden_ttl_s=3600`, `reap_interval_s=30`,
+  `max_pending_cleanup=64`, and `cleanup_retry_batch=16`; the example server starts maintenance
+  from its app lifecycle and exposes matching `SHINKEN_*` environment overrides. Direct
+  long-lived engine users call `start_maintenance()` explicitly; construction is thread-free so
+  fork-based scorers remain safe. Snapshot-delete failures remain tracked and are retried in
+  bounded batches; reaching the cleanup high-water mark fails closed for new seed/teardown work
+  until maintenance makes progress. Terminal close gives every current owner two fair attempts
+  without bypassing that bound; failures stay in the terminal engine ledger, and close raises
+  until a later retry succeeds.
 - **Process model**: one resources-server instance must use one worker because rollout ownership
   is process-local; startup rejects `num_workers != 1`. Scale out with multiple session-routed
   server instances. A shared external session-owner/control-plane layer is not implemented.

@@ -16,6 +16,9 @@ returns an address and token for a running ``shinkend``.
 - ``fork(handle)`` — snapshot + restore of a LIVE sandbox in one call.
 - ``resume(id)`` — **deprecated alias of** ``restore`` (kept for back-compat). It has
   RESTORE semantics, not pause/unpause semantics.
+- Snapshot-owning integrations additionally require ``delete_snapshot(id)``. Implementations
+  must succeed when the substrate proves the id is already absent, but must raise when the
+  control plane cannot determine absence; callers retain the id and retry on every failure.
 """
 
 from __future__ import annotations

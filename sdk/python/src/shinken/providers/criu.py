@@ -505,10 +505,10 @@ class CriuDockerProvider(DockerLocalProvider):
     def delete_snapshot(self, snapshot_id: str) -> None:
         """Reclaim the committed image AND the CRIU images directory on the shared
         volume (a transient unprivileged container runs the ``rm``). Idempotent."""
-        try:
-            snapshot_key, _image_ref, _record = self._resolve_snapshot(snapshot_id)
-        except ProviderError:
+        resolved = self._resolve_snapshot_for_delete(snapshot_id)
+        if resolved is None:
             return
+        snapshot_key, _image_ref, _record = resolved
         mem = self._mem.get(snapshot_key)
         if mem is not None:
             volume = str(mem.get("images_volume") or self.images_volume)

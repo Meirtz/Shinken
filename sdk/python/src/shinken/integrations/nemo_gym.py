@@ -285,10 +285,16 @@ class ShinkenComputerEngine:
         max_goldens: int = 32,
         golden_ttl_s: float = 3600.0,
         reap_interval_s: float = 30.0,
+        max_pending_cleanup: int = 64,
+        cleanup_retry_batch: int = 16,
         env_factory: Any = ShinkenCuaGymEnv,
     ) -> None:
-        if max_goldens < 0:
+        if type(max_goldens) is not int or max_goldens < 0:
             raise ValueError("max_goldens must be >= 0")
+        if type(max_pending_cleanup) is not int or max_pending_cleanup < 1:
+            raise ValueError("max_pending_cleanup must be >= 1")
+        if type(cleanup_retry_batch) is not int or cleanup_retry_batch < 1:
+            raise ValueError("cleanup_retry_batch must be >= 1")
         if not callable(getattr(provider, "delete_snapshot", None)):
             raise ValueError("provider must implement delete_snapshot for bounded golden ownership")
         lifetimes = {
@@ -310,12 +316,18 @@ class ShinkenComputerEngine:
         self.max_goldens = int(max_goldens)
         self.golden_ttl_s = lifetimes["golden_ttl_s"]
         self.reap_interval_s = lifetimes["reap_interval_s"]
+        self.max_pending_cleanup = max_pending_cleanup
+        self.cleanup_retry_batch = cleanup_retry_batch
         self.env_factory = env_factory
         self._rollouts: dict[str, _Rollout] = {}
         self._goldens: dict[str, _Golden] = {}
         self._session_inflight: dict[str, int] = {}
         self._lock = threading.Lock()
         self._cleanup_lock = threading.Lock()
+        self._maintenance_lock = threading.Lock()
+        self._terminal_cleanup_lock = threading.Lock()
+        self._cleanup_reservations = 0
+        self._cleanup_inflight = 0
         self._pending_snapshot_deletes: list[Any] = []
         self._pending_env_closes: list[Any] = []
         # Fixed stripes avoid the lock-map leak/ABA problem of one dynamically-created lock
@@ -384,44 +396,69 @@ class ShinkenComputerEngine:
                             f"stale rollout generation for session {session_id!r}; "
                             "seed_session ran again"
                         )
-                try:
-                    task = self.tasks.get(task_id)
-                except KeyError:
-                    # ``CuaGymTaskSource.get`` raises while a plain dict returns None.
-                    task = None
-                if task is None:
-                    raise CuaGymError(f"unknown task_id {task_id!r}")
+                with self._cleanup_admission():
+                    return self._seed_new_generation(session_id, task_id)
 
-                env = self.env_factory(
-                    task, self.provider, spec=self.spec, exec_timeout=self.exec_timeout
+    def _seed_new_generation(self, session_id: str, task_id: str) -> dict:
+        try:
+            task = self.tasks.get(task_id)
+        except KeyError:
+            # ``CuaGymTaskSource.get`` raises while a plain dict returns None.
+            task = None
+        if task is None:
+            raise CuaGymError(f"unknown task_id {task_id!r}")
+
+        # Mint the restart-safe epoch before creating any resource-owning environment.
+        # Entropy failures must not leave an initialized but unpublished replica behind.
+        generation = secrets.randbits(128)
+        env = self.env_factory(task, self.provider, spec=self.spec, exec_timeout=self.exec_timeout)
+        try:
+            t0 = time.perf_counter()
+            with self._golden_lease(task, env) as golden:
+                env.golden_checkpoint = golden
+                env.reset()
+            # Process setup is replayed after every filesystem-tier fork.
+            post_fork = task.config.get("shinken_post_fork") or []
+            if post_fork:
+                sess, run = env._session(), env._guest_exec()
+                for step in post_fork:
+                    env._apply_setup_step(step, sess, run)
+            # Idle age starts only after expensive reset/setup has completed. Constructing the
+            # rollout earlier would let maintenance reap a generation immediately after seed.
+            published = _Rollout(env, task, generation)
+        except BaseException:
+            # The old generation remains current unless initialization fully succeeds.
+            self._close_env(env)
+            raise
+
+        reset_ms = (time.perf_counter() - t0) * 1000.0
+        with self._lock:
+            previous = self._rollouts.get(session_id)
+            self._rollouts[session_id] = published
+        if previous is not None:
+            self._close_env(previous.env)
+        return self._seed_result(published, reset_ms=reset_ms)
+
+    @contextlib.contextmanager
+    def _cleanup_admission(self) -> Iterator[None]:
+        # Give a recovered provider one bounded retry batch before applying backpressure.
+        self._drain_env_closes()
+        self._drain_snapshot_deletes()
+        # A prior seed may have left a leased golden temporarily above the cache limit.
+        # Re-attempt that eviction before deciding whether ownership is still saturated.
+        self._evict_goldens()
+        with self._lock:
+            if self._cleanup_pressure_locked() >= self.max_pending_cleanup:
+                raise CuaGymError(
+                    "cleanup backlog is at capacity; cleanup-producing operations are disabled "
+                    "until maintenance reclaims pending resources"
                 )
-                try:
-                    t0 = time.perf_counter()
-                    with self._golden_lease(task, env) as golden:
-                        env.golden_checkpoint = golden
-                        env.reset()
-                    # Process setup is replayed after every filesystem-tier fork.
-                    post_fork = task.config.get("shinken_post_fork") or []
-                    if post_fork:
-                        sess, run = env._session(), env._guest_exec()
-                        for step in post_fork:
-                            env._apply_setup_step(step, sess, run)
-                except BaseException:
-                    # The old generation remains current unless initialization fully succeeds.
-                    self._close_env(env)
-                    raise
-
-                reset_ms = (time.perf_counter() - t0) * 1000.0
-                with self._lock:
-                    # A random epoch cannot alias a signed session cookie retained across a
-                    # resources-server restart (a process-local counter could restart at 1).
-                    generation = secrets.randbits(128)
-                    previous = self._rollouts.get(session_id)
-                    published = _Rollout(env, task, generation)
-                    self._rollouts[session_id] = published
-                if previous is not None:
-                    self._close_env(previous.env)
-                return self._seed_result(published, reset_ms=reset_ms)
+            self._cleanup_reservations += 1
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._cleanup_reservations -= 1
 
     @staticmethod
     def _seed_result(rollout: _Rollout, *, reset_ms: float) -> dict:
@@ -463,12 +500,13 @@ class ShinkenComputerEngine:
         with self._operation(session_id=session_id):
             with self._session_lock(session_id):
                 rollout = self._current_rollout(session_id, generation)
-                try:
-                    return rollout.env.evaluate()
-                finally:
-                    detached = self._detach_rollout(session_id, rollout)
-                    if detached is not None:
-                        self._close_env(detached.env)
+                with self._cleanup_admission():
+                    try:
+                        return rollout.env.evaluate()
+                    finally:
+                        detached = self._detach_rollout(session_id, rollout)
+                        if detached is not None:
+                            self._close_env(detached.env)
 
     def end(self, session_id: str, *, generation: int) -> None:
         """Tear down a rollout's replica without scoring (idempotent)."""
@@ -484,8 +522,10 @@ class ShinkenComputerEngine:
                         or rollout.generation != generation
                     ):
                         return
-                    self._rollouts.pop(session_id, None)
-                self._close_env(rollout.env)
+                with self._cleanup_admission():
+                    with self._lock:
+                        self._rollouts.pop(session_id, None)
+                    self._close_env(rollout.env)
 
     def close(self, *, delete_goldens: bool = True) -> None:
         """Terminal barrier: reject new work, drain admitted calls, then reclaim resources."""
@@ -502,35 +542,117 @@ class ShinkenComputerEngine:
         if not owner:
             # A later close(delete_goldens=True) may release snapshots retained by an earlier
             # close(delete_goldens=False), while replica teardown remains idempotent.
-            if delete_goldens:
-                self._delete_remaining_goldens()
-            self._drain_env_closes()
-            self._drain_snapshot_deletes()
-            self._raise_pending_cleanup()
+            # An interrupted owning close may already have published ``closed`` while an
+            # admitted operation finishes; preserve the terminal barrier on this retry.
+            with self._lifecycle:
+                self._lifecycle.wait_for(lambda: self._active_operations == 0)
+            self._reclaim_terminal_resources(delete_goldens=delete_goldens)
+            self._raise_pending_cleanup(include_retained_goldens=delete_goldens)
             return
 
-        self._reaper_stop.set()
-        thread = self._reaper_thread
-        if thread is not None and thread is not threading.current_thread():
-            thread.join()
+        try:
+            self._reaper_stop.set()
+            thread = self._reaper_thread
+            if thread is not None and thread is not threading.current_thread():
+                thread.join()
 
-        with self._lifecycle:
-            self._lifecycle.wait_for(lambda: self._active_operations == 0)
+            with self._lifecycle:
+                self._lifecycle.wait_for(lambda: self._active_operations == 0)
 
+            self._reclaim_terminal_resources(delete_goldens=delete_goldens)
+        finally:
+            # Even an interrupt cannot strand concurrent close callers in ``closing``.
+            # Any resource not conclusively reclaimed remains in an ownership collection.
+            self._reaper_stop.set()
+            with self._lifecycle:
+                self._state = "closed"
+                self._lifecycle.notify_all()
+        self._raise_pending_cleanup(include_retained_goldens=delete_goldens)
+
+    def _reclaim_terminal_resources(self, *, delete_goldens: bool) -> None:
+        """Reclaim terminal ownership without ever exceeding the cleanup high-water mark."""
+        with self._terminal_cleanup_lock:
+            # Two fair rounds recover the common fail-once case during the app's only shutdown
+            # callback. A poison owner is attempted at most twice per close call, preventing an
+            # O(N) series of provider timeouts while other healthy owners are still reclaimed.
+            for _round in range(2):
+                self._drain_terminal_pending_once()
+                self._close_retained_rollouts_once()
+                if delete_goldens:
+                    self._delete_retained_goldens_once()
+                with self._lock:
+                    remaining = self._terminal_ownership_locked(
+                        include_retained_goldens=delete_goldens
+                    )
+                if remaining == 0:
+                    return
+
+    def _drain_terminal_pending_once(self) -> int:
+        """Give every currently queued owner one fair retry; return reclaimed count."""
         with self._lock:
-            rollouts = list(self._rollouts.values())
-            self._rollouts.clear()
-        for rollout in rollouts:
-            self._close_env(rollout.env)
-        if delete_goldens:
-            self._delete_remaining_goldens()
-        self._drain_env_closes()
-        self._drain_snapshot_deletes()
+            env_remaining = len(self._pending_env_closes)
+            snapshot_remaining = len(self._pending_snapshot_deletes)
+        reclaimed = 0
+        while env_remaining:
+            attempted, succeeded = self._drain_env_closes(limit=env_remaining)
+            if attempted == 0:
+                break
+            env_remaining -= attempted
+            reclaimed += succeeded
+        while snapshot_remaining:
+            attempted, succeeded = self._drain_snapshot_deletes(limit=snapshot_remaining)
+            if attempted == 0:
+                break
+            snapshot_remaining -= attempted
+            reclaimed += succeeded
+        return reclaimed
 
-        with self._lifecycle:
-            self._state = "closed"
-            self._lifecycle.notify_all()
-        self._raise_pending_cleanup()
+    def _close_retained_rollouts_once(self) -> int:
+        """Try every terminal rollout in place so one poison owner cannot block the rest."""
+        with self._lock:
+            retained = list(self._rollouts.items())
+        reclaimed = 0
+        for session_id, rollout in retained:
+            try:
+                rollout.env.close()
+            except Exception:
+                _LOG.warning(
+                    "failed to close terminal NeMo Gym rollout; retained for retry",
+                    exc_info=True,
+                )
+                continue
+            except BaseException:
+                # The rollout remains in the ledger before an interrupt propagates.
+                raise
+            with self._lock:
+                if self._rollouts.get(session_id) is rollout:
+                    self._rollouts.pop(session_id)
+                    reclaimed += 1
+        return reclaimed
+
+    def _delete_retained_goldens_once(self) -> int:
+        """Try every terminal golden in place, retaining failures without queue growth."""
+        with self._lock:
+            retained = list(self._goldens.items())
+        reclaimed = 0
+        delete_snapshot = self.provider.delete_snapshot
+        for task_id, entry in retained:
+            try:
+                delete_snapshot(entry.snapshot)
+            except Exception:
+                _LOG.warning(
+                    "failed to delete terminal NeMo Gym golden; retained for retry",
+                    exc_info=True,
+                )
+                continue
+            except BaseException:
+                # The golden remains in the ledger before an interrupt propagates.
+                raise
+            with self._lock:
+                if self._goldens.get(task_id) is entry:
+                    self._goldens.pop(task_id)
+                    reclaimed += 1
+        return reclaimed
 
     @contextlib.contextmanager
     def _operation(
@@ -596,7 +718,12 @@ class ShinkenComputerEngine:
         with self._operation(fail_if_closed=False) as admitted:
             if not admitted:
                 return {"rollouts_reaped": 0, "goldens_evicted": 0}
-            return self._maintenance_once()
+            if not self._maintenance_lock.acquire(blocking=False):
+                return {"rollouts_reaped": 0, "goldens_evicted": 0}
+            try:
+                return self._maintenance_once()
+            finally:
+                self._maintenance_lock.release()
 
     def _maintenance_once(self) -> dict[str, int]:
         result = {
@@ -618,6 +745,7 @@ class ShinkenComputerEngine:
             session_lock = self._session_lock(session_id)
             if not session_lock.acquire(blocking=False):
                 continue
+            reserved = False
             try:
                 with self._lock:
                     rollout = self._rollouts.get(session_id)
@@ -627,10 +755,17 @@ class ShinkenComputerEngine:
                         or rollout.last_used >= cutoff
                     ):
                         continue
+                    if self._cleanup_pressure_locked() >= self.max_pending_cleanup:
+                        break
+                    self._cleanup_reservations += 1
+                    reserved = True
                     self._rollouts.pop(session_id, None)
                 self._close_env(rollout.env)
                 reaped += 1
             finally:
+                if reserved:
+                    with self._lock:
+                        self._cleanup_reservations -= 1
                 session_lock.release()
         return reaped
 
@@ -654,92 +789,146 @@ class ShinkenComputerEngine:
                     if task_id not in evicted:
                         evicted.add(task_id)
                         remaining_count -= 1
-            snapshots = [self._goldens.pop(task_id).snapshot for task_id in evicted]
-        self._queue_snapshot_deletes(snapshots)
-        return len(snapshots)
-
-    def _delete_remaining_goldens(self) -> None:
-        with self._lock:
-            snapshots = [entry.snapshot for entry in self._goldens.values()]
-            self._goldens.clear()
-        self._queue_snapshot_deletes(snapshots)
-
-    def _queue_snapshot_deletes(self, snapshots: Iterable[Any]) -> None:
-        with self._lock:
+            available = max(
+                0,
+                self.max_pending_cleanup - self._cleanup_pressure_locked(),
+            )
+            selected = sorted(evicted, key=lambda task_id: self._goldens[task_id].last_used)[
+                :available
+            ]
+            snapshots = [self._goldens.pop(task_id).snapshot for task_id in selected]
+            # Selecting and queueing are one transaction. Otherwise two concurrent eviction
+            # passes can both observe the same free capacity and overflow the high-water mark.
             self._pending_snapshot_deletes.extend(snapshots)
         self._drain_snapshot_deletes()
+        return len(snapshots)
 
-    def _drain_snapshot_deletes(self) -> None:
+    def _drain_snapshot_deletes(self, *, limit: int | None = None) -> tuple[int, int]:
         if not self._cleanup_lock.acquire(blocking=False):
-            return
+            return 0, 0
         try:
             with self._lock:
-                pending, self._pending_snapshot_deletes = self._pending_snapshot_deletes, []
+                batch = (
+                    self.cleanup_retry_batch
+                    if limit is None
+                    else min(limit, self.cleanup_retry_batch)
+                )
+                pending = self._pending_snapshot_deletes[:batch]
+                del self._pending_snapshot_deletes[:batch]
+                self._cleanup_inflight += len(pending)
             if not pending:
-                return
+                return 0, 0
             failed = []
+            completed = 0
             delete_snapshot = getattr(self.provider, "delete_snapshot", None)
-            if delete_snapshot is None:
-                failed = pending
-            else:
-                for snapshot in pending:
-                    try:
-                        delete_snapshot(snapshot)
-                    except Exception:
-                        failed.append(snapshot)
-                        _LOG.warning(
-                            "failed to delete NeMo Gym golden snapshot; queued for retry",
-                            exc_info=True,
-                        )
-            if failed:
+            try:
+                if delete_snapshot is None:
+                    failed = pending
+                    completed = len(pending)
+                else:
+                    for snapshot in pending:
+                        try:
+                            delete_snapshot(snapshot)
+                        except Exception:
+                            failed.append(snapshot)
+                            completed += 1
+                            _LOG.warning(
+                                "failed to delete NeMo Gym golden snapshot; queued for retry",
+                                exc_info=True,
+                            )
+                        else:
+                            completed += 1
+            finally:
+                # If an interrupt escapes a provider call, retain the current and all
+                # unattempted handles. Snapshot deletion is required to be idempotent.
+                failed.extend(pending[completed:])
                 with self._lock:
                     self._pending_snapshot_deletes.extend(failed)
+                    self._cleanup_inflight -= len(pending)
+            return len(pending), len(pending) - len(failed)
         finally:
             self._cleanup_lock.release()
 
     def _close_env(self, env: Any) -> None:
         try:
             env.close()
-        except Exception:
+        except BaseException as exc:
             with self._lock:
                 if not any(pending is env for pending in self._pending_env_closes):
                     self._pending_env_closes.append(env)
-            _LOG.warning(
-                "failed to close NeMo Gym rollout environment; queued for retry",
-                exc_info=True,
-            )
+            if isinstance(exc, Exception):
+                _LOG.warning(
+                    "failed to close NeMo Gym rollout environment; queued for retry",
+                    exc_info=True,
+                )
+                return
+            # Interrupts still propagate, but only after the ownership handle is durable.
+            raise
 
-    def _drain_env_closes(self) -> None:
+    def _drain_env_closes(self, *, limit: int | None = None) -> tuple[int, int]:
         if not self._cleanup_lock.acquire(blocking=False):
-            return
+            return 0, 0
         try:
             with self._lock:
-                pending, self._pending_env_closes = self._pending_env_closes, []
+                batch = (
+                    self.cleanup_retry_batch
+                    if limit is None
+                    else min(limit, self.cleanup_retry_batch)
+                )
+                pending = self._pending_env_closes[:batch]
+                del self._pending_env_closes[:batch]
+                self._cleanup_inflight += len(pending)
             failed = []
-            for env in pending:
-                try:
-                    env.close()
-                except Exception:
-                    failed.append(env)
-                    _LOG.warning(
-                        "failed to close queued NeMo Gym rollout environment",
-                        exc_info=True,
-                    )
-            if failed:
+            completed = 0
+            try:
+                for env in pending:
+                    try:
+                        env.close()
+                    except Exception:
+                        failed.append(env)
+                        completed += 1
+                        _LOG.warning(
+                            "failed to close queued NeMo Gym rollout environment",
+                            exc_info=True,
+                        )
+                    else:
+                        completed += 1
+            finally:
+                # Preserve ownership across interrupts just like the snapshot retry path.
+                failed.extend(pending[completed:])
                 with self._lock:
                     self._pending_env_closes.extend(failed)
+                    self._cleanup_inflight -= len(pending)
+            return len(pending), len(pending) - len(failed)
         finally:
             self._cleanup_lock.release()
 
-    def _raise_pending_cleanup(self) -> None:
+    def _raise_pending_cleanup(self, *, include_retained_goldens: bool) -> None:
         with self._lock:
             env_count = len(self._pending_env_closes)
             snapshot_count = len(self._pending_snapshot_deletes)
-        if env_count or snapshot_count:
+            rollout_count = len(self._rollouts)
+            golden_count = len(self._goldens) if include_retained_goldens else 0
+        if env_count or snapshot_count or rollout_count or golden_count:
             raise CuaGymError(
                 "computer engine closed with retryable cleanup pending: "
-                f"{env_count} environment(s), {snapshot_count} snapshot(s); call close() again"
+                f"{env_count} environment(s), {snapshot_count} snapshot(s), "
+                f"{rollout_count} retained rollout(s), {golden_count} retained golden(s); "
+                "call close() again"
             )
+
+    def _cleanup_backlog_locked(self) -> int:
+        return len(self._pending_env_closes) + len(self._pending_snapshot_deletes)
+
+    def _cleanup_pressure_locked(self) -> int:
+        return self._cleanup_backlog_locked() + self._cleanup_inflight + self._cleanup_reservations
+
+    def _terminal_ownership_locked(self, *, include_retained_goldens: bool) -> int:
+        return (
+            self._cleanup_pressure_locked()
+            + len(self._rollouts)
+            + (len(self._goldens) if include_retained_goldens else 0)
+        )
 
     @staticmethod
     def _run_reaper(
