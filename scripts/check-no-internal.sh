@@ -147,7 +147,7 @@ fi
 # `.gitignore` is not an access-control mechanism: `git add -f` bypasses it, and a file
 # that was already tracked stays tracked. Make the ignore policy enforceable in CI by
 # rejecting any tracked path that still matches it. The exact public Dockerfile.cua is
-# explicitly unignored; private CUA/AGS variants remain blocked.
+# explicitly unignored; private CUA/provider variants remain blocked.
 ignored_tracked="$(git ls-files -ci --exclude-standard)"
 if [[ -n "$ignored_tracked" ]]; then
   ignored_count="$(printf '%s\n' "$ignored_tracked" | wc -l | tr -d ' ')"
