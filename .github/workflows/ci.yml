@@ -179,7 +179,9 @@ jobs:
           [ "$xvfb_ready" = 1 ] || { echo "::error::Xvfb (:99) never became ready"; exit 1; }
           TOKEN=$(openssl rand -hex 32)
           export SHK_TOKEN="$TOKEN"
-          SHINKEND_ADDR=127.0.0.1:8765 SHINKEND_TOKEN="$TOKEN" ./shinkend/target/debug/shinkend &
+          # This job explicitly exercises launch_app, which shares the default-off
+          # arbitrary process-spawn boundary with exec.
+          SHINKEND_ADDR=127.0.0.1:8765 SHINKEND_TOKEN="$TOKEN" SHINKEND_ENABLE_EXEC=1 ./shinkend/target/debug/shinkend &
           sleep 1
           python scripts/m1_smoke.py 127.0.0.1:8765
           eval "$(xdotool getmouselocation --shell)"
