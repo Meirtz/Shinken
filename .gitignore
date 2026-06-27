@@ -65,3 +65,19 @@ map.md
 
 # local run receipts (minimal; raw ones never uploaded)
 runs/
+
+# Local-only Docker context and unpublished CUA/OSWorld image experiments. These files
+# may contain environment-specific paths, guest credentials, or private launch topology.
+/.dockerignore
+/images/linux/*cua*
+/images/linux/sk-exec-sidecar.py
+/scripts/osworld_arm_vm.sh
+
+# Local agent analysis and paper-draft artifacts; keep source-derived notes out of the
+# public repository even when they do not contain a literal credential.
+/AGENTIX_ANALYSIS.md
+/CODEX_BU_AND_CU_RUNTIME.md
+/CODEX_CUA_HARNESS_ANALYSIS.md
+/SHINKEN_CUA_HARNESS_WALKTHROUGH.md
+/SHINKEN_PAPER_HARNESS_SECTION.md
+/SHINKEN_RUNTIME_DEEPDIVE.md
