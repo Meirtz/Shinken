@@ -28,18 +28,17 @@ each leg with repetitions, against the local DockerLocalProvider (disk tier:
 Rep counts are env-overridable: ``SHINKEN_BENCH_FORK_REPS`` (default 16) and
 ``SHINKEN_BENCH_FORK_NS`` (comma-separated, default ``1,2,4,8,16,32``).
 
-**Pool mode** (S4b): ``SHINKEN_BENCH_FORK_MODE=pool`` runs the same protocol against
-a provider with the opt-in warm pool (``warm_pool_size`` =
-``SHINKEN_BENCH_POOL_K``, default 8): restore claims a pre-booted base container and
-grafts the checkpoint's filesystem delta instead of cold-booting the committed
-image. Every replica still verifies the inherited golden marker, and each row
-records whether it was a pool graft or a classic fallback (pool empty), so the
-numbers never mix silently. Pool mode emits fork_resume_pool.json/.png.
+**Historical pool mode** (S4b): ``SHINKEN_BENCH_FORK_MODE=pool`` now exits explicitly.
+The former implementation grafted a checkpoint delta onto a running container, which
+could race guest writers and did not preserve pool-hit/pool-miss equivalence. Its tracked
+JSON/figure remain historical artifacts; this harness cannot regenerate them until an
+equivalence-preserving implementation exists.
 
 **Memory mode** (S4c): ``SHINKEN_BENCH_FORK_MODE=memory`` runs the protocol against
 the CRIU memory tier (``CriuDockerProvider``, snapshot_kind="process", PRIVILEGED
 containers — a latency/state-fidelity tier, not an isolation posture): checkpoint =
-``criu dump --leave-running`` + ``docker commit``; fork = fresh privileged container
+``criu dump --leave-stopped`` + ``docker commit`` in one consistency window, followed by
+donor resume; fork = fresh privileged container
 + ``criu restore``. On top of the golden FILE marker, every replica must pass the
 **process-memory verifier** — a python planted inside the checkpointed tree whose
 counter lives only in its heap answers with the same pid/nonce and a counter ≥ the
@@ -79,7 +78,9 @@ from _common import (
 
 MODE = os.environ.get("SHINKEN_BENCH_FORK_MODE", "classic")  # classic | pool | memory
 POOL_K = int(os.environ.get("SHINKEN_BENCH_POOL_K", "8"))
-SUITE = {"pool": "fork_resume_pool", "memory": "fork_resume_memory"}.get(MODE, "fork_resume")
+SUITE = {"pool": "fork_resume_pool", "memory": "fork_resume_memory"}.get(
+    MODE, "fork_resume"
+)
 REPS = int(os.environ.get("SHINKEN_BENCH_FORK_REPS", "16"))
 FANOUT = [
     int(n)
@@ -103,7 +104,9 @@ def _make_provider(**kwargs):
     if MODE == "memory":
         from shinken.providers.criu import CriuDockerProvider
 
-        return CriuDockerProvider(image=CRIU_IMAGE, name_prefix="shinken-bench", **kwargs)
+        return CriuDockerProvider(
+            image=CRIU_IMAGE, name_prefix="shinken-bench", **kwargs
+        )
     from shinken.providers.docker import DockerLocalProvider
 
     return DockerLocalProvider(image=IMAGE, name_prefix="shinken-bench", **kwargs)
@@ -137,7 +140,9 @@ def _cold_boot_once(rep: int) -> dict:
     }
 
 
-def _resume_once(provider, ckpt_id: str, idx: int, marker_floor: dict | None = None) -> dict:
+def _resume_once(
+    provider, ckpt_id: str, idx: int, marker_floor: dict | None = None
+) -> dict:
     """One replica. A provider-level infra failure (the contended Docker daemon
     refusing a create under burst) is recorded HONESTLY as a failed row — excluded
     from timing stats and from the verified-inheritance denominator, never faked."""
@@ -153,7 +158,9 @@ def _resume_once(provider, ckpt_id: str, idx: int, marker_floor: dict | None = N
         }
 
 
-def _resume_once_inner(provider, ckpt_id: str, idx: int, marker_floor: dict | None) -> dict:
+def _resume_once_inner(
+    provider, ckpt_id: str, idx: int, marker_floor: dict | None
+) -> dict:
     t0 = now_ms()
     handle = provider.resume(ckpt_id)
     resume_ms = now_ms() - t0
@@ -179,7 +186,9 @@ def _resume_once_inner(provider, ckpt_id: str, idx: int, marker_floor: dict | No
                 from shinken.providers.criu import verify_memory_marker
 
                 memory_row = {
-                    "memory_state_verified": verify_memory_marker(env, marker_floor)["ok"]
+                    "memory_state_verified": verify_memory_marker(env, marker_floor)[
+                        "ok"
+                    ]
                 }
         finally:
             env.close()
@@ -241,6 +250,12 @@ def _wait_pool_refill(provider, n: int, budget_s: float = 90.0) -> int:
 
 
 def run() -> dict:
+    if MODE == "pool":
+        raise RuntimeError(
+            "SHINKEN_BENCH_FORK_MODE=pool is disabled: the historical live filesystem "
+            "graft was not equivalent to classic restore; tracked S4b results are "
+            "historical artifacts only"
+        )
     cold = [_cold_boot_once(rep) for rep in range(REPS)]
     print(f"cold boots: {[c['total_ms'] for c in cold]}", flush=True)
 
@@ -294,7 +309,10 @@ def run() -> dict:
             t0 = now_ms()
             with concurrent.futures.ThreadPoolExecutor(max_workers=n) as pool:
                 rows = list(
-                    pool.map(lambda i: _resume_once(provider, ckpt_id, i, marker_floor), range(n))
+                    pool.map(
+                        lambda i: _resume_once(provider, ckpt_id, i, marker_floor),
+                        range(n),
+                    )
                 )
             wall = now_ms() - t0
             for row in rows:
@@ -305,7 +323,8 @@ def run() -> dict:
                     "n": n,
                     "wall_ms": round(wall, 1),
                     "wall_per_replica_ms": round(wall / n, 1),
-                    "all_inherited": bool(real) and all(r["inherited_golden_state"] for r in real),
+                    "all_inherited": bool(real)
+                    and all(r["inherited_golden_state"] for r in real),
                     "pool_grafts": sum(1 for r in real if r.get("pool_graft")),
                     "infra_failures": len(rows) - len(real),
                     **({"pool_at_start": pool_at_start} if MODE == "pool" else {}),
@@ -522,9 +541,19 @@ def plot_classic(payload: dict) -> None:
     for x, (legs, vals) in enumerate(((cold_legs, cold_tot), (fork_legs, fork_tot))):
         m = mean(vals)
         if m > 0.33 * ymax:
-            ax1.text(x, m / 2, legs, ha="center", va="center", color="white", fontsize=8)
+            ax1.text(
+                x, m / 2, legs, ha="center", va="center", color="white", fontsize=8
+            )
         else:
-            ax1.text(x + 0.36, m / 2, legs, ha="left", va="center", color="#333333", fontsize=8)
+            ax1.text(
+                x + 0.36,
+                m / 2,
+                legs,
+                ha="left",
+                va="center",
+                color="#333333",
+                fontsize=8,
+            )
     note = (
         "fork inherits LIVE process+memory\nstate (criu restore into a fresh\n"
         "privileged container) — every\nreplica passes the in-heap marker"
@@ -606,9 +635,7 @@ def plot_classic(payload: dict) -> None:
             f"+ live process memory ({mem_ok}/{len(fr)})"
         )
     else:
-        verified_line = (
-            f"every replica marker-verified: golden marker read back ({verified}/{len(fr)})"
-        )
+        verified_line = f"every replica marker-verified: golden marker read back ({verified}/{len(fr)})"
     ax2.text(
         0.5,
         0.99,
@@ -625,10 +652,19 @@ def plot_classic(payload: dict) -> None:
     ax2.legend(loc="center right", fontsize=8.5)
     # Save under the payload's OWN suite name (replot.py re-renders tracked JSONs with
     # the env unset, so deriving the name from MODE would overwrite the classic figure).
-    save_plot(fig, "fork_resume_memory" if payload.get("mode") == "memory" else "fork_resume")
+    save_plot(
+        fig, "fork_resume_memory" if payload.get("mode") == "memory" else "fork_resume"
+    )
 
 
 def main() -> int:
+    if MODE == "pool":
+        print(
+            "bench_fork pool mode is disabled: the historical live filesystem graft "
+            "was not equivalent to classic restore; tracked S4b results are historical only",
+            file=sys.stderr,
+        )
+        return 2
     payload = run()
     d = payload["datapoints"]
     real = [r for r in d["fork_resume"] if "infra_failure" not in r]
@@ -643,7 +679,11 @@ def main() -> int:
         "state_verify": {
             level: "{}/{}".format(
                 sum(1 for r in real if (r.get("state_verify") or {}).get(level)),
-                sum(1 for r in real if (r.get("state_verify") or {}).get(level) is not None),
+                sum(
+                    1
+                    for r in real
+                    if (r.get("state_verify") or {}).get(level) is not None
+                ),
             )
             for level in VERIFY_LEVELS
         },
@@ -658,12 +698,15 @@ def main() -> int:
         misses = [r["total_ms"] for r in real if not r.get("pool_graft")]
         payload["summary"]["pool_graft_total_ms"] = summarize(hits)
         payload["summary"]["classic_fallback_total_ms"] = summarize(misses)
-        payload["summary"]["pool_hit_rate"] = round(len(hits) / len(real), 3) if real else None
+        payload["summary"]["pool_hit_rate"] = (
+            round(len(hits) / len(real), 3) if real else None
+        )
     write_result(SUITE, payload)
     plot(payload)
     ok = (
         payload["summary"]["replicas_total"] > 0
-        and payload["summary"]["replicas_verified"] == payload["summary"]["replicas_total"]
+        and payload["summary"]["replicas_verified"]
+        == payload["summary"]["replicas_total"]
     )
     if MODE == "memory":
         # The memory tier's bar is higher: every replica must ALSO prove live

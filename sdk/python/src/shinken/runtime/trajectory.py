@@ -47,7 +47,13 @@ def resolve_exit_reason(*candidates: str | None) -> str | None:
 
 @dataclass
 class Step:
-    """One turn: what the agent saw and the canonical ACI action(s) it took."""
+    """One turn: what the agent saw and the canonical ACI action(s) it took.
+
+    ``observation`` is the policy input *before* ``actions`` (``s_t``).  Producers
+    that also observe the result retain it in ``next_observation`` (``s_{t+1}``).
+    The latter is optional so existing producers and positional ``Step(...)`` calls
+    remain compatible.
+    """
 
     index: int
     observation: dict  # ACI observation (coordinate-space tagged); capture policy decides retention
@@ -66,9 +72,12 @@ class Step:
     response_token_ids: list[int] | None = None  # token ids of the model response this turn
     response_mask: list[int] | None = None  # per response token: 1=model-generated, 0=tool-injected
     finish_reason: str | None = None  # provider finish reason (stop | length | tool_calls | …)
+    # Kept last to preserve the historical positional constructor layout. Legacy
+    # producers that only retain the policy input leave this as None.
+    next_observation: dict | None = None  # post-action observation (s_{t+1}), when captured
 
     def to_dict(self) -> dict:
-        return {
+        out = {
             "index": self.index,
             "observation": self.observation,
             "actions": self.actions,
@@ -79,6 +88,11 @@ class Step:
             "response_mask": self.response_mask,
             "finish_reason": self.finish_reason,
         }
+        # Do not change the serialized shape of legacy/runtime-loop Steps that do not
+        # capture a post-action observation. Gym transitions include the field.
+        if self.next_observation is not None:
+            out["next_observation"] = self.next_observation
+        return out
 
 
 @dataclass

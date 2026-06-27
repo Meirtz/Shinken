@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import base64
+import io
+import json
 import subprocess
+import tarfile
 
 import pytest
 
@@ -11,6 +15,8 @@ from shinken.providers import (
     DockerLocalProvider,
     ExternalProvider,
     SandboxSpec,
+    StateFidelity,
+    UnsatisfiedSandboxSpec,
     UnsupportedProviderOperation,
 )
 from shinken.providers.base import ProviderError, SandboxHandle
@@ -77,6 +83,7 @@ def test_docker_provider_builds_run_command(monkeypatch):
     assert "--cpus" in cmd and "1.5" in cmd
     assert "--pids-limit" in cmd and "128" in cmd
     assert "--shm-size" in cmd and "128m" in cmd
+    assert "SHINKEND_ENABLE_EXEC=1" in cmd
     assert "shinken/test" == cmd[-1]
     assert handle.addr == "127.0.0.1:19001"
     assert handle.metadata["container_id"] == "container-id"
@@ -113,12 +120,19 @@ def test_docker_extra_env_passes_through_but_never_reserved_keys(monkeypatch):
     monkeypatch.setattr(DockerLocalProvider, "_wait_ready", lambda _self, _handle: None)
     DockerLocalProvider().create(
         SandboxSpec(
-            extra_env={"SHINKEND_DAMAGE": "off", "SHINKEND_TOKEN": "evil", "SCREEN_GEOMETRY": "1x1"}
+            extra_env={
+                "SHINKEND_DAMAGE": "off",
+                "SHINKEND_TOKEN": "evil",
+                "SHINKEND_ENABLE_EXEC": "0",
+                "SCREEN_GEOMETRY": "1x1",
+            }
         )
     )
     cmd = commands[0]
     assert "SHINKEND_DAMAGE=off" in cmd
     assert "SHINKEND_TOKEN=evil" not in cmd, "reserved env must not be overridable"
+    assert "SHINKEND_ENABLE_EXEC=0" not in cmd
+    assert cmd.count("SHINKEND_ENABLE_EXEC=1") == 1
     assert "SCREEN_GEOMETRY=1x1" not in cmd
     assert sum(1 for a in cmd if a.startswith("SCREEN_GEOMETRY=")) == 1
 
@@ -133,19 +147,46 @@ def test_docker_default_network_mode_is_bridge_and_recorded(monkeypatch):
     assert handle.metadata["guest_egress"] is True
 
 
-def test_docker_network_none_omits_port_and_records_no_egress(monkeypatch):
-    # #152: network_mode="none" gives the guest no network (no egress) and omits -p
-    # (incompatible with --network none); metadata records the no-egress posture.
-    cmd, handle = _docker_create(monkeypatch, network_mode="none")
-    assert "--network" in cmd and cmd[cmd.index("--network") + 1] == "none"
-    assert "-p" not in cmd
-    assert handle.metadata["network_mode"] == "none"
-    assert handle.metadata["guest_egress"] is False
+def test_docker_network_none_fails_before_docker_run(monkeypatch):
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "shinken.providers.docker._run",
+        lambda cmd, **_kwargs: calls.append(cmd),
+    )
+    with pytest.raises(ProviderError, match="before docker run"):
+        DockerLocalProvider(network_mode="none").create()
+    assert calls == []
 
 
 def test_docker_invalid_network_mode_rejected():
     with pytest.raises(ProviderError):
         DockerLocalProvider(network_mode="airplane")
+
+
+@pytest.mark.parametrize(
+    ("spec", "field"),
+    [
+        (SandboxSpec(os="windows"), "os"),
+        (SandboxSpec(needs_gpu=True), "needs_gpu"),
+        (SandboxSpec(fast_reset=True), "fast_reset"),
+        (SandboxSpec(state_fidelity="process_memory"), "state_fidelity"),
+    ],
+)
+def test_docker_unsatisfied_spec_is_typed_and_preflighted(monkeypatch, spec, field):
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "shinken.providers.docker._run",
+        lambda cmd, **_kwargs: calls.append(cmd),
+    )
+    with pytest.raises(UnsatisfiedSandboxSpec) as raised:
+        DockerLocalProvider().create(spec)
+    assert raised.value.field == field
+    assert calls == []
+
+
+def test_unproven_warm_pool_is_rejected_explicitly():
+    with pytest.raises(ProviderError, match="cannot yet be proven equivalent"):
+        DockerLocalProvider(warm_pool_size=1)
 
 
 def test_docker_provider_cleans_up_if_readiness_fails(monkeypatch):
@@ -208,30 +249,45 @@ def test_docker_memory_parser():
 
 def test_redact_cmd_masks_secret_env():
     # #153: secret env values are masked when a command is rendered for an error/log
-    masked = _redact_cmd(["docker", "run", "-e", "SHINKEND_TOKEN=deadbeef", "img"])
+    masked = _redact_cmd(
+        [
+            "docker",
+            "run",
+            "-e",
+            "SHINKEND_TOKEN=deadbeef",
+            "-e",
+            "api_token=lowercase-secret",
+            "img",
+        ]
+    )
     assert "deadbeef" not in masked
     assert "SHINKEND_TOKEN=***" in masked
+    assert "lowercase-secret" not in masked
+    assert "api_token=***" in masked
     # non-secret args are preserved verbatim
     assert _redact_cmd(["SCREEN_GEOMETRY=1280x800x24"]) == "SCREEN_GEOMETRY=1280x800x24"
 
 
-def test_run_error_does_not_leak_token(monkeypatch):
+@pytest.mark.parametrize("assignment", ["SHINKEND_TOKEN=supersecret", "api_token=supersecret"])
+def test_run_error_does_not_leak_token(monkeypatch, assignment):
     # #153: a failing docker invocation must not echo the runtime token into the error
     def boom(cmd, **_kwargs):
         raise subprocess.CalledProcessError(1, cmd, output="", stderr="boom")
 
     monkeypatch.setattr(subprocess, "run", boom)
     with pytest.raises(ProviderError) as exc:
-        _run(["docker", "run", "-e", "SHINKEND_TOKEN=supersecret", "img"])
+        _run(["docker", "run", "-e", assignment, "img"])
     msg = str(exc.value)
     assert "supersecret" not in msg
-    assert "SHINKEND_TOKEN=***" in msg
+    assert f"{assignment.split('=', 1)[0]}=***" in msg
 
 
 def test_top_level_exports_provider_types():
     assert shinken.DockerLocalProvider is DockerLocalProvider
     assert shinken.ExternalProvider is ExternalProvider
     assert shinken.SandboxSpec is SandboxSpec
+    assert shinken.providers.UnsatisfiedSandboxSpec is UnsatisfiedSandboxSpec
+    assert shinken.providers.StateFidelity is StateFidelity
 
 
 # --- runtime-state primitives, disk tier (#206) -----------------------------------
@@ -248,7 +304,12 @@ def _mock_docker(monkeypatch) -> list[list[str]]:
 
     def fake_run(cmd, timeout=30.0):
         calls.append(cmd)
-        return subprocess.CompletedProcess(cmd, 0, stdout="cid\n", stderr="")
+        if cmd[:2] == ["docker", "commit"]:
+            commit_count = sum(c[:2] == ["docker", "commit"] for c in calls)
+            out = f"sha256:immutable-{commit_count}\n"
+        else:
+            out = "cid\n"
+        return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
 
     monkeypatch.setattr("shinken.providers.docker._run", fake_run)
     monkeypatch.setattr("shinken.providers.docker._free_port", lambda _host: 19010)
@@ -268,7 +329,35 @@ def test_docker_snapshot_uses_commit(monkeypatch):
     snap = DockerLocalProvider().snapshot(_handle("c1"), name="base")
     assert calls[0][:2] == ["docker", "commit"]
     assert "c1" in calls[0]
-    assert snap == "shinken-snap:base"
+    assert snap.startswith("shinken-snap:") and "base" not in snap
+    assert "LABEL shinken.snapshot_name=base" not in calls[0]
+    assert "LABEL shinken.checkpoint_id=" in calls[0]
+    assert "LABEL shinken.snapshot_name=" in calls[0]
+
+
+def test_docker_same_human_name_mints_distinct_snapshot_ids(monkeypatch):
+    _mock_docker(monkeypatch)
+    provider = DockerLocalProvider()
+    first = provider.snapshot(_handle("c1"), name="golden")
+    second = provider.snapshot(_handle("c1"), name="golden")
+    assert first != second
+    assert first.startswith("shinken-snap:") and second.startswith("shinken-snap:")
+
+
+def test_docker_rejects_cross_tier_persisted_record():
+    provider = DockerLocalProvider()
+    record = provider._snapshot_record(
+        snapshot_id="shinken-memsnap:foreign",
+        spec=SandboxSpec(),
+        name=None,
+        checkpoint_id=None,
+        event_seq=None,
+        agent_state_ref=None,
+    )
+    record["provider"] = "docker-criu"
+    record["snapshot_kind"] = "process"
+    with pytest.raises(ProviderError, match="belongs to provider"):
+        provider._remember_snapshot_record(record, image_ref="sha256:foreign")
 
 
 def test_docker_fork_snapshots_then_launches_from_image(monkeypatch):
@@ -276,8 +365,9 @@ def test_docker_fork_snapshots_then_launches_from_image(monkeypatch):
     child = DockerLocalProvider().fork(_handle("c1"))
     assert any(c[:2] == ["docker", "commit"] for c in calls)
     run_cmd = next(c for c in calls if c[:2] == ["docker", "run"])
-    assert run_cmd[-1].startswith("shinken-snap:")  # launched from the snapshot image
-    assert child.metadata["image"].startswith("shinken-snap:")
+    assert run_cmd[-1] == "sha256:immutable-1"
+    assert child.metadata["image"] == "sha256:immutable-1"
+    assert child.metadata["snapshot_id"].startswith("shinken-snap:")
 
 
 def test_docker_checkpoint_binds_offset_and_resume_restores_it(monkeypatch):
@@ -288,7 +378,146 @@ def test_docker_checkpoint_binds_offset_and_resume_restores_it(monkeypatch):
     rec = p._checkpoints[ckpt]
     assert rec["event_seq"] == 42 and rec["agent_state_ref"] == "agent://x"
     resumed = p.resume(ckpt)  # resume a checkpoint id -> restore its snapshot
-    assert resumed.metadata["image"] == rec["snapshot_id"]
+    assert resumed.metadata["image"] == p._snapshot_images[rec["snapshot_id"]]
+    assert resumed.metadata["snapshot_id"] == rec["snapshot_id"]
+    assert resumed.metadata["restore_path"] == "cold"
+
+
+def test_fresh_provider_rebuilds_checkpoint_from_image_labels(monkeypatch):
+    calls = _mock_docker(monkeypatch)
+    original = DockerLocalProvider()
+    donor = original.create(
+        SandboxSpec(
+            os="linux",
+            memory="768m",
+            cpus=1.25,
+            screen_geometry="900x700x24",
+            extra_env={"VISIBLE_SETTING": "yes"},
+            metadata={"suite": "provider-p0"},
+        )
+    )
+    checkpoint = original.checkpoint(
+        donor,
+        name="human-label",
+        event_seq=73,
+        agent_state_ref="agent://state/73",
+    )
+    commit = next(cmd for cmd in calls if cmd[:2] == ["docker", "commit"])
+    encoded = next(
+        arg.split("=", 1)[1]
+        for arg in commit
+        if arg.startswith("LABEL shinken.snapshot_record.v1=")
+    )
+    raw_record = base64.urlsafe_b64decode(encoded).decode()
+    record = json.loads(raw_record)
+    assert record["name"] == "human-label"
+    assert record["spec"]["extra_env"] == {"VISIBLE_SETTING": "yes"}
+    assert record["spec"]["redacted_extra_env_keys"] == []
+
+    fresh_calls: list[list[str]] = []
+
+    def fresh_run(cmd, timeout=30.0):
+        fresh_calls.append(cmd)
+        if cmd[:2] == ["docker", "images"]:
+            out = "sha256:persisted-image\n"
+        elif cmd[:3] == ["docker", "image", "inspect"]:
+            out = json.dumps(
+                [
+                    {
+                        "Id": "sha256:persisted-image",
+                        "Config": {"Labels": {DockerLocalProvider._SNAPSHOT_RECORD_LABEL: encoded}},
+                    }
+                ]
+            )
+        elif cmd[:2] == ["docker", "run"]:
+            out = "fresh-container\n"
+        else:
+            out = ""
+        return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
+
+    monkeypatch.setattr("shinken.providers.docker._run", fresh_run)
+    fresh = DockerLocalProvider()
+    rebuilt = fresh.snapshot_spec(checkpoint)
+    assert rebuilt is not None
+    assert rebuilt.memory == "768m" and rebuilt.cpus == 1.25
+    assert rebuilt.screen_geometry == "900x700x24"
+    assert rebuilt.extra_env == {"VISIBLE_SETTING": "yes"}
+    assert rebuilt.metadata["suite"] == "provider-p0"
+
+    restored = fresh.restore(checkpoint)
+    run_cmd = next(cmd for cmd in fresh_calls if cmd[:2] == ["docker", "run"])
+    assert run_cmd[-1] == "sha256:persisted-image"
+    assert restored.metadata["checkpoint_id"] == checkpoint
+    assert restored.metadata["event_seq"] == 73
+    assert restored.metadata["agent_state_ref"] == "agent://state/73"
+    assert restored.metadata["restore_path"] == "cold"
+    assert restored.metadata["pool_status"] == "disabled"
+
+
+def test_snapshot_scrubs_secret_env_and_fresh_restore_requires_reinjection(monkeypatch):
+    calls = _mock_docker(monkeypatch)
+    original = DockerLocalProvider()
+    donor = original.create(
+        SandboxSpec(
+            extra_env={"PUBLIC_SETTING": "yes", "API_TOKEN": "do-not-persist"},
+            metadata={"purpose": "secret-env-test"},
+        )
+    )
+    checkpoint = original.checkpoint(donor)
+    commit = next(cmd for cmd in calls if cmd[:2] == ["docker", "commit"])
+    assert "ENV SHINKEND_TOKEN=" in commit
+    assert "ENV API_TOKEN=" in commit
+    encoded = next(
+        arg.split("=", 1)[1]
+        for arg in commit
+        if arg.startswith("LABEL shinken.snapshot_record.v1=")
+    )
+    raw_record = base64.urlsafe_b64decode(encoded).decode()
+    assert "do-not-persist" not in raw_record
+    original.restore(checkpoint)
+    same_process_restore = [cmd for cmd in calls if cmd[:2] == ["docker", "run"]][-1]
+    assert "API_TOKEN=do-not-persist" in same_process_restore
+
+    fresh_calls: list[list[str]] = []
+
+    def fresh_run(cmd, timeout=30.0):
+        fresh_calls.append(cmd)
+        if cmd[:2] == ["docker", "images"]:
+            out = "sha256:secret-scrubbed\n"
+        elif cmd[:3] == ["docker", "image", "inspect"]:
+            out = json.dumps(
+                [
+                    {
+                        "Id": "sha256:secret-scrubbed",
+                        "Config": {"Labels": {DockerLocalProvider._SNAPSHOT_RECORD_LABEL: encoded}},
+                    }
+                ]
+            )
+        else:
+            out = "unexpected\n"
+        return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
+
+    monkeypatch.setattr("shinken.providers.docker._run", fresh_run)
+    with pytest.raises(UnsatisfiedSandboxSpec) as raised:
+        DockerLocalProvider().restore(checkpoint)
+    assert raised.value.field == "extra_env"
+    assert raised.value.requested == ["API_TOKEN"]
+    assert not any(cmd[:2] == ["docker", "run"] for cmd in fresh_calls)
+
+
+def test_redacted_or_opaque_metadata_cannot_silently_replay():
+    provider = DockerLocalProvider()
+    persisted = provider._spec_to_record(
+        SandboxSpec(metadata={"api_key": "metadata-secret", "opaque": object()}),
+        for_label=True,
+    )
+    raw = json.dumps(persisted)
+    assert "metadata-secret" not in raw
+    assert persisted["redacted_metadata_paths"] == ["api_key", "opaque"]
+    reconstructed = provider._spec_from_record(persisted)
+    with pytest.raises(UnsatisfiedSandboxSpec) as raised:
+        provider._validate_replay_metadata(reconstructed)
+    assert raised.value.field == "metadata"
 
 
 def test_docker_resume_requires_id_not_live_handle():
@@ -402,36 +631,45 @@ def test_pool_compatible_requires_matching_spec():
     assert not provider._pool_compatible(SandboxSpec(memory="512m"))
 
 
-def test_capture_delta_splits_adds_and_deletions(monkeypatch, tmp_path):
-    diff_out = "\n".join(
-        [
-            "C /tmp",
-            "A /tmp/shinken_bench_golden.txt",
-            "D /home/shinken/gone.txt",
-            "C /tmp/.X11-unix",  # live X state — excluded from the graft
-            "A /tmp/.X0-lock",  # likewise
-            "D /run/dbus/pid",  # likewise (deletions filtered too)
-        ]
-    )
+def test_capture_delta_comes_from_immutable_image_layer(monkeypatch, tmp_path):
+    layer_bytes = io.BytesIO()
+    with tarfile.open(fileobj=layer_bytes, mode="w") as layer:
+        for name, payload in (
+            ("tmp/shinken_bench_golden.txt", b"golden"),
+            ("home/shinken/.wh.gone.txt", b""),
+            ("home/cache/.wh..wh..opq", b""),
+            ("run/dbus/pid", b"excluded-runtime"),
+            ("run/dbus/.wh.old", b""),
+        ):
+            member = tarfile.TarInfo(name)
+            member.size = len(payload)
+            layer.addfile(member, io.BytesIO(payload))
+    manifest = json.dumps([{"Layers": ["layer.tar"]}]).encode()
+    image_bytes = io.BytesIO()
+    with tarfile.open(fileobj=image_bytes, mode="w") as image:
+        for name, payload in (("manifest.json", manifest), ("layer.tar", layer_bytes.getvalue())):
+            member = tarfile.TarInfo(name)
+            member.size = len(payload)
+            image.addfile(member, io.BytesIO(payload))
+
+    calls: list[list[str]] = []
 
     def fake_run(cmd, timeout=30.0):
-        assert cmd[:2] == ["docker", "diff"]
-        return subprocess.CompletedProcess(cmd, 0, stdout=diff_out, stderr="")
-
-    tar_inputs = {}
-
-    def fake_subprocess_run(cmd, **kwargs):
-        assert cmd[:3] == ["docker", "exec", "-i"]
-        tar_inputs["paths"] = kwargs["input"].decode().splitlines()
-        kwargs["stdout"].write(b"TARBYTES")
-        return subprocess.CompletedProcess(cmd, 0, stdout=b"", stderr=b"")
+        calls.append(cmd)
+        assert cmd[:3] == ["docker", "image", "save"]
+        output_path = cmd[cmd.index("-o") + 1]
+        with open(output_path, "wb") as saved:
+            saved.write(image_bytes.getvalue())
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     monkeypatch.setattr("shinken.providers.docker._run", fake_run)
-    monkeypatch.setattr("shinken.providers.docker.subprocess.run", fake_subprocess_run)
     provider = DockerLocalProvider()
     provider._delta_dir = tmp_path
-    delta = provider._capture_delta("cid", "shinken-snap:t1")
-    # adds: the real state, paths relative to / for tar -C /
-    assert tar_inputs["paths"] == ["tmp", "tmp/shinken_bench_golden.txt"]
-    assert delta["deletions"] == ["/home/shinken/gone.txt"]
-    assert delta["tar"] and (tmp_path / "t1.tar").read_bytes() == b"TARBYTES"
+    delta = provider._capture_delta("live-donor-must-not-be-read", "sha256:t1")
+    assert calls == [["docker", "image", "save", "-o", str(tmp_path / "t1.image.tar"), "sha256:t1"]]
+    assert delta["source"] == "committed_image_layer"
+    assert delta["image_ref"] == "sha256:t1"
+    assert delta["deletions"] == ["/home/shinken/gone.txt", "/home/cache"]
+    assert delta["tar"]
+    with tarfile.open(delta["tar"]) as graft:
+        assert graft.getnames() == ["tmp/shinken_bench_golden.txt"]

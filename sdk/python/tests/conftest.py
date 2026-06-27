@@ -157,7 +157,7 @@ async def _send_observation(ws, cid: str, fmt: str, binary: bool, scope: str = "
     shared by the one-shot screenshot reply and the act-returns-observation follow-up
     (binary frame on a binary-negotiated session, base64-in-JSON text otherwise)."""
     meta = {"w": 1, "h": 1, "scope": scope, "format": fmt}
-    # pointer metadata rides one-shot observations (capture pixels, [x, y]); the mock
+    # pointer metadata rides one-shot observations (global point_px, [x, y]); the mock
     # mirrors the runtime so SDK passthrough is exercised on every screenshot test
     frame = {"type": "observation", "obs_id": f"obs-{cid}", "cause": cid, "pointer": [11, 22]}
     if binary:
@@ -523,7 +523,7 @@ async def _handler(
                 fmt = action.get("format") or "png"
                 meta = {"w": 1, "h": 1, "scope": "screen", "format": fmt}
                 extra = {"frame_hash": frame_hash} if support_dedup else {}
-                # pointer metadata rides one-shot screenshots (capture pixels, [x, y])
+                # pointer metadata rides one-shot screenshots (global point_px, [x, y])
                 extra["pointer"] = [11, 22]
                 if binary:
                     await ws.send(

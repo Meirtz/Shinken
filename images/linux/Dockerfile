@@ -6,8 +6,8 @@
 # executor backends land in M1 (#4).
 #
 # Build (from repo root):  docker build -f images/linux/Dockerfile -t shinken/sandbox-linux .
-# Run (bind to HOST loopback + require a dev token — shinkend refuses a non-loopback
-# bind without SHINKEND_TOKEN). This local reference image is NOT the production isolation
+# Run (bind to HOST loopback + require a dev token — every TCP shinkend requires
+# SHINKEND_TOKEN). This local reference image is NOT the production isolation
 # boundary (that is a microVM, see docs/design/threat-model.md — the isolation & capability
 # note); for a tighter container, add the usual run flags:
 #   docker run --rm -p 127.0.0.1:8765:8765 \

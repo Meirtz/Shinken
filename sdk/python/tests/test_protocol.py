@@ -67,6 +67,20 @@ from shinken import protocol
             "seq": 0,
             "image": {"ref": "abc", "w": 640, "h": 400, "scope": "screen"},
         },
+        {
+            "type": "observation",
+            "obs_id": "shot-1",
+            "cause": "c1",
+            "display": {
+                "origin": "top-left",
+                "w": 1920,
+                "h": 1080,
+                "dpr": 1,
+                "source_rect": {"x": 320, "y": 180, "w": 800, "h": 600},
+                "delivered": {"w": 400, "h": 300},
+            },
+            "image": {"ref": "abc", "w": 400, "h": 300, "scope": "window:42"},
+        },
     ],
 )
 def test_valid_messages_pass_schema(message):
@@ -122,6 +136,12 @@ def test_valid_messages_pass_schema(message):
             "stream": "sc",
             "seq": 0,
         },
+        {  # a present coordinate descriptor is complete, never guessable/partial
+            "type": "observation",
+            "obs_id": "shot-1",
+            "display": {"origin": "top-left", "w": 1920, "h": 1080, "dpr": 1},
+            "image": {"ref": "abc", "w": 400, "h": 300, "scope": "window:42"},
+        },
     ],
 )
 def test_invalid_messages_fail_schema(message):
@@ -131,6 +151,39 @@ def test_invalid_messages_fail_schema(message):
 
 def test_schema_version_constant():
     assert protocol.SCHEMA_VERSION == 0
+
+
+def test_binary_header_accepts_the_same_coordinate_descriptor():
+    schema = protocol.aci_schema()
+    binary_schema = {
+        "$schema": schema["$schema"],
+        "$ref": "#/$defs/BinaryFrameHeader",
+        "$defs": schema["$defs"],
+    }
+    jsonschema.validate(
+        {
+            "type": "observation",
+            "obs_id": "shot-1",
+            "cause": "c1",
+            "display": {
+                "origin": "top-left",
+                "w": 1920,
+                "h": 1080,
+                "dpr": 1,
+                "source_rect": {"x": 320, "y": 180, "w": 800, "h": 600},
+                "delivered": {"w": 400, "h": 300},
+            },
+            "image": {
+                "off": 0,
+                "len": 12,
+                "w": 400,
+                "h": 300,
+                "scope": "window:42",
+                "format": "jpeg",
+            },
+        },
+        binary_schema,
+    )
 
 
 def test_parse_welcome_ok():

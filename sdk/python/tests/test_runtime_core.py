@@ -123,6 +123,20 @@ def test_step_token_fidelity_fields_are_reserved_and_unpopulated():
         assert k in d and d[k] is None
 
 
+def test_step_next_observation_is_optional_and_serialization_compatible():
+    legacy = Step(0, {"state": 0}, [{"verb": "click"}])
+    assert legacy.next_observation is None
+    assert "next_observation" not in legacy.to_dict()
+
+    transition = Step(
+        0,
+        {"state": 0},
+        [{"verb": "click"}],
+        next_observation={"state": 1},
+    )
+    assert transition.to_dict()["next_observation"] == {"state": 1}
+
+
 def test_trajectory_exit_reason_defaults_none_and_serializes():
     t = Trajectory()
     assert t.exit_reason is None and t.to_dict()["exit_reason"] is None

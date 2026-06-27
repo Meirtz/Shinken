@@ -15,15 +15,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--version", action="version", version=f"shinken {__version__}")
     sub = parser.add_subparsers(dest="cmd")
     connect_cmd = sub.add_parser("connect", help="connect to a shinkend and print its capabilities")
-    # Default addr/token from the SDK's SHK_ADDR/SHK_TOKEN convention (see smoke.py) so the
-    # CLI can reach a token-protected (non-loopback) shinkend, which requires a token.
+    # Default addr/token from the SDK's SHK_ADDR/SHK_TOKEN convention (see smoke.py).
+    # Every TCP shinkend, including loopback, requires a token.
     connect_cmd.add_argument(
         "addr", nargs="?", default=os.environ.get("SHK_ADDR", "127.0.0.1:8765")
     )
     connect_cmd.add_argument(
         "--token",
         default=os.environ.get("SHK_TOKEN"),
-        help="dev bearer token (defaults to $SHK_TOKEN); required for a non-loopback shinkend",
+        help="dev bearer token (defaults to $SHK_TOKEN); required by every shinkend",
     )
     ps_cmd = sub.add_parser(
         "ps", help="list live Shinken sandboxes rebuilt from substrate labels (Provider.list)"

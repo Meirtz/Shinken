@@ -25,6 +25,7 @@ from .client import (
     SharedLoop,
     aconnect,
     connect,
+    map_target_from_observation,
 )
 from .dialect import DialectError, parse_actions, parse_xml_actions
 from .errors import (
@@ -58,6 +59,7 @@ __all__ = [
     "Checkpoint",
     "FrameCache",
     "SandboxFleet",
+    "map_target_from_observation",
     "CapabilityDenied",
     "ShinkenError",
     "SessionClosed",

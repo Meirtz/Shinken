@@ -23,9 +23,11 @@ This adapter exposes Shinken sandboxes through the same shapes:
   — task content is never embedded in-tree, matching the ``OSWORLD_PATH`` discipline.
 - :class:`ShinkenCuaGymEnv` mirrors the ``Env`` method surface over a Shinken provider and
   replaces the fresh-VM lifecycle with the runtime-state primitive CUA-Gym lacks:
-  **``reset()`` is a golden-checkpoint fork.** Bundle setup runs ONCE into a base sandbox,
-  is checkpointed, and every reset materializes a replica from that single checkpoint
-  (sub-second on the Docker disk tier vs minutes of cloud-VM provisioning per use).
+  **``reset()`` is a golden-checkpoint restore.** Bundle setup runs ONCE into a base
+  sandbox and every reset materializes a replica from that checkpoint. Because CUA-Gym
+  setup commonly leaves an application running, the default request requires
+  process+memory fidelity; a filesystem-only provider must be selected explicitly only
+  for tasks whose post-restore launch/focus is replayed.
 
 ``TaskSource``/scorers are consumer-side by design (``docs/design/agent-runtime.md`` §5);
 nothing here touches the runtime waist. No CUA-Gym code is imported or copied.
@@ -49,6 +51,7 @@ from pathlib import Path
 from typing import Any
 
 from shinken.errors import ShinkenError
+from shinken.providers.base import SandboxSpec
 
 #: Mirror of the public method surface of CUA-Gym's ``utils/env.py`` ``Env`` (operations
 #: only — their cloud-lifecycle classmethods are replaced by reset-via-fork). Kept as a
@@ -305,8 +308,9 @@ class ShinkenCuaGymEnv:
       setup steps (``download`` → ``put_file`` from the bundle dir, ``execute`` → guest
       exec), checkpoints the result as the **golden state**, and destroys the base; every
       call (including the first) then materializes a fresh replica from that single
-      checkpoint — sub-second on the Docker disk tier, and every replica starts from the
-      byte-identical golden state.
+      checkpoint. The Docker disk tier restores persistent filesystem state and restarts
+      processes; setup that depends on a live GUI/window must be replayed after restore or
+      use a provider whose declared fidelity includes process+memory state.
 
     ``download`` steps are resolved **from the bundle directory** by URL basename (their
     exported URLs point at a private object store); a referenced file missing from the
@@ -326,7 +330,12 @@ class ShinkenCuaGymEnv:
     ) -> None:
         self.task = task
         self.provider = provider
-        self.spec = spec
+        # CUA-Gym setup is GUI state preparation, not merely file installation. Fail
+        # closed on Docker's filesystem tier instead of silently checkpointing files
+        # while losing the application/window/process state the agent is meant to see.
+        # A caller may explicitly pass filesystem fidelity for a task whose launch/focus
+        # is replayed after every restore.
+        self.spec = spec if spec is not None else SandboxSpec(state_fidelity="process_memory")
         self.exec_factory = exec_factory
         self.guest_python = guest_python
         self.setup_timeout = setup_timeout

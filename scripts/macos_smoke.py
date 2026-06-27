@@ -8,13 +8,14 @@ against YOUR live desktop, not a sandbox. Clicks/typing are gated behind
 Run shinkend first (the terminal needs the Screen Recording + Accessibility
 grants — see docs/engineering/macos-engine.md):
 
-    cargo run --manifest-path shinkend/Cargo.toml -- --backend macos
+    SHINKEND_TOKEN="$SHK_TOKEN" cargo run --manifest-path shinkend/Cargo.toml -- --backend macos
     python scripts/macos_smoke.py [addr] [--unsafe]
 
 Exit codes: 0 = smoke passed; 2 = runtime reachable but TCC permissions pending
 (the documented "grant and rerun" state); 1 = anything else.
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -35,7 +36,10 @@ def main() -> int:
     addr = next((a for a in sys.argv[1:] if not a.startswith("--")), "127.0.0.1:8765")
     unsafe = "--unsafe" in sys.argv[1:]
 
-    env = shinken.connect(addr)
+    token = os.environ.get("SHK_TOKEN")
+    if not token:
+        raise RuntimeError("SHK_TOKEN is required (use the same token passed to shinkend)")
+    env = shinken.connect(addr, token=token)
     print(f"connected to {addr}: platform={env.platform}")
     assert env.platform == "macos", f"expected a macOS runtime, got {env.platform!r}"
 

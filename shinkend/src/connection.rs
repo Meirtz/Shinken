@@ -1,7 +1,8 @@
 //! Per-connection ACI session: the handshake state machine + dev-token auth.
 //!
 //! The first message on a connection MUST be `hello`; `hello` is accepted exactly
-//! once. If a token is configured (`SHINKEND_TOKEN`), the `hello` must carry it.
+//! once. The production TCP server always configures a token (`SHINKEND_TOKEN`), so
+//! every `hello` must carry it; tokenless sessions exist only as an internal test seam.
 //! Only after a successful handshake are actions/queries dispatched. This keeps an
 //! unauthenticated client from driving the desktop or occupying RPC (#22).
 
@@ -146,6 +147,10 @@ impl Step {
 pub struct Session {
     authed: bool,
     token: Option<String>,
+    /// Privileged in-guest process execution is fail-closed in the production server.
+    /// Unit tests and embedders retain the historical enabled default; `main` applies
+    /// the operator's explicit `SHINKEND_ENABLE_EXEC` policy through the builder.
+    exec_enabled: bool,
     exec: Arc<dyn Executor>,
     /// Binary media framing negotiated by this session's `hello.accept.binary_frames`.
     /// Off by default — an old client that never asked keeps base64-in-JSON frames.
@@ -163,6 +168,7 @@ impl Session {
         Self {
             authed: false,
             token,
+            exec_enabled: true,
             exec,
             binary: false,
             tree: None,
@@ -174,6 +180,11 @@ impl Session {
     /// loop; sessions without one keep nacking the observe family honestly).
     pub fn with_tree_source(mut self, tree: Arc<dyn TreeSource>) -> Self {
         self.tree = Some(tree);
+        self
+    }
+
+    pub fn with_exec_enabled(mut self, enabled: bool) -> Self {
+        self.exec_enabled = enabled;
         self
     }
 
@@ -232,7 +243,7 @@ impl Session {
                     .and_then(serde_json::Value::as_bool)
                     .unwrap_or(false);
                 self.authed = true;
-                Step::reply(&protocol::welcome())
+                Step::reply(&protocol::welcome_with_exec(self.exec_enabled))
             }
             _ => Step::close(protocol::error_result_text(
                 "?",
@@ -349,9 +360,17 @@ fn observation_reply(
     exec: &dyn Executor,
     binary: bool,
 ) -> Result<Reply, String> {
-    let img = exec.capture(scope, opts).map_err(|e| e.to_string())?;
+    let frame = exec.capture_frame(scope, opts).map_err(|e| e.to_string())?;
     let pointer = exec.pointer_position();
-    Ok(image_reply(call_id, scope, &img, None, binary, pointer))
+    Ok(image_reply(
+        call_id,
+        scope,
+        &frame.image,
+        None,
+        binary,
+        pointer,
+        frame.display.as_ref(),
+    ))
 }
 
 /// Validate an `observe` spec's capture parameters (same rules as `screenshot`:
@@ -486,6 +505,7 @@ impl Session {
             // Typed in-guest exec (G1): validate here (the nack path), run in the
             // serve loop's bounded exec task. The child is a process of shinkend —
             // no Executor backend involved, so exec works on EVERY backend.
+            "exec" if !self.exec_enabled => nack("exec is disabled by server policy".to_string()),
             "exec" => match crate::exec::ExecSpec::from_action(call_id, &spec, binary) {
                 Ok(espec) => Step {
                     // Streamed form: ack now, events follow. Buffered form: silence
@@ -731,15 +751,17 @@ fn screenshot_reply(
 ) -> Reply {
     let pointer = exec.pointer_position();
     if exec.supports_raw_capture() {
-        return match exec.capture_raw(scope, opts.max_long_edge) {
-            Ok((rgb, w, h)) => {
+        return match exec.capture_raw_frame(scope, opts.max_long_edge) {
+            Ok(frame) => {
+                let crate::executor::RawCapturedFrame { rgb, w, h, display } = frame;
                 let hash = crate::executor::frame_hash_hex(&rgb, w, h);
                 if if_none_match == Some(hash.as_str()) {
                     // Not modified: no encode, no payload — text even on a binary
                     // session (there are no payload bytes to frame). The pointer
-                    // rides along: the frame is unchanged, the metadata is fresh.
+                    // and coordinate map ride along: pixels may be unchanged even
+                    // though the captured window moved on the global screen.
                     return Reply::Text(encode(&protocol::not_modified_observation(
-                        call_id, &hash, pointer,
+                        call_id, &hash, pointer, display,
                     )));
                 }
                 // capture_raw already downscaled; encoding must not downscale again.
@@ -748,15 +770,31 @@ fn screenshot_reply(
                     ..opts
                 };
                 match crate::executor::encode_frame(&rgb, w, h, encode_opts) {
-                    Ok(img) => image_reply(call_id, scope, &img, Some(&hash), binary, pointer),
+                    Ok(img) => image_reply(
+                        call_id,
+                        scope,
+                        &img,
+                        Some(&hash),
+                        binary,
+                        pointer,
+                        display.as_ref(),
+                    ),
                     Err(e) => ack(call_id, false, Some(e.to_string())),
                 }
             }
             Err(e) => ack(call_id, false, Some(e.to_string())),
         };
     }
-    match exec.capture(scope, opts) {
-        Ok(img) => image_reply(call_id, scope, &img, None, binary, pointer),
+    match exec.capture_frame(scope, opts) {
+        Ok(frame) => image_reply(
+            call_id,
+            scope,
+            &frame.image,
+            None,
+            binary,
+            pointer,
+            frame.display.as_ref(),
+        ),
         Err(e) => ack(call_id, false, Some(e.to_string())),
     }
 }
@@ -772,15 +810,20 @@ fn image_reply(
     frame_hash: Option<&str>,
     binary: bool,
     pointer: Option<(i32, i32)>,
+    display: Option<&crate::executor::CoordinateSpace>,
 ) -> Reply {
     if binary {
-        return Reply::Binary(protocol::binary_image_frame(
-            &format!("obs-{call_id}"),
-            Some(call_id),
-            None,
-            None,
-            frame_hash,
-            pointer,
+        let obs_id = format!("obs-{call_id}");
+        return Reply::Binary(protocol::binary_image_frame_with_display(
+            protocol::BinaryObservationMeta {
+                obs_id: &obs_id,
+                cause: Some(call_id),
+                stream: None,
+                seq: None,
+                frame_hash,
+                pointer,
+                display,
+            },
             protocol::BinaryImageMeta {
                 w: img.w,
                 h: img.h,
@@ -795,6 +838,7 @@ fn image_reply(
         cause: Some(call_id.to_string()),
         stream: None,
         seq: None,
+        display: display.cloned(),
         image: Some(protocol::ImageRef {
             data: img.to_base64(),
             w: img.w,
@@ -1061,8 +1105,129 @@ mod tests {
         }
     }
 
+    /// Scoped/downscaled executor used to prove the wire carries enough metadata
+    /// to invert delivered image coordinates back into global point_px actions.
+    struct ScopedCoordinateExec;
+    impl Executor for ScopedCoordinateExec {
+        fn execute(&self, _: &ActionSpec) -> anyhow::Result<String> {
+            Ok(String::new())
+        }
+        fn backend(&self) -> &'static str {
+            "scoped-coordinate"
+        }
+        fn screen_size(&self) -> (u16, u16) {
+            (20, 10)
+        }
+        fn capture_raw_frame(
+            &self,
+            scope: &str,
+            max_long_edge: Option<u32>,
+        ) -> anyhow::Result<crate::executor::RawCapturedFrame> {
+            assert_eq!(scope, "window:42");
+            assert_eq!(max_long_edge, Some(2));
+            Ok(crate::executor::RawCapturedFrame {
+                rgb: vec![7; 6],
+                w: 2,
+                h: 1,
+                display: Some(crate::executor::CoordinateSpace::new(
+                    (20, 10),
+                    crate::executor::FrameRect {
+                        x: 5,
+                        y: 3,
+                        w: 4,
+                        h: 2,
+                    },
+                    (2, 1),
+                    1.0,
+                )),
+            })
+        }
+        fn capture_frame(
+            &self,
+            scope: &str,
+            opts: EncodeOpts,
+        ) -> anyhow::Result<crate::executor::CapturedFrame> {
+            assert_eq!(scope, "window:42");
+            assert_eq!(opts.max_long_edge, Some(2));
+            let image = crate::executor::encode_frame(&[7; 6], 2, 1, opts)?;
+            Ok(crate::executor::CapturedFrame {
+                image,
+                display: Some(crate::executor::CoordinateSpace::new(
+                    (20, 10),
+                    crate::executor::FrameRect {
+                        x: 5,
+                        y: 3,
+                        w: 4,
+                        h: 2,
+                    },
+                    (2, 1),
+                    1.0,
+                )),
+            })
+        }
+        fn supports_raw_capture(&self) -> bool {
+            true
+        }
+    }
+
     fn obs_json(step: Step) -> serde_json::Value {
         serde_json::from_str(&step.reply.unwrap().into_text()).unwrap()
+    }
+
+    #[test]
+    fn scoped_downscaled_screenshot_carries_frame_to_global_mapping() {
+        let opts = EncodeOpts {
+            max_long_edge: Some(2),
+            ..EncodeOpts::default()
+        };
+        let reply = screenshot_reply(
+            "coord",
+            "window:42",
+            opts,
+            None,
+            &ScopedCoordinateExec,
+            false,
+        );
+        let Reply::Text(text) = reply else {
+            panic!("expected text observation")
+        };
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value["image"]["w"], 2);
+        assert_eq!(value["image"]["h"], 1);
+        assert_eq!(value["display"]["w"], 20);
+        assert_eq!(value["display"]["h"], 10);
+        assert_eq!(value["display"]["dpr"], 1.0);
+        assert_eq!(
+            value["display"]["source_rect"],
+            serde_json::json!({"x": 5, "y": 3, "w": 4, "h": 2})
+        );
+        assert_eq!(
+            value["display"]["delivered"],
+            serde_json::json!({"w": 2, "h": 1})
+        );
+    }
+
+    #[test]
+    fn observe_after_act_uses_the_same_coordinate_mapping() {
+        let opts = EncodeOpts {
+            max_long_edge: Some(2),
+            ..EncodeOpts::default()
+        };
+        let reply = observation_reply(
+            "observe-coord",
+            "window:42",
+            opts,
+            &ScopedCoordinateExec,
+            false,
+        )
+        .unwrap();
+        let Reply::Text(text) = reply else {
+            panic!("expected text observation")
+        };
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value["cause"], "observe-coord");
+        assert_eq!(value["display"]["source_rect"]["x"], 5);
+        assert_eq!(value["display"]["delivered"]["w"], 2);
     }
 
     /// Content-negotiated screenshot (#frame-dedup): the first screenshot carries a
@@ -1629,6 +1794,26 @@ mod tests {
         let espec = step.exec.expect("exec side effect");
         assert!(espec.stream);
         assert_eq!(espec.command, ExecCommand::Shell("ls | wc -l".into()));
+    }
+
+    #[test]
+    fn exec_disabled_by_server_policy_is_not_advertised_or_dispatched() {
+        let mut s = session(None).with_exec_enabled(false);
+        let welcome = s.on_text(HELLO).reply.unwrap().into_text();
+        let welcome: serde_json::Value = serde_json::from_str(&welcome).unwrap();
+        let verbs = welcome["capabilities"]["verbs"].as_array().unwrap();
+        assert!(!verbs.iter().any(|verb| verb == "exec"));
+
+        let step = s.on_text(
+            r#"{"type":"action","call_id":"x1","action":{"verb":"exec","argv":["true"]}}"#,
+        );
+        assert!(
+            step.exec.is_none(),
+            "disabled exec must never escape as a side effect"
+        );
+        let reply = step.reply.unwrap().into_text();
+        assert!(reply.contains("\"ok\":false"));
+        assert!(reply.contains("disabled by server policy"));
     }
 
     #[test]

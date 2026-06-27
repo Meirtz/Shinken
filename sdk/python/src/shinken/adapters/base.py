@@ -104,7 +104,12 @@ def actions_from_text(text: str) -> list[dict]:
 
 
 def image_size(observation: dict) -> dict:
-    """Pull ``{w, h, scope}`` out of a screenshot observation for coordinate-space
-    metadata (recorded so model pixels can be mapped back to the display)."""
-    image = observation.get("image", {}) or {}
-    return {"w": image.get("w"), "h": image.get("h"), "scope": image.get("scope", "screen")}
+    """Pull frame dimensions + coordinate mapping from either a raw wire
+    observation or the SDK's flattened screenshot shape."""
+    image = observation.get("image") or observation
+    return {
+        "w": image.get("w"),
+        "h": image.get("h"),
+        "scope": image.get("scope", "screen"),
+        "display": observation.get("display"),
+    }

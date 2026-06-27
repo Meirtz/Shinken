@@ -7,9 +7,9 @@ pattern as providers/workloads). The caller picks the method **explicitly**; if 
 cannot reach the sandbox (missing target fields, command/transport failure), injection raises
 :class:`InjectionError` — there is **no silent fallback and no guessing**.
 
-``shinkend`` is configured purely by env (``SHINKEND_ADDR``, ``SHINKEND_TOKEN``); a non-loopback
-bind requires the token. So to be reachable from outside the sandbox we bind ``0.0.0.0:<port>``
-with a token (generated if not supplied) and return ``(addr, token)`` for the SDK to connect.
+``shinkend`` is configured purely by env (``SHINKEND_ADDR``, ``SHINKEND_TOKEN``); every TCP
+listener requires the token. Injection therefore always generates one when not supplied, binds
+``0.0.0.0:<port>`` for substrate reachability, and returns ``(addr, token)`` to the SDK.
 """
 
 from __future__ import annotations
@@ -36,8 +36,8 @@ class InjectionTarget:
     """What an injector needs to reach one sandbox. Fields are method-specific; each injector
     validates the ones it uses and raises :class:`InjectionError` if a required field is absent.
 
-    ``token`` (auto-generated if None) gates a non-loopback bind so the in-sandbox shinkend is
-    reachable; ``reachable_addr`` is the host ``host:port`` the SDK connects to when the
+    ``token`` (auto-generated if None) authenticates the in-sandbox shinkend;
+    ``reachable_addr`` is the host ``host:port`` the SDK connects to when the
     substrate maps the in-sandbox port elsewhere (e.g. a published Docker port)."""
 
     port: int = DEFAULT_PORT
@@ -69,7 +69,7 @@ class InjectionTarget:
 @dataclass
 class InjectionResult:
     addr: str  # host:port the SDK connects to
-    token: str | None  # bearer token shinkend was started with (None => loopback, no auth)
+    token: str  # mandatory bearer token shinkend was started with
 
 
 @runtime_checkable
@@ -130,12 +130,12 @@ def _gen_token() -> str:
 
 
 def _start_command(target: InjectionTarget, args: list[str] | None) -> str:
-    """Shell snippet that starts shinkend bound for reachability (0.0.0.0 + token when set),
+    """Shell snippet that starts shinkend bound for reachability (0.0.0.0 + token),
     exporting any ``target.env`` (e.g. DISPLAY, SHINKEND_EXECUTOR) ahead of the binary."""
-    host = "0.0.0.0" if target.token else "127.0.0.1"
-    env = f"SHINKEND_ADDR={shlex.quote(f'{host}:{target.port}')}"
-    if target.token:
-        env += f" SHINKEND_TOKEN={shlex.quote(target.token)}"
+    if not target.token:
+        raise InjectionError("injected shinkend requires a non-empty bearer token")
+    env = f"SHINKEND_ADDR={shlex.quote(f'0.0.0.0:{target.port}')}"
+    env += f" SHINKEND_TOKEN={shlex.quote(target.token)}"
     for k, v in (target.env or {}).items():
         env += f" {k}={shlex.quote(str(v))}"
     # Quote each arg: these are argv entries, not a shell fragment — an unquoted value with
@@ -289,14 +289,17 @@ def inject_shinkend(
     chosen ``method`` (an injector name). The user MUST pick ``method``; an unknown method or a
     method that cannot reach the sandbox raises :class:`InjectionError` (no silent fallback).
 
-    A token is generated (so a reachable ``0.0.0.0`` bind is allowed) unless ``require_token``
-    is False or ``target.token`` is preset. After starting (the injectors run detached), the
+    A token is generated unless ``target.token`` is preset. ``require_token=False`` is retained
+    only as a compatibility tripwire and now fails closed: tokenless TCP runtimes are no longer
+    supported. After starting (the injectors run detached), the
     bound port is polled for up to ``readiness_timeout`` seconds — so a binary that died at
     startup (wrong arch, missing libs, port in use) raises here instead of leaving the SDK to
     fail on connect. Pass ``readiness_timeout=0`` to skip the check. Returns ``(addr, token)``."""
     if not os.path.exists(binary):
         raise InjectionError(f"shinkend binary not found: {binary}")
-    if target.token is None and require_token:
+    if not require_token:
+        raise InjectionError("tokenless shinkend injection is no longer supported")
+    if not target.token:
         target.token = _gen_token()
     addr = get(method).inject(target, binary, args=args)
     if readiness_timeout and not _wait_reachable(addr, readiness_timeout):

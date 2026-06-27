@@ -3,8 +3,10 @@
 //! A WebSocket server speaking the ACI: handshake (`hello`→`welcome`) + pointer/
 //! keyboard action execution + screenshot capture, via a backend-pluggable
 //! [`executor::Executor`]. Connections run a [`connection::Session`] state machine
-//! (handshake-first, optional dev-token auth). Listens on `$SHINKEND_ADDR`
-//! (default `127.0.0.1:8765`); a non-loopback bind requires `$SHINKEND_TOKEN`.
+//! (handshake-first, mandatory dev-token auth). Listens on `$SHINKEND_ADDR`
+//! (default `127.0.0.1:8765`); every TCP listener requires `$SHINKEND_TOKEN`.
+//! Browser-originated WebSocket upgrades are rejected unless their exact origin is
+//! listed in `$SHINKEND_ALLOWED_ORIGINS`.
 //! `$SHINKEND_EXECUTOR` (or the `--backend` flag, which wins) selects the action
 //! backend (`auto`, `x11_xtest`, `virtual`, `pyautogui`, `macos`). On macOS with
 //! no `$DISPLAY`, `auto` picks the native CoreGraphics backend.
@@ -30,6 +32,10 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, Semaphore};
 use tokio::task::JoinHandle;
+use tokio_tungstenite::tungstenite::handshake::server::{
+    Callback, ErrorResponse, Request as WsRequest, Response as WsResponse,
+};
+use tokio_tungstenite::tungstenite::http::StatusCode;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
@@ -66,6 +72,106 @@ const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 const STREAM_RESUME_TTL: Duration = Duration::from_secs(60);
 /// Hard cap on remembered logical streams; past it the stalest entry is evicted.
 const STREAM_REGISTRY_MAX: usize = 64;
+
+/// Exact browser origins admitted at the HTTP upgrade boundary. Native SDK clients do
+/// not send `Origin` and are admitted; browser clients always do and are denied unless
+/// the operator opts an exact origin in via `SHINKEND_ALLOWED_ORIGINS` (comma-separated).
+/// Wildcards are deliberately unsupported: this is the CSWSH boundary for a daemon that
+/// can capture the screen and inject input.
+#[derive(Debug, Clone, Default)]
+struct OriginPolicy {
+    allowed: Vec<String>,
+}
+
+impl OriginPolicy {
+    fn parse(value: Option<&str>) -> Result<Self> {
+        let allowed: Vec<String> = value
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect();
+        if allowed.iter().any(|origin| origin == "*") {
+            anyhow::bail!(
+                "SHINKEND_ALLOWED_ORIGINS does not accept '*'; list exact origins instead"
+            );
+        }
+        Ok(Self { allowed })
+    }
+
+    fn allows(&self, request: &WsRequest) -> bool {
+        let mut origins = request.headers().get_all("origin").iter();
+        let Some(origin) = origins.next() else {
+            return true; // non-browser SDK/CLI client
+        };
+        // Multiple Origin headers are malformed/ambiguous and fail closed.
+        if origins.next().is_some() {
+            return false;
+        }
+        origin
+            .to_str()
+            .ok()
+            .is_some_and(|candidate| self.allowed.iter().any(|allowed| allowed == candidate))
+    }
+}
+
+fn forbidden_origin() -> ErrorResponse {
+    tokio_tungstenite::tungstenite::http::Response::builder()
+        .status(StatusCode::FORBIDDEN)
+        .body(Some(
+            "browser WebSocket origin is not allowed by SHINKEND_ALLOWED_ORIGINS".to_string(),
+        ))
+        .expect("static origin-rejection response is valid")
+}
+
+struct OriginCallback(Arc<OriginPolicy>);
+
+impl Callback for OriginCallback {
+    // Tungstenite's public Callback trait requires the large ErrorResponse by value.
+    // The shape is external and this path runs once per connection, not per frame.
+    fn on_request(
+        self,
+        request: &WsRequest,
+        response: WsResponse,
+    ) -> std::result::Result<WsResponse, ErrorResponse> {
+        if self.0.allows(request) {
+            Ok(response)
+        } else {
+            Err(forbidden_origin())
+        }
+    }
+}
+
+/// Clone-cheap, server-wide services handed to each accepted connection. Grouping the
+/// policy and bounded shared resources makes it difficult for a new connection path to
+/// forget one of the security controls.
+#[derive(Clone)]
+struct ConnectionServices {
+    exec: Arc<dyn Executor>,
+    token: Option<String>,
+    origin_policy: Arc<OriginPolicy>,
+    exec_enabled: bool,
+    screencasts: Arc<Semaphore>,
+    execs: Arc<Semaphore>,
+    streams: Arc<StreamRegistry>,
+    tree: Option<Arc<dyn observe::TreeSource>>,
+}
+
+/// Parse an explicit opt-in feature flag. Only `1` and `true` enable a privileged
+/// surface; typos therefore fail closed.
+fn enabled(value: Option<&str>) -> bool {
+    value.is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+}
+
+fn require_token(value: Option<String>) -> Result<String> {
+    value.filter(|token| !token.is_empty()).ok_or_else(|| {
+        anyhow::anyhow!(
+            "SHINKEND_TOKEN is required for every TCP listener, including loopback; \
+             set it to a high-entropy bearer token"
+        )
+    })
+}
 
 /// Server-wide screencast resume registry (#56): logical stream id → (next seq, last
 /// activity, owning generation). Shared across connections so a client that reconnects
@@ -226,17 +332,11 @@ fn backend_arg(args: impl Iterator<Item = String>) -> Option<String> {
 async fn main() -> Result<()> {
     let addr = std::env::var("SHINKEND_ADDR").unwrap_or_else(|_| DEFAULT_ADDR.to_string());
     let backend = backend_arg(std::env::args().skip(1));
-    let token = std::env::var("SHINKEND_TOKEN")
-        .ok()
-        .filter(|t| !t.is_empty());
-
-    if !is_loopback(&addr) && token.is_none() {
-        eprintln!(
-            "shinkend: refusing to bind non-loopback address {addr} without SHINKEND_TOKEN.\n         \
-             Set SHINKEND_TOKEN to require a dev bearer token, or bind a loopback address (127.0.0.1)."
-        );
-        std::process::exit(1);
-    }
+    let token = require_token(std::env::var("SHINKEND_TOKEN").ok())?;
+    let origin_policy = Arc::new(OriginPolicy::parse(
+        std::env::var("SHINKEND_ALLOWED_ORIGINS").ok().as_deref(),
+    )?);
+    let exec_enabled = enabled(std::env::var("SHINKEND_ENABLE_EXEC").ok().as_deref());
 
     let listener = TcpListener::bind(&addr).await?;
     let exec = executor::executor_for(backend.as_deref())?;
@@ -256,16 +356,30 @@ async fn main() -> Result<()> {
     #[cfg(not(target_os = "linux"))]
     let tree: Option<Arc<dyn observe::TreeSource>> = None;
     eprintln!(
-        "shinkend v{} listening on ws://{addr} (platform: {}, backend: {}, auth: {})",
+        "shinkend v{} listening on ws://{addr} (platform: {}, backend: {}, auth: token)",
         env!("CARGO_PKG_VERSION"),
         protocol::platform(),
         exec.backend(),
-        if token.is_some() {
-            "token"
-        } else {
-            "none (loopback)"
-        },
     );
+    eprintln!(
+        "browser origins: {}; in-guest exec: {}",
+        if origin_policy.allowed.is_empty() {
+            "denied".to_string()
+        } else {
+            origin_policy.allowed.join(",")
+        },
+        if exec_enabled { "enabled" } else { "disabled" }
+    );
+    let services = ConnectionServices {
+        exec,
+        token: Some(token),
+        origin_policy,
+        exec_enabled,
+        screencasts,
+        execs,
+        streams,
+        tree,
+    };
 
     loop {
         // shinkend is the sole control path into the sandbox, so a transient accept()
@@ -283,26 +397,14 @@ async fn main() -> Result<()> {
             eprintln!("connection {peer} rejected: max connections reached ({MAX_CONNECTIONS})");
             continue;
         };
-        let exec = exec.clone();
-        let token = token.clone();
-        let screencasts = screencasts.clone();
-        let execs = execs.clone();
-        let streams = streams.clone();
-        let tree = tree.clone();
+        let services = services.clone();
         tokio::spawn(async move {
             let _conn_permit = conn_permit;
-            if let Err(e) = serve(stream, exec, token, screencasts, execs, streams, tree).await {
+            if let Err(e) = serve(stream, services).await {
                 eprintln!("connection {peer} closed with error: {e}");
             }
         });
     }
-}
-
-/// True if `addr`'s host is a loopback address (no token required to bind).
-fn is_loopback(addr: &str) -> bool {
-    let host = addr.rsplit_once(':').map_or(addr, |(h, _)| h);
-    let host = host.trim_start_matches('[').trim_end_matches(']');
-    host == "::1" || host == "localhost" || host.starts_with("127.")
 }
 
 /// Handle one client connection through its [`Session`] state machine.
@@ -311,22 +413,28 @@ fn is_loopback(addr: &str) -> bool {
 /// channel, so both request replies and unsolicited server-pushed frames (e.g. a
 /// screencast) can be sent without interleaving. The read loop stays a thin driver
 /// over the synchronous [`Session`]; streaming side effects arrive as [`StreamCtl`].
-async fn serve(
-    stream: TcpStream,
-    exec: Arc<dyn Executor>,
-    token: Option<String>,
-    screencasts: Arc<Semaphore>,
-    execs: Arc<Semaphore>,
-    streams: Arc<StreamRegistry>,
-    tree: Option<Arc<dyn observe::TreeSource>>,
-) -> Result<()> {
+async fn serve(stream: TcpStream, services: ConnectionServices) -> Result<()> {
+    let ConnectionServices {
+        exec,
+        token,
+        origin_policy,
+        exec_enabled,
+        screencasts,
+        execs,
+        streams,
+        tree,
+    } = services;
     // Bound the WS HTTP upgrade itself by the pre-auth deadline. The connection permit
     // is already held by the caller, so an upgrade that never completes would squat a
     // slot forever — exactly the slot-exhaustion DoS #134's handshake deadline (which
     // only starts AFTER the upgrade) cannot otherwise see.
     let ws = tokio::time::timeout(
         HANDSHAKE_TIMEOUT,
-        tokio_tungstenite::accept_async_with_config(stream, Some(ws_config())),
+        tokio_tungstenite::accept_hdr_async_with_config(
+            stream,
+            OriginCallback(origin_policy),
+            Some(ws_config()),
+        ),
     )
     .await
     .map_err(|_| anyhow::anyhow!("websocket upgrade timed out"))??;
@@ -347,7 +455,7 @@ async fn serve(
         let _ = tx.close().await;
     });
 
-    let mut session = Session::new(token, exec.clone());
+    let mut session = Session::new(token, exec.clone()).with_exec_enabled(exec_enabled);
     if let Some(tree) = tree {
         session = session.with_tree_source(tree);
     }
@@ -1057,12 +1165,30 @@ mod tests {
     }
 
     #[test]
-    fn loopback_detection() {
-        assert!(is_loopback("127.0.0.1:8765"));
-        assert!(is_loopback("localhost:8765"));
-        assert!(is_loopback("[::1]:8765"));
-        assert!(!is_loopback("0.0.0.0:8765"));
-        assert!(!is_loopback("10.0.0.5:8765"));
+    fn privileged_flags_fail_closed() {
+        assert!(!enabled(None));
+        assert!(!enabled(Some("")));
+        assert!(!enabled(Some("yes")));
+        assert!(enabled(Some("1")));
+        assert!(enabled(Some("TRUE")));
+    }
+
+    #[test]
+    fn token_is_mandatory_even_for_the_default_listener() {
+        assert!(require_token(None).is_err());
+        assert!(require_token(Some(String::new())).is_err());
+        assert_eq!(require_token(Some("secret".into())).unwrap(), "secret");
+    }
+
+    #[test]
+    fn origin_policy_rejects_wildcards() {
+        assert!(OriginPolicy::parse(Some("*")).is_err());
+        let policy =
+            OriginPolicy::parse(Some("https://console.example, http://127.0.0.1:3000")).unwrap();
+        assert_eq!(
+            policy.allowed,
+            ["https://console.example", "http://127.0.0.1:3000"]
+        );
     }
 
     const HELLO: &str = r#"{"type":"hello","v":0,"client":{"name":"t","version":"0"}}"#;
@@ -1074,6 +1200,23 @@ mod tests {
         screencasts: Arc<Semaphore>,
         streams: Arc<StreamRegistry>,
         execs: Arc<Semaphore>,
+    ) -> std::net::SocketAddr {
+        spawn_server_with_policy(
+            screencasts,
+            streams,
+            execs,
+            Arc::new(OriginPolicy::default()),
+            true,
+        )
+        .await
+    }
+
+    async fn spawn_server_with_policy(
+        screencasts: Arc<Semaphore>,
+        streams: Arc<StreamRegistry>,
+        execs: Arc<Semaphore>,
+        origin_policy: Arc<OriginPolicy>,
+        exec_enabled: bool,
     ) -> std::net::SocketAddr {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -1090,9 +1233,22 @@ mod tests {
                 let execs = execs.clone();
                 let streams = streams.clone();
                 let tree = tree.clone();
+                let origin_policy = origin_policy.clone();
                 tokio::spawn(async move {
-                    let _ =
-                        serve(stream, exec, None, screencasts, execs, streams, Some(tree)).await;
+                    let _ = serve(
+                        stream,
+                        ConnectionServices {
+                            exec,
+                            token: None,
+                            origin_policy,
+                            exec_enabled,
+                            screencasts,
+                            execs,
+                            streams,
+                            tree: Some(tree),
+                        },
+                    )
+                    .await;
                 });
             }
         });
@@ -1106,6 +1262,42 @@ mod tests {
             Arc::new(Semaphore::new(exec::MAX_EXECS)),
         )
         .await
+    }
+
+    #[tokio::test]
+    async fn browser_origin_is_rejected_unless_exactly_allowlisted() {
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+        use tokio_tungstenite::tungstenite::http::HeaderValue;
+
+        let origins = Arc::new(OriginPolicy::parse(Some("https://trusted.example")).unwrap());
+        let addr = spawn_server_with_policy(
+            Arc::new(Semaphore::new(MAX_SCREENCASTS)),
+            Arc::new(StreamRegistry::default()),
+            Arc::new(Semaphore::new(exec::MAX_EXECS)),
+            origins,
+            true,
+        )
+        .await;
+
+        let mut evil = format!("ws://{addr}").into_client_request().unwrap();
+        evil.headers_mut()
+            .insert("origin", HeaderValue::from_static("https://evil.example"));
+        let err = tokio_tungstenite::connect_async(evil).await.unwrap_err();
+        match err {
+            tokio_tungstenite::tungstenite::Error::Http(response) => {
+                assert_eq!(response.status(), StatusCode::FORBIDDEN)
+            }
+            other => panic!("expected an HTTP rejection, got {other:?}"),
+        }
+
+        let mut trusted = format!("ws://{addr}").into_client_request().unwrap();
+        trusted.headers_mut().insert(
+            "origin",
+            HeaderValue::from_static("https://trusted.example"),
+        );
+        let (mut ws, _) = tokio_tungstenite::connect_async(trusted).await.unwrap();
+        ws.send(WsMessage::Text(HELLO.into())).await.unwrap();
+        assert!(text(&mut ws).await.contains("\"type\":\"welcome\""));
     }
 
     async fn text(

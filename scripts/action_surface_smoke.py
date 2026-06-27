@@ -5,9 +5,8 @@ verifies the drag's end position with `xdotool` afterwards, so the drag to
 (640, 360) must be the LAST pointer action here.
 
 Env: ``SHK_EXPECT_WINDOW`` — an X window id (decimal) that must appear in
-list_windows (CI passes the xclock id it found via xdotool); optional ``SHK_TOKEN``
-— bearer token, for running against the Docker sandbox image (token-authenticated)
-instead of CI's local tokenless Xvfb shinkend.
+list_windows (CI passes the xclock id it found via xdotool); ``SHK_TOKEN`` — bearer
+token for the mandatory authenticated handshake.
 Usage: python scripts/action_surface_smoke.py [addr]
 """
 

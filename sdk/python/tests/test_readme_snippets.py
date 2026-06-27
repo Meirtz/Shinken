@@ -58,6 +58,7 @@ def _needs_external_backend(code: str) -> bool:
             return True
     return False
 
+
 #: Anthropic computer-use ``tool_use`` *input* (what a model emits for the versioned
 #: ``computer`` tool — see shinken/adapters/anthropic.py). A ``type`` action is
 #: load-bearing here: its payload lives OUTSIDE verb/target, so a consumption pattern
@@ -404,6 +405,7 @@ def test_snippet_executes_against_mock(idx, lineno, code, mock_shinkend_many, mo
     actions, screenshots, and SharedLoop fan-out all go over a live WebSocket, and the
     mock schema-validates every frame — wrong wire shapes fail here."""
     primary = mock_shinkend_many(1)[0]
+    monkeypatch.setenv("SHK_TOKEN", "doc-test-token")
     real_connect = shinken.connect
 
     def connect_to_mock(addr=None, *args, **kwargs):

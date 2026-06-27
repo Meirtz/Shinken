@@ -192,6 +192,11 @@ pub enum Message {
         /// Monotonic frame index within `stream` (server-push only).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         seq: Option<u64>,
+        /// Mapping from delivered image pixels back into the runtime's global
+        /// `point_px` action space. Optional only for compatibility with older or
+        /// scoped legacy backends; the X11 screenshot path always emits it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        display: Option<crate::executor::CoordinateSpace>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         image: Option<ImageRef>,
         /// Dirty-tile delta frame (`start_screencast` with `delta`): only the tiles
@@ -209,7 +214,7 @@ pub enum Message {
         /// frame even on a binary session: there is no payload to carry).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         not_modified: Option<bool>,
-        /// Live pointer position in capture pixels `[x, y]` — observation METADATA
+        /// Live pointer position in global `point_px` action coordinates `[x, y]` — metadata
         /// (captures stay cursor-free; frame-hash dedup depends on that). Set on
         /// one-shot screenshot/not-modified replies when the backend can report it;
         /// omitted on stream frames.
@@ -301,7 +306,19 @@ pub fn capabilities() -> Capabilities {
 }
 
 /// Build the `welcome` reply to a client `hello`.
+#[cfg(test)]
 pub fn welcome() -> Message {
+    welcome_with_exec(true)
+}
+
+/// Build a policy-aware `welcome`. `exec` is a privileged server surface and is
+/// omitted unless the operator explicitly enabled it; clients must never be told a
+/// disabled action is available.
+pub fn welcome_with_exec(exec_enabled: bool) -> Message {
+    let mut capabilities = capabilities();
+    if !exec_enabled {
+        capabilities.verbs.retain(|verb| verb != "exec");
+    }
     Message::Welcome {
         v: 0,
         server: ServerInfo {
@@ -309,7 +326,7 @@ pub fn welcome() -> Message {
             version: env!("CARGO_PKG_VERSION").to_string(),
             platform: platform().to_string(),
         },
-        capabilities: capabilities(),
+        capabilities,
     }
 }
 
@@ -320,6 +337,7 @@ pub fn stream_frame(stream_id: &str, seq: u64, image: ImageRef) -> Message {
         cause: None,
         stream: Some(stream_id.to_string()),
         seq: Some(seq),
+        display: None,
         image: Some(image),
         tiles: None,
         frame_hash: None,
@@ -335,6 +353,7 @@ pub fn stream_tiles_frame(stream_id: &str, seq: u64, tiles: Vec<TileRef>) -> Mes
         cause: None,
         stream: Some(stream_id.to_string()),
         seq: Some(seq),
+        display: None,
         image: None,
         tiles: Some(tiles),
         frame_hash: None,
@@ -351,12 +370,14 @@ pub fn not_modified_observation(
     call_id: &str,
     frame_hash: &str,
     pointer: Option<(i32, i32)>,
+    display: Option<crate::executor::CoordinateSpace>,
 ) -> Message {
     Message::Observation {
         obs_id: format!("obs-{call_id}"),
         cause: Some(call_id.to_string()),
         stream: None,
         seq: None,
+        display,
         image: None,
         tiles: None,
         frame_hash: Some(frame_hash.to_string()),
@@ -473,6 +494,20 @@ pub struct BinaryImageMeta<'a> {
     pub format: &'a str,
 }
 
+/// Envelope metadata for a binary image observation.  Grouping it separately from
+/// codec/dimensions keeps the coordinate descriptor on the observation (not inside
+/// the encoded image object) and avoids growing the historical helper's argument
+/// list every time observation metadata evolves.
+pub struct BinaryObservationMeta<'a> {
+    pub obs_id: &'a str,
+    pub cause: Option<&'a str>,
+    pub stream: Option<&'a str>,
+    pub seq: Option<u64>,
+    pub frame_hash: Option<&'a str>,
+    pub pointer: Option<(i32, i32)>,
+    pub display: Option<&'a crate::executor::CoordinateSpace>,
+}
+
 /// One tile of a binary dirty-tile `observation` frame.
 pub struct BinaryTileRef<'a> {
     pub x: u32,
@@ -499,6 +534,7 @@ fn assemble_binary(header: &serde_json::Value, payloads: &[&[u8]]) -> Vec<u8> {
 /// `cause` is set, a screencast (key)frame when `stream`/`seq` are. `frame_hash` is
 /// the raw-pixel content hash (screenshot dedup) — set on one-shot screenshots from
 /// a raw-capture backend, absent on stream frames.
+#[allow(clippy::too_many_arguments)]
 pub fn binary_image_frame(
     obs_id: &str,
     cause: Option<&str>,
@@ -509,9 +545,32 @@ pub fn binary_image_frame(
     meta: BinaryImageMeta<'_>,
     data: &[u8],
 ) -> Vec<u8> {
+    binary_image_frame_with_display(
+        BinaryObservationMeta {
+            obs_id,
+            cause,
+            stream,
+            seq,
+            frame_hash,
+            pointer,
+            display: None,
+        },
+        meta,
+        data,
+    )
+}
+
+/// Coordinate-aware binary image observation.  The legacy
+/// [`binary_image_frame`] remains as a compatibility wrapper for screencast call
+/// sites that do not yet attach frame coordinates.
+pub fn binary_image_frame_with_display(
+    observation: BinaryObservationMeta<'_>,
+    meta: BinaryImageMeta<'_>,
+    data: &[u8],
+) -> Vec<u8> {
     let mut header = serde_json::json!({
         "type": "observation",
-        "obs_id": obs_id,
+        "obs_id": observation.obs_id,
         "image": {
             "off": 0,
             "len": data.len(),
@@ -521,20 +580,24 @@ pub fn binary_image_frame(
             "format": meta.format,
         },
     });
-    if let Some(c) = cause {
+    if let Some(c) = observation.cause {
         header["cause"] = c.into();
     }
-    if let Some(s) = stream {
+    if let Some(s) = observation.stream {
         header["stream"] = s.into();
     }
-    if let Some(q) = seq {
+    if let Some(q) = observation.seq {
         header["seq"] = q.into();
     }
-    if let Some(fh) = frame_hash {
+    if let Some(fh) = observation.frame_hash {
         header["frame_hash"] = fh.into();
     }
-    if let Some((px, py)) = pointer {
+    if let Some((px, py)) = observation.pointer {
         header["pointer"] = serde_json::json!([px, py]);
+    }
+    if let Some(display) = observation.display {
+        header["display"] =
+            serde_json::to_value(display).expect("CoordinateSpace serialization is infallible");
     }
     assemble_binary(&header, &[data])
 }
@@ -872,7 +935,7 @@ mod tests {
     /// and NO image/tiles — the shape the schema's ObservationMsg rule pins.
     #[test]
     fn not_modified_observation_is_compact_and_correlated() {
-        let msg = not_modified_observation("c7", "deadbeefdeadbeef", Some((640, 360)));
+        let msg = not_modified_observation("c7", "deadbeefdeadbeef", Some((640, 360)), None);
         let text = serde_json::to_string(&msg).unwrap();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["type"], "observation");
@@ -1046,6 +1109,45 @@ mod tests {
         assert!(header.get("seq").is_none());
         // the one-shot screenshot header carries the raw-pixel content hash
         assert_eq!(header["frame_hash"], "00ff00ff00ff00ff");
+    }
+
+    #[test]
+    fn binary_image_frame_preserves_coordinate_space() {
+        let display = crate::executor::CoordinateSpace::new(
+            (1920, 1080),
+            crate::executor::FrameRect {
+                x: 320,
+                y: 180,
+                w: 800,
+                h: 600,
+            },
+            (400, 300),
+            1.0,
+        );
+        let frame = binary_image_frame_with_display(
+            BinaryObservationMeta {
+                obs_id: "obs-coord",
+                cause: Some("coord"),
+                stream: None,
+                seq: None,
+                frame_hash: None,
+                pointer: None,
+                display: Some(&display),
+            },
+            BinaryImageMeta {
+                w: 400,
+                h: 300,
+                scope: "window:42",
+                format: "jpeg",
+            },
+            b"jpeg",
+        );
+        let hlen = u32::from_le_bytes(frame[..4].try_into().unwrap()) as usize;
+        let header: serde_json::Value = serde_json::from_slice(&frame[4..4 + hlen]).unwrap();
+        assert_eq!(header["display"]["w"], 1920);
+        assert_eq!(header["display"]["source_rect"]["x"], 320);
+        assert_eq!(header["display"]["delivered"]["w"], 400);
+        assert_eq!(header["image"]["scope"], "window:42");
     }
 
     /// Binary tiles frame: payloads concatenated in tile order, offsets contiguous.
@@ -1223,6 +1325,17 @@ mod tests {
                 assert_eq!(v, 0);
                 assert_eq!(capabilities.schema_version, SCHEMA_VERSION);
                 assert!(capabilities.verbs.iter().any(|s| s == "click"));
+            }
+            other => panic!("expected welcome, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn policy_aware_welcome_omits_disabled_exec() {
+        match welcome_with_exec(false) {
+            Message::Welcome { capabilities, .. } => {
+                assert!(!capabilities.verbs.iter().any(|verb| verb == "exec"));
+                assert!(capabilities.verbs.iter().any(|verb| verb == "click"));
             }
             other => panic!("expected welcome, got {other:?}"),
         }
