@@ -104,9 +104,10 @@ surface, default off).
   (`docker.py` disk tier, `criu.py` memory tier, `external.py` attach-only). The narrow waist
   runs in two directions: `backends/` drive the ACI **over** third-party computer-control
   systems, while `integrations/` expose Shinken **to** third-party trainers/harnesses.
-  `runtime/` is the zero-semantics agent loop + trajectory; `gym.py` (reset()=fork),
-  `eval.py` (`run_eval_forked`), and the OSWorld modules are consumers of it. `dialect.py`
-  parses model tool-call text (dialect + XML) into typed actions.
+  `runtime/` is the zero-semantics agent loop + trajectory; `gym.py` (reset()=fork, with an
+  honest recreate fallback over snapshot-less providers), `eval.py` (`run_eval_forked`), and
+  the OSWorld modules are consumers of it. `dialect.py` parses model tool-call text (dialect +
+  XML) into typed actions.
 - **Live proof lives in CI, not unit tests:** `scripts/*_smoke.py` run against real
   Xvfb/Docker in `ci.yml` (pointer, screencast, windows, clipboard, observe,
   checkpoint→fork→screenshot, forked eval). When touching runtime behavior, check whether a
@@ -153,7 +154,9 @@ live process+memory replica. The hardened path is unit-tested and awaits a privi
 rerun before latency is republished — a state-fidelity tier, not an isolation posture), plus
 `eval.run_eval_forked` (golden→fork-N→score, #231) and the **fork-native gym adapter**
 (`shinken.gym`: trainer-facing `make/reset/step/evaluate` with reset()=fork, pool parallel
-reset, HF-datasets exporter, MultiTurnDataloader-shaped iterator), are built; a **local
+reset, HF-datasets exporter, MultiTurnDataloader-shaped iterator; **reset-strategy
+resolution** `auto`/`fork`/`recreate` — honest recreate fallback so the harness also runs
+over snapshot-less D15 backends), are built; a **local
 capability-gateway shim** (`sdk/python/src/shinken/gateway.py` + tests) is built. **Push-based boot readiness (S9)** is
 single-connection SDK readiness loop took `provider.create()` from ~7.7 s to ~0.19 s p50.
 The historical live **warm-pool fork graft** is disabled because pool-hit/pool-miss
@@ -192,7 +195,10 @@ The immediate work (per the recalibrated priorities):
    (production enforcement beyond the local gateway
    shim), `.skn` recording/playback, the sub-ms CoW fork fast tier
    (the CRIU **memory tier is now BUILT** — `CriuDockerProvider`, productized from the positive
-   `spikes/criu-memory-tier/` spike; only the CoW/microVM fast tier remains designed),
+   `spikes/criu-memory-tier/` spike; only the CoW/microVM fast tier remains designed), the
+   **backend runtime-state mapping** (D15 extension — mapping a third-party substrate's own
+   snapshot/1:N-fork API into backend `checkpoint`/`resume` so `supports_fork` flips honestly;
+   see [operation-layer.md §13](docs/design/operation-layer.md)),
    control plane + concurrency, dual-channel WebRTC/NVENC, and the rest of the first-party native
    runtime coverage — **Windows** + **Wayland** + macOS AX/ScreenCaptureKit (the **macOS engine v1**
    capture+input slice IS built, local-only: `shinkend --backend macos`,
