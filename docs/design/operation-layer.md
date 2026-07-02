@@ -393,3 +393,28 @@ Browser Runtime as a CDP backend), and `e2b` (E2B cloud desktop, pixels + shell)
 one-way *coarsening* of this contract (pixel/`pyautogui`/full-screenshot-poll), not a peer
 backend — compatible (M5 gate, score 1.0) but fork/structured-observe/capability-negotiation do
 not round-trip.
+
+**Training over backends (built):** `shinken.gym` resolves a reset strategy per provider —
+fork-from-golden where the provider serves the checkpoint+resume pair, an honest **recreate
+fallback** (fresh sandbox + per-episode `task.setup` replay, loud degrade,
+`info["reset_strategy"]` recorded) where it does not — so the gym harness runs over every
+backend above today; only the reset economics change. Two honesty gates ride along: recreate
+requires a real create/destroy lifecycle (`supports_lifecycle` — the attach-only
+`ExternalProvider` stays a typed failure, since recreate over it would reuse one live desktop
+across episodes), and `eval.run_eval_forked` still requires a snapshot tier (no recreate
+fallback there yet).
+
+**Backend runtime-state mapping (designed):** the follow-up that makes `supports_fork=True`
+honest over a third-party substrate — map the substrate's own snapshot/1:N-instantiate API into
+the backend provider's `checkpoint`/`resume` verbs. Public candidate APIs exist: cua Cloud
+(`sandbox.snapshot()` → an Image instantiable N times; container snapshots are filesystem-tier —
+<https://cua.ai/docs/how-to-guides/sandbox/snapshots>), Daytona (`_experimental_fork` /
+`_experimental_create_snapshot(include_memory=…)` — the prefix is an explicit instability
+signal — <https://www.daytona.io/docs/en/sandboxes/>), Morph Cloud (`instance.branch(count=N)`,
+memory+disk snapshots — <https://cloud.morph.so/docs/documentation/instances/branch>).
+E2B's pause/resume is 1:1 persistence, not fork
+(<https://e2b.dev/docs/sandbox/persistence>). Two contract requirements before any of these
+ships: (1) `snapshot_kind`/`state_fidelity` must carry through capability negotiation so the
+fidelity preflight keeps rejecting disk-tier substitution for `process_memory` tasks; (2) an
+env-gated live smoke against the real substrate — fixture-only proof is insufficient for a fork
+claim (the standing rule for the unrun `cua`/`e2b`/`mcp` live gates applies doubly here).

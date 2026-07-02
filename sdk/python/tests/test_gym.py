@@ -20,6 +20,8 @@ import pytest
 import shinken
 from shinken import eval as ev
 from shinken import gym as g
+from shinken.providers.base import ProviderCapabilities, UnsupportedProviderOperation
+from shinken.providers.external import ExternalProvider
 from shinken.runtime.trajectory import Trajectory
 
 # ---------------------------------------------------------------------------- fixtures
@@ -157,6 +159,7 @@ def test_make_runs_setup_once_and_every_reset_is_a_fork(mock_shinkend):
     assert prov.calls["resume"] == 1
     assert obs["png"][:8] == b"\x89PNG\r\n\x1a\n"
     assert info["reset_ms"] > 0 and info["golden_checkpoint"] == "golden-1"
+    assert info["reset_strategy"] == "fork"
     assert info["task"] == "typed-hi" and info["instruction"] == "type hi then stop"
 
     env.reset()  # second episode: ANOTHER fork — no setup rerun, no new checkpoint
@@ -220,6 +223,254 @@ def test_observe_args_codec_levers_reach_the_wire_on_reset(mock_shinkend):
         assert sent["format"] == "jpeg"
         assert sent["quality"] == 50
         assert sent["max_long_edge"] == 768
+
+
+# -------------------------------------------------- reset strategy / recreate fallback
+
+
+class _NoCheckpointProvider(_ForkProvider):
+    """The ``shinken.backends`` provider shape: full create/connect/destroy lifecycle,
+    NO runtime-state tier — ``checkpoint``/``resume`` raise the shared typed error."""
+
+    def checkpoint(self, handle, *, name=None, event_seq=None, agent_state_ref=None):
+        self.calls["checkpoint"] += 1
+        raise UnsupportedProviderOperation("stub has no snapshot tier")
+
+    def resume(self, ckpt):
+        raise UnsupportedProviderOperation("stub has no snapshot tier")
+
+
+def _no_snapshot_caps() -> ProviderCapabilities:
+    # Every snapshot/fork/checkpoint flag defaults False — the honest backend advertisement.
+    return ProviderCapabilities(name="stub", supports_lifecycle=True, supports_gui=True)
+
+
+def test_auto_degrades_to_recreate_when_checkpoint_probe_fails(mock_shinkend):
+    """A duck-typed provider publishing NO capabilities: auto probes the fork path once
+    (boot + setup + checkpoint attempt), then degrades loudly to recreate."""
+    prov = _NoCheckpointProvider(mock_shinkend)
+    setups: list = []
+    env = g.make(_typed_hi_task(setups), prov)
+    assert prov.calls["checkpoint"] == 1 and prov.destroyed == ["base-1"]  # the probe
+    obs, info = env.reset()
+    assert info["reset_strategy"] == "recreate"
+    assert info["golden_checkpoint"] is None
+    assert obs["png"][:8] == b"\x89PNG\r\n\x1a\n"
+    assert prov.calls["resume"] == 0
+    assert setups == [1, 1]  # the probe's setup + this episode's replay
+    env.reset()
+    assert setups == [1, 1, 1]  # setup replays into EVERY episode
+    assert "base-2" in prov.destroyed  # the stale episode sandbox was torn down
+    env.dispose()
+    assert prov.calls["delete_snapshot"] == 0  # nothing golden to reclaim
+
+
+def test_auto_skips_the_probe_when_capabilities_say_no(mock_shinkend):
+    """A provider that HONESTLY advertises no snapshot tier (every shinken.backends
+    provider) resolves to recreate at make() without wasting a probe boot."""
+    prov = _NoCheckpointProvider(mock_shinkend)
+    prov.capabilities = _no_snapshot_caps()
+    setups: list = []
+    env = g.make(_typed_hi_task(setups), prov)
+    assert prov.calls["create"] == 0 and prov.calls["checkpoint"] == 0
+    assert setups == []
+    _obs, info = env.reset()
+    assert info["reset_strategy"] == "recreate"
+    assert prov.calls["create"] == 1 and setups == [1]
+    env.dispose()
+
+
+def test_fork_strategy_stays_strict(mock_shinkend):
+    """reset_strategy='fork' preserves today's contract: no silent degrade."""
+    prov = _NoCheckpointProvider(mock_shinkend)
+    with pytest.raises(UnsupportedProviderOperation):
+        g.make(_typed_hi_task(), prov, reset_strategy="fork")
+
+
+def test_unknown_reset_strategy_is_typed(mock_shinkend):
+    with pytest.raises(g.GymError, match="reset_strategy"):
+        g.ShinkenGymEnv(_typed_hi_task(), _ForkProvider(mock_shinkend), reset_strategy="warm")
+
+
+def test_explicit_recreate_never_touches_the_snapshot_tier(mock_shinkend):
+    """reset_strategy='recreate' on a fully fork-capable provider: CUA-Gym semantics on
+    purpose — no golden build, no checkpoint, no resume; setup replays per episode."""
+    prov = _ForkProvider(mock_shinkend)
+    setups: list = []
+    env = g.make(_typed_hi_task(setups), prov, reset_strategy="recreate")
+    assert prov.calls["create"] == 0  # make() has nothing to prebuild
+    env.reset()
+    env.reset()
+    assert prov.calls["checkpoint"] == 0 and prov.calls["resume"] == 0
+    assert prov.calls["create"] == 2 and setups == [1, 1]
+    env.dispose()
+    assert prov.calls["delete_snapshot"] == 0
+
+
+class _LifecycleOnlyProvider:
+    """The most minimal duck-typed provider: create/connect/destroy and nothing else —
+    no capabilities attribute, no checkpoint/resume methods at all."""
+
+    def __init__(self, addr):
+        self.addr = addr
+        self.calls: collections.Counter = collections.Counter()
+
+    def create(self, spec=None):
+        self.calls["create"] += 1
+        return f"box-{self.calls['create']}"
+
+    def connect(self, handle, **kwargs):
+        return shinken.connect(self.addr, **kwargs)
+
+    def destroy(self, handle):
+        self.calls["destroy"] += 1
+
+
+def test_recreate_requires_a_real_sandbox_lifecycle(mock_shinkend):
+    """An attach-only provider (the real ExternalProvider: supports_lifecycle=False,
+    create() re-mints a handle to the SAME live sandbox, destroy() is a metadata no-op)
+    must stay a typed failure — recreate over it would silently share one dirty desktop
+    across episodes."""
+    prov = ExternalProvider(addr=mock_shinkend)
+    with pytest.raises(UnsupportedProviderOperation, match="lifecycle"):
+        g.make(_typed_hi_task(), prov)  # auto must NOT degrade to recreate
+    with pytest.raises(UnsupportedProviderOperation, match="lifecycle"):
+        g.make(_typed_hi_task(), prov, reset_strategy="recreate")
+
+
+def test_explicit_recreate_conflicts_with_a_borrowed_golden(mock_shinkend):
+    """Assigning a shared golden to an env whose knob says 'recreate' is a
+    contradiction — typed, never silently resolved in either direction."""
+    prov = _ForkProvider(mock_shinkend)
+    env = g.ShinkenGymEnv(_typed_hi_task(), prov, reset_strategy="recreate")
+    env.golden_checkpoint = "golden-1"
+    with pytest.raises(g.GymError, match="recreate"):
+        env.reset()
+
+
+def test_auto_degrades_without_a_boot_when_checkpoint_is_absent(mock_shinkend):
+    """A provider with NO checkpoint method at all resolves to recreate without a probe
+    boot (no AttributeError); strict fork raises the typed error instead."""
+    prov = _LifecycleOnlyProvider(mock_shinkend)
+    env = g.make(_typed_hi_task(), prov)
+    assert prov.calls["create"] == 0  # no probe boot
+    _obs, info = env.reset()
+    assert info["reset_strategy"] == "recreate"
+    env.dispose()
+    with pytest.raises(UnsupportedProviderOperation):
+        g.make(_typed_hi_task(), _LifecycleOnlyProvider(mock_shinkend), reset_strategy="fork")
+
+
+def test_checkpoint_without_resume_degrades_instead_of_crashing_at_reset(mock_shinkend):
+    """The fork path drives the checkpoint+resume PAIR; capabilities advertising
+    checkpoint without resume must resolve to recreate at make(), not crash at the
+    first reset()."""
+    prov = _ForkProvider(mock_shinkend)
+    prov.capabilities = ProviderCapabilities(
+        name="half",
+        supports_lifecycle=True,
+        supports_gui=True,
+        supports_checkpoint=True,
+        supports_resume=False,
+    )
+    env = g.make(_typed_hi_task(), prov)
+    _obs, info = env.reset()
+    assert info["reset_strategy"] == "recreate"
+    assert prov.calls["checkpoint"] == 0 and prov.calls["resume"] == 0
+    env.dispose()
+
+
+def test_foreign_capabilities_shape_falls_back_to_the_probe(mock_shinkend):
+    """A capabilities object that is not ProviderCapabilities-shaped (a dict) is
+    UNKNOWN, not an honest no — the probe must run and discover the fork tier."""
+    prov = _ForkProvider(mock_shinkend)
+    prov.capabilities = {"supports_fork": True}
+    env = g.make(_typed_hi_task(), prov)
+    _obs, info = env.reset()
+    assert info["reset_strategy"] == "fork"
+    assert prov.calls["checkpoint"] == 1
+    env.dispose()
+
+
+def test_strict_fork_fails_fast_on_an_honest_no_snapshot_advertisement(mock_shinkend):
+    """reset_strategy='fork' + capabilities that honestly say no: raise at make()
+    BEFORE booting a sandbox or running side-effectful task.setup."""
+    prov = _NoCheckpointProvider(mock_shinkend)
+    prov.capabilities = _no_snapshot_caps()
+    setups: list = []
+    with pytest.raises(UnsupportedProviderOperation):
+        g.make(_typed_hi_task(setups), prov, reset_strategy="fork")
+    assert prov.calls["create"] == 0 and setups == []
+
+
+def test_borrowed_golden_checkpoint_still_means_fork(mock_shinkend):
+    """The documented golden-sharing pattern (a pool sibling, or
+    benchmarks/bench_agent_quality.py assigning env.golden_checkpoint directly) must
+    keep meaning fork — no rebuild, no probe."""
+    prov = _ForkProvider(mock_shinkend)
+    env0 = g.make(_typed_hi_task(), prov)
+    env1 = g.ShinkenGymEnv(_typed_hi_task(), prov)
+    env1.golden_checkpoint = env0.golden_checkpoint
+    env1.owns_checkpoint = False
+    _obs, info = env1.reset()
+    assert info["reset_strategy"] == "fork"
+    assert prov.calls["checkpoint"] == 1  # only env0's golden build ever checkpointed
+    env1.close()
+    env0.dispose()
+
+
+def test_recreate_reset_tears_down_on_setup_failure(mock_shinkend):
+    """A setup failure during a cold reset must not leak the episode sandbox."""
+    prov = _NoCheckpointProvider(mock_shinkend)
+    prov.capabilities = _no_snapshot_caps()
+
+    def boom(_sess):
+        raise RuntimeError("setup exploded")
+
+    env = g.make(g.GymTask("boom", instruction="", setup=boom), prov)
+    with pytest.raises(RuntimeError, match="setup exploded"):
+        env.reset()
+    assert env._handle is None and env._sess is None
+    assert prov.destroyed == ["base-1"]
+
+
+def test_recreate_episode_records_carry_the_strategy(mock_shinkend):
+    prov = _NoCheckpointProvider(mock_shinkend)
+    prov.capabilities = _no_snapshot_caps()
+    env = g.make(_typed_hi_task(), prov)
+    env.reset()
+    _obs, reward, done, _info = env.step([{"verb": "type_text", "text": "hi"}, {"verb": "done"}])
+    assert done and reward == 1.0
+    meta = env.episodes[-1].trajectory.metadata
+    assert meta["reset_strategy"] == "recreate" and meta["golden_checkpoint"] is None
+    env.dispose()
+
+
+def test_pool_cold_reset_fans_out_recreates(mock_shinkend):
+    """A pool over a snapshot-less provider: siblings inherit the resolved strategy from
+    env 0 (no per-sibling probes) and every reset provisions N fresh sandboxes."""
+    prov = _NoCheckpointProvider(mock_shinkend)
+    prov.capabilities = _no_snapshot_caps()
+    setups: list = []
+    with g.ShinkenGymPool(_typed_hi_task(setups), prov, 3) as pool:
+        pairs = pool.reset()
+        assert len(pairs) == 3
+        assert all(info["reset_strategy"] == "recreate" for _obs, info in pairs)
+        assert prov.calls["create"] == 3 and len(setups) == 3
+        assert prov.calls["checkpoint"] == 0 and prov.calls["resume"] == 0
+
+
+def test_dispose_then_reset_rebuilds_the_golden(mock_shinkend):
+    """dispose() reclaims the snapshot; a later reset() must rebuild the golden
+    checkpoint instead of forking from a dead reference. (Characterization guard:
+    passes today and must keep passing across the strategy-resolution refactor.)"""
+    prov = _ForkProvider(mock_shinkend)
+    env = g.make(_typed_hi_task(), prov)
+    env.reset()
+    env.dispose()
+    env.reset()
+    assert prov.calls["checkpoint"] == 2  # a fresh golden build after dispose
+    env.dispose()
 
 
 # ------------------------------------------------------------------------- step routing

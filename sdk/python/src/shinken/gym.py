@@ -11,6 +11,17 @@ process/GUI state. Tasks must replay launch/focus after a disk restore instead o
 byte-identical live desktop. Measured restore latencies are in
 ``docs/engineering/benchmarks.md`` §1.
 
+Providers without a snapshot tier still get the full harness: reset-strategy resolution
+(``reset_strategy="auto"``, the default) forks where the provider serves the
+checkpoint+resume pair and degrades **loudly** to ``recreate`` — fresh sandbox +
+per-episode ``task.setup`` replay, the cold semantics every other gym has — where it does
+not (every ``shinken.backends`` provider). Recreate additionally requires a real
+create/destroy lifecycle: the attach-only ``ExternalProvider`` stays a typed failure,
+because recreate over it would reuse one live desktop across episodes.
+``info["reset_strategy"]`` and the trajectory metadata record which path actually ran,
+and ``info["reset_ms"]`` stays the honest apples-to-apples re-provision number on both
+paths.
+
 Everything here is a *consumer* of the narrow waist (``docs/design/agent-runtime.md``):
 sessions come from a provider, episodes are recorded as the existing typed
 :class:`~shinken.runtime.trajectory.Trajectory`, and no scorer/reward semantics leak into
@@ -44,6 +55,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import math
 import random
 import time
@@ -57,7 +69,10 @@ from .client import FrameCache, SharedLoop
 from .dialect import parse_actions
 from .errors import SandboxDied, ShinkenError, is_connection_loss
 from .eval import Task, coerce_verifier_receipt
+from .providers.base import UnsupportedProviderOperation
 from .runtime.trajectory import Step, Trajectory
+
+_log = logging.getLogger("shinken.gym")
 
 __all__ = [
     "EXPORT_COLUMNS",
@@ -83,6 +98,16 @@ _EXIT_REASON_FOR_TERMINAL = {
     "stopped": "task_complete",
     "max_steps": "max_steps",
 }
+
+#: Reset strategies for the gym knob: ``fork`` = golden-checkpoint fork (strict),
+#: ``recreate`` = fresh sandbox + ``task.setup`` replay per episode (the semantics every
+#: other gym has), ``auto`` = fork when the provider serves the checkpoint+resume pair,
+#: loud degrade to recreate when it does not. Distinct from
+#: ``ProviderCapabilities.reset_strategy`` (``providers/base.py``), which describes the
+#: provider's OWN ``reset()`` verb — the fork-capable Docker provider advertises
+#: ``reset_strategy="recreate"`` there — so resolution reads the boolean
+#: checkpoint/resume/lifecycle flags, never that field.
+_RESET_STRATEGIES = ("auto", "fork", "recreate")
 
 
 class GymError(ShinkenError):
@@ -168,6 +193,14 @@ class ShinkenGymEnv:
     and the post-step frame fused into ~1 RTT via the pipelined ``Sandbox.step``) or
     ``"structured"`` (the guest a11y tree observation — ``tree_text``/``elements``).
 
+    ``reset_strategy`` knob: ``"auto"`` (default — fork when the provider has a snapshot
+    tier, loud degrade to recreate when it does not, so the same harness runs over the
+    fork-native providers AND the snapshot-less ``shinken.backends`` providers),
+    ``"fork"`` (strict — a snapshot-less provider raises the typed
+    ``UnsupportedProviderOperation``), or ``"recreate"`` (fresh sandbox + ``task.setup``
+    replay per episode — the cold semantics every other gym has, on purpose).
+    ``info["reset_strategy"]`` and the trajectory metadata record what actually ran.
+
     ``step(action)`` accepts a canonical ACI action dict, a list of them, or **raw model
     text** parsed by :func:`shinken.dialect.parse_actions` with ``action_format``
     (``"auto"`` routes the XML tool-call grammars too); a ``<done/>``/``<stop/>`` control
@@ -193,20 +226,31 @@ class ShinkenGymEnv:
         spec: Any = None,
         observation: str = "screenshot",
         action_format: str = "auto",
+        reset_strategy: str = "auto",
         max_steps: int | None = None,
         observe_args: dict | None = None,
         connect_kwargs: dict | None = None,
     ) -> None:
         if observation not in ("screenshot", "structured"):
             raise GymError(f"unknown observation kind {observation!r}")
+        if reset_strategy not in _RESET_STRATEGIES:
+            raise GymError(
+                f"unknown reset_strategy {reset_strategy!r} (one of {_RESET_STRATEGIES})"
+            )
         self.task = task
         self.provider = provider
         self.spec = spec
         self.observation = observation
         self.action_format = action_format
+        self.reset_strategy = reset_strategy
         self.max_steps = max_steps
         self.observe_args = dict(observe_args or {})
         self.connect_kwargs = dict(connect_kwargs or {})
+        #: Latched by :meth:`make` when resolution lands on recreate (explicit knob, or
+        #: the honest ``auto`` degrade). Fork is never latched — it is DERIVED from
+        #: ``golden_checkpoint`` (see :attr:`resolved_reset_strategy`), so the documented
+        #: golden-sharing pattern can never desync from the reported strategy.
+        self._recreate_latched = False
         self.golden_checkpoint: str | None = None
         #: False when the checkpoint is shared/borrowed (pool siblings): dispose() then
         #: never deletes the underlying snapshot.
@@ -227,20 +271,73 @@ class ShinkenGymEnv:
 
     # --- lifecycle ---------------------------------------------------------------------
 
-    def make(self) -> ShinkenGymEnv:
-        """Build the golden checkpoint (idempotent): create a base sandbox, run
-        ``task.setup`` once, ``checkpoint``, destroy the base. Every subsequent
-        :meth:`reset` materializes a replica from this single checkpoint."""
+    @property
+    def resolved_reset_strategy(self) -> str | None:
+        """What this env actually resolved to: ``"fork"`` when a golden checkpoint
+        exists (built, borrowed from a pool sibling, or assigned directly — the
+        ``benchmarks/bench_agent_quality.py`` sharing pattern), ``"recreate"`` when the
+        recreate latch is set, ``None`` before :meth:`make` resolves."""
         if self.golden_checkpoint is not None:
+            return "fork"
+        if self._recreate_latched:
+            return "recreate"
+        return None
+
+    def make(self) -> ShinkenGymEnv:
+        """Resolve the reset strategy and, on the fork path, build the golden checkpoint
+        (idempotent): create a base sandbox, run ``task.setup`` once, ``checkpoint``,
+        destroy the base — every subsequent :meth:`reset` forks that single checkpoint.
+        On the recreate path there is nothing to prebuild: provisioning (and the
+        spec/provider preflight with it) defers to the first :meth:`reset`.
+
+        ``auto`` resolves from the provider's honest ``ProviderCapabilities`` when
+        published: the fork path needs the pair the gym drives (``supports_checkpoint``
+        AND ``supports_resume``), and recreate additionally needs
+        ``supports_lifecycle`` — an attach-only provider (``ExternalProvider``) stays a
+        typed failure, because recreate over it would reuse ONE live sandbox across
+        episodes. A provider with no such advertisement is probed by the golden build
+        itself; a probe that degrades costs one boot and one extra ``task.setup`` run,
+        so capability-less providers with side-effectful setups should pass an explicit
+        ``reset_strategy``."""
+        if self.reset_strategy == "recreate" and self.golden_checkpoint is not None:
+            raise GymError(
+                "reset_strategy='recreate' conflicts with an assigned golden_checkpoint "
+                "— drop the checkpoint sharing or use reset_strategy='auto'/'fork'"
+            )
+        if self.resolved_reset_strategy is not None:
             return self
+        if self.reset_strategy == "recreate":
+            self._require_lifecycle()
+            self._recreate_latched = True
+            return self
+        fork_path, lifecycle = self._capability_verdict()
+        if fork_path is False or not callable(getattr(self.provider, "checkpoint", None)):
+            detail = (
+                "capabilities advertise no checkpoint+resume pair"
+                if fork_path is False
+                else "provider defines no checkpoint verb"
+            )
+            if self.reset_strategy == "fork":
+                raise UnsupportedProviderOperation(
+                    f"{type(self.provider).__name__} cannot serve reset_strategy='fork': {detail}"
+                )
+            if lifecycle is False:
+                self._raise_no_lifecycle(detail)
+            self._degrade_to_recreate(detail)
+            return self
+        # Fork advertised (True) or unknown (no ProviderCapabilities-shaped object):
+        # build the golden — for the unknown case this build IS the probe.
         base = self.provider.create(self.spec)
         try:
             sess = self.provider.connect(base, **self.connect_kwargs)
             try:
-                setup = getattr(self.task, "setup", None)
-                if setup is not None:
-                    setup(sess)
-                self.golden_checkpoint = self.provider.checkpoint(base)
+                self._run_setup(sess)
+                try:
+                    self.golden_checkpoint = self.provider.checkpoint(base)
+                except UnsupportedProviderOperation:
+                    if self.reset_strategy == "fork":
+                        raise
+                    self._degrade_to_recreate("the checkpoint probe raised the typed error")
             finally:
                 with contextlib.suppress(Exception):
                     sess.close()
@@ -250,22 +347,32 @@ class ShinkenGymEnv:
         return self
 
     def reset(self) -> tuple[dict, dict]:
-        """Start a fresh episode by **forking the golden checkpoint** (building it first
-        if :meth:`make` was never called) and return ``(observation, info)``.
-        ``info["reset_ms"]`` is the measured fork→connected latency — the number that is
-        a sandbox re-provision in every other gym."""
+        """Start a fresh episode and return ``(observation, info)``. On the fork path
+        the replica is **forked from the golden checkpoint** (built first if :meth:`make`
+        was never called); on the recreate path a fresh sandbox is provisioned and
+        ``task.setup`` replays into it — the CUA-Gym semantics, for providers with no
+        snapshot tier. ``info["reset_ms"]`` is the measured latency to a policy-ready
+        replica — fork→connected on the fork path, create→connected→setup on the
+        recreate path — the honest apples-to-apples re-provision number;
+        ``info["reset_strategy"]`` says which path this env resolved to."""
         self.make()
         self._finalize_episode(terminal="stopped")  # an un-done episode is "stopped"
         self._teardown_replica()
+        recreate = self.resolved_reset_strategy == "recreate"
         t0 = time.perf_counter()
-        handle = self.provider.resume(self.golden_checkpoint)
+        if recreate:
+            handle = self.provider.create(self.spec)
+        else:
+            handle = self.provider.resume(self.golden_checkpoint)
         sess = connect_owned_handle(self.provider, handle, **self.connect_kwargs)
         self._handle = handle
         self._sess = sess
-        self._reset_ms = (time.perf_counter() - t0) * 1000.0
         self._steps = []
         self._done = False
         try:
+            if recreate:
+                self._run_setup(sess)  # per-episode replay — what fork amortizes away
+            self._reset_ms = (time.perf_counter() - t0) * 1000.0
             obs = self._observe()
         except BaseException:
             self._teardown_replica()
@@ -277,6 +384,7 @@ class ShinkenGymEnv:
             "task": getattr(self.task, "name", ""),
             "instruction": getattr(self.task, "instruction", "") or "",
             "reset_ms": self._reset_ms,
+            "reset_strategy": self.resolved_reset_strategy,
             "episode": len(self.episodes),
             "episode_id": self._episode_id,
             "golden_checkpoint": self.golden_checkpoint,
@@ -399,7 +507,10 @@ class ShinkenGymEnv:
         self._teardown_replica()
 
     def dispose(self) -> None:
-        """Full cleanup: the replica AND (when owned) the golden snapshot image."""
+        """Full cleanup: the replica AND (when owned) the golden snapshot image. On the
+        fork path a later :meth:`reset` rebuilds a fresh golden checkpoint; the recreate
+        latch survives dispose (a provider does not grow a snapshot tier), so no
+        re-probe is paid."""
         self.close()
         if (
             self.golden_checkpoint is not None
@@ -430,6 +541,50 @@ class ShinkenGymEnv:
         if self._sess is None:
             raise GymError("no live replica — call reset() first")
         return self._sess
+
+    def _capability_verdict(self) -> tuple[bool | None, bool | None]:
+        """``(fork_path, lifecycle)`` from the provider's honest advertisement.
+        ``fork_path`` is True only for the exact pair the gym drives
+        (``supports_checkpoint`` AND ``supports_resume`` — ``supports_fork`` alone
+        advertises a verb the gym never calls). Both are ``None`` when the provider
+        publishes no ``ProviderCapabilities``-shaped object (absent attribute, or a
+        foreign shape such as a dict) — unknown, so the golden-build probe decides."""
+        caps = getattr(self.provider, "capabilities", None)
+        if caps is None or not hasattr(caps, "supports_checkpoint"):
+            return None, None
+        fork_path = bool(getattr(caps, "supports_checkpoint", False)) and bool(
+            getattr(caps, "supports_resume", False)
+        )
+        return fork_path, bool(getattr(caps, "supports_lifecycle", False))
+
+    def _run_setup(self, sess: Any) -> None:
+        """The one setup contract both strategy paths share (golden build and
+        per-episode recreate replay)."""
+        setup = getattr(self.task, "setup", None)
+        if setup is not None:
+            setup(sess)
+
+    def _degrade_to_recreate(self, detail: str) -> None:
+        _log.warning(
+            "provider %s has no usable fork tier (%s); gym reset degrades to recreate "
+            "(fresh sandbox + task.setup replay per episode)",
+            type(self.provider).__name__,
+            detail,
+        )
+        self._recreate_latched = True
+
+    def _require_lifecycle(self) -> None:
+        _fork_path, lifecycle = self._capability_verdict()
+        if lifecycle is False:
+            self._raise_no_lifecycle("no fork tier requested or available")
+
+    def _raise_no_lifecycle(self, detail: str) -> None:
+        raise UnsupportedProviderOperation(
+            f"{type(self.provider).__name__} cannot serve recreate resets ({detail}): it "
+            "advertises supports_lifecycle=False (attach-only) — recreate would reuse ONE "
+            "live sandbox across episodes; gym needs a real create/destroy lifecycle or a "
+            "checkpoint tier"
+        )
 
     def _coerce_actions(self, action: str | dict | list[dict]) -> list[dict]:
         if isinstance(action, str):
@@ -510,6 +665,7 @@ class ShinkenGymEnv:
             "instruction": getattr(self.task, "instruction", "") or "",
             "golden_checkpoint": self.golden_checkpoint,
             "reset_ms": round(self._reset_ms, 3),
+            "reset_strategy": self.resolved_reset_strategy,
             "episode_id": self._episode_id,
             # Old Gym artifacts omitted this marker and stored post-action frames in
             # Step.observation. Consumers can now reject/explicitly migrate those
@@ -554,8 +710,10 @@ def _receipt_dict(receipt: Any) -> Any:
 
 def make(task: Any, provider: Any, **kwargs: Any) -> ShinkenGymEnv:
     """Module-level ``make()`` (the gym entry point trainers expect): construct the env
-    and build the golden checkpoint eagerly — boot base, run ``task.setup`` once,
-    checkpoint. Provider preflight rejects unsupported state-fidelity/fast-reset requests."""
+    and resolve the reset strategy eagerly — on the fork path that builds the golden
+    checkpoint (boot base, run ``task.setup`` once, checkpoint); on the recreate path
+    resolution is bookkeeping only and provisioning happens per ``reset()``. Provider
+    preflight rejects unsupported state-fidelity/fast-reset requests."""
     return ShinkenGymEnv(task, provider, **kwargs).make()
 
 
@@ -600,11 +758,19 @@ class ShinkenGymPool:
         return [ep for env in self.envs for ep in env.episodes]
 
     def make(self) -> ShinkenGymPool:
-        """Build the golden checkpoint ONCE (env 0 runs ``task.setup``) and share it with
-        every sibling env — N envs, one setup, one snapshot."""
-        ckpt = self.envs[0].make().golden_checkpoint
+        """Resolve the strategy ONCE on env 0 and share the outcome with every sibling:
+        on the fork path that is the single golden checkpoint (env 0 runs ``task.setup``
+        once — N envs, one setup, one snapshot); on the recreate path siblings inherit
+        the latch (no per-sibling probes) and each reset provisions its own fresh
+        sandbox with a per-episode ``task.setup`` replay. Fork's build-once guarantee
+        does NOT carry to the recreate path: pool resets replay ``task.setup``
+        concurrently on the worker threads (one call per sibling sandbox), so a
+        recreate-path task's setup must tolerate concurrent runs against independent
+        sandboxes."""
+        first = self.envs[0].make()
         for env in self.envs[1:]:
-            env.golden_checkpoint = ckpt
+            env.golden_checkpoint = first.golden_checkpoint
+            env._recreate_latched = first._recreate_latched
         return self
 
     def reset(self) -> list[tuple[dict, dict]]:

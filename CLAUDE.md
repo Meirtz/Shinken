@@ -1,5 +1,8 @@
 # CLAUDE.md — guide for AI coding sessions in this repo
 
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this
+repository.
+
 Shinken is an **AI-native, cross-platform sandbox runtime + control plane + control panel for
 computer-use agents** — the runtime that benchmarks and harnesses plug into. See [README.md](README.md) and
 [`docs/`](docs/README.md). The implementation has two distinct maturity axes. The
@@ -53,6 +56,63 @@ checkout). Anything committed is world-readable.
 | `benchmarks/` | ✅ | Rerunnable local benchmark suites (incl. `bench_client_scale.py` N=3096 client plane) + tracked raw results (`results/*.json`, one-off WAN CSVs in `results/remote/`); ALL figures land in `docs/assets/bench/` (regenerate: `replot.py` + `plot_remote.py`); methodology in `docs/engineering/benchmarks.md`, headline report in `docs/benchmarks/README.md`; plus the agent-quality STUDY harness (`bench_agent_quality.py` — codec tier × task success over fork-identical episodes, `docs/engineering/agent-quality-study.md`; not in `run_all.sh`, needs a model endpoint) |
 | `references/` | 🚫 git-ignored | 13 cloned prior-art repos studied for design (OSWorld, cua, codex, anthropic-quickstarts, neko, OpenAdapt, e2b-desktop, UI-TARS-desktop, OmniParser; + 2026-06: uni-agent, CUA-Gym, Agentix, ProRL-Agent-Server); provenance + re-clone in `references/README.md` (tracked) |
 
+## Development commands
+
+The Makefile mirrors CI (`.github/workflows/ci.yml`); `make help` lists targets.
+
+```bash
+make lint    # rustfmt --check + clippy -D warnings + ruff check/format --check + tsc
+make fmt     # format Rust + Python
+make test    # cargo test + pytest + npm ts:test (all three languages)
+make guard   # scripts/check-no-internal.sh — scans TRACKED files only, so `git add` new files first
+make run     # run a token-protected shinkend locally (prints a fresh SHINKEND_TOKEN)
+```
+
+Per language:
+
+- **Rust** (`shinkend/`): `cargo test --locked --manifest-path shinkend/Cargo.toml --all`.
+  Single test: `cargo test --manifest-path shinkend/Cargo.toml <test_name>`.
+- **Python** (`sdk/python/`): install once with `pip install -e "sdk/python[dev]"`, then
+  `cd sdk/python && pytest -q`. Single file: `pytest tests/test_gym.py -q`; single test:
+  `pytest -k <pattern> -q`. The suite runs against an in-process mock `shinkend`
+  (`tests/conftest.py`) — no Rust build or Docker required. `tests/test_contract.py` is the
+  v0.0.1 contract gate (fails on schema/runtime drift). Live backend smokes are env-gated
+  (`SHINKEN_{BROWSER,E2B,CUA,MCP}_LIVE=1` for `tests/test_backends_live.py`).
+- **TypeScript** (`sdk/typescript/`, npm workspace rooted at repo root): `npm ci`, then
+  `npm run ts:check` / `npm run ts:test`.
+
+Other targets: `make sandbox-image` builds the Linux Sandbox Docker image
+(`shinken/sandbox-linux`); `make benchmarks` runs every local suite and regenerates results
+JSON + figures. Runtime env knobs: `SHINKEND_TOKEN` (auth, mandatory), `SHINKEND_ADDR`
+(bind address), `SHINKEND_ENABLE_EXEC=1` (gates the `exec`/`launch_app` process-spawn
+surface, default off).
+
+## Architecture (how the pieces connect)
+
+- **Wire contract sync chain:** `schema/aci.schema.json` is the source of truth. It is
+  implemented twice — `shinkend/src/protocol.rs` (guest) and
+  `sdk/python/src/shinken/protocol.py` (client) — and a byte-identical copy is packaged at
+  `sdk/python/src/shinken/schemas/aci.schema.json` (CI diffs it against `schema/`). Changing a
+  verb or message means touching the schema, both implementations, the packaged copy, and
+  usually `tests/test_contract.py` plus the mock verb set in `tests/conftest.py`.
+- **`shinkend` (Rust Guest Runtime):** one WebSocket server per sandbox. `connection.rs`
+  handles transport/auth; `executor.rs` (X11) and `executor_macos.rs` (CoreGraphics) are the
+  per-platform input+capture backends (`--backend macos`); `observe.rs` + `atspi_source.rs`
+  serve structured observation; `exec.rs` the typed in-guest exec channel.
+- **Python SDK layering** (`sdk/python/src/shinken/`): `client.py` is a sync facade over an
+  async reader/demux. `providers/` own sandbox lifecycle including checkpoint/fork/resume
+  (`docker.py` disk tier, `criu.py` memory tier, `external.py` attach-only). The narrow waist
+  runs in two directions: `backends/` drive the ACI **over** third-party computer-control
+  systems, while `integrations/` expose Shinken **to** third-party trainers/harnesses.
+  `runtime/` is the zero-semantics agent loop + trajectory; `gym.py` (reset()=fork, with an
+  honest recreate fallback over snapshot-less providers), `eval.py` (`run_eval_forked`), and
+  the OSWorld modules are consumers of it. `dialect.py` parses model tool-call text (dialect +
+  XML) into typed actions.
+- **Live proof lives in CI, not unit tests:** `scripts/*_smoke.py` run against real
+  Xvfb/Docker in `ci.yml` (pointer, screencast, windows, clipboard, observe,
+  checkpoint→fork→screenshot, forked eval). When touching runtime behavior, check whether a
+  smoke covers it.
+
 ## Conventions
 
 - **The public design canon is `docs/design/tech-decisions.md`** — decisions are numbered **D1–D15**.
@@ -65,6 +125,9 @@ checkout). Anything committed is world-readable.
 - Docs are **self-contained**: cite external sources by URL and sibling docs by relative path; do
   not cite private working filenames.
 - Mark unverified vendor numbers `(vendor-published, unverified)`.
+- Workflow (see [CONTRIBUTING.md](CONTRIBUTING.md)): branch off `main` as
+  `feat/…`/`fix/…`/`chore/…`/`docs/…`/`spike/…`, use Conventional Commits, squash-merge with
+  green CI; update the relevant ADR in the same PR when a design decision changes.
 
 ## Status & next steps
 
@@ -91,7 +154,9 @@ live process+memory replica. The hardened path is unit-tested and awaits a privi
 rerun before latency is republished — a state-fidelity tier, not an isolation posture), plus
 `eval.run_eval_forked` (golden→fork-N→score, #231) and the **fork-native gym adapter**
 (`shinken.gym`: trainer-facing `make/reset/step/evaluate` with reset()=fork, pool parallel
-reset, HF-datasets exporter, MultiTurnDataloader-shaped iterator), are built; a **local
+reset, HF-datasets exporter, MultiTurnDataloader-shaped iterator; **reset-strategy
+resolution** `auto`/`fork`/`recreate` — honest recreate fallback so the harness also runs
+over snapshot-less D15 backends), are built; a **local
 capability-gateway shim** (`sdk/python/src/shinken/gateway.py` + tests) is built. **Push-based boot readiness (S9)** is
 single-connection SDK readiness loop took `provider.create()` from ~7.7 s to ~0.19 s p50.
 The historical live **warm-pool fork graft** is disabled because pool-hit/pool-miss
@@ -130,7 +195,10 @@ The immediate work (per the recalibrated priorities):
    (production enforcement beyond the local gateway
    shim), `.skn` recording/playback, the sub-ms CoW fork fast tier
    (the CRIU **memory tier is now BUILT** — `CriuDockerProvider`, productized from the positive
-   `spikes/criu-memory-tier/` spike; only the CoW/microVM fast tier remains designed),
+   `spikes/criu-memory-tier/` spike; only the CoW/microVM fast tier remains designed), the
+   **backend runtime-state mapping** (D15 extension — mapping a third-party substrate's own
+   snapshot/1:N-fork API into backend `checkpoint`/`resume` so `supports_fork` flips honestly;
+   see [operation-layer.md §13](docs/design/operation-layer.md)),
    control plane + concurrency, dual-channel WebRTC/NVENC, and the rest of the first-party native
    runtime coverage — **Windows** + **Wayland** + macOS AX/ScreenCaptureKit (the **macOS engine v1**
    capture+input slice IS built, local-only: `shinkend --backend macos`,
