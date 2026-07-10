@@ -11,7 +11,7 @@ requires-python = ">=3.10"
 license = "Apache-2.0"
 authors = [{ name = "The Shinken Authors" }]
 keywords = ["computer-use", "agent", "sandbox", "gui-agent", "runtime"]
-dependencies = ["websockets>=13"]
+dependencies = ["websockets>=16.1"]
 
 [project.urls]
 Homepage = "https://github.com/Meirtz/Shinken"
