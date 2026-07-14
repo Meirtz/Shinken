@@ -56,7 +56,7 @@ libc = "0.2"
 # ScreenCaptureKit upgrade path is documented in docs/engineering/macos-engine.md.
 [target.'cfg(target_os = "macos")'.dependencies]
 # `highsierra` unlocks CGEventCreateScrollWheelEvent2 (pixel-denominated scroll).
-core-graphics = { version = "0.24", features = ["highsierra"] }
+core-graphics = { version = "0.25", features = ["highsierra"] }
 core-foundation = "0.10"
 
 [profile.release]
