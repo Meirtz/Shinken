@@ -20,7 +20,7 @@ jobs:
     name: No internal/confidential content
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           # The tree scan catches the final checkout; full history is needed to catch a
           # credential added in one PR commit and deleted in a later commit.
@@ -51,7 +51,7 @@ jobs:
     name: Schema sanity
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Validate JSON schemas (parse + JSON-Schema metaschema)
         run: |
           shopt -s globstar nullglob
@@ -73,7 +73,7 @@ jobs:
     name: shinkend (Rust)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - id: present
         run: |
           if [ -f shinkend/Cargo.toml ]; then echo "exists=true" >> "$GITHUB_OUTPUT"; else echo "exists=false" >> "$GITHUB_OUTPUT"; fi
@@ -94,7 +94,7 @@ jobs:
     name: v0.0.1 contract gate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - id: present
         run: |
           if [ -f sdk/python/tests/test_contract.py ]; then echo "go=true" >> "$GITHUB_OUTPUT"; else echo "go=false" >> "$GITHUB_OUTPUT"; fi
@@ -120,7 +120,7 @@ jobs:
         # pyproject declares requires-python >=3.10; exercise the floor and a recent ver.
         python-version: ["3.10", "3.13"]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - run: test -d sdk/python || { echo "::error::sdk/python missing — this gate must not be skipped"; exit 1; }
       - uses: actions/setup-python@v6
         with:
@@ -137,7 +137,7 @@ jobs:
     name: SDK (TypeScript)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6   # was @v6 elsewhere; aligned so checkout version doesn't drift
+      - uses: actions/checkout@v7   # was @v6 elsewhere; aligned so checkout version doesn't drift
       - run: test -f sdk/typescript/package.json || { echo "::error::sdk/typescript missing — this gate must not be skipped"; exit 1; }
       - uses: actions/setup-node@v4
         with:
@@ -152,7 +152,7 @@ jobs:
     name: Linux integration (Xvfb)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - id: present
         run: |
           if [ -f shinkend/Cargo.toml ] && [ -f scripts/m1_smoke.py ]; then echo "go=true" >> "$GITHUB_OUTPUT"; else echo "go=false" >> "$GITHUB_OUTPUT"; fi
@@ -221,7 +221,7 @@ jobs:
     name: SDK wheel install
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - id: present
         run: |
           if [ -f sdk/python/pyproject.toml ]; then echo "go=true" >> "$GITHUB_OUTPUT"; else echo "go=false" >> "$GITHUB_OUTPUT"; fi
@@ -253,7 +253,7 @@ jobs:
     name: Docker sandbox image
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - id: present
         run: |
           if [ -f images/linux/Dockerfile ] && [ -f scripts/docker_smoke.py ]; then echo "go=true" >> "$GITHUB_OUTPUT"; else echo "go=false" >> "$GITHUB_OUTPUT"; fi
