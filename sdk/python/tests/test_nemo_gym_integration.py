@@ -333,6 +333,78 @@ def test_webserver_shutdown_closes_engine_resources():
     assert engine.started and engine.closed
 
 
+def test_webserver_shutdown_wraps_lifespan_when_add_event_handler_is_gone():
+    """Newer Starlette removed ``add_event_handler`` (lifespan-only apps); the engine
+    lifetime binding must wrap the router's lifespan context instead of crashing at
+    server startup with AttributeError."""
+    import contextlib
+
+    events: list[str] = []
+
+    @contextlib.asynccontextmanager
+    async def base_lifespan(app):
+        events.append("base-enter")
+        yield {"base": True}
+        events.append("base-exit")
+
+    class Router:
+        def __init__(self):
+            self.lifespan_context = base_lifespan
+
+    class App:  # deliberately NO add_event_handler attribute
+        def __init__(self):
+            self.router = Router()
+
+    class Engine:
+        def start_maintenance(self):
+            events.append("engine-start")
+
+        def close(self):
+            events.append("engine-close")
+
+    app, engine = App(), Engine()
+    _install_engine_shutdown(app, engine)
+
+    async def run():
+        async with app.router.lifespan_context(app) as state:
+            assert state == {"base": True}
+            assert "engine-start" in events
+
+    asyncio.run(run())
+    assert events == ["engine-start", "base-enter", "base-exit", "engine-close"]
+
+
+def test_current_generation_recovers_the_active_rollout(tmp_path):
+    """When the client session cookie doesn't thread the generation (multi-server
+    SessionMiddleware cookie collision), the engine can recover the active rollout's
+    generation from the reliably-threaded session_id."""
+    engine, task = make_engine(tmp_path)
+    try:
+        assert engine.current_generation("s1") is None  # nothing seeded yet
+        seeded = engine.seed("s1", task.task_id, generation=None)
+        assert engine.current_generation("s1") == seeded["generation"]
+        # a distinct session is independent
+        assert engine.current_generation("other") is None
+    finally:
+        engine.close()
+
+
+def test_current_generation_lets_tool_and_verify_proceed_without_the_cookie(tmp_path):
+    """The recovered generation is the SAME value seed issued, so tool/verify calls
+    that pass it succeed exactly as a cookie-threaded generation would."""
+    engine, task = make_engine(tmp_path)
+    try:
+        engine.seed("s1", task.task_id, generation=None)
+        gen = engine.current_generation("s1")
+        assert isinstance(gen, int)
+        # tool + verify accept the recovered generation (no CuaGymError)
+        engine.tool("s1", "computer_observe", {"mode": "tree"}, generation=gen)
+        engine.verify("s1", generation=gen)  # tears the replica down
+        assert engine.current_generation("s1") is None  # gone after verify
+    finally:
+        engine.close()
+
+
 def test_idle_rollouts_are_reaped(tmp_path):
     engine, task = make_engine(tmp_path, idle_ttl_s=0.01)
     engine.seed("s1", task.task_id, generation=None)
@@ -1525,6 +1597,9 @@ def test_nemo_adapter_threads_cookie_generation_through_routes(monkeypatch):
             calls.append(("verify", session_id, generation))
             return 0.75
 
+        def current_generation(self, session_id):
+            return None  # no server-side rollout in this cookie-threading fixture
+
     class Request:
         def __init__(self):
             self.session = {"sid": "session-1"}
@@ -1544,8 +1619,13 @@ def test_nemo_adapter_threads_cookie_generation_through_routes(monkeypatch):
 
     response = asyncio.run(server._make_tool_route("computer_observe")(request))
     assert response.body == "observed"
+    # The tool response re-asserts the generation into the session so Starlette re-emits
+    # the Set-Cookie — otherwise the multi-server agent's cookie chain drops it and the
+    # NEXT call arrives session-less (the live failure this fixes).
+    assert request.session["shinken_rollout_generation"] == 8
     verified = asyncio.run(server.verify(request, Model(request_id="r1")))
     assert verified.reward == 0.75 and verified.request_id == "r1"
+    assert request.session["shinken_rollout_generation"] == 8  # verify re-asserts too
     assert calls == [
         ("seed", "session-1", "task-1", None),
         ("seed", "session-1", "task-1", 7),
@@ -1559,6 +1639,20 @@ def test_nemo_adapter_threads_cookie_generation_through_routes(monkeypatch):
     missing_generation.session["shinken_rollout_generation"] = True
     with pytest.raises(CuaGymError, match="no Shinken rollout generation"):
         asyncio.run(server.verify(missing_generation, Model()))
+
+    # A tool call whose cookie DROPPED the generation but whose engine still owns the
+    # rollout recovers it AND re-asserts it into the session, so the Set-Cookie is
+    # re-emitted and the next call in the agent's cookie chain carries it again.
+    class EngineWithRollout(Engine):
+        def current_generation(self, session_id):
+            return 99
+
+    healed = build_resources_server_cls(lambda _c: EngineWithRollout())
+    server2 = object.__new__(healed)
+    server2._engine = EngineWithRollout()
+    recovered = Request()  # session has session_id but no generation
+    asyncio.run(server2._make_tool_route("computer_observe")(recovered))
+    assert recovered.session["shinken_rollout_generation"] == 99
 
 
 def test_reentrant_close_is_rejected_instead_of_deadlocking(tmp_path):
