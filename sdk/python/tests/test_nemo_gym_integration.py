@@ -96,6 +96,8 @@ class FakeEnv:
 
     def evaluate(self):
         self.log.append(("evaluate",))
+        if (self.task.config or {}).get("_scorer_raises"):
+            raise CuaGymError("reward.py failed (rc=1): AssertionError: Expected 1.0, got 0.0")
         return 1.0
 
     def screenshot(self):
@@ -401,6 +403,35 @@ def test_current_generation_lets_tool_and_verify_proceed_without_the_cookie(tmp_
         engine.tool("s1", "computer_observe", {"mode": "tree"}, generation=gen)
         engine.verify("s1", generation=gen)  # tears the replica down
         assert engine.current_generation("s1") is None  # gone after verify
+    finally:
+        engine.close()
+
+
+def test_scorer_crash_raises_by_default(tmp_path):
+    """Strict default (eval contract): a reward.py that exits non-zero is a typed fault."""
+    engine, task = make_engine(tmp_path, task_config={"_scorer_raises": True})
+    try:
+        engine.seed("s1", task.task_id, generation=None)
+        gen = engine.current_generation("s1")
+        with pytest.raises(CuaGymError, match="reward.py failed"):
+            engine.verify("s1", generation=gen)
+    finally:
+        engine.close()
+
+
+def test_scorer_crash_scores_configured_reward_for_rl(tmp_path):
+    """RL-collection resilience: a badly-authored corpus task whose reward.py crashes on
+    the unsolved state (common in CUA-Gym: `assert reward == 1.0` self-tests) must NOT
+    abort the whole batch. With scorer_error_reward set, a scorer crash yields that
+    reward and the replica is still torn down."""
+    engine, task = make_engine(
+        tmp_path, scorer_error_reward=0.0, task_config={"_scorer_raises": True}
+    )
+    try:
+        engine.seed("s1", task.task_id, generation=None)
+        gen = engine.current_generation("s1")
+        assert engine.verify("s1", generation=gen) == 0.0
+        assert engine.current_generation("s1") is None  # rollout torn down, batch continues
     finally:
         engine.close()
 

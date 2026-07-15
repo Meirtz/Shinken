@@ -55,6 +55,10 @@ def engine_factory(_config: object) -> ShinkenComputerEngine:
             lifecycle[argument] = float(os.environ[env_name])
     if "SHINKEN_MAX_GOLDENS" in os.environ:
         lifecycle["max_goldens"] = int(os.environ["SHINKEN_MAX_GOLDENS"])
+    if "SHINKEN_SCORER_ERROR_REWARD" in os.environ:
+        # RL-tolerant scoring: a corpus task whose reward.py crashes on the unsolved state
+        # scores this value instead of aborting the collection batch (default: strict raise).
+        lifecycle["scorer_error_reward"] = float(os.environ["SHINKEN_SCORER_ERROR_REWARD"])
     if "SHINKEN_MAX_PENDING_CLEANUP" in os.environ:
         lifecycle["max_pending_cleanup"] = int(
             os.environ["SHINKEN_MAX_PENDING_CLEANUP"]

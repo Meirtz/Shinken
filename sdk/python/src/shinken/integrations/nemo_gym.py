@@ -288,6 +288,7 @@ class ShinkenComputerEngine:
         reap_interval_s: float = 30.0,
         max_pending_cleanup: int = 64,
         cleanup_retry_batch: int = 16,
+        scorer_error_reward: float | None = None,
         env_factory: Any = ShinkenCuaGymEnv,
     ) -> None:
         if type(max_goldens) is not int or max_goldens < 0:
@@ -319,6 +320,13 @@ class ShinkenComputerEngine:
         self.reap_interval_s = lifetimes["reap_interval_s"]
         self.max_pending_cleanup = max_pending_cleanup
         self.cleanup_retry_batch = cleanup_retry_batch
+        # None keeps the strict eval contract (a broken scorer is a typed fault). A float
+        # makes verify tolerant for RL collection over messy corpora: a reward.py that
+        # crashes/emits no reward (e.g. CUA-Gym self-tests that `assert reward == 1.0` on
+        # the unsolved state) scores this value with a warning instead of aborting the batch.
+        self.scorer_error_reward = (
+            None if scorer_error_reward is None else float(scorer_error_reward)
+        )
         self.env_factory = env_factory
         self._rollouts: dict[str, _Rollout] = {}
         self._goldens: dict[str, _Golden] = {}
@@ -497,17 +505,35 @@ class ShinkenComputerEngine:
             self._evict_goldens()
 
     def verify(self, session_id: str, *, generation: int) -> float:
-        """Score the rollout with the bundle's ``reward.py`` and tear the replica down."""
+        """Score the rollout with the bundle's ``reward.py`` and tear the replica down.
+
+        A scorer fault is a typed error by default; with ``scorer_error_reward`` set it is
+        logged and scored as that value so one badly-authored corpus task cannot abort an
+        RL collection batch."""
         with self._operation(session_id=session_id):
             with self._session_lock(session_id):
                 rollout = self._current_rollout(session_id, generation)
                 with self._cleanup_admission():
                     try:
-                        return rollout.env.evaluate()
+                        return self._score(rollout)
                     finally:
                         detached = self._detach_rollout(session_id, rollout)
                         if detached is not None:
                             self._close_env(detached.env)
+
+    def _score(self, rollout: _Rollout) -> float:
+        if self.scorer_error_reward is None:
+            return rollout.env.evaluate()
+        try:
+            return rollout.env.evaluate()
+        except CuaGymError as exc:
+            _LOG.warning(
+                "reward.py fault on task %r scored as %s (RL-tolerant): %s",
+                getattr(rollout.task, "task_id", "?"),
+                self.scorer_error_reward,
+                exc,
+            )
+            return self.scorer_error_reward
 
     def end(self, session_id: str, *, generation: int) -> None:
         """Tear down a rollout's replica without scoring (idempotent)."""
