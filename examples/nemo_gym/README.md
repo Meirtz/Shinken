@@ -116,6 +116,21 @@ exactly the shape Shinken's fleet numbers are built for: `num_generations_per_pr
 maps to N forks of one golden checkpoint at ~0.5 s each, where re-provisioning
 environments per generation is the cost the trainer otherwise eats.
 
+**Verified end-to-end (2026-07-15).** A real NeMo RL GRPO run (not a bespoke trainer)
+drove rollouts through this resources server on a single GPU node — Qwen3-4B policy in
+vLLM, the `run_grpo_nemo_gym.py` entrypoint over the container's Gym submodule — and closed
+one full training step: `Collecting rollouts` completed the validation set and the
+`num_prompts_per_step × num_generations_per_prompt` training group **as forks of the golden
+desktop checkpoint**, then `Processing rewards → Computing advantages → Computing logprobs`.
+Bringing that up surfaced three integration fixes in `shinken.integrations.nemo_gym` (all
+covered by `tests/test_nemo_gym_integration.py`): a Starlette lifespan-compat shim for the
+engine-shutdown binding (newer Starlette dropped `add_event_handler`), a `session_id`-keyed
+generation fallback, and re-asserting the rollout generation into the session on every
+tool/verify response so the multi-server agent's chained `resources_server_cookies` keeps
+carrying our namespaced session cookie end to end (otherwise a later call arrives
+session-less and the fence rejects it). Set `SHINKEN_NG_DEBUG=1` to trace inbound
+cookies/session per request when adapting to a different agent.
+
 ## 5. Local optimizer-step smoke (not GRPO equivalence)
 
 NeMo RL is the production trainer, but it needs CUDA. [`local_grpo.py`](local_grpo.py)

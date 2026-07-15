@@ -44,6 +44,7 @@ import contextlib
 import json
 import logging
 import math
+import os
 import secrets
 import threading
 import time
@@ -287,6 +288,7 @@ class ShinkenComputerEngine:
         reap_interval_s: float = 30.0,
         max_pending_cleanup: int = 64,
         cleanup_retry_batch: int = 16,
+        scorer_error_reward: float | None = None,
         env_factory: Any = ShinkenCuaGymEnv,
     ) -> None:
         if type(max_goldens) is not int or max_goldens < 0:
@@ -318,6 +320,13 @@ class ShinkenComputerEngine:
         self.reap_interval_s = lifetimes["reap_interval_s"]
         self.max_pending_cleanup = max_pending_cleanup
         self.cleanup_retry_batch = cleanup_retry_batch
+        # None keeps the strict eval contract (a broken scorer is a typed fault). A float
+        # makes verify tolerant for RL collection over messy corpora: a reward.py that
+        # crashes/emits no reward (e.g. CUA-Gym self-tests that `assert reward == 1.0` on
+        # the unsolved state) scores this value with a warning instead of aborting the batch.
+        self.scorer_error_reward = (
+            None if scorer_error_reward is None else float(scorer_error_reward)
+        )
         self.env_factory = env_factory
         self._rollouts: dict[str, _Rollout] = {}
         self._goldens: dict[str, _Golden] = {}
@@ -496,17 +505,35 @@ class ShinkenComputerEngine:
             self._evict_goldens()
 
     def verify(self, session_id: str, *, generation: int) -> float:
-        """Score the rollout with the bundle's ``reward.py`` and tear the replica down."""
+        """Score the rollout with the bundle's ``reward.py`` and tear the replica down.
+
+        A scorer fault is a typed error by default; with ``scorer_error_reward`` set it is
+        logged and scored as that value so one badly-authored corpus task cannot abort an
+        RL collection batch."""
         with self._operation(session_id=session_id):
             with self._session_lock(session_id):
                 rollout = self._current_rollout(session_id, generation)
                 with self._cleanup_admission():
                     try:
-                        return rollout.env.evaluate()
+                        return self._score(rollout)
                     finally:
                         detached = self._detach_rollout(session_id, rollout)
                         if detached is not None:
                             self._close_env(detached.env)
+
+    def _score(self, rollout: _Rollout) -> float:
+        if self.scorer_error_reward is None:
+            return rollout.env.evaluate()
+        try:
+            return rollout.env.evaluate()
+        except CuaGymError as exc:
+            _LOG.warning(
+                "reward.py fault on task %r scored as %s (RL-tolerant): %s",
+                getattr(rollout.task, "task_id", "?"),
+                self.scorer_error_reward,
+                exc,
+            )
+            return self.scorer_error_reward
 
     def end(self, session_id: str, *, generation: int) -> None:
         """Tear down a rollout's replica without scoring (idempotent)."""
@@ -693,6 +720,17 @@ class ShinkenComputerEngine:
 
     def _golden_lock(self, task_id: str) -> threading.Lock:
         return self._golden_locks[hash(task_id) % len(self._golden_locks)]
+
+    def current_generation(self, session_id: str) -> int | None:
+        """The generation of the session's live rollout, or ``None`` when none is active.
+
+        Lets a transport that cannot reliably thread the per-rollout generation (e.g. a
+        multi-server SessionMiddleware whose ``session`` cookie collides across servers,
+        while the ``session_id`` still threads) recover the fence value from the
+        reliably-keyed ``session_id``. Single rollout per session, so this is unambiguous."""
+        with self._lock:
+            rollout = self._rollouts.get(session_id)
+            return rollout.generation if rollout is not None else None
 
     def _current_rollout(self, session_id: str, generation: int) -> _Rollout:
         with self._lock:
@@ -1051,9 +1089,38 @@ def extract_task_id(payload: Mapping[str, Any]) -> str | None:
     return None
 
 
+def _install_request_tracer(app: Any, session_id_key: str) -> None:
+    """SHINKEN_NG_DEBUG diagnostic: log every inbound request's path, the cookies it
+    carried, and the session_id/generation the server resolved — to pin down where a
+    multi-server session cookie drops the per-rollout state. Off unless the env is set."""
+    import sys
+
+    @app.middleware("http")
+    async def _trace(request: Any, call_next: Any) -> Any:
+        cookie_names = sorted(request.cookies.keys())
+        try:
+            session = request.session
+            sid = session.get(session_id_key)
+            gen = session.get(_SESSION_GENERATION_KEY)
+        except Exception as exc:  # noqa: BLE001 — diagnostic must never break the request
+            sid, gen = f"<no-session:{exc}>", None
+        print(
+            f"[NG_TRACE] {request.method} {request.url.path} cookies={cookie_names} "
+            f"session_id={sid!r} generation={gen!r}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return await call_next(request)
+
+
 def _install_engine_shutdown(app: Any, engine: ShinkenComputerEngine) -> None:
-    """Bind active maintenance and engine-owned resources to the web app lifetime."""
+    """Bind active maintenance and engine-owned resources to the web app lifetime.
+
+    Starlette's classic ``add_event_handler``/``on_event`` surface was removed in newer
+    releases (lifespan-only apps), so when the app doesn't expose it, wrap the router's
+    lifespan context instead — same lifetime contract on both API generations."""
     import asyncio
+    import contextlib
 
     def start_engine() -> None:
         engine.start_maintenance()
@@ -1061,8 +1128,25 @@ def _install_engine_shutdown(app: Any, engine: ShinkenComputerEngine) -> None:
     async def close_engine() -> None:
         await asyncio.to_thread(engine.close)
 
-    app.add_event_handler("startup", start_engine)
-    app.add_event_handler("shutdown", close_engine)
+    add_handler = getattr(app, "add_event_handler", None)
+    if callable(add_handler):
+        add_handler("startup", start_engine)
+        add_handler("shutdown", close_engine)
+        return
+
+    router = app.router
+    inner = router.lifespan_context
+
+    @contextlib.asynccontextmanager
+    async def lifespan_with_engine(app_: Any) -> Any:
+        start_engine()
+        try:
+            async with inner(app_) as state:
+                yield state
+        finally:
+            await close_engine()
+
+    router.lifespan_context = lifespan_with_engine
 
 
 def _request_generation(request: Any) -> int:
@@ -1130,12 +1214,14 @@ def build_resources_server_cls(engine_factory: Any) -> type:
             # live replicas and golden snapshots. Tie those lifetimes together so normal
             # server shutdown cannot orphan provider resources.
             _install_engine_shutdown(app, self._engine)
+            if os.environ.get("SHINKEN_NG_DEBUG"):
+                _install_request_tracer(app, SESSION_ID_KEY)
             return app
 
         def _make_tool_route(self, name: str):
             async def route(request: Request) -> PlainTextResponse:
                 session_id = request.session[SESSION_ID_KEY]
-                generation = _request_generation(request)
+                generation = self._resolve_generation(request, session_id)
                 args = await request.json()
                 out = await asyncio.to_thread(
                     self._engine.tool,
@@ -1164,12 +1250,43 @@ def build_resources_server_cls(engine_factory: Any) -> type:
                 self._engine.seed, session_id, task_id, generation=generation
             )
             request.session[_SESSION_GENERATION_KEY] = seeded["generation"]
+            if os.environ.get("SHINKEN_NG_DEBUG"):
+                import sys
+
+                print(
+                    f"[NG_TRACE] SEED session_id={session_id!r} task={task_id!r} "
+                    f"generation={seeded['generation']!r}",
+                    file=sys.stderr,
+                    flush=True,
+                )
             return BaseSeedSessionResponse()
 
         async def verify(self, request: Request, body: BaseVerifyRequest) -> BaseVerifyResponse:
             session_id = request.session[SESSION_ID_KEY]
-            generation = _request_generation(request)
+            generation = self._resolve_generation(request, session_id)
             reward = await asyncio.to_thread(self._engine.verify, session_id, generation=generation)
             return BaseVerifyResponse(**body.model_dump(), reward=reward)
+
+        def _resolve_generation(self, request: Request, session_id: str) -> int:
+            """The rollout generation for a fenced tool/verify call, re-asserted into the
+            session so Starlette re-emits the Set-Cookie.
+
+            Value precedence: the client session's threaded value, else the engine's
+            active generation for this ``session_id`` (recovering from a transport that
+            drops the per-rollout cookie but keeps ``session_id``). The re-assert is the
+            load-bearing part over a multi-server agent: each server namespaces its own
+            session cookie and the agent chains ``resources_server_cookies`` from one tool
+            response to the next, so a response that does NOT re-emit our cookie breaks
+            the chain and the next call arrives session-less. Writing the generation back
+            marks the session modified on every call, keeping the cookie alive end to end."""
+            generation = request.session.get(_SESSION_GENERATION_KEY)
+            if type(generation) is not int:  # missing / non-int (bool) — recover it
+                generation = self._engine.current_generation(session_id)
+                if generation is None:
+                    raise CuaGymError(
+                        "session carries no Shinken rollout generation — seed_session first"
+                    )
+            request.session[_SESSION_GENERATION_KEY] = generation
+            return generation
 
     return ShinkenComputerResourcesServer
