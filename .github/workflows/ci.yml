@@ -99,7 +99,7 @@ jobs:
         run: |
           if [ -f sdk/python/tests/test_contract.py ]; then echo "go=true" >> "$GITHUB_OUTPUT"; else echo "go=false" >> "$GITHUB_OUTPUT"; fi
       - if: steps.present.outputs.go == 'true'
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - if: steps.present.outputs.go == 'true'
@@ -122,7 +122,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - run: test -d sdk/python || { echo "::error::sdk/python missing — this gate must not be skipped"; exit 1; }
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
       - working-directory: sdk/python
@@ -159,7 +159,7 @@ jobs:
       - if: steps.present.outputs.go == 'true'
         uses: dtolnay/rust-toolchain@stable
       - if: steps.present.outputs.go == 'true'
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - if: steps.present.outputs.go == 'true'
@@ -231,7 +231,7 @@ jobs:
           diff -q schema/aci.schema.json sdk/python/src/shinken/schemas/aci.schema.json
           echo "packaged ACI schema in sync with schema/"
       - if: steps.present.outputs.go == 'true'
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - if: steps.present.outputs.go == 'true'
@@ -258,7 +258,7 @@ jobs:
         run: |
           if [ -f images/linux/Dockerfile ] && [ -f scripts/docker_smoke.py ]; then echo "go=true" >> "$GITHUB_OUTPUT"; else echo "go=false" >> "$GITHUB_OUTPUT"; fi
       - if: steps.present.outputs.go == 'true'
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - if: steps.present.outputs.go == 'true'
